@@ -1,12 +1,18 @@
-name: CI - Code Quality Check
+name: CI - Code Quality and Automation
 
 on:
+  push:
+    branches: [ main ]
   pull_request:
     types: [opened, edited, synchronized]
     branches: [ main ]
+  issues:
+    types: [opened]
 
 jobs:
+  # 1. בדיקות איכות - רץ רק ב-Pull Requests
   test:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
@@ -20,12 +26,40 @@ jobs:
     - name: Quality Checks
       run: |
         flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        mypy tests/
+        mypy .
     - name: Run tests
       run: |
         pytest tests/
 
+  # 2. ניהול Issue חדש - מוסיף תגובה ולייבלים
+  issue-management:
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v6
+        with:
+          script: |
+            const issueNumber = context.issue.number;
+            const repo = { owner: context.repo.owner, repo: context.repo.repo };
+            const opener = context.payload.sender.login;
+
+            await github.rest.issues.createComment({
+              ...repo,
+              issue_number: issueNumber,
+              body: `היי @${opener}, תודה על פתיחת ה-Issue! 💪 אנחנו נבדוק את זה בהקדם.`
+            });
+
+            await github.rest.issues.addLabels({
+              ...repo,
+              issue_number: issueNumber,
+              labels: ['triage', 'pending-review']
+            });
+
+  # 3. סנכרון PR עם ה-Issue המקושר (הקוד המקורי שלך)
   sync-and-assign:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -36,11 +70,9 @@ jobs:
           script: |
             const prNumber = context.issue.number;
             const repo = { owner: context.repo.owner, repo: context.repo.repo };
-            
-            // 1. Auto-assign the PR opener
+
             await github.rest.issues.addAssignees({ ...repo, issue_number: prNumber, assignees: [context.payload.sender.login] });
 
-            // 2. Sync Labels and Milestone from linked Issue
             const body = context.payload.pull_request.body || "";
             const match = body.match(/(?:fixes|closes|relates|ref|#)(\d+)/i);
             if (match) {
@@ -52,4 +84,56 @@ jobs:
               if (issue.data.milestone) {
                 await github.rest.issues.update({ ...repo, issue_number: prNumber, milestone: issue.data.milestone.number });
               }
+            }
+
+  # 4. עדכון PROGRESS.md - מחלץ טקסט מבין גרשיים בקומיט
+  update-progress:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, 'relates #')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: read
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Update Progress Documentation
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const { execSync } = require('child_process');
+
+            const commitMessage = context.payload.head_commit.message;
+            
+            // חיפוש ה-Issue והטקסט שבתוך הגרשיים
+            const issueMatch = commitMessage.match(/relates\s+#(\d+)/i);
+            const contentMatch = commitMessage.match(/'([^']+)'/);
+            
+            if (issueMatch && contentMatch) {
+              const issueNumber = issueMatch[1];
+              const extractedContent = contentMatch[1];
+              const repo = { owner: context.repo.owner, repo: context.repo.repo };
+              
+              const issue = await github.rest.issues.get({ ...repo, issue_number: issueNumber });
+              const status = issue.data.state === 'closed' ? 'COMPLETED' : 'IN PROGRESS';
+              const date = new Date().toLocaleDateString('en-GB');
+
+              const newEntry = `\n${date}\n\n=== Issue #${issueNumber}: ${issue.data.title} (${status}) ===\n- ${extractedContent}\n`;
+
+              const filePath = 'PROGRESS.md';
+              let content = '';
+              if (fs.existsSync(filePath)) {
+                content = fs.readFileSync(filePath, 'utf8');
+              }
+              
+              fs.writeFileSync(filePath, newEntry + content);
+              
+              // הגדרות גיט ודחיפת השינוי
+              execSync('git config user.name "github-actions[bot]"');
+              execSync('git config user.email "github-actions[bot]@users.noreply.github.com"');
+              execSync('git add PROGRESS.md');
+              execSync('git commit -m "docs: update progress for issue #' + issueNumber + '"');
+              execSync('git push');
             }
