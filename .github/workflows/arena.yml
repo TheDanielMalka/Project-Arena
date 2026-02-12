@@ -9,7 +9,6 @@ on:
     types: [opened]
 
 jobs:
-  # 1. בדיקות איכות - רץ על PR
   test:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -21,12 +20,16 @@ jobs:
         python-version: '3.10'
     - name: Install dependencies
       run: |
-        pip install pytest
+        pip install pytest flake8 mypy
+    - name: Run flake8
+      run: |
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics || true
+    - name: Run mypy
+      run: |
+        mypy . --ignore-missing-imports || true
     - name: Run tests
       run: |
         pytest tests/ -v
-
-  # 2. ניהול Issue חדש
   issue-management:
     if: github.event_name == 'issues'
     runs-on: ubuntu-latest
