@@ -2,17 +2,16 @@ name: CI - Code Quality and Automation
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main ] 
   pull_request:
-    types: [opened, edited, synchronized]
     branches: [ main ]
   issues:
     types: [opened]
 
 jobs:
-  # 1. בדיקות איכות - רץ רק ב-Pull Requests
+  # 1. בדיקות איכות - רץ על push ו-PR
   test:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
@@ -57,7 +56,7 @@ jobs:
               labels: ['triage', 'pending-review']
             });
 
-  # 3. סנכרון PR עם ה-Issue המקושר (הקוד המקורי שלך)
+  # 3. סנכרון PR עם ה-Issue המקושר
   sync-and-assign:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -137,4 +136,3 @@ jobs:
               execSync('git commit -m "docs: update progress for issue #' + issueNumber + '"');
               execSync('git push');
             }
-
