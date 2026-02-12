@@ -2,7 +2,7 @@ name: CI - Code Quality and Automation
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "**" ]
   pull_request:
     types: [opened, edited, synchronized]
     branches: [ main ]
