@@ -32,6 +32,7 @@ Arena is a decentralized adjudication system designed to facilitate high-stakes 
 ```
 project-arena/
 ├── src/
+│   ├── config.py        # Environment & secrets loader
 │   ├── vision/          # Computer Vision AI
 │   ├── blockchain/      # Smart Contracts
 │   ├── web3/           # Payment Integration
@@ -64,6 +65,27 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 ```
+
+### Environment Setup
+```bash
+# Copy the environment template
+cp .env.example .env
+
+# Edit .env and fill in your actual keys
+nano .env
+```
+
+Required variables:
+- `PRIVATE_KEY` — Blockchain wallet private key
+- `WALLET_ADDRESS` — Your wallet address
+- `BINANCE_API_KEY` — Binance API key
+- `BINANCE_SECRET` — Binance API secret
+- `ORACLE_API_KEY` — Oracle service API key
+- `DATABASE_URL` — Database connection string
+- `SSH_KEY_PATH` — Path to SSH private key (optional)
+- `ENVIRONMENT` — development / production (default: development)
+
+> ⚠️ Never commit your `.env` file. It is already in `.gitignore`.
 
 ### Running Tests
 ```bash
