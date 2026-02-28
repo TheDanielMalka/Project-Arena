@@ -145,3 +145,4 @@ This project is licensed under the MIT License.
 ---
 
 **Built with 💪 by [TheDanielMalka](https://github.com/TheDanielMalka)**
+
