@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 from datetime import datetime
 import os
+import time
 
 
 def capture_screen(output_dir="screenshots"):
@@ -33,7 +34,19 @@ def capture_screen(output_dir="screenshots"):
         print(f"Screenshot saved: {filepath}")
 
         return filepath
-
+    
+def capture_loop(interval=5, output_dir="screenshots"):
+    """
+    Captures screen every X seconds.
+    Press Ctrl+C to stop.
+    """
+    print(f"Starting capture every {interval} seconds. Press Ctrl+C to stop.")
+    try:
+        while True:
+            capture_screen(output_dir)
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print("Capture stopped.")
 
 if __name__ == "__main__":
-    capture_screen()
+    capture_loop()
