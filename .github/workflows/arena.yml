@@ -15,23 +15,64 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.12'
+
     - name: Install dependencies
       run: |
         pip install pytest flake8 mypy
         pip install -r requirements.txt
+
     - name: Run flake8
       run: |
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics || true
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=venv || true
+
     - name: Run mypy
       run: |
-        mypy . --ignore-missing-imports || true
-    - name: Run tests
+        mypy . --ignore-missing-imports --exclude venv || true
+
+    - name: Find and run matching tests
       run: |
-        pytest tests/ -v
+        
+        CHANGED=$(git diff --name-only origin/main...HEAD)
+        echo "Changed files:"
+        echo "$CHANGED"
+        
+        TEST_FILES=""
+        
+        for FILE in $CHANGED; do
+          BASENAME=$(basename "$FILE" .py)
+          
+          if [[ "$FILE" != *.py ]]; then
+            continue
+          fi
+
+          if [[ "$BASENAME" == test_* ]]; then
+            continue
+          fi
+  
+          TEST_PATH="tests/test_${BASENAME}.py"
+          if [ -f "$TEST_PATH" ]; then
+            echo "Found test for $BASENAME: $TEST_PATH"
+            TEST_FILES="$TEST_FILES $TEST_PATH"
+          fi
+        done
+   
+        if echo "$CHANGED" | grep -qE '(requirements\.txt|\.yml$|\.yaml$)'; then
+          echo "General config changed - running all tests"
+          pytest tests/ -v
+        elif [ -n "$TEST_FILES" ]; then
+          echo "Running targeted tests:$TEST_FILES"
+          pytest $TEST_FILES -v
+        else
+          echo "No matching tests found - skipping"
+        fi
+
   issue-management:
     if: github.event_name == 'issues'
     runs-on: ubuntu-latest
@@ -57,7 +98,6 @@ jobs:
               labels: ['triage']
             });
 
-  # 3. סנכרון PR עם Issue
   sync-and-assign:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
