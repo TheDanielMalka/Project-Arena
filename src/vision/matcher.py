@@ -24,10 +24,7 @@ logger.addHandler(console_handler)
 logger.addHandler(file_handler)
 
 def match_template(image_path, template_path, threshold=0.8):
-    """
-    Compares an image to a template.
-    Returns (matched, confidence, location).
-    """
+
     logger.info(f"starting match: image={image_path}, template={template_path}")
 
     if not os.path.exists(image_path):
