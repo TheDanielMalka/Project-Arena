@@ -5,7 +5,6 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
 
-
 LOG_DIR = "logs"
 os.makedirs(LOG_DIR, exist_ok=True)
 
