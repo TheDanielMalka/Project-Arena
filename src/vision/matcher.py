@@ -53,10 +53,28 @@ def match_template(image_path, template_path, threshold=0.8):
 
     if matched:
         logger.info(f"MATCH FOUND - confidence: {confidence}, location: {max_loc}")
+        save_evidence(image_path, "victory", confidence)
     else:
         logger.warning(f"no match - confidence: {confidence}, threshold: {threshold}")
 
     return matched, confidence, max_loc
+
+def save_evidence(image_path, result, confidence):
+    evidence_dir = "evidence"
+    os.makedirs(evidence_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    filename = f"{timestamp}_{result}_{confidence}.png"
+    dest = os.path.join(evidence_dir, filename)
+
+    img = cv2.imread(image_path)
+    if img is None:
+        logger.error(f"cannot read image for evidence: {image_path}")
+        return None
+
+    cv2.imwrite(dest, img)
+    logger.info(f"evidence saved: {dest}")
+    return dest
 
 if __name__ == "__main__":
     matched, confidence, location = match_template(
