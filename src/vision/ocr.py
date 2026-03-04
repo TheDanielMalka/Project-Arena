@@ -31,7 +31,7 @@ logger.addHandler(console_handler)
 logger.addHandler(file_handler)
 
 
-def preprocess_image(img):
+def preprocess_image(img, invert=True):
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     logger.debug(f"converted to grayscale: {gray.shape}")
@@ -39,16 +39,17 @@ def preprocess_image(img):
     scaled = cv2.resize(gray, (gray.shape[1] * 3, gray.shape[0] * 3))
     logger.debug(f"upscaled 3x: {scaled.shape}")
 
-    inverted = cv2.bitwise_not(scaled)
-    logger.debug("inverted colors")
+    if invert:
+        scaled = cv2.bitwise_not(scaled)
+        logger.debug("inverted colors")
 
-    _, binary = cv2.threshold(inverted, 140, 255, cv2.THRESH_BINARY)
+    _, binary = cv2.threshold(scaled, 180, 255, cv2.THRESH_BINARY)
     logger.debug("applied binary threshold")
 
     return binary
 
 
-def extract_text(image_path, region=None):
+def extract_text(image_path, region=None, invert=True):
 
     logger.info(f"extracting text from: {image_path}")
 
@@ -63,7 +64,7 @@ def extract_text(image_path, region=None):
         img = img[y:y+h, x:x+w]
         logger.info(f"cropped region: x={x}, y={y}, w={w}, h={h}")
 
-    processed = preprocess_image(img)
+    processed = preprocess_image(img, invert=invert)
 
     text = pytesseract.image_to_string(processed, config="--psm 6")
     logger.info(f"raw OCR output: {text.strip()}")
@@ -71,32 +72,38 @@ def extract_text(image_path, region=None):
     return text.strip()
 
 
-def extract_player_names(image_path, region=None):
+def extract_player_names(image_path, region=None, invert=True):
 
     logger.info("extracting player names from scoreboard")
 
-    raw_text = extract_text(image_path, region)
+    raw_text = extract_text(image_path, region, invert=invert)
 
     if not raw_text:
         logger.warning("no text extracted from image")
         return []
 
-    lines = raw_text.split("\n")
+    cleaned = raw_text.replace("|", " ")
+    cleaned = re.sub(r"[^a-zA-Z0-9_\-\s]", "", cleaned)
+
+    words = cleaned.split()
     names = []
 
-    for line in lines:
-        cleaned = line.strip()
-        if len(cleaned) < 2:
+    for word in words:
+        word = word.strip("-_ ")
+        if len(word) < 3:
             continue
-        if cleaned.isdigit():
+        if word.isdigit():
             continue
-        names.append(cleaned)
+        names.append(word)
 
     logger.info(f"extracted {len(names)} player names: {names}")
     return names
 
 
-
 if __name__ == "__main__":
-    result = extract_player_names("src/vision/templates/cs2/template.jpg")
+    result = extract_player_names(
+        "src/vision/templates/cs2/cs2_1920_1080_victory.jpg",
+        region=(20, 700, 980, 50),
+        invert=False
+    )
     print(f"Players: {result}")
