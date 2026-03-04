@@ -23,6 +23,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+evidence/
 logs/
 # IDE
 .vscode/
