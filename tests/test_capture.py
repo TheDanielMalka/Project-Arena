@@ -25,8 +25,5 @@ def test_crop_roi(tmp_path):
 
 
 def test_crop_roi_file_not_found():
-    try:
-        crop_roi("nonexistent.png", 0, 0, 10, 10)
-        assert False, "Should have raised an error"
-    except:
-        assert True
+    result = crop_roi("nonexistent.png", 0, 0, 10, 10)
+    assert result is None

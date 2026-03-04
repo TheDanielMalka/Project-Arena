@@ -92,5 +92,5 @@ def extract_player_names(image_path, region=None):
 
 
 if __name__ == "__main__":
-    result = extract_player_names("templates/test.jpg")
+    result = extract_player_names("src/vision/templates/cs2/template.jpg")
     print(f"Players: {result}")
