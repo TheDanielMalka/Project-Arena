@@ -4,6 +4,8 @@ import numpy as np
 import os
 import logging
 import re
+from logging.handlers import RotatingFileHandler
+
 
 
 LOG_DIR = "logs"
@@ -18,7 +20,11 @@ console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.DEBUG)
 console_handler.setFormatter(formatter)
 
-file_handler = logging.FileHandler(os.path.join(LOG_DIR, "ocr.log"))
+file_handler = RotatingFileHandler(
+    os.path.join(LOG_DIR, "ocr.log"),
+    maxBytes=500000,
+    backupCount=3
+)
 file_handler.setLevel(logging.DEBUG)
 file_handler.setFormatter(formatter)
 
