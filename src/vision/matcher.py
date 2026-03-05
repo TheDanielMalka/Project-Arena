@@ -1,4 +1,5 @@
 import cv2
+import numpy as np
 import os
 import logging
 from datetime import datetime
@@ -27,6 +28,53 @@ file_handler.setFormatter(formatter)
 
 logger.addHandler(console_handler)
 logger.addHandler(file_handler)
+
+
+def detect_result(image_path, region=None):
+
+    logger.info(f"detecting match result: {image_path}")
+
+    if not os.path.exists(image_path):
+        logger.error(f"image file not found: {image_path}")
+        return None, 0.0
+
+    img = cv2.imread(image_path)
+
+    if region:
+        x, y, w, h = region
+        crop = img[y:y+h, x:x+w]
+        logger.info(f"cropped region: x={x}, y={y}, w={w}, h={h}")
+    else:
+        h, w = img.shape[:2]
+        crop = img[int(h*0.12):int(h*0.17), int(w*0.34):int(w*0.68)]
+        logger.info("using default region (top center)")
+
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+
+    avg_h = np.mean(hsv[:,:,0])
+    avg_s = np.mean(hsv[:,:,1])
+    avg_v = np.mean(hsv[:,:,2])
+
+    logger.debug(f"average HSV: H={avg_h:.1f}, S={avg_s:.1f}, V={avg_v:.1f}")
+
+    if 35 <= avg_h <= 85 and avg_s > 50:
+        result = "victory"
+        confidence = round(avg_s / 255, 4)
+        logger.info(f"VICTORY detected - confidence: {confidence}")
+        save_evidence(image_path, result, confidence)
+        return result, confidence
+
+    elif (avg_h <= 10 or avg_h >= 170) and avg_s > 50:
+        result = "defeat"
+        confidence = round(avg_s / 255, 4)
+        logger.info(f"DEFEAT detected - confidence: {confidence}")
+        save_evidence(image_path, result, confidence)
+        return result, confidence
+
+    else:
+        logger.warning(f"no result detected - H={avg_h:.1f}, S={avg_s:.1f}")
+        return None, 0.0
+
 
 def match_template(image_path, template_path, threshold=0.8):
 
@@ -59,6 +107,7 @@ def match_template(image_path, template_path, threshold=0.8):
 
     return matched, confidence, max_loc
 
+
 def save_evidence(image_path, result, confidence):
     evidence_dir = "evidence"
     os.makedirs(evidence_dir, exist_ok=True)
@@ -76,9 +125,7 @@ def save_evidence(image_path, result, confidence):
     logger.info(f"evidence saved: {dest}")
     return dest
 
+
 if __name__ == "__main__":
-    matched, confidence, location = match_template(
-        "templates/Full_Template.jpg",
-        "templates/Victory.jpg"
-    )
-    print(f"Result: matched={matched}, confidence={confidence}, location={location}")
+    result, confidence = detect_result("src/vision/templates/cs2/template2.jpg")
+    print(f"Result: {result}, Confidence: {confidence}")
