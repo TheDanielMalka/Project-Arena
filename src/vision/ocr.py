@@ -7,6 +7,7 @@ import re
 from logging.handlers import RotatingFileHandler
 
 
+
 LOG_DIR = "logs"
 os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -98,7 +99,6 @@ def extract_player_names(image_path, region=None, invert=True):
 
     logger.info(f"extracted {len(names)} player names: {names}")
     return names
-
 
 if __name__ == "__main__":
     result = extract_player_names(
