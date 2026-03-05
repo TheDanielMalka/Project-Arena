@@ -7,7 +7,6 @@ import re
 from logging.handlers import RotatingFileHandler
 
 
-
 LOG_DIR = "logs"
 os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -64,6 +63,14 @@ def extract_text(image_path, region=None, invert=True):
         x, y, w, h = region
         img = img[y:y+h, x:x+w]
         logger.info(f"cropped region: x={x}, y={y}, w={w}, h={h}")
+    else:
+        h, w = img.shape[:2]
+        x1 = int(w * 0.02)
+        y1 = int(h * 0.85)
+        w1 = int(w * 0.96)
+        h1 = int(h * 0.06)
+        img = img[y1:y1+h1, x1:x1+w1]
+        logger.info(f"using default region (player names row): x={x1}, y={y1}, w={w1}, h={h1}")
 
     processed = preprocess_image(img, invert=invert)
 
@@ -100,10 +107,11 @@ def extract_player_names(image_path, region=None, invert=True):
     logger.info(f"extracted {len(names)} player names: {names}")
     return names
 
+
 if __name__ == "__main__":
-    result = extract_player_names(
-        "src/vision/templates/cs2/template2.jpg",
-        region=(20, 700, 980, 50),
-        invert=False
-    )
+    result = extract_player_names("src/vision/templates/cs2/template2.jpg", invert=False)
+    print(f"Players: {result}")
+    result = extract_player_names("src/vision/templates/cs2/temp4.jpg", invert=False)
+    print(f"Players: {result}")
+    result = extract_player_names("src/vision/templates/cs2/temp3.webp", invert=False)
     print(f"Players: {result}")

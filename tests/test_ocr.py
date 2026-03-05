@@ -21,7 +21,7 @@ def test_extract_text_clean_image(tmp_path):
     img_path = str(tmp_path / "clean.png")
     cv2.imwrite(img_path, img)
 
-    result = extract_text(img_path)
+    result = extract_text(img_path, region=(0, 0, 600, 200))
     assert result is not None
     assert len(result) > 0
 
@@ -35,5 +35,5 @@ def test_extract_player_names_clean(tmp_path):
     img_path = str(tmp_path / "players.png")
     cv2.imwrite(img_path, img)
 
-    names = extract_player_names(img_path)
+    names = extract_player_names(img_path, region=(0, 0, 600, 200))
     assert len(names) >= 1
