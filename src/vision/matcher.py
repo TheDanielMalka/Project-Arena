@@ -50,29 +50,33 @@ def detect_result(image_path, region=None):
         logger.info("using default region (top center)")
 
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    total_pixels = hsv.shape[0] * hsv.shape[1]
 
-    avg_h = np.mean(hsv[:,:,0])
-    avg_s = np.mean(hsv[:,:,1])
-    avg_v = np.mean(hsv[:,:,2])
+    green_mask = cv2.inRange(hsv, (35, 50, 50), (85, 255, 255))
+    green_pct = np.sum(green_mask > 0) / total_pixels * 100
 
-    logger.debug(f"average HSV: H={avg_h:.1f}, S={avg_s:.1f}, V={avg_v:.1f}")
+    red_mask1 = cv2.inRange(hsv, (0, 50, 50), (10, 255, 255))
+    red_mask2 = cv2.inRange(hsv, (170, 50, 50), (180, 255, 255))
+    red_pct = np.sum((red_mask1 | red_mask2) > 0) / total_pixels * 100
 
-    if 35 <= avg_h <= 85 and avg_s > 50:
+    logger.debug(f"green: {green_pct:.1f}%, red: {red_pct:.1f}%")
+
+    if green_pct > 30:
         result = "victory"
-        confidence = round(avg_s / 255, 4)
+        confidence = round(green_pct / 100, 4)
         logger.info(f"VICTORY detected - confidence: {confidence}")
         save_evidence(image_path, result, confidence)
         return result, confidence
 
-    elif (avg_h <= 10 or avg_h >= 170) and avg_s > 50:
+    elif red_pct > 30:
         result = "defeat"
-        confidence = round(avg_s / 255, 4)
+        confidence = round(red_pct / 100, 4)
         logger.info(f"DEFEAT detected - confidence: {confidence}")
         save_evidence(image_path, result, confidence)
         return result, confidence
 
     else:
-        logger.warning(f"no result detected - H={avg_h:.1f}, S={avg_s:.1f}")
+        logger.warning(f"no result detected - green: {green_pct:.1f}%, red: {red_pct:.1f}%")
         return None, 0.0
 
 
@@ -128,4 +132,8 @@ def save_evidence(image_path, result, confidence):
 
 if __name__ == "__main__":
     result, confidence = detect_result("src/vision/templates/cs2/template2.jpg")
+    print(f"Result: {result}, Confidence: {confidence}")
+    result, confidence = detect_result("src/vision/templates/cs2/temp3.webp")
+    print(f"Result: {result}, Confidence: {confidence}")
+    result, confidence = detect_result("src/vision/templates/cs2/temp4.jpg")
     print(f"Result: {result}, Confidence: {confidence}")
