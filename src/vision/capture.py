@@ -31,7 +31,7 @@ file_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 logger.addHandler(file_handler)
 
-def capture_screen(output_dir="templates", monitor_num=1):
+def capture_screen(output_dir="screenshots", monitor_num=1):
 
     os.makedirs(output_dir, exist_ok=True)
     logger.info(f"capturing screen from monitor {monitor_num}")

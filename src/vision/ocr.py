@@ -31,6 +31,10 @@ logger.addHandler(console_handler)
 logger.addHandler(file_handler)
 
 
+NAME_ROW_Y = 0.85
+NAME_ROW_H = 0.06
+
+
 def preprocess_image(img, invert=True):
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -66,9 +70,9 @@ def extract_text(image_path, region=None, invert=True):
     else:
         h, w = img.shape[:2]
         x1 = int(w * 0.02)
-        y1 = int(h * 0.85)
+        y1 = int(h * NAME_ROW_Y)
         w1 = int(w * 0.96)
-        h1 = int(h * 0.06)
+        h1 = int(h * NAME_ROW_H)
         img = img[y1:y1+h1, x1:x1+w1]
         logger.info(f"using default region (player names row): x={x1}, y={y1}, w={w1}, h={h1}")
 
@@ -109,9 +113,22 @@ def extract_player_names(image_path, region=None, invert=True):
 
 
 if __name__ == "__main__":
-    result = extract_player_names("src/vision/templates/cs2/template2.jpg", invert=False)
-    print(f"Players: {result}")
-    result = extract_player_names("src/vision/templates/cs2/temp4.jpg", invert=False)
-    print(f"Players: {result}")
-    result = extract_player_names("src/vision/templates/cs2/temp3.webp", invert=False)
-    print(f"Players: {result}")
+    images = [
+        "src/vision/templates/cs2/cs2_1920x1080_victory_nuke.png",
+        "src/vision/templates/cs2/cs2_1920x1080_victory_anubis.png",
+        "src/vision/templates/cs2/cs2_1920x1080_victory_dust2.png",
+        "src/vision/templates/cs2/cs2_1280x960_victory_nuke.png",
+        "src/vision/templates/cs2/cs2_1280x960_victory_dust2.png",
+        "src/vision/templates/cs2/cs2_1280x960_victory_anubis.png",
+        "src/vision/templates/cs2/cs2_1280x720_victory_dust2.png",
+        "src/vision/templates/cs2/cs2_1280x720_victory_nuke.png",
+        "src/vision/templates/cs2/cs2_1024x768_victory_nuke.png",
+        "src/vision/templates/cs2/cs2_1024x768_victory_dust2.png",
+        "src/vision/templates/cs2/cs2_1024x768_victory_anubis.png",
+        "src/vision/templates/cs2/cs2_800x600_victory_nuke.png",
+        "src/vision/templates/cs2/cs2_800x600_victory_dust2.png",
+        "src/vision/templates/cs2/cs2_800x600_victory_anubis.png"
+    ]
+    for img in images:
+        result = extract_player_names(img, invert=False)
+        print(f"{img.split('/')[-1]}: {result}")
