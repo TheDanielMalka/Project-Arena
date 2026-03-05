@@ -99,7 +99,6 @@ def extract_player_names(image_path, region=None, invert=True):
     logger.info(f"extracted {len(names)} player names: {names}")
     return names
 
-
 if __name__ == "__main__":
     result = extract_player_names(
         "src/vision/templates/cs2/template2.jpg",
