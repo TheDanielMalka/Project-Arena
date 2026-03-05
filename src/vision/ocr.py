@@ -102,7 +102,7 @@ def extract_player_names(image_path, region=None, invert=True):
 
 if __name__ == "__main__":
     result = extract_player_names(
-        "src/vision/templates/cs2/cs2_1920_1080_victory.jpg",
+        "src/vision/templates/cs2/template2.jpg",
         region=(20, 700, 980, 50),
         invert=False
     )
