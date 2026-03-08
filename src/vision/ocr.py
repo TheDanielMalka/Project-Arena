@@ -138,7 +138,12 @@ if __name__ == "__main__":
         "src/vision/templates/cs2/cs2_1280x960_victory_nuke.png",
         "src/vision/templates/cs2/cs2_1280x720_victory_nuke.png",
         "src/vision/templates/cs2/cs2_1024x768_victory_nuke.png",
-        "src/vision/templates/cs2/cs2_800x600_victory_nuke.png"
+        "src/vision/templates/cs2/cs2_800x600_victory_nuke.png",
+        "src/vision/templates/cs2/cs2_1920x1080_victory_overpass.png",
+        "src/vision/templates/cs2/cs2_1280x960_victory_overpass.png",
+        "src/vision/templates/cs2/cs2_1280x720_victory_overpass.png",
+        "src/vision/templates/cs2/cs2_1024x768_victory_overpass.png",
+        "src/vision/templates/cs2/cs2_800x600_victory_overpass.png"
     ]
     for img in images:
         result = extract_player_names(img, invert=False)

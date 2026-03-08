@@ -34,13 +34,14 @@ logs/
 
 # Environment
 .env
+
 .env.local
 
 # Testing
 .coverage
 htmlcov/
 .pytest_cache/
-
+src/vision/templates/
 # Blockchain
 node_modules/
 .secret
