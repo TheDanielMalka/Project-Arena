@@ -114,20 +114,31 @@ def extract_player_names(image_path, region=None, invert=True):
 
 if __name__ == "__main__":
     images = [
-        "src/vision/templates/cs2/cs2_1920x1080_victory_nuke.png",
+        "src/vision/templates/cs2/cs2_1920x1080_victory_vertigo.png",
         "src/vision/templates/cs2/cs2_1920x1080_victory_anubis.png",
         "src/vision/templates/cs2/cs2_1920x1080_victory_dust2.png",
-        "src/vision/templates/cs2/cs2_1280x960_victory_nuke.png",
+        "src/vision/templates/cs2/cs2_1280x960_victory_vertigo.png",
         "src/vision/templates/cs2/cs2_1280x960_victory_dust2.png",
         "src/vision/templates/cs2/cs2_1280x960_victory_anubis.png",
         "src/vision/templates/cs2/cs2_1280x720_victory_dust2.png",
-        "src/vision/templates/cs2/cs2_1280x720_victory_nuke.png",
-        "src/vision/templates/cs2/cs2_1024x768_victory_nuke.png",
+        "src/vision/templates/cs2/cs2_1280x720_victory_vertigo.png",
+        "src/vision/templates/cs2/cs2_1280x720_victory_anubis.png",
+        "src/vision/templates/cs2/cs2_1024x768_victory_vertigo.png",
         "src/vision/templates/cs2/cs2_1024x768_victory_dust2.png",
         "src/vision/templates/cs2/cs2_1024x768_victory_anubis.png",
-        "src/vision/templates/cs2/cs2_800x600_victory_nuke.png",
+        "src/vision/templates/cs2/cs2_800x600_victory_vertigo.png",
         "src/vision/templates/cs2/cs2_800x600_victory_dust2.png",
-        "src/vision/templates/cs2/cs2_800x600_victory_anubis.png"
+        "src/vision/templates/cs2/cs2_800x600_victory_anubis.png",
+        "src/vision/templates/cs2/cs2_800x600_victory_mirage.png",
+        "src/vision/templates/cs2/cs2_1920x1080_victory_mirage.png",
+        "src/vision/templates/cs2/cs2_1280x960_victory_mirage.png",
+        "src/vision/templates/cs2/cs2_1280x720_victory_mirage.png",
+        "src/vision/templates/cs2/cs2_1024x768_victory_mirage.png",
+        "src/vision/templates/cs2/cs2_1920x1080_victory_nuke.png",
+        "src/vision/templates/cs2/cs2_1280x960_victory_nuke.png",
+        "src/vision/templates/cs2/cs2_1280x720_victory_nuke.png",
+        "src/vision/templates/cs2/cs2_1024x768_victory_nuke.png",
+        "src/vision/templates/cs2/cs2_800x600_victory_nuke.png"
     ]
     for img in images:
         result = extract_player_names(img, invert=False)
