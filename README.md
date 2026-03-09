@@ -1,148 +1,196 @@
-# Project Arena 🎮⚔️
+# ARENA — Competitive Gaming Platform
 
-**The AI-Powered Web3 Oracle for Competitive Gaming**
+> Automated match verification and wagering platform for competitive FPS titles.
 
-Arena is a decentralized adjudication system designed to facilitate high-stakes gaming matches without manual intervention. By combining Computer Vision (AI) with Smart Contract Escrows (Blockchain), we ensure fair play and automated payouts for gamers globally.
+## 🏗️ Architecture
 
----
-
-## 🎯 Core Technologies
-
-### 🔍 Vision Engine
-**Python-based AI using OpenCV** for real-time match result validation
-- Screenshot analysis of CS2 scoreboard
-- OCR for kill/death extraction
-- Automated win/loss detection
-
-### 🔗 Blockchain
-**Solidity Smart Contracts** on Ethereum-compatible chains
-- Secure fund escrow
-- Multi-layer authentication using SSH-encrypted communication
-- Automated payout distribution
-
-### 💰 Web3 Integration
-**Binance API** + **WalletConnect** for seamless liquidity management
-- Crypto payments (ETH, USDT, BNB)
-- Wallet authentication
-- Transaction management
-
----
-
-## 📂 Project Structure
 ```
-project-arena/
-├── src/
-│   ├── config.py        # Environment & secrets loader
-│   ├── vision/          # Computer Vision AI
-│   ├── blockchain/      # Smart Contracts
-│   ├── web3/           # Payment Integration
-│   └── api/            # REST API
-├── tests/              # Test Suite
-├── docs/               # Documentation
-├── scripts/            # Deployment Scripts
-└── config/             # Configuration Files
+┌─────────────────────────────────────────────────────────────┐
+│                      ARENA Platform                         │
+├──────────────┬──────────────────┬───────────────────────────┤
+│   Frontend   │   Engine API     │   Desktop Client          │
+│   (React)    │   (FastAPI)      │   (Python / System Tray)  │
+│              │                  │                           │
+│  Dashboard   │  /health         │  Game detection           │
+│  Match Lobby │  /validate       │  Screen capture           │
+│  Wallet      │  /match/result   │  OCR recognition          │
+│  History     │  /match/lobby    │  Result submission         │
+│  Profile     │                  │                           │
+└──────┬───────┴────────┬─────────┴─────────────┬─────────────┘
+       │                │                       │
+       │         ┌──────┴──────┐                │
+       └────────►│  PostgreSQL │◄───────────────┘
+                 │  Database   │
+                 └─────────────┘
 ```
 
----
+## 📁 Project Structure
+
+```
+├── src/                    # Frontend — React + TypeScript + Tailwind
+│   ├── pages/              # Dashboard, MatchLobby, Wallet, History, Profile
+│   ├── components/         # Reusable UI components
+│   ├── stores/             # Zustand state management
+│   ├── hooks/              # Custom hooks (polling, engine status)
+│   └── lib/                # API client, utilities
+│
+├── engine/                 # Backend — FastAPI + Vision Pipeline
+│   ├── main.py             # API server entry point
+│   ├── src/vision/         # Screen capture, OCR, result matching
+│   └── tests/              # Unit tests for vision modules
+│
+├── client/                 # Desktop Client — Python System Tray App
+│   ├── main.py             # Background monitor + tray controls
+│   ├── autostart.py        # Windows auto-start management
+│   ├── build.py            # PyInstaller → .exe builder
+│   └── config.json         # Local configuration
+│
+├── infra/
+│   ├── sql/init.sql        # Database schema + seed data
+│   └── nginx/default.conf  # Reverse proxy configuration
+│
+├── docker-compose.yml      # Full-stack orchestration (3 containers)
+├── Dockerfile.frontend     # Frontend production build
+└── .github/workflows/      # CI/CD pipeline
+```
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Python 3.10+
-- Node.js 18+
-- MetaMask or WalletConnect wallet
+- **Docker & Docker Compose** (recommended)
+- **Node.js 18+** (frontend development)
+- **Python 3.12** (recommended for engine/client)
+- **Tesseract OCR** (required for OCR tests/runtime on Windows)
 
-### Installation
+### Option 1: Docker (Full Stack)
 ```bash
-# Clone the repository
-git clone https://github.com/TheDanielMalka/Project-Arena.git
-cd Project-Arena
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-```
-
-### Environment Setup
-```bash
-# Copy the environment template
 cp .env.example .env
-
-# Edit .env and fill in your actual keys
-nano .env
+# Edit .env with your configuration
+docker compose up --build
 ```
 
-Required variables:
-- `PRIVATE_KEY` — Blockchain wallet private key
-- `WALLET_ADDRESS` — Your wallet address
-- `BINANCE_API_KEY` — Binance API key
-- `BINANCE_SECRET` — Binance API secret
-- `ORACLE_API_KEY` — Oracle service API key
-- `DATABASE_URL` — Database connection string
-- `SSH_KEY_PATH` — Path to SSH private key (optional)
-- `ENVIRONMENT` — development / production (default: development)
+Services:
+| Service   | URL                    |
+|-----------|------------------------|
+| Frontend  | http://localhost:3000   |
+| Engine    | http://localhost:8000   |
+| Database  | localhost:5432          |
 
-> ⚠️ Never commit your `.env` file. It is already in `.gitignore`.
+### Option 2: Local Development
 
-### Running Tests
+**Frontend:**
 ```bash
-pytest tests/ -v
+npm install
+npm run dev
 ```
 
----
+**Engine:**
+```bash
+cd engine
+python3 -m venv .venv
+# Linux/macOS/WSL-created venv:
+source .venv/bin/activate
+# Git Bash / Windows-created venv:
+# source .venv/Scripts/activate
+pip install -r requirements.txt
+python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
 
-## 🗺️ Roadmap & Architecture
+**Desktop Client:**
+```bash
+cd client
+python3 -m venv .venv
+# Linux/macOS/WSL-created venv:
+source .venv/bin/activate
+# Git Bash / Windows-created venv:
+# source .venv/Scripts/activate
+pip install -r requirements.txt
+python main.py
+```
 
-See [Roadmap Documentation](docs/architecture/ROADMAP.md) for detailed project phases.
+**WSL shortcut workflow (if configured):**
+```bash
+engine   # cd -> engine + activate engine .venv
+client   # cd -> client + activate client .venv
+off      # deactivate + return project root
+```
 
-### Sprint 1: Secure Core & Git Setup ✅
-- [x] GitHub repository initialization
-- [x] CI/CD pipeline with GitHub Actions
-- [x] Project structure
+## 🔄 Match Flow
 
-### Sprint 2: Vision Engine (In Progress)
-- [ ] OpenCV screenshot capture
-- [ ] OCR scoreboard detection
-- [ ] Match validation logic
+```
+Player launches CS2
+        │
+        ▼
+Desktop Client detects game process
+        │
+        ▼
+Screen capture every 5 seconds
+        │
+        ▼
+Match ends → Color analysis (win/loss)
+        │
+        ▼
+OCR extracts player names + score
+        │
+        ▼
+POST /validate/screenshot → Engine API
+        │
+        ▼
+Engine verifies and updates database
+        │
+        ▼
+Frontend polls and reflects results
+```
 
-### Sprint 3: Blockchain Integration
-- [ ] Escrow smart contract
-- [ ] Testnet deployment
-- [ ] Multi-sig validation
+## 🧪 Testing
 
-### Sprint 4: Web3 Payments
-- [ ] Binance API integration
-- [ ] WalletConnect setup
-- [ ] Payment flow
+```bash
+# Frontend unit tests
+npm run test
 
----
+# Engine tests (WSL shortcuts)
+engine
+pytest tests -q
+off
 
-## 🤝 Contributing
+# Client smoke test
+client
+python -m py_compile main.py
+off
+```
 
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit changes (`git commit -m 'Add AmazingFeature'`)
-4. Push to branch (`git push origin feature/AmazingFeature`)
-5. Open Pull Request
+## 📦 Building for Production
 
----
+### Frontend
+```bash
+npm run build
+# Output: dist/
+```
+
+### Desktop Client
+```bash
+cd client
+python build.py
+# Output: client/dist/ArenaClient.exe
+```
+
+### Docker
+```bash
+docker compose -f docker-compose.yml up --build -d
+```
+
+## 🔐 Environment Variables
+
+See [`.env.example`](.env.example) for the complete list of required environment variables.
+
+## 📖 Component Documentation
+
+| Component | README |
+|-----------|--------|
+| Desktop Client | [`client/README.md`](client/README.md) |
+| Engine API | [`engine/`](engine/) |
+| Frontend | [`src/`](src/) |
 
 ## 📄 License
 
-This project is licensed under the MIT License.
-
----
-
-## 🔗 Links
-
-- **Documentation**: [docs/](docs/)
-- **Issues**: [GitHub Issues](https://github.com/TheDanielMalka/Project-Arena/issues)
-- **Milestones**: [GitHub Milestones](https://github.com/TheDanielMalka/Project-Arena/milestones)
-
----
-
-**Built with 💪 by [TheDanielMalka](https://github.com/TheDanielMalka)**
-
+Proprietary — All rights reserved.

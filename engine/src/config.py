@@ -1,0 +1,61 @@
+"""
+ARENA Engine — Configuration
+Loads environment variables with validation.
+"""
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ── Database ──────────────────────────────────────────────────
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://arena_admin:arena_secret_change_me@arena-db:5432/arena")
+
+# ── Crypto / Wallet ──────────────────────────────────────────
+PRIVATE_KEY = os.getenv("PRIVATE_KEY")
+WALLET_ADDRESS = os.getenv("WALLET_ADDRESS")
+
+# ── Binance API ──────────────────────────────────────────────
+BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
+BINANCE_SECRET = os.getenv("BINANCE_SECRET")
+
+# ── Infrastructure ───────────────────────────────────────────
+SSH_KEY_PATH = os.getenv("SSH_KEY_PATH")
+ORACLE_API_KEY = os.getenv("ORACLE_API_KEY")
+
+# ── App Settings ─────────────────────────────────────────────
+API_SECRET = os.getenv("API_SECRET", "change_me_in_production")
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+SCREENSHOT_INTERVAL = int(os.getenv("SCREENSHOT_INTERVAL", "5"))
+
+REQUIRED_VARS = [
+    "DATABASE_URL",
+    "API_SECRET",
+]
+
+OPTIONAL_VARS = [
+    "PRIVATE_KEY",
+    "WALLET_ADDRESS",
+    "BINANCE_API_KEY",
+    "BINANCE_SECRET",
+    "SSH_KEY_PATH",
+    "ORACLE_API_KEY",
+]
+
+
+def validate_env():
+    missing = [var for var in REQUIRED_VARS if not os.getenv(var)]
+    if missing:
+        raise EnvironmentError(
+            f"Missing required environment variables: {', '.join(missing)}"
+        )
+
+    optional_missing = [var for var in OPTIONAL_VARS if not os.getenv(var)]
+    if optional_missing:
+        print(f"⚠️  Optional vars not set: {', '.join(optional_missing)}")
+
+    print("✅ All required environment variables loaded successfully.")
+
+
+if __name__ == "__main__":
+    validate_env()

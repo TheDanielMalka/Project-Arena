@@ -1,0 +1,101 @@
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  ARENA — Full Stack Docker Compose                         ║
+# ║  Services: PostgreSQL · Frontend (Nginx) · Python Engine   ║
+# ║  הפעלה: docker compose up -d --build                       ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+services:
+  # ─── PostgreSQL 16 ──────────────────────────────────────────
+  arena-db:
+    image: postgres:16-alpine
+    container_name: arena-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: arena
+      POSTGRES_USER: arena_admin
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-arena_secret_change_me}
+    ports:
+      - "5432:5432"
+    volumes:
+      - arena-pgdata:/var/lib/postgresql/data
+      - ./infra/sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks:
+      - arena-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arena_admin -d arena"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ─── React Frontend (Nginx) ────────────────────────────────
+  arena-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: arena-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      arena-db:
+        condition: service_healthy
+    networks:
+      - arena-net
+
+  # ─── Python Engine (OCR + Capture + Matcher + API) ─────────
+  arena-engine:
+    build:
+      context: ./engine
+      dockerfile: Dockerfile
+    container_name: arena-engine
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://arena_admin:${DB_PASSWORD:-arena_secret_change_me}@arena-db:5432/arena
+      API_SECRET: ${API_SECRET:-change_me_in_production}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      SCREENSHOT_INTERVAL: ${SCREENSHOT_INTERVAL:-5}
+      SCREENSHOT_DIR: /app/screenshots
+      EVIDENCE_DIR: /app/evidence
+      # Crypto — ימולא מה-.env
+      PRIVATE_KEY: ${PRIVATE_KEY:-}
+      WALLET_ADDRESS: ${WALLET_ADDRESS:-}
+      BINANCE_API_KEY: ${BINANCE_API_KEY:-}
+      BINANCE_SECRET: ${BINANCE_SECRET:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      # Screenshots — bind mount לגישה מהירה מהמארח
+      - arena-screenshots:/app/screenshots
+      # Evidence — שמירת הוכחות משחק
+      - arena-evidence:/app/evidence
+      # Logs — לוגים של ה-Engine
+      - arena-engine-logs:/app/logs
+      # Templates — תמונות ייחוס ל-matcher (bind mount מהמארח)
+      - ./engine/templates:/app/templates:ro
+    depends_on:
+      arena-db:
+        condition: service_healthy
+    networks:
+      - arena-net
+
+# ─── Volumes ──────────────────────────────────────────────────
+volumes:
+  arena-pgdata:
+    name: arena-pgdata
+    driver: local
+  arena-screenshots:
+    name: arena-screenshots
+    driver: local
+  arena-evidence:
+    name: arena-evidence
+    driver: local
+  arena-engine-logs:
+    name: arena-engine-logs
+    driver: local
+
+# ─── Networks ─────────────────────────────────────────────────
+networks:
+  arena-net:
+    name: arena-net
+    driver: bridge
