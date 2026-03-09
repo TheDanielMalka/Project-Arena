@@ -1,0 +1,90 @@
+import { create } from "zustand";
+import type { UserProfile } from "@/types";
+
+interface UserState {
+  user: UserProfile | null;
+  isAuthenticated: boolean;
+  walletConnected: boolean;
+  login: (email: string, password: string) => boolean;
+  signup: (username: string, email: string, password: string, steamId?: string) => boolean;
+  loginWithGoogle: () => void;
+  logout: () => void;
+  connectWallet: () => void;
+  disconnectWallet: () => void;
+  updateProfile: (updates: Partial<UserProfile>) => void;
+}
+
+const MOCK_USER: UserProfile = {
+  id: "user-001",
+  username: "ArenaPlayer_01",
+  email: "player@arena.gg",
+  steamId: "76561198XXXXXXXX",
+  walletAddress: "0x7a3F9c2E1b8D4a5C6f7e8d9B0c1A2b3C4d5E6f7A",
+  walletShort: "0x7a3...6f7A",
+  rank: "Gold III",
+  tier: "Gold",
+  verified: true,
+  avatarInitials: "AP",
+  preferredGame: "CS2",
+  memberSince: "March 2026",
+  status: "active",
+  stats: {
+    matches: 147,
+    wins: 94,
+    losses: 53,
+    winRate: 64.2,
+    totalEarnings: 2847,
+    inEscrow: 50,
+  },
+  balance: {
+    total: 7248.20,
+    available: 7198.20,
+    inEscrow: 50,
+  },
+};
+
+export const useUserStore = create<UserState>((set) => ({
+  user: null,
+  isAuthenticated: false,
+  walletConnected: false,
+
+  login: (email: string, _password: string) => {
+    // Mock: any email/password works
+    const user: UserProfile = {
+      ...MOCK_USER,
+      email,
+    };
+    set({ user, isAuthenticated: true, walletConnected: true });
+    return true;
+  },
+
+  signup: (username: string, email: string, _password: string, steamId?: string) => {
+    const initials = username.slice(0, 2).toUpperCase();
+    const user: UserProfile = {
+      ...MOCK_USER,
+      username,
+      email,
+      steamId: steamId || "",
+      avatarInitials: initials,
+      stats: { matches: 0, wins: 0, losses: 0, winRate: 0, totalEarnings: 0, inEscrow: 0 },
+      balance: { total: 0, available: 0, inEscrow: 0 },
+    };
+    set({ user, isAuthenticated: true, walletConnected: false });
+    return true;
+  },
+
+  loginWithGoogle: () => {
+    set({ user: MOCK_USER, isAuthenticated: true, walletConnected: true });
+  },
+
+  logout: () => set({ user: null, isAuthenticated: false, walletConnected: false }),
+
+  connectWallet: () => set({ walletConnected: true }),
+
+  disconnectWallet: () => set({ walletConnected: false }),
+
+  updateProfile: (updates) =>
+    set((state) => ({
+      user: state.user ? { ...state.user, ...updates } : null,
+    })),
+}));

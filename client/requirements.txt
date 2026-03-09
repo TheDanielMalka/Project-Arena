@@ -1,0 +1,18 @@
+# ARENA Desktop Client - Dependencies
+# NOTE: No cv2/numpy/pytesseract - OCR processing happens server-side
+
+# System Tray
+pystray==0.19.*
+Pillow==11.*
+
+# Screenshot Capture
+mss==9.*
+
+# HTTP Client
+httpx==0.28.*
+
+# Process Detection
+psutil==6.*
+
+# Build
+pyinstaller==6.11.*

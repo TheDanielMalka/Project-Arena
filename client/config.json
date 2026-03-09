@@ -1,0 +1,11 @@
+{
+  "engine_url": "http://localhost:8000",
+  "auth_token": "",
+  "screenshot_interval": 5,
+  "monitor": 1,
+  "auto_start": true,
+  "minimize_to_tray": true,
+  "game": "CS2",
+  "screenshot_dir": "screenshots",
+  "log_dir": "logs"
+}

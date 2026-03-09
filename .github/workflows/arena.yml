@@ -46,6 +46,7 @@ jobs:
         echo "$CHANGED"
         
         TEST_FILES=""
+        RUN_CLIENT_SMOKE=0
         
         for FILE in $CHANGED; do
           BASENAME=$(basename "$FILE" .py)
@@ -54,25 +55,39 @@ jobs:
             continue
           fi
 
-          if [[ "$BASENAME" == test_* ]]; then
+          # If test file itself changed, run it directly
+          if [[ "$FILE" == engine/tests/test_*.py ]]; then
+            echo "Changed test file: $FILE"
+            TEST_FILES="$TEST_FILES $FILE"
             continue
           fi
-  
-          TEST_PATH="tests/test_${BASENAME}.py"
+
+          # Engine source file -> matching engine test
+          TEST_PATH="engine/tests/test_${BASENAME}.py"
           if [ -f "$TEST_PATH" ]; then
             echo "Found test for $BASENAME: $TEST_PATH"
             TEST_FILES="$TEST_FILES $TEST_PATH"
+          fi
+
+          # Client python change -> run compile smoke check
+          if [[ "$FILE" == client/*.py ]]; then
+            RUN_CLIENT_SMOKE=1
           fi
         done
    
         if echo "$CHANGED" | grep -qE '(requirements\.txt|\.yml$|\.yaml$)'; then
           echo "General config changed - running all tests"
-          pytest tests/ -v
+          pytest engine/tests -v
         elif [ -n "$TEST_FILES" ]; then
           echo "Running targeted tests:$TEST_FILES"
           pytest $TEST_FILES -v
         else
           echo "No matching tests found - skipping"
+        fi
+
+        if [ "$RUN_CLIENT_SMOKE" -eq 1 ]; then
+          echo "Client Python changed - running smoke compile"
+          python -m py_compile client/main.py
         fi
 
   issue-management:
