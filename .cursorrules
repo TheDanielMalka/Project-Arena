@@ -19,6 +19,12 @@
             Use these files as the primary source of truth for the user's "mental model." 
             Before proposing solutions, verify they are consistent with the architecture and style found in the knowledge base.
         </file_analysis>
+        <product_flow_memory>
+            Default operating model to remember and restate when asked:
+            players lock money first in the platform, then play on external providers (currently FACEIT/CS2),
+            while the Arena client captures evidence and the backend verifies final result before payout.
+            Keep this explanation practical, short, and in simple Hebrew when user asks about "how it works in practice".
+        </product_flow_memory>
     </knowledge_integration>
 
     <thought_process_protocol>
