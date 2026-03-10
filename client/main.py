@@ -16,12 +16,22 @@ import threading
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
+import signal
 import httpx
 import mss
 import mss.tools
 import pystray
 from PIL import Image, ImageDraw
 from pystray import MenuItem, Menu
+
+# ── Per-game capture intervals (seconds) ──────────────────────
+GAME_INTERVALS = {
+    "AUTO":         5,   # fallback when auto-detecting
+    "CS2":          3,   # fast-paced – capture more often
+    "Valorant":     5,
+    "Fortnite":     5,
+    "Apex Legends": 5,
+}
 
 # ── Config ────────────────────────────────────────────────────
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
@@ -277,69 +287,157 @@ class MatchMonitor:
 
 # ── System Tray ───────────────────────────────────────────────
 class ArenaTray:
-    """System tray application with Start/Stop/Settings controls."""
+    """System tray application with Arena branding, ON/OFF toggle, and game selector."""
 
     def __init__(self):
         self.config = load_config()
         self.monitor = MatchMonitor(self.config)
         self.icon: pystray.Icon | None = None
+        self._monitoring_enabled = False
+        self._selected_game = self.config.get("game", "AUTO")
 
-    def create_icon_image(self, color: str = "green") -> Image.Image:
-        """Create a simple tray icon."""
-        img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    def create_icon_image(self, active: bool = True) -> Image.Image:
+        """Create Arena-branded tray icon with stylized 'A' logo."""
+        size = 128
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
-        fill = (0, 200, 80) if color == "green" else (100, 100, 100)
-        draw.rounded_rectangle([4, 4, 60, 60], radius=12, fill=fill)
-        draw.text((16, 16), "A", fill=(255, 255, 255))
+
+        # Dark circular background
+        draw.ellipse([2, 2, size - 2, size - 2], fill=(12, 12, 18, 255))
+
+        # Colored ring – green when active, gray when inactive
+        ring_color = (0, 230, 118, 255) if active else (70, 70, 80, 255)
+        draw.ellipse([2, 2, size - 2, size - 2], outline=ring_color, width=5)
+
+        # Stylized "A" drawn as lines (no external font needed)
+        lw = 8
+        cx = size // 2
+        text_color = (0, 230, 118, 255) if active else (100, 100, 110, 255)
+
+        top  = (cx, 18)               # apex of the A
+        bl   = (18, size - 18)        # bottom-left foot
+        br   = (size - 18, size - 18) # bottom-right foot
+        cb_l = (32, 76)               # crossbar left
+        cb_r = (size - 32, 76)        # crossbar right
+
+        draw.line([top, bl],    fill=text_color, width=lw)
+        draw.line([top, br],    fill=text_color, width=lw)
+        draw.line([cb_l, cb_r], fill=text_color, width=lw)
+
+        # Status dot in the bottom-right corner
+        dot_color = (0, 230, 118, 255) if active else (80, 80, 90, 255)
+        draw.ellipse([size - 30, size - 30, size - 8, size - 8], fill=dot_color)
+
         return img
 
-    def _on_start(self, icon, item):
-        self.monitor.start()
-        icon.icon = self.create_icon_image("green")
-        icon.notify("Arena Client", "Monitoring started")
-        logger.info("Tray: Start clicked")
+    # ── Game selection ────────────────────────────────────────
+    def _set_game(self, game: str):
+        """Select a game and lock its interval."""
+        self._selected_game = game
+        interval = GAME_INTERVALS.get(game, 5)
+        self.config["game"] = game
+        self.config["screenshot_interval"] = interval
+        self.monitor.config["game"] = game
+        self.monitor.config["screenshot_interval"] = interval
+        save_config(self.config)
+        logger.info(f"Game set to {game}, interval locked to {interval}s")
+        if self.icon:
+            self.icon.update_menu()
 
-    def _on_stop(self, icon, item):
-        self.monitor.stop()
-        icon.icon = self.create_icon_image("gray")
-        icon.notify("Arena Client", "Monitoring stopped")
-        logger.info("Tray: Stop clicked")
+    def _make_game_item(self, game: str) -> MenuItem:
+        label = f"{game}  ({GAME_INTERVALS[game]}s)" if game != "AUTO" else "AUTO (detect)"
 
+        def _action(icon, item):       # exactly 2 args → pystray accepts it
+            self._set_game(game)
+
+        def _checked(item):            # exactly 1 arg  → pystray accepts it
+            return self._selected_game == game
+
+        return MenuItem(label, _action, checked=_checked)
+
+    # ── Monitoring toggle ─────────────────────────────────────
+    def _toggle_monitoring(self, icon, item):
+        if self._monitoring_enabled:
+            self.monitor.stop()
+            self._monitoring_enabled = False
+            icon.icon = self.create_icon_image(active=False)
+            icon.notify("Arena Client", "Monitoring OFF")
+            logger.info("Tray: Monitoring disabled")
+        else:
+            self.monitor.start()
+            self._monitoring_enabled = True
+            icon.icon = self.create_icon_image(active=True)
+            icon.notify("Arena Client", "Monitoring ON")
+            logger.info("Tray: Monitoring enabled")
+
+    # ── Other actions ─────────────────────────────────────────
     def _on_status(self, icon, item):
         health = self.monitor.engine.health()
         if health and health.get("status") == "ok":
-            icon.notify("Engine Status", f"Connected - DB: {health.get('db')}")
+            icon.notify("Engine Status", f"Connected · DB: {health.get('db', 'ok')}")
         else:
-            icon.notify("Engine Status", "Engine offline")
+            icon.notify("Engine Status", "Engine offline or unreachable")
+
+    def _on_help(self, icon, item):
+        import webbrowser
+        webbrowser.open("https://github.com/TheDanielMalka/ProjectArena#readme")
+
+    def _shutdown(self):
+        """Cleanly stop monitor and exit the process."""
+        logger.info("Arena Client shutting down...")
+        self.monitor.stop()
+        if self.icon:
+            try:
+                self.icon.stop()
+            except Exception:
+                pass
+        os._exit(0)
 
     def _on_quit(self, icon, item):
-        self.monitor.stop()
-        icon.stop()
-        logger.info("Tray: Quit")
+        self._shutdown()
 
+    # ── Run ───────────────────────────────────────────────────
     def run(self):
+        self._monitoring_enabled = bool(self.config.get("auto_start", False))
+        self._selected_game = self.config.get("game", "AUTO")
+
         menu = Menu(
-            MenuItem("Start Monitoring", self._on_start),
-            MenuItem("Stop Monitoring", self._on_stop),
+            MenuItem("Arena Client", None, enabled=False),
+            Menu.SEPARATOR,
+            MenuItem(
+                "Monitoring",
+                self._toggle_monitoring,
+                checked=lambda item: self._monitoring_enabled,
+            ),
+            MenuItem("Game", Menu(
+                self._make_game_item("AUTO"),
+                self._make_game_item("CS2"),
+                self._make_game_item("Valorant"),
+                self._make_game_item("Fortnite"),
+                self._make_game_item("Apex Legends"),
+            )),
             MenuItem("Check Engine", self._on_status),
-            pystray.Menu.SEPARATOR,
-            MenuItem(f"Game: {self.config.get('game', 'CS2')}", None, enabled=False),
-            MenuItem(f"Interval: {self.config.get('screenshot_interval', 5)}s", None, enabled=False),
-            pystray.Menu.SEPARATOR,
+            Menu.SEPARATOR,
+            MenuItem("Help", self._on_help),
             MenuItem("Quit", self._on_quit),
         )
 
         self.icon = pystray.Icon(
-            "Arena Client",
-            self.create_icon_image("gray"),
+            "Arena",
+            self.create_icon_image(self._monitoring_enabled),
             "Arena - Match Monitor",
             menu,
         )
 
-        # Auto-start if configured
-        if self.config.get("auto_start"):
+        if self._monitoring_enabled:
             self.monitor.start()
-            self.icon.icon = self.create_icon_image("green")
+
+        # Handle Ctrl+C and SIGTERM gracefully
+        def _signal_handler(sig, frame):
+            self._shutdown()
+
+        signal.signal(signal.SIGINT, _signal_handler)
+        signal.signal(signal.SIGTERM, _signal_handler)
 
         logger.info("Arena Desktop Client started")
         self.icon.run()
