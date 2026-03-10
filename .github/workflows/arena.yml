@@ -40,47 +40,55 @@ jobs:
 
     - name: Find and run matching tests
       run: |
-        
-        CHANGED=$(git diff --name-only origin/main...HEAD)
+        BASE_SHA="${{ github.event.pull_request.base.sha }}"
+        HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+        CHANGED="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+
         echo "Changed files:"
         echo "$CHANGED"
-        
-        TEST_FILES=""
+
+        TEST_FILES=()
+        RUN_ALL_ENGINE=0
         RUN_CLIENT_SMOKE=0
-        
+
         for FILE in $CHANGED; do
-          BASENAME=$(basename "$FILE" .py)
-          
-          if [[ "$FILE" != *.py ]]; then
-            continue
+          if [[ "$FILE" == client/*.py ]]; then
+            RUN_CLIENT_SMOKE=1
           fi
 
           # If test file itself changed, run it directly
           if [[ "$FILE" == engine/tests/test_*.py ]]; then
             echo "Changed test file: $FILE"
-            TEST_FILES="$TEST_FILES $FILE"
+            TEST_FILES+=("$FILE")
             continue
           fi
 
           # Engine source file -> matching engine test
-          TEST_PATH="engine/tests/test_${BASENAME}.py"
-          if [ -f "$TEST_PATH" ]; then
-            echo "Found test for $BASENAME: $TEST_PATH"
-            TEST_FILES="$TEST_FILES $TEST_PATH"
+          if [[ "$FILE" =~ ^engine/src/.+\.py$ || "$FILE" == "engine/main.py" ]]; then
+            BASENAME=$(basename "$FILE" .py)
+            TEST_PATH="engine/tests/test_${BASENAME}.py"
+            if [ -f "$TEST_PATH" ]; then
+              echo "Found test for $BASENAME: $TEST_PATH"
+              TEST_FILES+=("$TEST_PATH")
+            else
+              # Engine code changed without a direct mapped test -> run full engine tests
+              RUN_ALL_ENGINE=1
+            fi
           fi
 
-          # Client python change -> run compile smoke check
-          if [[ "$FILE" == client/*.py ]]; then
-            RUN_CLIENT_SMOKE=1
+          # Global/python config changes -> run full engine tests
+          if [[ "$FILE" == "requirements.txt" || "$FILE" == "engine/requirements.txt" || "$FILE" == ".github/workflows/arena.yml" ]]; then
+            RUN_ALL_ENGINE=1
           fi
         done
-   
-        if echo "$CHANGED" | grep -qE '(requirements\.txt|\.yml$|\.yaml$)'; then
-          echo "General config changed - running all tests"
+
+        if [ "$RUN_ALL_ENGINE" -eq 1 ]; then
+          echo "Running full engine test suite"
           pytest engine/tests -v
-        elif [ -n "$TEST_FILES" ]; then
-          echo "Running targeted tests:$TEST_FILES"
-          pytest $TEST_FILES -v
+        elif [ ${#TEST_FILES[@]} -gt 0 ]; then
+          UNIQUE_TEST_FILES=$(printf "%s\n" "${TEST_FILES[@]}" | sort -u | tr '\n' ' ')
+          echo "Running targeted tests: $UNIQUE_TEST_FILES"
+          pytest $UNIQUE_TEST_FILES -v
         else
           echo "No matching tests found - skipping"
         fi
