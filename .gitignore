@@ -12,7 +12,7 @@ Thumbs.db
 *.ntvs*
 *.njsproj
 *.sln
-
+.claude/
 # -----------------------------
 # Node / Frontend
 # -----------------------------
