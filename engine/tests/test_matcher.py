@@ -2,6 +2,7 @@ import os
 import sys
 import cv2
 import numpy as np
+import src.vision.matcher as matcher_module
 from src.vision.matcher import match_template, detect_result
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -79,3 +80,57 @@ def test_detect_missing_file():
     result, confidence = detect_result("not_exists.jpg")
     assert result is None
     assert confidence == 0.0
+
+
+def test_match_template_prefers_edge_score_when_higher(tmp_path, monkeypatch):
+    big_img = np.zeros((120, 160), dtype=np.uint8)
+    big_img[30:80, 50:100] = 255
+    template = big_img[30:80, 50:100].copy()
+
+    img_path = str(tmp_path / "edge_pref_big.png")
+    tpl_path = str(tmp_path / "edge_pref_tpl.png")
+    cv2.imwrite(img_path, big_img)
+    cv2.imwrite(tpl_path, template)
+
+    calls = {"count": 0}
+
+    def fake_match_template(_img, _tpl, _method):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return np.array([[0.10, 0.20], [0.30, 0.40]], dtype=np.float32)  # base max -> (1,1)
+        return np.array([[0.95, 0.20], [0.10, 0.30]], dtype=np.float32)      # edge max -> (0,0)
+
+    monkeypatch.setattr(matcher_module.cv2, "matchTemplate", fake_match_template)
+
+    matched, confidence, location = match_template(img_path, tpl_path, threshold=0.8)
+
+    assert matched is True
+    assert confidence == 0.95
+    assert location == (0, 0)
+
+
+def test_match_template_keeps_base_score_when_higher(tmp_path, monkeypatch):
+    big_img = np.zeros((120, 160), dtype=np.uint8)
+    big_img[30:80, 50:100] = 255
+    template = big_img[30:80, 50:100].copy()
+
+    img_path = str(tmp_path / "base_pref_big.png")
+    tpl_path = str(tmp_path / "base_pref_tpl.png")
+    cv2.imwrite(img_path, big_img)
+    cv2.imwrite(tpl_path, template)
+
+    calls = {"count": 0}
+
+    def fake_match_template(_img, _tpl, _method):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return np.array([[0.10, 0.20], [0.30, 0.91]], dtype=np.float32)  # base max -> (1,1)
+        return np.array([[0.50, 0.20], [0.10, 0.30]], dtype=np.float32)      # edge max -> (0,0)
+
+    monkeypatch.setattr(matcher_module.cv2, "matchTemplate", fake_match_template)
+
+    matched, confidence, location = match_template(img_path, tpl_path, threshold=0.8)
+
+    assert matched is True
+    assert confidence == 0.91
+    assert location == (1, 1)
