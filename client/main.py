@@ -34,7 +34,14 @@ GAME_INTERVALS = {
 }
 
 # ── Config ────────────────────────────────────────────────────
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
+# When running as a frozen exe (PyInstaller), use the exe's directory.
+# When running as a script, use the script's directory.
+if getattr(sys, "frozen", False):
+    _BASE_DIR = os.path.dirname(sys.executable)
+else:
+    _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+CONFIG_FILE = os.path.join(_BASE_DIR, "config.json")
 
 DEFAULT_CONFIG = {
     "engine_url": "http://localhost:8000",
@@ -45,8 +52,8 @@ DEFAULT_CONFIG = {
     "minimize_to_tray": True,
     # AUTO: client will auto-detect supported games (CS2 / Valorant / Fortnite / Apex)
     "game": "AUTO",
-    "screenshot_dir": os.path.join(os.path.dirname(__file__), "screenshots"),
-    "log_dir": os.path.join(os.path.dirname(__file__), "logs"),
+    "screenshot_dir": os.path.join(_BASE_DIR, "screenshots"),
+    "log_dir": os.path.join(_BASE_DIR, "logs"),
 }
 
 
