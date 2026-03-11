@@ -95,21 +95,43 @@ def match_template(image_path, template_path, threshold=0.8):
     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
 
+    img = cv2.GaussianBlur(img, (3, 3), 0)
+    template = cv2.GaussianBlur(template, (3, 3), 0)
+
     logger.debug(f"image size: {img.shape}, template size: {template.shape}")
 
+    # Base matching on grayscale images
     result = cv2.matchTemplate(img, template, cv2.TM_CCOEFF_NORMED)
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+    _, base_max_val, _, base_max_loc = cv2.minMaxLoc(result)
 
-    matched = max_val >= threshold
-    confidence = round(max_val, 4)
+    # Alternative matching on edge maps (shape-focused, less color/noise-sensitive)
+    img_edges = cv2.Canny(img, 50, 150)
+    template_edges = cv2.Canny(template, 50, 150)
+    edge_result = cv2.matchTemplate(img_edges, template_edges, cv2.TM_CCOEFF_NORMED)
+    _, edge_max_val, _, edge_max_loc = cv2.minMaxLoc(edge_result)
+
+    # Use the stronger signal between base and edge matching
+    if edge_max_val > base_max_val:
+        best_score = edge_max_val
+        best_loc = edge_max_loc
+        best_mode = "edge"
+    else:
+        best_score = base_max_val
+        best_loc = base_max_loc
+        best_mode = "base"
+
+    logger.debug(f"base score: {base_max_val:.4f}, edge score: {edge_max_val:.4f}, mode: {best_mode}")
+
+    matched = best_score >= threshold
+    confidence = round(best_score, 4)
 
     if matched:
-        logger.info(f"MATCH FOUND - confidence: {confidence}, location: {max_loc}")
+        logger.info(f"MATCH FOUND - confidence: {confidence}, location: {best_loc}, mode: {best_mode}")
         save_evidence(image_path, "victory", confidence)
     else:
         logger.warning(f"no match - confidence: {confidence}, threshold: {threshold}")
 
-    return matched, confidence, max_loc
+    return matched, confidence, best_loc
 
 
 def save_evidence(image_path, result, confidence):

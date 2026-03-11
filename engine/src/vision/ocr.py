@@ -63,6 +63,7 @@ _configure_tesseract_path()
 def preprocess_image(img, invert=True):
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
     logger.debug(f"converted to grayscale: {gray.shape}")
 
     scaled = cv2.resize(gray, (gray.shape[1] * 3, gray.shape[0] * 3))
