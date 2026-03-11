@@ -37,3 +37,12 @@ def test_extract_player_names_clean(tmp_path):
 
     names = extract_player_names(img_path, region=(0, 0, 600, 200))
     assert len(names) >= 1
+
+
+def test_extract_text_logs_elapsed_for_missing_image(caplog):
+    caplog.set_level("INFO", logger="vision.ocr")
+
+    result = extract_text("not_exists.jpg")
+
+    assert result is None
+    assert "extract_text elapsed:" in caplog.text

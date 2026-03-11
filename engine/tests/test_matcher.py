@@ -134,3 +134,14 @@ def test_match_template_keeps_base_score_when_higher(tmp_path, monkeypatch):
     assert matched is True
     assert confidence == 0.91
     assert location == (1, 1)
+
+
+def test_match_template_logs_elapsed_for_missing_image(caplog):
+    caplog.set_level("INFO", logger="vision.matcher")
+
+    matched, confidence, location = match_template("not_exists.jpg", "also_not_exists.jpg")
+
+    assert matched is False
+    assert confidence == 0.0
+    assert location is None
+    assert "match_template elapsed:" in caplog.text

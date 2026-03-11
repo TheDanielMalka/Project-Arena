@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import os
 import logging
+import time
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
@@ -83,13 +84,18 @@ def detect_result(image_path, region=None):
 def match_template(image_path, template_path, threshold=0.8):
 
     logger.info(f"starting match: image={image_path}, template={template_path}")
+    start_time = time.perf_counter()
 
     if not os.path.exists(image_path):
         logger.error(f"image file not found: {image_path}")
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        logger.info(f"match_template elapsed: {elapsed_ms:.2f}ms (image missing)")
         return False, 0.0, None
 
     if not os.path.exists(template_path):
         logger.error(f"template file not found: {template_path}")
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        logger.info(f"match_template elapsed: {elapsed_ms:.2f}ms (template missing)")
         return False, 0.0, None
 
     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
@@ -130,6 +136,9 @@ def match_template(image_path, template_path, threshold=0.8):
         save_evidence(image_path, "victory", confidence)
     else:
         logger.warning(f"no match - confidence: {confidence}, threshold: {threshold}")
+
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info(f"match_template elapsed: {elapsed_ms:.2f}ms")
 
     return matched, confidence, best_loc
 

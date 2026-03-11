@@ -4,6 +4,7 @@ import numpy as np
 import os
 import logging
 import re
+import time
 from logging.handlers import RotatingFileHandler
 
 
@@ -82,9 +83,12 @@ def preprocess_image(img, invert=True):
 def extract_text(image_path, region=None, invert=True):
 
     logger.info(f"extracting text from: {image_path}")
+    start_time = time.perf_counter()
 
     if not os.path.exists(image_path):
         logger.error(f"image file not found: {image_path}")
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        logger.info(f"extract_text elapsed: {elapsed_ms:.2f}ms (file missing)")
         return None
 
     img = cv2.imread(image_path)
@@ -106,6 +110,8 @@ def extract_text(image_path, region=None, invert=True):
 
     text = pytesseract.image_to_string(processed, config="--psm 6")
     logger.info(f"raw OCR output: {text.strip()}")
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info(f"extract_text elapsed: {elapsed_ms:.2f}ms")
 
     return text.strip()
 
