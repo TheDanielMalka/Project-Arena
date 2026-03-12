@@ -20,6 +20,7 @@ export type UserStatus = "active" | "flagged" | "banned" | "suspended";
 
 export interface UserProfile {
   id: string;
+  role: UserRole;
   username: string;
   email: string;
   steamId: string;

@@ -16,6 +16,7 @@ interface UserState {
 
 const MOCK_USER: UserProfile = {
   id: "user-001",
+  role: "user",
   username: "ArenaPlayer_01",
   email: "player@arena.gg",
   steamId: "76561198XXXXXXXX",
@@ -43,6 +44,8 @@ const MOCK_USER: UserProfile = {
   },
 };
 
+const ADMIN_EMAILS = new Set(["admin@arena.gg"]);
+
 export const useUserStore = create<UserState>((set) => ({
   user: null,
   isAuthenticated: false,
@@ -50,9 +53,11 @@ export const useUserStore = create<UserState>((set) => ({
 
   login: (email: string, _password: string) => {
     // Mock: any email/password works
+    const normalizedEmail = email.trim().toLowerCase();
     const user: UserProfile = {
       ...MOCK_USER,
-      email,
+      email: normalizedEmail,
+      role: ADMIN_EMAILS.has(normalizedEmail) ? "admin" : "user",
     };
     set({ user, isAuthenticated: true, walletConnected: true });
     return true;
@@ -62,6 +67,7 @@ export const useUserStore = create<UserState>((set) => ({
     const initials = username.slice(0, 2).toUpperCase();
     const user: UserProfile = {
       ...MOCK_USER,
+      role: "user",
       username,
       email,
       steamId: steamId || "",
@@ -74,7 +80,7 @@ export const useUserStore = create<UserState>((set) => ({
   },
 
   loginWithGoogle: () => {
-    set({ user: MOCK_USER, isAuthenticated: true, walletConnected: true });
+    set({ user: { ...MOCK_USER, role: "user" }, isAuthenticated: true, walletConnected: true });
   },
 
   logout: () => set({ user: null, isAuthenticated: false, walletConnected: false }),
