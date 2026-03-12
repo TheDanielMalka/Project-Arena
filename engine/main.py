@@ -1,8 +1,3 @@
-"""
-ARENA Engine — OCR / Capture / Match Result Validator
-Full integration: FastAPI + Vision modules (capture, OCR, matcher)
-"""
-
 import os
 import logging
 from contextlib import asynccontextmanager

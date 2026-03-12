@@ -6,33 +6,34 @@ from src.vision.engine import VisionEngine
 
 
 class ScreenshotHandler(FileSystemEventHandler):
-    """נקרא אוטומטית כל פעם שנוצר קובץ חדש בתיקייה"""
 
     def __init__(self, engine: VisionEngine):
         self.engine = engine
 
     def on_created(self, event):
-        # התעלם מתיקיות, רק קבצי PNG
+
         if event.is_directory or not event.src_path.endswith(".png"):
             return
 
+        time.sleep(0.3)
         image_path = event.src_path
         print(f"תמונה חדשה: {os.path.basename(image_path)}")
 
-        result = self.engine.process_frame(image_path)
+        try:
+            result = self.engine.process_frame(image_path)
+        except Exception as e:
+            print(f"שגיאה בעיבוד: {e}")
+            return
 
         if result.accepted:
-            print(f"תוצאה: {result.result} | ביטחון: {result.confidence:.0%}")
-            print(f"שחקנים: {result.players}")
+            print(f"result: {result.result} | confidence: {result.confidence:.0%}")
+            print(f"players: {result.players}")
         else:
-            print(f"לא זוהתה תוצאה ברורה (ביטחון: {result.confidence:.0%})")
+            print(f"no confidence: {result.confidence:.0%})")
 
 
 def watch(game: str, screenshots_dir: str = "screenshots"):
-    """
-    game: שם המשחק (CS2 / Fortnite / Valorant וכו')
-    screenshots_dir: תיקיית ה-screenshots הראשית
-    """
+
     watch_path = os.path.join(screenshots_dir, game.replace(" ", "_"))
     os.makedirs(watch_path, exist_ok=True)
 
@@ -43,7 +44,7 @@ def watch(game: str, screenshots_dir: str = "screenshots"):
     observer.schedule(handler, path=watch_path, recursive=False)
     observer.start()
 
-    print(f"מאזין לתמונות חדשות ב: {watch_path}")
+    print(f"waiting for new photos: {watch_path}")
 
     try:
         while True:
@@ -57,4 +58,5 @@ def watch(game: str, screenshots_dir: str = "screenshots"):
 if __name__ == "__main__":
     import sys
     game = sys.argv[1] if len(sys.argv) > 1 else "CS2"
-    watch(game)
+    screenshots_dir = sys.argv[2] if len(sys.argv) > 2 else "screenshots"
+    watch(game, screenshots_dir)
