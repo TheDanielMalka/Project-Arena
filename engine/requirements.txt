@@ -16,6 +16,7 @@ pytesseract==0.3.*
 opencv-python-headless==4.10.*
 pillow==11.*
 mss==9.*
+watchdog==6.*
 
 # ── HTTP / Auth ───────────────────────────────────────────────
 httpx==0.28.*
