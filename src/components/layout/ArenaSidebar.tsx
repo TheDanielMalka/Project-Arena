@@ -1,6 +1,7 @@
 import { LayoutDashboard, Swords, History, User, ShieldAlert, Wallet, Trophy, Settings2 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useUserStore } from "@/stores/userStore";
 import {
   Sidebar,
   SidebarContent,
@@ -25,10 +26,12 @@ const items = [
 ];
 
 export function ArenaSidebar() {
+  const user = useUserStore((s) => s.user);
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const location = useLocation();
   const navigate = useNavigate();
+  const visibleItems = user?.role === "admin" ? items : items.filter((item) => item.url !== "/admin");
 
   return (
     <Sidebar collapsible="icon">
@@ -51,7 +54,7 @@ export function ArenaSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {items.map((item) => (
+              {visibleItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild>
                     <NavLink
