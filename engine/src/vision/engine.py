@@ -31,8 +31,8 @@ class VisionEngine:
     def process_frame(self, image_path: str, template_path: Optional[str] = None) -> VisionEngineOutput:
 
         result, confidence = detect_result(image_path)
-        players = extract_player_names(image_path) or []
-        score = extract_score(image_path)
+        players = extract_player_names(image_path, invert=False) or []
+        score = extract_score(image_path, invert=False)
 
         template_matched = None
         template_confidence = None
