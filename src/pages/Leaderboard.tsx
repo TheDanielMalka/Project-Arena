@@ -45,6 +45,10 @@ const getChangeIcon = (change: "up" | "down" | "same") => {
 
 const Leaderboard = () => {
   const [timeRange, setTimeRange] = useState<"weekly" | "monthly" | "alltime">("weekly");
+  const [selectedPlayer, setSelectedPlayer] = useState<LeaderboardEntry>(mockLeaderboard[0]);
+
+  const matchesPlayed = selectedPlayer.wins + selectedPlayer.losses;
+  const avgEarningsPerMatch = matchesPlayed > 0 ? selectedPlayer.earnings / matchesPlayed : 0;
 
   return (
     <div className="space-y-6">
@@ -78,7 +82,13 @@ const Leaderboard = () => {
           const glows = ["", "glow-green", ""];
           const borders = ["border-muted-foreground/30", "border-arena-gold/50", "border-arena-orange/30"];
           return (
-            <Card key={player.username} className={`bg-card ${borders[idx]} ${glows[idx]} text-center`}>
+            <Card
+              key={player.username}
+              className={`bg-card ${borders[idx]} ${glows[idx]} text-center cursor-pointer transition-all hover:-translate-y-0.5 ${
+                selectedPlayer.username === player.username ? "ring-1 ring-primary/40" : ""
+              }`}
+              onClick={() => setSelectedPlayer(player)}
+            >
               <CardContent className="pt-6 pb-4 flex flex-col items-center">
                 <div className={`${heights[idx]} flex items-end justify-center mb-3`}>
                   <div className="text-center">
@@ -106,6 +116,49 @@ const Leaderboard = () => {
         })}
       </div>
 
+      {/* Selected Player Quick View */}
+      <Card className="bg-card border-primary/25">
+        <CardHeader className="pb-3">
+          <CardTitle className="font-display text-lg flex items-center gap-2">
+            <Star className="h-5 w-5 text-arena-gold" />
+            {selectedPlayer.username} - Quick Stats
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div className="rounded-lg border border-border bg-secondary/30 p-3">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Matches</p>
+              <p className="font-display text-xl font-bold">{matchesPlayed}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-secondary/30 p-3">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Wins</p>
+              <p className="font-display text-xl font-bold text-primary">{selectedPlayer.wins}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-secondary/30 p-3">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Losses</p>
+              <p className="font-display text-xl font-bold text-destructive">{selectedPlayer.losses}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-secondary/30 p-3">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Win Rate</p>
+              <p className="font-display text-xl font-bold">{selectedPlayer.winRate}%</p>
+            </div>
+            <div className="rounded-lg border border-border bg-secondary/30 p-3">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Avg $ / Match</p>
+              <p className="font-display text-xl font-bold text-arena-gold">
+                ${avgEarningsPerMatch.toFixed(2)}
+              </p>
+            </div>
+          </div>
+          <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+            <TrendingUp className="h-4 w-4 text-primary" />
+            <span>
+              Current streak: <span className="text-foreground font-medium">{selectedPlayer.streak}</span> • Game:{" "}
+              <span className="text-foreground font-medium">{selectedPlayer.game}</span>
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Full Leaderboard Table */}
       <Tabs defaultValue="all" className="w-full">
         <TabsList className="bg-secondary border border-border">
@@ -128,7 +181,12 @@ const Leaderboard = () => {
                     .map((player) => (
                       <div
                         key={player.rank}
-                        className="grid grid-cols-[3rem_1fr_5rem_5rem_5rem_6rem_4rem] gap-2 px-4 py-3 items-center hover:bg-secondary/30 transition-colors"
+                        className={`grid grid-cols-[3rem_1fr_5rem_5rem_5rem_6rem_4rem] gap-2 px-4 py-3 items-center transition-colors cursor-pointer ${
+                          selectedPlayer.username === player.username
+                            ? "bg-primary/10 border-l-2 border-primary"
+                            : "hover:bg-secondary/30"
+                        }`}
+                        onClick={() => setSelectedPlayer(player)}
                       >
                         <div className="flex items-center">{getRankIcon(player.rank)}</div>
                         <div className="flex items-center gap-3">
