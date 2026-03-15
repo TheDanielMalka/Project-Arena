@@ -17,12 +17,12 @@ class ScreenshotHandler(FileSystemEventHandler):
 
         time.sleep(0.3)
         image_path = event.src_path
-        print(f"תמונה חדשה: {os.path.basename(image_path)}")
+        print(f"New Photo: {os.path.basename(image_path)}")
 
         try:
             result = self.engine.process_frame(image_path)
         except Exception as e:
-            print(f"שגיאה בעיבוד: {e}")
+            print(f"Proccesing Error: {e}")
             return
 
         if result.accepted:
