@@ -29,7 +29,9 @@ def make_output(accepted: bool, result="victory", confidence=0.95, players=None)
 
 @pytest.fixture
 def engine():
-    return MagicMock()
+    mock = MagicMock()
+    mock.config.cooldown_seconds = 0
+    return mock
 
 
 @pytest.fixture
