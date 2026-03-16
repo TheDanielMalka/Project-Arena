@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Radio, Clock, Gamepad2, Users, Zap } from "lucide-react";
+import { Radio, Clock, Gamepad2, Users, Zap, ChevronDown, ChevronUp, Hash, Shield } from "lucide-react";
 import { useMatchStore } from "@/stores/matchStore";
 import type { Match } from "@/types";
 
@@ -9,6 +9,7 @@ const LiveMatchTracker = () => {
   const { matches } = useMatchStore();
   const liveMatches = matches.filter((m) => m.status === "in_progress");
   const [now, setNow] = useState(Date.now());
+  const [expandedMatchId, setExpandedMatchId] = useState<string | null>(null);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 1000);
@@ -21,6 +22,22 @@ const LiveMatchTracker = () => {
     const mins = Math.floor(diff / 60).toString().padStart(2, "0");
     const secs = (diff % 60).toString().padStart(2, "0");
     return `${mins}:${secs}`;
+  };
+
+  const getMapForMatch = (match: Match) => {
+    const mapPools: Record<string, string[]> = {
+      CS2: ["Mirage", "Inferno", "Nuke", "Ancient", "Anubis"],
+      Valorant: ["Ascent", "Haven", "Bind", "Split", "Lotus"],
+      Fortnite: ["Olympus", "Classy Courts", "Pleasant Piazza"],
+      "Apex Legends": ["World's Edge", "Storm Point", "Olympus"],
+    };
+    const pool = mapPools[match.game] ?? ["Arena Core"];
+    const seed = match.id.split("").reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+    return pool[seed % pool.length];
+  };
+
+  const getEstimatedPrize = (match: Match) => {
+    return match.betAmount * Math.max(match.maxPlayers, 2);
   };
 
   if (liveMatches.length === 0) {
@@ -45,7 +62,13 @@ const LiveMatchTracker = () => {
       </div>
 
       {liveMatches.map((match) => (
-        <Card key={match.id} className="bg-card border-arena-cyan/20 hover:border-arena-cyan/40 transition-colors">
+        <Card
+          key={match.id}
+          className={`bg-card border-arena-cyan/20 transition-colors cursor-pointer ${
+            expandedMatchId === match.id ? "border-arena-cyan/50" : "hover:border-arena-cyan/40"
+          }`}
+          onClick={() => setExpandedMatchId((prev) => (prev === match.id ? null : match.id))}
+        >
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -69,6 +92,13 @@ const LiveMatchTracker = () => {
                 <Badge variant="outline" className="text-xs border-arena-gold/30 text-arena-gold mt-1">
                   <Zap className="h-3 w-3 mr-1" /> ${match.betAmount}
                 </Badge>
+                <div className="flex justify-end mt-2 text-muted-foreground">
+                  {expandedMatchId === match.id ? (
+                    <ChevronUp className="h-4 w-4" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4" />
+                  )}
+                </div>
               </div>
             </div>
 
@@ -80,6 +110,48 @@ const LiveMatchTracker = () => {
                   <div className="h-full w-1/2 bg-gradient-to-r from-primary to-arena-cyan animate-pulse-glow" />
                 </div>
                 <span className="text-xs font-display font-medium text-arena-orange">{match.players[1]}</span>
+              </div>
+            )}
+
+            {expandedMatchId === match.id && (
+              <div className="mt-4 rounded-lg border border-border bg-secondary/20 p-3 space-y-3">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                  <div className="rounded-md bg-background/60 p-2">
+                    <p className="text-muted-foreground">Map</p>
+                    <p className="font-medium">{getMapForMatch(match)}</p>
+                  </div>
+                  <div className="rounded-md bg-background/60 p-2">
+                    <p className="text-muted-foreground">Match ID</p>
+                    <p className="font-mono flex items-center gap-1">
+                      <Hash className="h-3 w-3" />
+                      {match.id}
+                    </p>
+                  </div>
+                  <div className="rounded-md bg-background/60 p-2">
+                    <p className="text-muted-foreground">Type</p>
+                    <p className="font-medium capitalize">{match.type} • {match.mode}</p>
+                  </div>
+                  <div className="rounded-md bg-background/60 p-2">
+                    <p className="text-muted-foreground">Estimated Pot</p>
+                    <p className="font-medium text-arena-gold">${getEstimatedPrize(match)}</p>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-xs text-muted-foreground mb-2">Players in lobby</p>
+                  <div className="flex flex-wrap gap-2">
+                    {match.players.length > 0 ? (
+                      match.players.map((player) => (
+                        <Badge key={`${match.id}-${player}`} variant="outline" className="gap-1">
+                          <Shield className="h-3 w-3" />
+                          {player}
+                        </Badge>
+                      ))
+                    ) : (
+                      <span className="text-xs text-muted-foreground">No players listed yet</span>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
           </CardContent>
