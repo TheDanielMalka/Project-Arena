@@ -45,10 +45,11 @@ const getChangeIcon = (change: "up" | "down" | "same") => {
 
 const Leaderboard = () => {
   const [timeRange, setTimeRange] = useState<"weekly" | "monthly" | "alltime">("weekly");
-  const [selectedPlayer, setSelectedPlayer] = useState<LeaderboardEntry>(mockLeaderboard[0]);
+  const [selectedTopPlayer, setSelectedTopPlayer] = useState<LeaderboardEntry>(mockLeaderboard[0]);
+  const [expandedRowPlayer, setExpandedRowPlayer] = useState<string | null>(null);
 
-  const matchesPlayed = selectedPlayer.wins + selectedPlayer.losses;
-  const avgEarningsPerMatch = matchesPlayed > 0 ? selectedPlayer.earnings / matchesPlayed : 0;
+  const matchesPlayed = selectedTopPlayer.wins + selectedTopPlayer.losses;
+  const avgEarningsPerMatch = matchesPlayed > 0 ? selectedTopPlayer.earnings / matchesPlayed : 0;
 
   return (
     <div className="space-y-6">
@@ -85,9 +86,9 @@ const Leaderboard = () => {
             <Card
               key={player.username}
               className={`bg-card ${borders[idx]} ${glows[idx]} text-center cursor-pointer transition-all hover:-translate-y-0.5 ${
-                selectedPlayer.username === player.username ? "ring-1 ring-primary/40" : ""
+                selectedTopPlayer.username === player.username ? "ring-1 ring-primary/40" : ""
               }`}
-              onClick={() => setSelectedPlayer(player)}
+              onClick={() => setSelectedTopPlayer(player)}
             >
               <CardContent className="pt-6 pb-4 flex flex-col items-center">
                 <div className={`${heights[idx]} flex items-end justify-center mb-3`}>
@@ -121,7 +122,7 @@ const Leaderboard = () => {
         <CardHeader className="pb-3">
           <CardTitle className="font-display text-lg flex items-center gap-2">
             <Star className="h-5 w-5 text-arena-gold" />
-            {selectedPlayer.username} - Quick Stats
+            {selectedTopPlayer.username} - Quick Stats (Top 3)
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -132,15 +133,15 @@ const Leaderboard = () => {
             </div>
             <div className="rounded-lg border border-border bg-secondary/30 p-3">
               <p className="text-xs text-muted-foreground uppercase tracking-wider">Wins</p>
-              <p className="font-display text-xl font-bold text-primary">{selectedPlayer.wins}</p>
+              <p className="font-display text-xl font-bold text-primary">{selectedTopPlayer.wins}</p>
             </div>
             <div className="rounded-lg border border-border bg-secondary/30 p-3">
               <p className="text-xs text-muted-foreground uppercase tracking-wider">Losses</p>
-              <p className="font-display text-xl font-bold text-destructive">{selectedPlayer.losses}</p>
+              <p className="font-display text-xl font-bold text-destructive">{selectedTopPlayer.losses}</p>
             </div>
             <div className="rounded-lg border border-border bg-secondary/30 p-3">
               <p className="text-xs text-muted-foreground uppercase tracking-wider">Win Rate</p>
-              <p className="font-display text-xl font-bold">{selectedPlayer.winRate}%</p>
+              <p className="font-display text-xl font-bold">{selectedTopPlayer.winRate}%</p>
             </div>
             <div className="rounded-lg border border-border bg-secondary/30 p-3">
               <p className="text-xs text-muted-foreground uppercase tracking-wider">Avg $ / Match</p>
@@ -152,8 +153,8 @@ const Leaderboard = () => {
           <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
             <TrendingUp className="h-4 w-4 text-primary" />
             <span>
-              Current streak: <span className="text-foreground font-medium">{selectedPlayer.streak}</span> • Game:{" "}
-              <span className="text-foreground font-medium">{selectedPlayer.game}</span>
+              Current streak: <span className="text-foreground font-medium">{selectedTopPlayer.streak}</span> • Game:{" "}
+              <span className="text-foreground font-medium">{selectedTopPlayer.game}</span>
             </span>
           </div>
         </CardContent>
@@ -179,30 +180,66 @@ const Leaderboard = () => {
                   {mockLeaderboard
                     .filter((p) => tab === "all" || p.game === tab)
                     .map((player) => (
-                      <div
-                        key={player.rank}
-                        className={`grid grid-cols-[3rem_1fr_5rem_5rem_5rem_6rem_4rem] gap-2 px-4 py-3 items-center transition-colors cursor-pointer ${
-                          selectedPlayer.username === player.username
-                            ? "bg-primary/10 border-l-2 border-primary"
-                            : "hover:bg-secondary/30"
-                        }`}
-                        onClick={() => setSelectedPlayer(player)}
-                      >
-                        <div className="flex items-center">{getRankIcon(player.rank)}</div>
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-secondary border border-border flex items-center justify-center text-xs font-display font-bold">
-                            {player.username.slice(0, 2)}
+                      <div key={player.rank}>
+                        <div
+                          className={`grid grid-cols-[3rem_1fr_5rem_5rem_5rem_6rem_4rem] gap-2 px-4 py-3 items-center transition-colors cursor-pointer ${
+                            expandedRowPlayer === player.username
+                              ? "bg-primary/10 border-l-2 border-primary"
+                              : "hover:bg-secondary/30"
+                          }`}
+                          onClick={() =>
+                            setExpandedRowPlayer((prev) => (prev === player.username ? null : player.username))
+                          }
+                        >
+                          <div className="flex items-center">{getRankIcon(player.rank)}</div>
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-secondary border border-border flex items-center justify-center text-xs font-display font-bold">
+                              {player.username.slice(0, 2)}
+                            </div>
+                            <div>
+                              <p className="font-medium text-sm">{player.username}</p>
+                              <p className="text-xs text-muted-foreground">{player.game}</p>
+                            </div>
                           </div>
-                          <div>
-                            <p className="font-medium text-sm">{player.username}</p>
-                            <p className="text-xs text-muted-foreground">{player.game}</p>
-                          </div>
+                          <span className="text-right text-sm text-primary font-mono">{player.wins}</span>
+                          <span className="text-right text-sm text-destructive font-mono">{player.losses}</span>
+                          <span className="text-right text-sm font-mono">{player.winRate}%</span>
+                          <span className="text-right text-sm font-display font-bold text-arena-gold">${player.earnings}</span>
+                          <div className="flex justify-center">{getChangeIcon(player.change)}</div>
                         </div>
-                        <span className="text-right text-sm text-primary font-mono">{player.wins}</span>
-                        <span className="text-right text-sm text-destructive font-mono">{player.losses}</span>
-                        <span className="text-right text-sm font-mono">{player.winRate}%</span>
-                        <span className="text-right text-sm font-display font-bold text-arena-gold">${player.earnings}</span>
-                        <div className="flex justify-center">{getChangeIcon(player.change)}</div>
+
+                        {expandedRowPlayer === player.username && (
+                          <div className="px-4 py-3 bg-secondary/20 border-l-2 border-primary">
+                            <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+                              <div className="rounded-md border border-border bg-background/50 p-2">
+                                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Matches</p>
+                                <p className="font-display text-sm font-bold">{player.wins + player.losses}</p>
+                              </div>
+                              <div className="rounded-md border border-border bg-background/50 p-2">
+                                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Wins</p>
+                                <p className="font-display text-sm font-bold text-primary">{player.wins}</p>
+                              </div>
+                              <div className="rounded-md border border-border bg-background/50 p-2">
+                                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Losses</p>
+                                <p className="font-display text-sm font-bold text-destructive">{player.losses}</p>
+                              </div>
+                              <div className="rounded-md border border-border bg-background/50 p-2">
+                                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Win Rate</p>
+                                <p className="font-display text-sm font-bold">{player.winRate}%</p>
+                              </div>
+                              <div className="rounded-md border border-border bg-background/50 p-2">
+                                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Streak</p>
+                                <p className="font-display text-sm font-bold">{player.streak}</p>
+                              </div>
+                              <div className="rounded-md border border-border bg-background/50 p-2">
+                                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg $ / Match</p>
+                                <p className="font-display text-sm font-bold text-arena-gold">
+                                  ${(player.earnings / Math.max(player.wins + player.losses, 1)).toFixed(2)}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ))}
                 </div>
