@@ -21,7 +21,7 @@ const footerLinks = [
     title: "Legal",
     links: [
       { label: "Terms of Service", to: "#" },
-      { label: "Privacy Policy", to: "#" },
+      { label: "Privacy Policy", to: "/privacy-policy" },
       { label: "Responsible Gaming", to: "/responsible-gaming" },
     ],
   },
