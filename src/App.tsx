@@ -16,6 +16,7 @@ import Admin from "./pages/Admin";
 import WalletPage from "./pages/Wallet";
 import Leaderboard from "./pages/Leaderboard";
 import SettingsPage from "./pages/Settings";
+import ResponsibleGaming from "./pages/ResponsibleGaming";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -42,6 +43,7 @@ const App = () => (
           <Route path="/wallet" element={<AppLayout><WalletPage /></AppLayout>} />
           <Route path="/leaderboard" element={<AppLayout><Leaderboard /></AppLayout>} />
           <Route path="/settings" element={<AppLayout><SettingsPage /></AppLayout>} />
+          <Route path="/responsible-gaming" element={<AppLayout><ResponsibleGaming /></AppLayout>} />
           <Route path="/admin" element={<AdminRoute />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

@@ -22,7 +22,7 @@ const footerLinks = [
     links: [
       { label: "Terms of Service", to: "#" },
       { label: "Privacy Policy", to: "#" },
-      { label: "Responsible Gaming", to: "#" },
+      { label: "Responsible Gaming", to: "/responsible-gaming" },
     ],
   },
 ];

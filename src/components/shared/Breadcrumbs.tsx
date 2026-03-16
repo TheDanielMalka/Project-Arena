@@ -8,6 +8,7 @@ const routeLabels: Record<string, string> = {
   profile: "Profile",
   wallet: "Wallet",
   admin: "Admin Panel",
+  "responsible-gaming": "Responsible Gaming",
 };
 
 export function Breadcrumbs() {
