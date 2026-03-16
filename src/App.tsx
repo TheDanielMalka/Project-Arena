@@ -16,6 +16,7 @@ import Admin from "./pages/Admin";
 import WalletPage from "./pages/Wallet";
 import Leaderboard from "./pages/Leaderboard";
 import SettingsPage from "./pages/Settings";
+import TermsOfService from "./pages/TermsOfService";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import ResponsibleGaming from "./pages/ResponsibleGaming";
 import NotFound from "./pages/NotFound";
@@ -44,6 +45,7 @@ const App = () => (
           <Route path="/wallet" element={<AppLayout><WalletPage /></AppLayout>} />
           <Route path="/leaderboard" element={<AppLayout><Leaderboard /></AppLayout>} />
           <Route path="/settings" element={<AppLayout><SettingsPage /></AppLayout>} />
+          <Route path="/terms-of-service" element={<AppLayout><TermsOfService /></AppLayout>} />
           <Route path="/privacy-policy" element={<AppLayout><PrivacyPolicy /></AppLayout>} />
           <Route path="/responsible-gaming" element={<AppLayout><ResponsibleGaming /></AppLayout>} />
           <Route path="/admin" element={<AdminRoute />} />

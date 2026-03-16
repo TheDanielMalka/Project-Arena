@@ -8,6 +8,7 @@ const routeLabels: Record<string, string> = {
   profile: "Profile",
   wallet: "Wallet",
   admin: "Admin Panel",
+  "terms-of-service": "Terms of Service",
   "privacy-policy": "Privacy Policy",
   "responsible-gaming": "Responsible Gaming",
 };
