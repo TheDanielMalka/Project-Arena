@@ -369,12 +369,8 @@ const MatchLobby = () => {
                   return (
                     <div
                       key={match.id}
-                      className={`flex items-center justify-between p-4 rounded-lg border border-border bg-secondary/30 transition-colors ${
-                        canJoin ? "hover:bg-secondary/50 cursor-pointer" : "opacity-90 cursor-not-allowed"
-                      }`}
-                      onClick={() => {
-                        if (canJoin) handleOpenPublicLobby(match.id);
-                      }}
+                      className="flex items-center justify-between p-4 rounded-lg border border-border bg-secondary/30 hover:bg-secondary/50 transition-colors cursor-pointer"
+                      onClick={() => handleOpenPublicLobby(match.id)}
                     >
                       <div className="flex items-center gap-4">
                         <Badge className={`${status.color} border text-xs gap-1`}>
