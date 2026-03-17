@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useMatchStore } from "@/stores/matchStore";
 import { useNavigate } from "react-router-dom";
-import { Search, Swords, Inbox, ChevronLeft, ChevronRight, Gamepad2, Filter } from "lucide-react";
+import { Search, Swords, Inbox, ChevronLeft, ChevronRight, Gamepad2, Filter, Users, Trophy, ChevronDown, ChevronUp } from "lucide-react";
 import type { Game, MatchStatus } from "@/types";
 
 const ITEMS_PER_PAGE = 8;
@@ -18,6 +18,7 @@ const History = () => {
   const [gameFilter, setGameFilter] = useState<Game | "all">("all");
   const [statusFilter, setStatusFilter] = useState<MatchStatus | "all">("all");
   const [page, setPage] = useState(1);
+  const [expandedMatchId, setExpandedMatchId] = useState<string | null>(null);
 
   const filtered = matches.filter((m) => {
     const matchSearch =
@@ -117,35 +118,104 @@ const History = () => {
           {paged.map((m) => {
             const isWin = m.status === "completed" && m.winnerId === "user-001";
             const isLoss = m.status === "completed" && m.winnerId && m.winnerId !== "user-001";
+            const isExpanded = expandedMatchId === m.id;
+            const maxPerTeam = m.maxPerTeam ?? Math.max(1, Math.ceil(m.maxPlayers / 2));
+            const teamA = m.teamA ?? m.players.slice(0, maxPerTeam);
+            const teamB = m.teamB ?? m.players.slice(maxPerTeam, maxPerTeam * 2);
 
             return (
-              <Card key={m.id} className="bg-card border-border hover:border-primary/20 transition-colors">
-                <CardContent className="p-4 flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    {statusBadge(m.status)}
-                    <div>
-                      <p className="font-medium text-sm">
-                        {m.type === "custom" ? `${m.host}'s Custom` : `vs ${m.host}`}
-                      </p>
-                      <p className="text-xs text-muted-foreground flex items-center gap-2">
-                        <Gamepad2 className="h-3 w-3" /> {m.game}
-                        <span>•</span>
-                        {m.mode}
-                        {m.code && (
-                          <>
-                            <span>•</span>
-                            <span className="font-mono text-arena-cyan">{m.code}</span>
-                          </>
-                        )}
-                      </p>
+              <Card
+                key={m.id}
+                className="bg-card border-border hover:border-primary/20 transition-colors cursor-pointer"
+                onClick={() => setExpandedMatchId((prev) => (prev === m.id ? null : m.id))}
+              >
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      {statusBadge(m.status)}
+                      <div>
+                        <p className="font-medium text-sm">
+                          {m.type === "custom" ? `${m.host}'s Custom` : `vs ${m.host}`}
+                        </p>
+                        <p className="text-xs text-muted-foreground flex items-center gap-2">
+                          <Gamepad2 className="h-3 w-3" /> {m.game}
+                          <span>•</span>
+                          {m.mode}
+                          {m.code && (
+                            <>
+                              <span>•</span>
+                              <span className="font-mono text-arena-cyan">{m.code}</span>
+                            </>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right flex items-center gap-3">
+                      <div>
+                        <p className={`font-display text-lg font-bold ${isWin ? "text-primary" : isLoss ? "text-destructive" : "text-arena-gold"}`}>
+                          ${m.betAmount}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">{m.id}</p>
+                      </div>
+                      {isExpanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className={`font-display text-lg font-bold ${isWin ? "text-primary" : isLoss ? "text-destructive" : "text-arena-gold"}`}>
-                      ${m.betAmount}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground">{m.id}</p>
-                  </div>
+
+                  {isExpanded && (
+                    <div className="mt-4 pt-4 border-t border-border space-y-3">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                        <div className="rounded-md border border-border bg-secondary/20 p-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Status</p>
+                          <p className="text-sm font-medium">{m.status.replace("_", " ")}</p>
+                        </div>
+                        <div className="rounded-md border border-border bg-secondary/20 p-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Players</p>
+                          <p className="text-sm font-medium">{m.players.length}/{m.maxPlayers}</p>
+                        </div>
+                        <div className="rounded-md border border-border bg-secondary/20 p-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Mode</p>
+                          <p className="text-sm font-medium">{m.mode}</p>
+                        </div>
+                        <div className="rounded-md border border-border bg-secondary/20 p-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Winner</p>
+                          <p className="text-sm font-medium flex items-center gap-1">
+                            <Trophy className="h-3 w-3 text-arena-gold" />
+                            {m.status === "completed" ? (m.winnerId ?? "Pending") : "In Progress"}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                          <p className="text-xs text-primary uppercase tracking-wider mb-2 flex items-center gap-1">
+                            <Users className="h-3 w-3" /> Team A ({teamA.length}/{maxPerTeam})
+                          </p>
+                          <div className="space-y-1">
+                            {teamA.map((player, i) => (
+                              <p key={`${m.id}-a-${player}-${i}`} className="text-sm">{player}</p>
+                            ))}
+                            {Array.from({ length: maxPerTeam - teamA.length }).map((_, i) => (
+                              <p key={`${m.id}-a-empty-${i}`} className="text-sm text-muted-foreground/40 italic">Empty slot</p>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border border-arena-orange/20 bg-arena-orange/5 p-3">
+                          <p className="text-xs text-arena-orange uppercase tracking-wider mb-2 flex items-center gap-1">
+                            <Users className="h-3 w-3" /> Team B ({teamB.length}/{maxPerTeam})
+                          </p>
+                          <div className="space-y-1">
+                            {teamB.map((player, i) => (
+                              <p key={`${m.id}-b-${player}-${i}`} className="text-sm">{player}</p>
+                            ))}
+                            {Array.from({ length: maxPerTeam - teamB.length }).map((_, i) => (
+                              <p key={`${m.id}-b-empty-${i}`} className="text-sm text-muted-foreground/40 italic">Empty slot</p>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             );
