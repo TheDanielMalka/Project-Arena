@@ -126,6 +126,9 @@ const MatchLobby = () => {
   const filteredCustom = customMatches.filter(
     (m) => !selectedGame || m.game === selectedGame
   );
+  const filteredPublicMatches = selectedBet
+    ? publicMatches.filter((m) => m.betAmount === selectedBet)
+    : publicMatches;
 
   return (
     <div className="space-y-6">
@@ -358,7 +361,7 @@ const MatchLobby = () => {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {publicMatches.map((match) => {
+                {filteredPublicMatches.map((match) => {
                   const status = statusConfig[match.status];
                   const StatusIcon = status.icon;
                   const canJoin = match.status === "waiting" && match.players.length < match.maxPlayers;
@@ -366,8 +369,12 @@ const MatchLobby = () => {
                   return (
                     <div
                       key={match.id}
-                      className="flex items-center justify-between p-4 rounded-lg border border-border bg-secondary/30 hover:bg-secondary/50 transition-colors cursor-pointer"
-                      onClick={() => handleOpenPublicLobby(match.id)}
+                      className={`flex items-center justify-between p-4 rounded-lg border border-border bg-secondary/30 transition-colors ${
+                        canJoin ? "hover:bg-secondary/50 cursor-pointer" : "opacity-90 cursor-not-allowed"
+                      }`}
+                      onClick={() => {
+                        if (canJoin) handleOpenPublicLobby(match.id);
+                      }}
                     >
                       <div className="flex items-center gap-4">
                         <Badge className={`${status.color} border text-xs gap-1`}>
@@ -412,6 +419,11 @@ const MatchLobby = () => {
                     </div>
                   );
                 })}
+                {filteredPublicMatches.length === 0 && selectedBet && (
+                  <div className="rounded-lg border border-border bg-secondary/20 p-4 text-sm text-muted-foreground">
+                    No open matches found for ${selectedBet}. Try another bet amount.
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
