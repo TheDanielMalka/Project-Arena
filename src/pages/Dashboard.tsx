@@ -3,7 +3,6 @@ import { StatsCards } from "@/components/dashboard/StatsCards";
 import { WinLossChart } from "@/components/dashboard/WinLossChart";
 import { EarningsChart } from "@/components/dashboard/EarningsChart";
 import { RecentMatches } from "@/components/dashboard/RecentMatches";
-import { AdBanner } from "@/components/shared/AdBanner";
 import LiveMatchTracker from "@/components/match/LiveMatchTracker";
 import { Button } from "@/components/ui/button";
 import { useUserStore } from "@/stores/userStore";
@@ -37,8 +36,6 @@ const Dashboard = () => {
 
       <StatsCards />
 
-      <AdBanner placement="dashboard-top" />
-
       <LiveMatchTracker />
 
       <div className="grid md:grid-cols-2 gap-6">
@@ -47,8 +44,6 @@ const Dashboard = () => {
       </div>
 
       <RecentMatches showViewAll limit={5} />
-
-      <AdBanner placement="dashboard-bottom" />
     </div>
   );
 };
