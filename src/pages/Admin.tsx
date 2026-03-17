@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { Fragment, useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -540,7 +540,7 @@ const Admin = () => {
                 </TableHeader>
                 <TableBody>
                   {pagedDisputes.map((d) => (
-                    <>
+                    <Fragment key={d.id}>
                       <TableRow key={d.id} className="hover:bg-secondary/50 cursor-pointer" onClick={() => toggleExpandDispute(d.id)}>
                         <TableCell className="w-8 px-2">
                           {expandedDisputeIds.has(d.id) ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
@@ -589,7 +589,7 @@ const Admin = () => {
                           </TableCell>
                         </TableRow>
                       )}
-                    </>
+                    </Fragment>
                   ))}
                 </TableBody>
               </Table>
