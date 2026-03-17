@@ -7,7 +7,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useMatchStore } from "@/stores/matchStore";
 import { useNavigate } from "react-router-dom";
 import { Search, Swords, Inbox, ChevronLeft, ChevronRight, Gamepad2, Filter } from "lucide-react";
-import { AdBanner } from "@/components/shared/AdBanner";
 import type { Game, MatchStatus } from "@/types";
 
 const ITEMS_PER_PAGE = 8;
@@ -181,7 +180,6 @@ const History = () => {
         </div>
       )}
 
-      <AdBanner placement="history-bottom" />
     </div>
   );
 };
