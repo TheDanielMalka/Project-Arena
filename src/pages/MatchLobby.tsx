@@ -13,7 +13,7 @@ import {
   Swords, Clock, Users, DollarSign, Lock, Gamepad2, CheckCircle,
   Search, Copy, UserPlus, Crown, Shield, Hash, KeyRound, Eye, EyeOff, AlertCircle
 } from "lucide-react";
-import type { MatchStatus, Game } from "@/types";
+import type { MatchStatus, Game, Match } from "@/types";
 
 const betAmounts = [10, 25, 50, 100];
 const games: Game[] = ["CS2", "Valorant", "Fortnite", "Apex Legends"];
@@ -44,6 +44,7 @@ const MatchLobby = () => {
   const [newMatchGame, setNewMatchGame] = useState<Game | "">("");
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [newMatchPassword, setNewMatchPassword] = useState("");
+  const [selectedPublicLobbyId, setSelectedPublicLobbyId] = useState<string | null>(null);
 
   // Password prompt state
   const [passwordPrompt, setPasswordPrompt] = useState<{ matchId: string; bet: number } | null>(null);
@@ -53,11 +54,27 @@ const MatchLobby = () => {
 
   const publicMatches = matches.filter((m) => m.type === "public");
   const customMatches = matches.filter((m) => m.type === "custom");
+  const selectedPublicLobby = selectedPublicLobbyId
+    ? publicMatches.find((m) => m.id === selectedPublicLobbyId) ?? null
+    : null;
+
+  const getPublicLobbyTeams = (match: Match) => {
+    const maxPerTeam = Math.max(1, Math.ceil(match.maxPlayers / 2));
+    return {
+      maxPerTeam,
+      teamA: match.players.slice(0, maxPerTeam),
+      teamB: match.players.slice(maxPerTeam, maxPerTeam * 2),
+    };
+  };
 
   const handleJoinPublic = (matchId: string) => {
     if (!selectedBet || !user) return;
     setJoiningMatch(matchId);
     setEscrowConfirm(true);
+  };
+
+  const handleOpenPublicLobby = (matchId: string) => {
+    setSelectedPublicLobbyId(matchId);
   };
 
   const handleJoinCustom = (matchId: string, bet: number) => {
@@ -194,6 +211,97 @@ const MatchLobby = () => {
         </Card>
       )}
 
+      {/* Public Lobby Details Overlay */}
+      {selectedPublicLobby && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+          <Card className="w-full max-w-5xl bg-card border-border">
+            <CardContent className="p-4 md:p-6 space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Lobby Details</p>
+                  <h3 className="font-display text-xl font-bold truncate">{selectedPublicLobby.host}'s Match</h3>
+                  <p className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+                    <Gamepad2 className="h-3 w-3" /> {selectedPublicLobby.game}
+                    <span>•</span>
+                    <Hash className="h-3 w-3" /> {selectedPublicLobby.id}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-display text-xl font-bold text-arena-gold">${selectedPublicLobby.betAmount}</span>
+                  <Button variant="outline" size="sm" onClick={() => setSelectedPublicLobbyId(null)}>
+                    Close
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                  <p className="text-xs text-primary font-display uppercase tracking-wider mb-2 flex items-center gap-1">
+                    <Shield className="h-3 w-3" /> Team A ({getPublicLobbyTeams(selectedPublicLobby).teamA.length}/{getPublicLobbyTeams(selectedPublicLobby).maxPerTeam})
+                  </p>
+                  <div className="space-y-1">
+                    {getPublicLobbyTeams(selectedPublicLobby).teamA.map((player, i) => (
+                      <p key={`public-team-a-${player}-${i}`} className="text-sm flex items-center gap-1.5">
+                        {i === 0 && <Crown className="h-3 w-3 text-arena-gold" />}
+                        {player}
+                      </p>
+                    ))}
+                    {Array.from({
+                      length: getPublicLobbyTeams(selectedPublicLobby).maxPerTeam - getPublicLobbyTeams(selectedPublicLobby).teamA.length,
+                    }).map((_, i) => (
+                      <p key={`public-empty-a-${i}`} className="text-sm text-muted-foreground/30 italic">
+                        Empty slot
+                      </p>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-arena-orange/20 bg-arena-orange/5 p-3">
+                  <p className="text-xs text-arena-orange font-display uppercase tracking-wider mb-2 flex items-center gap-1">
+                    <Shield className="h-3 w-3" /> Team B ({getPublicLobbyTeams(selectedPublicLobby).teamB.length}/{getPublicLobbyTeams(selectedPublicLobby).maxPerTeam})
+                  </p>
+                  <div className="space-y-1">
+                    {getPublicLobbyTeams(selectedPublicLobby).teamB.map((player, i) => (
+                      <p key={`public-team-b-${player}-${i}`} className="text-sm">
+                        {player}
+                      </p>
+                    ))}
+                    {Array.from({
+                      length: getPublicLobbyTeams(selectedPublicLobby).maxPerTeam - getPublicLobbyTeams(selectedPublicLobby).teamB.length,
+                    }).map((_, i) => (
+                      <p key={`public-empty-b-${i}`} className="text-sm text-muted-foreground/30 italic">
+                        Empty slot
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                <p className="text-xs text-muted-foreground">
+                  {selectedPublicLobby.players.length}/{selectedPublicLobby.maxPlayers} players in lobby
+                </p>
+                <Button
+                  disabled={
+                    !selectedBet ||
+                    selectedBet !== selectedPublicLobby.betAmount ||
+                    selectedPublicLobby.status !== "waiting" ||
+                    selectedPublicLobby.players.length >= selectedPublicLobby.maxPlayers
+                  }
+                  onClick={() => {
+                    setSelectedPublicLobbyId(null);
+                    handleJoinPublic(selectedPublicLobby.id);
+                  }}
+                  className="font-display"
+                >
+                  <Swords className="mr-1 h-4 w-4" /> Join This Lobby
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       <Tabs defaultValue="public" className="w-full">
         <TabsList className="bg-secondary border border-border w-full sm:w-auto">
           <TabsTrigger value="public" className="font-display data-[state=active]:bg-primary/20 data-[state=active]:text-primary flex-1 sm:flex-none gap-2">
@@ -258,7 +366,8 @@ const MatchLobby = () => {
                   return (
                     <div
                       key={match.id}
-                      className="flex items-center justify-between p-4 rounded-lg border border-border bg-secondary/30 hover:bg-secondary/50 transition-colors"
+                      className="flex items-center justify-between p-4 rounded-lg border border-border bg-secondary/30 hover:bg-secondary/50 transition-colors cursor-pointer"
+                      onClick={() => handleOpenPublicLobby(match.id)}
                     >
                       <div className="flex items-center gap-4">
                         <Badge className={`${status.color} border text-xs gap-1`}>
@@ -286,7 +395,10 @@ const MatchLobby = () => {
                           <Button
                             size="sm"
                             disabled={!selectedBet || selectedBet !== match.betAmount || escrowConfirm}
-                            onClick={() => handleJoinPublic(match.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleJoinPublic(match.id);
+                            }}
                             className="font-display"
                           >
                             <Swords className="mr-1 h-4 w-4" /> Join
