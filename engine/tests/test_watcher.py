@@ -97,7 +97,7 @@ class TestErrorHandling:
 
 class TestOutput:
 
-    def test_prints_result_when_accepted(self, handler, engine, capsys):
+    def test_prints_detected_when_accepted_once(self, handler, engine, capsys):
 
         engine.process_frame.return_value = make_output(
             accepted=True,
@@ -111,7 +111,26 @@ class TestOutput:
             handler.on_created(event)
 
         output = capsys.readouterr().out
+        assert "detected" in output
         assert "victory" in output
+
+    def test_prints_confirmed_after_three_consecutive(self, handler, engine, capsys):
+
+        engine.process_frame.return_value = make_output(
+            accepted=True,
+            result="victory",
+            confidence=0.95,
+            players=["player1", "player2"],
+        )
+        event = make_event("screenshots/CS2/match_001.png")
+
+        with patch("time.sleep"):
+            handler.on_created(event)
+            handler.on_created(event)
+            handler.on_created(event)
+
+        output = capsys.readouterr().out
+        assert "CONFIRMED" in output
         assert "player1" in output
 
     def test_prints_no_confidence_when_not_accepted(self, handler, engine, capsys):
