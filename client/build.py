@@ -7,10 +7,12 @@ Usage:
     python build.py --clean  # Clean build artifacts first
 """
 
+import importlib.util
 import os
-import sys
 import shutil
 import subprocess
+import sys
+import time
 
 
 APP_NAME = "ArenaClient"
@@ -34,6 +36,49 @@ HIDDEN_IMPORTS = [
 ]
 
 
+def ensure_pyinstaller_installed():
+    """Fail fast with a clear message when PyInstaller is missing."""
+    if importlib.util.find_spec("PyInstaller") is not None:
+        return
+    print("ERROR: PyInstaller is not installed in this Python environment.")
+    print("Run: python -m pip install -r requirements.txt")
+    sys.exit(1)
+
+
+def stop_running_client_processes():
+    """
+    Stop running ArenaClient.exe processes that lock dist/ArenaClient.exe.
+    This prevents WinError 5 (Access denied) during rebuilds.
+    """
+    if sys.platform != "win32":
+        return
+
+    try:
+        import psutil  # type: ignore
+    except Exception:
+        # If psutil is unavailable, build can still proceed.
+        return
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    target_exe = os.path.abspath(os.path.join(script_dir, "dist", f"{APP_NAME}.exe")).lower()
+    stopped = 0
+
+    for proc in psutil.process_iter(attrs=["pid", "name", "exe"]):
+        try:
+            exe_path = (proc.info.get("exe") or "").lower()
+            name = (proc.info.get("name") or "").lower()
+            if exe_path == target_exe or name == f"{APP_NAME.lower()}.exe":
+                proc.terminate()
+                stopped += 1
+        except Exception:
+            continue
+
+    if stopped:
+        # Give Windows a moment to release file handles.
+        time.sleep(1.0)
+        print(f"Stopped {stopped} running {APP_NAME}.exe process(es).")
+
+
 def clean():
     """Remove previous build artifacts."""
     for d in ["build", "dist", f"{APP_NAME}.spec"]:
@@ -51,6 +96,8 @@ def clean():
 
 def build():
     """Build .exe using PyInstaller."""
+    ensure_pyinstaller_installed()
+    stop_running_client_processes()
     print(f"\n  Building {APP_NAME}...\n")
 
     cmd = [
@@ -95,6 +142,7 @@ def build():
 
 if __name__ == "__main__":
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    stop_running_client_processes()
 
     if "--clean" in sys.argv:
         clean()
