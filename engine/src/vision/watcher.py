@@ -3,6 +3,7 @@ import os
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from src.vision.engine import VisionEngine, VisionEngineConfig
+from src.vision.state_machine import StateMachine, MatchState
 from typing import Optional
 
 
@@ -11,10 +12,14 @@ class ScreenshotHandler(FileSystemEventHandler):
     def __init__(self, engine: VisionEngine):
         self.engine = engine
         self.last_processed_time: float = 0
+        self.state_machine = StateMachine(confirmations_required=3)
 
     def on_created(self, event):
 
         if event.is_directory or not event.src_path.endswith(".png"):
+            return
+
+        if self.state_machine.state == MatchState.REPORTED:
             return
 
         now = time.time()
@@ -36,11 +41,18 @@ class ScreenshotHandler(FileSystemEventHandler):
 
         self.last_processed_time = time.time()
 
-        if result.accepted:
-            print(f"result: {result.result} | confidence: {result.confidence:.0%}")
-            print(f"players: {result.players}")
+        state = self.state_machine.update(result)
+        print(f"state: {state.value}")
+
+        if state == MatchState.CONFIRMED:
+            confirmed = self.state_machine.confirmed_output
+            print(f"CONFIRMED: {confirmed.result} | confidence: {confirmed.confidence:.0%}")
+            print(f"players: {confirmed.players}")
+            self.state_machine.mark_reported()
+        elif state == MatchState.DETECTED:
+            print(f"detected: {result.result} | confidence: {result.confidence:.0%}")
         else:
-            print(f"no confidence: {result.confidence:.0%})")
+            print(f"no confidence: {result.confidence:.0%}")
 
 
 def watch(game: str, screenshots_dir: str = "screenshots", config: Optional[VisionEngineConfig] = None):
