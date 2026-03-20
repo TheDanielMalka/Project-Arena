@@ -94,3 +94,31 @@ class TestReported:
         sm.mark_reported()
         sm.update(make_output(accepted=True))
         assert sm.state == MatchState.REPORTED
+
+
+class TestLogging:
+
+    def test_logs_detected_on_first_accepted_frame(self, sm, caplog):
+        caplog.set_level("INFO", logger="vision.state_machine")
+        sm.update(make_output(accepted=True, result="victory"))
+        assert "DETECTED" in caplog.text
+        assert "victory" in caplog.text
+
+    def test_logs_confirmed_after_three_consecutive(self, sm, caplog):
+        caplog.set_level("INFO", logger="vision.state_machine")
+        for _ in range(3):
+            sm.update(make_output(accepted=True, result="victory"))
+        assert "CONFIRMED" in caplog.text
+
+    def test_logs_waiting_on_low_confidence(self, sm, caplog):
+        caplog.set_level("INFO", logger="vision.state_machine")
+        sm.update(make_output(accepted=True))
+        sm.update(make_output(accepted=False))
+        assert "WAITING" in caplog.text
+
+    def test_logs_reported_on_mark_reported(self, sm, caplog):
+        caplog.set_level("INFO", logger="vision.state_machine")
+        for _ in range(3):
+            sm.update(make_output(accepted=True))
+        sm.mark_reported()
+        assert "REPORTED" in caplog.text
