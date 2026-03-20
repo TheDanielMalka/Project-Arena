@@ -11,6 +11,7 @@ import sys
 import os
 import time
 import json
+import random
 import logging
 import threading
 from datetime import datetime
@@ -236,7 +237,8 @@ class MatchMonitor:
 
                 if not game:
                     # No supported game is running right now – sleep and try again
-                    time.sleep(self.config.get("screenshot_interval", 5))
+                    base = self.config.get("screenshot_interval", 5)
+                    time.sleep(base + random.uniform(-0.5, 0.5))
                     continue
 
                 if is_game_running(game):
@@ -285,7 +287,8 @@ class MatchMonitor:
             except Exception as e:
                 logger.error(f"Monitor loop error: {e}")
 
-            time.sleep(self.config.get("screenshot_interval", 5))
+            base = self.config.get("screenshot_interval", 5)
+            time.sleep(base + random.uniform(-0.5, 0.5))
 
     def set_match_id(self, match_id: str):
         self.current_match_id = match_id
