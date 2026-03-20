@@ -44,8 +44,8 @@ class StateMachine:
         if self._consecutive >= self.confirmations_required:
             self.state = MatchState.CONFIRMED
             self.confirmed_output = output
-            log.info("state: CONFIRMED | result=%s confidence=%.0f%% consecutive=%d",
-                     output.result, output.confidence * 100, self._consecutive)
+            log.info("state: CONFIRMED | result=%s confidence=%.0f%% players=%s",
+                     output.result, output.confidence * 100, output.players)
         else:
             self.state = MatchState.DETECTED
             log.info("state: DETECTED | result=%s consecutive=%d/%d",
