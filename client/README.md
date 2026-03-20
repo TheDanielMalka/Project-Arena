@@ -111,3 +111,20 @@ python autostart.py status
 - Authentication tokens are stored locally in `config.json` — never transmitted in plain text.
 - All Engine communication uses HTTPS in production environments.
 - Screenshots are stored locally and purged after successful verification.
+
+## 🛡️ Anti-Cheat Compatibility
+
+The Arena Client is fully compatible with anti-cheat systems (VAC, Riot Vanguard, Easy Anti-Cheat) because it uses a **screen-only capture approach**:
+
+| What we do | What we never do |
+|---|---|
+| ✅ Screen capture via Windows GDI (`mss`) | ❌ Game memory reading |
+| ✅ Process name detection (`psutil`) | ❌ DLL injection |
+| ✅ Screenshot upload to Engine API | ❌ Kernel-level hooks |
+| ✅ Randomized capture intervals | ❌ Game file modification |
+
+### Why this is safe
+- `mss` captures the screen at the OS level — identical to taking a screenshot manually
+- No interaction with the game process beyond detecting that it is running
+- Anti-cheat engines do not block OS-level screen capture
+- Tested on live CS2 with VAC enabled — no flags, no bans
