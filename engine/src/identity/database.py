@@ -2,7 +2,7 @@
 ARENA Engine — Player Identity Database
 Stores the mapping: wallet_address → steam_id → steam_display_name → game
 Uses SQLite (local file, no server needed).
-Also manages the blacklist for banned players.
+Also manages the blacklist for banned players and the dispute queue.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import re
 import sqlite3
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List
 
 log = logging.getLogger("identity.database")
 
@@ -21,6 +21,15 @@ _DEFAULT_DB_PATH = "players.db"
 # ── Validation patterns ───────────────────────────────────────────────────────
 _WALLET_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")   # Ethereum: 0x + 40 hex chars
 _STEAM_RE  = re.compile(r"^\d{17}$")               # Steam ID: exactly 17 digits
+
+
+# ── Dispute dataclass ────────────────────────────────────────────────────────
+@dataclass
+class Dispute:
+    wallet_address: str   # who is appealing
+    reason:         str   # what they wrote
+    status:         str   # "pending" | "approved" | "rejected"
+    admin_note:     str = ""  # what the admin wrote when deciding
 
 
 # ── Player dataclass ─────────────────────────────────────────────────────────
@@ -70,6 +79,14 @@ class PlayerDatabase:
             CREATE TABLE IF NOT EXISTS blacklist (
                 wallet_address TEXT PRIMARY KEY,
                 reason         TEXT NOT NULL DEFAULT 'smurf'
+            )
+        """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS disputes (
+                wallet_address TEXT PRIMARY KEY,
+                reason         TEXT NOT NULL,
+                status         TEXT NOT NULL DEFAULT 'pending',
+                admin_note     TEXT NOT NULL DEFAULT ''
             )
         """)
         self._conn.commit()
@@ -180,6 +197,46 @@ class PlayerDatabase:
             "SELECT 1 FROM blacklist WHERE wallet_address = ?", (wallet_address,)
         ).fetchone()
         return row is not None
+
+    # ── Disputes ──────────────────────────────────────────────────────────────
+    def submit_dispute(self, wallet_address: str, reason: str) -> None:
+        """Player submits an appeal. Raises ValueError if not blacklisted or already pending."""
+        _validate_wallet(wallet_address)
+        if not self.is_blacklisted(wallet_address):
+            raise ValueError(f"Wallet '{wallet_address}' is not blacklisted — no dispute needed")
+        self._conn.execute(
+            "INSERT OR REPLACE INTO disputes (wallet_address, reason, status, admin_note) VALUES (?, ?, 'pending', '')",
+            (wallet_address, reason),
+        )
+        self._conn.commit()
+        log.info("dispute submitted | wallet=%s", wallet_address)
+
+    def get_pending_disputes(self) -> List[Dispute]:
+        """Return all disputes waiting for admin review."""
+        rows = self._conn.execute(
+            "SELECT * FROM disputes WHERE status = 'pending'"
+        ).fetchall()
+        return [Dispute(
+            wallet_address=r["wallet_address"],
+            reason=r["reason"],
+            status=r["status"],
+            admin_note=r["admin_note"],
+        ) for r in rows]
+
+    def resolve_dispute(self, wallet_address: str, approved: bool, admin_note: str = "") -> None:
+        """Admin approves or rejects a dispute."""
+        _validate_wallet(wallet_address)
+        status = "approved" if approved else "rejected"
+        cursor = self._conn.execute(
+            "UPDATE disputes SET status=?, admin_note=? WHERE wallet_address=? AND status='pending'",
+            (status, admin_note, wallet_address),
+        )
+        self._conn.commit()
+        if cursor.rowcount == 0:
+            raise ValueError(f"No pending dispute found for wallet '{wallet_address}'")
+        if approved:
+            self.unblacklist(wallet_address)
+        log.info("dispute %s | wallet=%s note=%s", status, wallet_address, admin_note)
 
     def close(self) -> None:
         self._conn.close()
