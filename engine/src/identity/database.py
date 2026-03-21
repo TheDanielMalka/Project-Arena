@@ -2,6 +2,7 @@
 ARENA Engine — Player Identity Database
 Stores the mapping: wallet_address → steam_id → player_name → game
 Uses SQLite (local file, no server needed).
+Also manages the blacklist for banned players.
 """
 
 from __future__ import annotations
@@ -60,9 +61,15 @@ class PlayerDatabase:
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS players (
                 wallet_address TEXT PRIMARY KEY,
-                steam_id       TEXT NOT NULL,
+                steam_id       TEXT NOT NULL UNIQUE,
                 player_name    TEXT NOT NULL,
                 game           TEXT NOT NULL
+            )
+        """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS blacklist (
+                wallet_address TEXT PRIMARY KEY,
+                reason         TEXT NOT NULL DEFAULT 'smurf'
             )
         """)
         self._conn.commit()
@@ -73,6 +80,10 @@ class PlayerDatabase:
         _validate_wallet(player.wallet_address)
         _validate_steam(player.steam_id)
 
+        # Check wallet duplicate first for a clear error message
+        if self.get(player.wallet_address) is not None:
+            raise ValueError(f"Player with wallet '{player.wallet_address}' already exists")
+
         try:
             self._conn.execute(
                 "INSERT INTO players (wallet_address, steam_id, player_name, game) VALUES (?, ?, ?, ?)",
@@ -82,7 +93,7 @@ class PlayerDatabase:
             log.info("add | wallet=%s steam=%s name=%s game=%s",
                      player.wallet_address, player.steam_id, player.player_name, player.game)
         except sqlite3.IntegrityError:
-            raise ValueError(f"Player with wallet '{player.wallet_address}' already exists")
+            raise ValueError(f"Steam ID '{player.steam_id}' is already registered with another wallet")
 
     def get(self, wallet_address: str) -> Optional[Player]:
         """Fetch a player by wallet address. Returns None if not found."""
@@ -126,6 +137,49 @@ class PlayerDatabase:
         if cursor.rowcount == 0:
             raise ValueError(f"Player with wallet '{wallet_address}' not found")
         log.info("delete | wallet=%s", wallet_address)
+
+    def get_by_steam_id(self, steam_id: str) -> Optional[Player]:
+        """Fetch a player by Steam ID. Returns None if not found."""
+        _validate_steam(steam_id)
+        row = self._conn.execute(
+            "SELECT * FROM players WHERE steam_id = ?", (steam_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return Player(
+            wallet_address=row["wallet_address"],
+            steam_id=row["steam_id"],
+            player_name=row["player_name"],
+            game=row["game"],
+        )
+
+    # ── Blacklist ──────────────────────────────────────────────────────────────
+    def blacklist(self, wallet_address: str, reason: str = "smurf") -> None:
+        """Add a wallet to the blacklist."""
+        _validate_wallet(wallet_address)
+        self._conn.execute(
+            "INSERT OR REPLACE INTO blacklist (wallet_address, reason) VALUES (?, ?)",
+            (wallet_address, reason),
+        )
+        self._conn.commit()
+        log.info("blacklist | wallet=%s reason=%s", wallet_address, reason)
+
+    def unblacklist(self, wallet_address: str) -> None:
+        """Remove a wallet from the blacklist."""
+        _validate_wallet(wallet_address)
+        self._conn.execute(
+            "DELETE FROM blacklist WHERE wallet_address = ?", (wallet_address,)
+        )
+        self._conn.commit()
+        log.info("unblacklist | wallet=%s", wallet_address)
+
+    def is_blacklisted(self, wallet_address: str) -> bool:
+        """Check if a wallet is blacklisted."""
+        _validate_wallet(wallet_address)
+        row = self._conn.execute(
+            "SELECT 1 FROM blacklist WHERE wallet_address = ?", (wallet_address,)
+        ).fetchone()
+        return row is not None
 
     def close(self) -> None:
         self._conn.close()
