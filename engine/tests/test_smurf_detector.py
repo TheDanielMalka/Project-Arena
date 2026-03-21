@@ -28,7 +28,7 @@ def detector(db):
 
 
 def add_player(db, wallet=WALLET_A, steam=STEAM_A, name="daniel", game="CS2"):
-    db.add(Player(wallet_address=wallet, steam_id=steam, player_name=name, game=game))
+    db.add(Player(wallet_address=wallet, steam_id=steam, steam_display_name=name, game=game))
 
 
 # ── Clean registration ────────────────────────────────────────────────────────
