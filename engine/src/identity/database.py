@@ -1,0 +1,131 @@
+"""
+ARENA Engine — Player Identity Database
+Stores the mapping: wallet_address → steam_id → player_name → game
+Uses SQLite (local file, no server needed).
+"""
+
+from __future__ import annotations
+
+import re
+import sqlite3
+import logging
+from dataclasses import dataclass
+from typing import Optional
+
+log = logging.getLogger("identity.database")
+
+# ── Default DB path (sits next to this file) ─────────────────────────────────
+_DEFAULT_DB_PATH = "players.db"
+
+# ── Validation patterns ───────────────────────────────────────────────────────
+_WALLET_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")   # Ethereum: 0x + 40 hex chars
+_STEAM_RE  = re.compile(r"^\d{17}$")               # Steam ID: exactly 17 digits
+
+
+# ── Player dataclass ─────────────────────────────────────────────────────────
+@dataclass
+class Player:
+    wallet_address: str   # primary key  e.g. "0xAbC...123"
+    steam_id:       str   # e.g. "76561198012345678"
+    player_name:    str   # e.g. "daniel_cs"
+    game:           str   # e.g. "CS2" | "Valorant" | "Fortnite"
+
+
+# ── Validation helpers ────────────────────────────────────────────────────────
+def _validate_wallet(wallet: str) -> None:
+    if not _WALLET_RE.match(wallet):
+        raise ValueError(f"Invalid wallet address: '{wallet}' — must be 0x + 40 hex chars")
+
+def _validate_steam(steam_id: str) -> None:
+    if not _STEAM_RE.match(steam_id):
+        raise ValueError(f"Invalid Steam ID: '{steam_id}' — must be exactly 17 digits")
+
+
+# ── Database class ────────────────────────────────────────────────────────────
+class PlayerDatabase:
+    """
+    Simple SQLite-backed store for player identity records.
+    Each instance manages one .db file.
+    """
+
+    def __init__(self, db_path: str = _DEFAULT_DB_PATH):
+        self.db_path = db_path
+        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row   # rows behave like dicts
+        self._create_table()
+        log.info("PlayerDatabase ready | path=%s", self.db_path)
+
+    # ── Internal ──────────────────────────────────────────────────────────────
+    def _create_table(self) -> None:
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS players (
+                wallet_address TEXT PRIMARY KEY,
+                steam_id       TEXT NOT NULL,
+                player_name    TEXT NOT NULL,
+                game           TEXT NOT NULL
+            )
+        """)
+        self._conn.commit()
+
+    # ── CRUD ──────────────────────────────────────────────────────────────────
+    def add(self, player: Player) -> None:
+        """Add a new player. Raises ValueError on bad data or duplicate wallet."""
+        _validate_wallet(player.wallet_address)
+        _validate_steam(player.steam_id)
+
+        try:
+            self._conn.execute(
+                "INSERT INTO players (wallet_address, steam_id, player_name, game) VALUES (?, ?, ?, ?)",
+                (player.wallet_address, player.steam_id, player.player_name, player.game),
+            )
+            self._conn.commit()
+            log.info("add | wallet=%s steam=%s name=%s game=%s",
+                     player.wallet_address, player.steam_id, player.player_name, player.game)
+        except sqlite3.IntegrityError:
+            raise ValueError(f"Player with wallet '{player.wallet_address}' already exists")
+
+    def get(self, wallet_address: str) -> Optional[Player]:
+        """Fetch a player by wallet address. Returns None if not found."""
+        _validate_wallet(wallet_address)
+        row = self._conn.execute(
+            "SELECT * FROM players WHERE wallet_address = ?", (wallet_address,)
+        ).fetchone()
+        if row is None:
+            log.info("get | wallet=%s → not found", wallet_address)
+            return None
+        log.info("get | wallet=%s → found name=%s", wallet_address, row["player_name"])
+        return Player(
+            wallet_address=row["wallet_address"],
+            steam_id=row["steam_id"],
+            player_name=row["player_name"],
+            game=row["game"],
+        )
+
+    def update(self, player: Player) -> None:
+        """Update an existing player's data. Raises ValueError if not found."""
+        _validate_wallet(player.wallet_address)
+        _validate_steam(player.steam_id)
+
+        cursor = self._conn.execute(
+            "UPDATE players SET steam_id=?, player_name=?, game=? WHERE wallet_address=?",
+            (player.steam_id, player.player_name, player.game, player.wallet_address),
+        )
+        self._conn.commit()
+        if cursor.rowcount == 0:
+            raise ValueError(f"Player with wallet '{player.wallet_address}' not found")
+        log.info("update | wallet=%s → name=%s game=%s", player.wallet_address, player.player_name, player.game)
+
+    def delete(self, wallet_address: str) -> None:
+        """Delete a player by wallet address. Raises ValueError if not found."""
+        _validate_wallet(wallet_address)
+
+        cursor = self._conn.execute(
+            "DELETE FROM players WHERE wallet_address = ?", (wallet_address,)
+        )
+        self._conn.commit()
+        if cursor.rowcount == 0:
+            raise ValueError(f"Player with wallet '{wallet_address}' not found")
+        log.info("delete | wallet=%s", wallet_address)
+
+    def close(self) -> None:
+        self._conn.close()
