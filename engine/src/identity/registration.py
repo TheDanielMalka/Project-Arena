@@ -17,7 +17,7 @@ class RegistrationResult:
 def register_player(
     wallet_address: str,
     steam_id: str,
-    player_name: str,
+    steam_display_name: str,
     game: str,
     db: PlayerDatabase,
 ) -> RegistrationResult:
@@ -29,11 +29,11 @@ def register_player(
         player = Player(
             wallet_address=wallet_address,
             steam_id=steam_id,
-            player_name=player_name,
+            steam_display_name=steam_display_name,
             game=game,
         )
         db.add(player)
-        log.info("registration success | wallet=%s name=%s", wallet_address, player_name)
+        log.info("registration success | wallet=%s display_name=%s", wallet_address, steam_display_name)
         return RegistrationResult(success=True, message="השחקן נרשם בהצלחה")
 
     except SmurfDetected as e:

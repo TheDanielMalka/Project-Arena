@@ -11,10 +11,10 @@ from src.identity.database import Player, PlayerDatabase
 def make_player(
     wallet="0xAbCdEf1234567890AbCdEf1234567890AbCdEf12",
     steam_id="76561198012345678",
-    player_name="daniel_cs",
+    steam_display_name="daniel_cs",
     game="CS2",
 ) -> Player:
-    return Player(wallet_address=wallet, steam_id=steam_id, player_name=player_name, game=game)
+    return Player(wallet_address=wallet, steam_id=steam_id, steam_display_name=steam_display_name, game=game)
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ class TestAdd:
         db.add(make_player())
         player = db.get("0xAbCdEf1234567890AbCdEf1234567890AbCdEf12")
         assert player is not None
-        assert player.player_name == "daniel_cs"
+        assert player.steam_display_name == "daniel_cs"
 
     def test_add_duplicate_raises(self, db):
         db.add(make_player())
@@ -67,12 +67,12 @@ class TestGet:
 
 # ── Update ────────────────────────────────────────────────────────────────────
 class TestUpdate:
-    def test_update_player_name(self, db):
+    def test_update_steam_display_name(self, db):
         db.add(make_player())
-        updated = make_player(player_name="new_name")
+        updated = make_player(steam_display_name="new_name")
         db.update(updated)
         player = db.get("0xAbCdEf1234567890AbCdEf1234567890AbCdEf12")
-        assert player.player_name == "new_name"
+        assert player.steam_display_name == "new_name"
 
     def test_update_game(self, db):
         db.add(make_player())

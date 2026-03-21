@@ -28,7 +28,7 @@ class TestSuccessfulRegistration:
         register_player(WALLET_A, STEAM_A, "daniel", "CS2", db)
         player = db.get(WALLET_A)
         assert player is not None
-        assert player.player_name == "daniel"
+        assert player.steam_display_name == "daniel"
         assert player.steam_id == STEAM_A
 
 

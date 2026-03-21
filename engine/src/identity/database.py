@@ -1,6 +1,6 @@
 """
 ARENA Engine — Player Identity Database
-Stores the mapping: wallet_address → steam_id → player_name → game
+Stores the mapping: wallet_address → steam_id → steam_display_name → game
 Uses SQLite (local file, no server needed).
 Also manages the blacklist for banned players.
 """
@@ -28,7 +28,7 @@ _STEAM_RE  = re.compile(r"^\d{17}$")               # Steam ID: exactly 17 digits
 class Player:
     wallet_address: str   # primary key  e.g. "0xAbC...123"
     steam_id:       str   # e.g. "76561198012345678"
-    player_name:    str   # e.g. "daniel_cs"
+    steam_display_name: str   # e.g. "daniel_cs" — the name OCR reads from the scoreboard
     game:           str   # e.g. "CS2" | "Valorant" | "Fortnite"
 
 
@@ -62,7 +62,7 @@ class PlayerDatabase:
             CREATE TABLE IF NOT EXISTS players (
                 wallet_address TEXT PRIMARY KEY,
                 steam_id       TEXT NOT NULL UNIQUE,
-                player_name    TEXT NOT NULL,
+                steam_display_name TEXT NOT NULL,
                 game           TEXT NOT NULL
             )
         """)
@@ -86,12 +86,12 @@ class PlayerDatabase:
 
         try:
             self._conn.execute(
-                "INSERT INTO players (wallet_address, steam_id, player_name, game) VALUES (?, ?, ?, ?)",
-                (player.wallet_address, player.steam_id, player.player_name, player.game),
+                "INSERT INTO players (wallet_address, steam_id, steam_display_name, game) VALUES (?, ?, ?, ?)",
+                (player.wallet_address, player.steam_id, player.steam_display_name, player.game),
             )
             self._conn.commit()
-            log.info("add | wallet=%s steam=%s name=%s game=%s",
-                     player.wallet_address, player.steam_id, player.player_name, player.game)
+            log.info("add | wallet=%s steam=%s display_name=%s game=%s",
+                     player.wallet_address, player.steam_id, player.steam_display_name, player.game)
         except sqlite3.IntegrityError:
             raise ValueError(f"Steam ID '{player.steam_id}' is already registered with another wallet")
 
@@ -104,11 +104,11 @@ class PlayerDatabase:
         if row is None:
             log.info("get | wallet=%s → not found", wallet_address)
             return None
-        log.info("get | wallet=%s → found name=%s", wallet_address, row["player_name"])
+        log.info("get | wallet=%s → found display_name=%s", wallet_address, row["steam_display_name"])
         return Player(
             wallet_address=row["wallet_address"],
             steam_id=row["steam_id"],
-            player_name=row["player_name"],
+            steam_display_name=row["steam_display_name"],
             game=row["game"],
         )
 
@@ -118,13 +118,13 @@ class PlayerDatabase:
         _validate_steam(player.steam_id)
 
         cursor = self._conn.execute(
-            "UPDATE players SET steam_id=?, player_name=?, game=? WHERE wallet_address=?",
-            (player.steam_id, player.player_name, player.game, player.wallet_address),
+            "UPDATE players SET steam_id=?, steam_display_name=?, game=? WHERE wallet_address=?",
+            (player.steam_id, player.steam_display_name, player.game, player.wallet_address),
         )
         self._conn.commit()
         if cursor.rowcount == 0:
             raise ValueError(f"Player with wallet '{player.wallet_address}' not found")
-        log.info("update | wallet=%s → name=%s game=%s", player.wallet_address, player.player_name, player.game)
+        log.info("update | wallet=%s → display_name=%s game=%s", player.wallet_address, player.steam_display_name, player.game)
 
     def delete(self, wallet_address: str) -> None:
         """Delete a player by wallet address. Raises ValueError if not found."""
@@ -149,7 +149,7 @@ class PlayerDatabase:
         return Player(
             wallet_address=row["wallet_address"],
             steam_id=row["steam_id"],
-            player_name=row["player_name"],
+            steam_display_name=row["steam_display_name"],
             game=row["game"],
         )
 
