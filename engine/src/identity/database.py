@@ -92,6 +92,13 @@ class PlayerDatabase:
                 admin_note     TEXT NOT NULL DEFAULT ''
             )
         """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS match_log (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                wallet_address TEXT NOT NULL,
+                played_at      TEXT NOT NULL DEFAULT (date('now'))
+            )
+        """)
         self._conn.commit()
 
     # ── CRUD ──────────────────────────────────────────────────────────────────
@@ -240,6 +247,26 @@ class PlayerDatabase:
         if approved:
             self.unblacklist(wallet_address)
         log.info("dispute %s | wallet=%s note=%s", status, wallet_address, admin_note)
+
+    # ── Match Log ──────────────────────────────────────────────────────────────
+    def log_match(self, wallet_address: str) -> None:
+        """רושם כניסה למשחק עבור שחקן."""
+        _validate_wallet(wallet_address)
+        self._conn.execute(
+            "INSERT INTO match_log (wallet_address) VALUES (?)",
+            (wallet_address,),
+        )
+        self._conn.commit()
+        log.info("match_log | wallet=%s", wallet_address)
+
+    def get_today_match_count(self, wallet_address: str) -> int:
+        """מחזיר כמה משחקים שיחק השחקן היום."""
+        _validate_wallet(wallet_address)
+        row = self._conn.execute(
+            "SELECT COUNT(*) as cnt FROM match_log WHERE wallet_address = ? AND played_at = date('now')",
+            (wallet_address,),
+        ).fetchone()
+        return row["cnt"]
 
     def close(self) -> None:
         self._conn.close()
