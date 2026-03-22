@@ -25,3 +25,4 @@ python-dotenv==1.0.*
 
 # ── Crypto / Wallet (Web3 integration) ───────────────────────
 python-multipart==0.0.*
+ccxt==4.5.*
