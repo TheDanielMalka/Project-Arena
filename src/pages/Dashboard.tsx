@@ -22,7 +22,7 @@ const Dashboard = () => {
           <p className="text-muted-foreground mt-1">Your performance overview</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button onClick={() => navigate("/lobby")} className="glow-green font-display">
+          <Button onClick={() => navigate("/lobby")} className="glow-green font-display animate-glow-breath">
             <Swords className="mr-2 h-4 w-4" /> Find Match
           </Button>
           <Button variant="outline" onClick={() => navigate("/wallet")} className="border-primary/30 text-primary hover:bg-primary/10 font-display">
