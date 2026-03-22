@@ -85,7 +85,7 @@ const Leaderboard = () => {
           return (
             <Card
               key={player.username}
-              className={`bg-card ${borders[idx]} ${glows[idx]} text-center cursor-pointer transition-all hover:-translate-y-0.5 ${
+              className={`bg-card ${borders[idx]} ${glows[idx]} text-center cursor-pointer arena-hover ${
                 selectedTopPlayer.username === player.username ? "ring-1 ring-primary/40" : ""
               }`}
               onClick={() => setSelectedTopPlayer(player)}

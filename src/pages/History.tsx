@@ -126,7 +126,7 @@ const History = () => {
             return (
               <Card
                 key={m.id}
-                className="bg-card border-border hover:border-primary/20 transition-colors cursor-pointer"
+                className="bg-card border-border cursor-pointer arena-hover"
                 onClick={() => setExpandedMatchId((prev) => (prev === m.id ? null : m.id))}
               >
                 <CardContent className="p-4">

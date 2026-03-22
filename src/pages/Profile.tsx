@@ -354,7 +354,7 @@ const Profile = () => {
             {gameConnections.filter(g => g.platform === "pc").map((game) => (
               <div
                 key={game.name}
-                className="flex items-center justify-between p-3 rounded-lg border border-border bg-secondary/30 hover:bg-secondary/50 transition-colors"
+                className="flex items-center justify-between p-3 rounded-lg border border-border bg-secondary/30 arena-hover"
               >
                 <div className="flex items-center gap-2">
                   <Gamepad2 className="h-4 w-4 text-arena-cyan" />
@@ -404,7 +404,7 @@ const Profile = () => {
             {gameConnections.filter(g => g.platform === "mobile").map((game) => (
               <div
                 key={game.name}
-                className="flex items-center justify-between p-3 rounded-lg border border-border bg-secondary/30 hover:bg-secondary/50 transition-colors"
+                className="flex items-center justify-between p-3 rounded-lg border border-border bg-secondary/30 arena-hover"
               >
                 <div className="flex items-center gap-2">
                   <Smartphone className="h-4 w-4 text-arena-orange" />
