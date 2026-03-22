@@ -11,12 +11,14 @@ import re
 import sqlite3
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, List
 
 log = logging.getLogger("identity.database")
 
-# ── Default DB path (sits next to this file) ─────────────────────────────────
-_DEFAULT_DB_PATH = "players.db"
+# ── Default DB path: engine/data/players.db ──────────────────────────────────
+_DATA_DIR        = Path(__file__).parent.parent.parent / "data"
+_DEFAULT_DB_PATH = str(_DATA_DIR / "players.db")
 
 # ── Validation patterns ───────────────────────────────────────────────────────
 _WALLET_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")   # Ethereum: 0x + 40 hex chars
@@ -60,6 +62,7 @@ class PlayerDatabase:
 
     def __init__(self, db_path: str = _DEFAULT_DB_PATH):
         self.db_path = db_path
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row   # rows behave like dicts
         self._create_table()
