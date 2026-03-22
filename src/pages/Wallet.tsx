@@ -268,7 +268,7 @@ const WalletPage = () => {
             {networkTokens.map((token) => (
               <div
                 key={token.symbol}
-                className="flex items-center justify-between p-4 rounded-lg bg-secondary/50 border border-border hover:border-primary/30 transition-colors"
+                className="flex items-center justify-between p-4 rounded-lg bg-secondary/50 border border-border arena-hover"
               >
                 <div className="flex items-center gap-3">
                   <span className="text-2xl">{token.icon}</span>

@@ -369,7 +369,7 @@ const MatchLobby = () => {
                   return (
                     <div
                       key={match.id}
-                      className="flex items-center justify-between p-4 rounded-lg border border-border bg-secondary/30 hover:bg-secondary/50 transition-colors cursor-pointer"
+                      className="flex items-center justify-between p-4 rounded-lg border border-border bg-secondary/30 cursor-pointer arena-hover"
                       onClick={() => handleOpenPublicLobby(match.id)}
                     >
                       <div className="flex items-center gap-4">
@@ -602,7 +602,7 @@ const MatchLobby = () => {
               const canJoin = match.status === "waiting" && (!teamAFull || !teamBFull);
 
               return (
-                <Card key={match.id} className="bg-card border-border">
+                <Card key={match.id} className="bg-card border-border cursor-pointer arena-hover">
                   <CardContent className="p-4 space-y-3">
                     {/* Header */}
                     <div className="flex items-center justify-between">
