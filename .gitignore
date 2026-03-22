@@ -75,6 +75,10 @@ htmlcov/
 # -----------------------------
 logs/
 *.log
+
+# Database files (created at runtime — not committed)
+engine/data/*.db
+engine/data/backups/*.db
 screenshots/
 client/screenshots/
 engine/screenshots/
