@@ -2,7 +2,7 @@
 Tests for BinanceClient — all API calls are mocked (no real keys needed).
 """
 
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 import pytest
 import ccxt
 
