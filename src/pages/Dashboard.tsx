@@ -19,7 +19,6 @@ const Dashboard = () => {
           <h1 className="font-display text-3xl font-bold tracking-wide">
             Welcome back, {user?.username ?? "Player"}
           </h1>
-          <p className="text-muted-foreground mt-1">Your performance overview</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button onClick={() => navigate("/lobby")} className="glow-green font-display animate-glow-breath">
