@@ -6,7 +6,7 @@ from typing import Optional
 
 import ccxt
 
-from engine.src.config import BINANCE_API_KEY, BINANCE_SECRET
+from src.config import BINANCE_API_KEY, BINANCE_SECRET
 
 logger = logging.getLogger(__name__)
 

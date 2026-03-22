@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch, PropertyMock
 import pytest
 import ccxt
 
-from engine.src.wallet.binance_client import BinanceClient, BinanceClientError, MAX_RETRIES
+from src.wallet.binance_client import BinanceClient, BinanceClientError, MAX_RETRIES
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -128,14 +128,14 @@ class TestRateLimitRetry:
             ccxt.RateLimitExceeded("slow down"),
             {"free": {"USDT": "100"}},
         ]
-        with patch("engine.src.wallet.binance_client.time.sleep"):
+        with patch("src.wallet.binance_client.time.sleep"):
             result = client.get_balance("USDT")
         assert result == 100.0
 
     def test_raises_after_max_retries_exceeded(self, client):
         mock = _mock_exchange(client)
         mock.fetch_balance.side_effect = ccxt.RateLimitExceeded("too fast")
-        with patch("engine.src.wallet.binance_client.time.sleep"):
+        with patch("src.wallet.binance_client.time.sleep"):
             with pytest.raises(BinanceClientError, match="Rate limit exceeded"):
                 client.get_balance()
         assert mock.fetch_balance.call_count == MAX_RETRIES
