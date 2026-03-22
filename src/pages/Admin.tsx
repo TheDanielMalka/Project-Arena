@@ -111,18 +111,18 @@ interface ActivityEvent {
 // ─── Mock Data ───────────────────────────────────────────────
 
 const MOCK_DISPUTES: Dispute[] = [
-  { id: "D-1051", matchId: "M-2048", playerA: "xDragon99", playerB: "ShadowKing", game: "CS2", stake: "$120", reason: "Player B claims disconnect wasn't counted", status: "open", resolution: "pending", createdAt: "2026-03-08 14:22", evidence: "Screenshot of disconnect error" },
-  { id: "D-1050", matchId: "M-2045", playerA: "NovaBlade", playerB: "CyberWolf", game: "Valorant", stake: "$75", reason: "Suspected aim-bot usage by Player A", status: "reviewing", resolution: "pending", createdAt: "2026-03-08 11:05" },
-  { id: "D-1048", matchId: "M-2039", playerA: "PhantomAce", playerB: "IronClad", game: "CS2", stake: "$200", reason: "Vision engine failed to capture final round", status: "escalated", resolution: "pending", createdAt: "2026-03-07 22:30", evidence: "Game API logs attached" },
-  { id: "D-1045", matchId: "M-2031", playerA: "StormRider", playerB: "DarkViper", game: "Valorant", stake: "$50", reason: "Player A rage-quit mid-match", status: "resolved", resolution: "player_b_wins", createdAt: "2026-03-07 09:15" },
-  { id: "D-1042", matchId: "M-2025", playerA: "BlazeFury", playerB: "NightHawk", game: "CS2", stake: "$90", reason: "Both players claim victory", status: "resolved", resolution: "refund", createdAt: "2026-03-06 17:40" },
+  { id: "D-1051", matchId: "M-2048", playerA: "DUNELZ", playerB: "ShadowKing", game: "CS2", stake: "$120", reason: "Player B claims disconnect wasn't counted", status: "open", resolution: "pending", createdAt: "2026-03-08 14:22", evidence: "Screenshot of disconnect error" },
+  { id: "D-1050", matchId: "M-2045", playerA: "DUNELZ", playerB: "CyberWolf", game: "Valorant", stake: "$75", reason: "Suspected aim-bot usage by Player A", status: "reviewing", resolution: "pending", createdAt: "2026-03-08 11:05" },
+  { id: "D-1048", matchId: "M-2039", playerA: "DUNELZ", playerB: "IronClad", game: "CS2", stake: "$200", reason: "Vision engine failed to capture final round", status: "escalated", resolution: "pending", createdAt: "2026-03-07 22:30", evidence: "Game API logs attached" },
+  { id: "D-1045", matchId: "M-2031", playerA: "DUNELZ", playerB: "DarkViper", game: "Valorant", stake: "$50", reason: "Player A rage-quit mid-match", status: "resolved", resolution: "player_b_wins", createdAt: "2026-03-07 09:15" },
+  { id: "D-1042", matchId: "M-2025", playerA: "DUNELZ", playerB: "NightHawk", game: "CS2", stake: "$90", reason: "Both players claim victory", status: "resolved", resolution: "refund", createdAt: "2026-03-06 17:40" },
 ];
 
 const MOCK_FLAGGED_USERS: FlaggedUser[] = [
-  { id: "U-301", username: "xDragon99", walletShort: "0x7a3...f9c2", reason: "92% win rate over 50 matches", winRate: 92, matchesPlayed: 54, flaggedAt: "2026-03-08", status: "flagged" },
-  { id: "U-288", username: "GhostSniper", walletShort: "0x1b8...44a1", reason: "Multiple accounts detected (smurf)", winRate: 78, matchesPlayed: 31, flaggedAt: "2026-03-07", status: "banned" },
-  { id: "U-275", username: "QuickScope", walletShort: "0x9e2...bb07", reason: "Suspicious betting pattern", winRate: 65, matchesPlayed: 120, flaggedAt: "2026-03-06", status: "cleared" },
-  { id: "U-260", username: "SilentKill", walletShort: "0x3c4...d5e8", reason: "Hardware fingerprint mismatch", winRate: 71, matchesPlayed: 43, flaggedAt: "2026-03-05", status: "flagged" },
+  { id: "U-301", username: "DUNELZ", walletShort: "0x7a3...f9c2", reason: "92% win rate over 50 matches", winRate: 92, matchesPlayed: 54, flaggedAt: "2026-03-08", status: "flagged" },
+  { id: "U-288", username: "DUNELZ", walletShort: "0x1b8...44a1", reason: "Multiple accounts detected (smurf)", winRate: 78, matchesPlayed: 31, flaggedAt: "2026-03-07", status: "banned" },
+  { id: "U-275", username: "DUNELZ", walletShort: "0x9e2...bb07", reason: "Suspicious betting pattern", winRate: 65, matchesPlayed: 120, flaggedAt: "2026-03-06", status: "cleared" },
+  { id: "U-260", username: "DUNELZ", walletShort: "0x3c4...d5e8", reason: "Hardware fingerprint mismatch", winRate: 71, matchesPlayed: 43, flaggedAt: "2026-03-05", status: "flagged" },
 ];
 
 const MOCK_AUDIT_LOG: AuditLog[] = [
