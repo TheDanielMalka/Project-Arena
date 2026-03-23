@@ -36,7 +36,7 @@ def engine():
 
 @pytest.fixture
 def handler(engine):
-    return ScreenshotHandler(engine)
+    return ScreenshotHandler(engine, wallet_address="0x" + "a" * 40)
 
 
 # ─── tests ───────────────────────────────────────────────────────────────────
