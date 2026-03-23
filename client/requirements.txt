@@ -16,3 +16,6 @@ psutil==6.*
 
 # Build
 pyinstaller==6.11.*
+
+# Testing
+pytest==9.*
