@@ -10,7 +10,7 @@ CREATE TYPE game           AS ENUM ('CS2','Valorant','Fortnite','Apex Legends');
 CREATE TYPE tx_type        AS ENUM ('deposit','withdrawal','match_win','match_loss','fee','refund','escrow_lock','escrow_release');
 CREATE TYPE tx_status      AS ENUM ('completed','pending','failed');
 CREATE TYPE dispute_status AS ENUM ('open','reviewing','resolved','escalated');
-CREATE TYPE dispute_resolution AS ENUM ('pending','player_a_wins','player_b_wins','refund','void');
+CREATE TYPE dispute_resolution AS ENUM ('pending','approved','rejected','player_a_wins','player_b_wins','refund','void');
 CREATE TYPE network        AS ENUM ('bsc','solana','ethereum');
 CREATE TYPE user_status    AS ENUM ('active','flagged','banned','suspended');
 CREATE TYPE app_role       AS ENUM ('user','admin','moderator');

@@ -9,7 +9,7 @@ export type TransactionType = "deposit" | "withdrawal" | "match_win" | "match_lo
 export type TransactionStatus = "completed" | "pending" | "failed";
 
 export type DisputeStatus = "open" | "reviewing" | "resolved" | "escalated";
-export type DisputeResolution = "pending" | "player_a_wins" | "player_b_wins" | "refund" | "void";
+export type DisputeResolution = "pending" | "approved" | "rejected" | "player_a_wins" | "player_b_wins" | "refund" | "void";
 
 export type Network = "bsc" | "solana" | "ethereum";
 

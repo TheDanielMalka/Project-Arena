@@ -56,12 +56,14 @@ export function EarningsChart() {
   const [hovered, setHovered] = useState<number | null>(null);
 
   useEffect(() => {
-    if (lineRef.current) {
+    if (lineRef.current && typeof lineRef.current.getTotalLength === "function") {
       const l = lineRef.current.getTotalLength();
       setLength(l);
       requestAnimationFrame(() => {
         requestAnimationFrame(() => setDrawn(true));
       });
+    } else {
+      setDrawn(true);
     }
   }, []);
 

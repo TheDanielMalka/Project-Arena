@@ -98,7 +98,7 @@ class WalletManager:
         amount: float,
         asset: str = DEFAULT_ASSET,
         match_id: Optional[str] = None,
-        tx_type: str = "payout",
+        tx_type: str = "match_win",
     ) -> Transaction:
         """
         Send *amount* of *asset* to *to_address*.
@@ -164,7 +164,7 @@ class WalletManager:
         tx: Transaction,
         wallet_address: str = "",
         match_id: Optional[str] = None,
-        tx_type: str = "payout",
+        tx_type: str = "match_win",
     ) -> None:
         self._log.append(tx)
         if self._ledger is not None:

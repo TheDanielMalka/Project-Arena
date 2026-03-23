@@ -26,10 +26,18 @@ log = logging.getLogger("wallet.ledger")
 _DATA_DIR        = Path(__file__).parent.parent.parent / "data"
 _DEFAULT_DB_PATH = str(_DATA_DIR / "ledger.db")
 
-# ── Transaction types ─────────────────────────────────────────────────────────
-TX_DEPOSIT = "deposit"
-TX_PAYOUT  = "payout"
-TX_FEE     = "fee"
+# ── Transaction types — aligned with Postgres tx_type enum and UI ─────────────
+TX_DEPOSIT         = "deposit"
+TX_WITHDRAWAL      = "withdrawal"
+TX_MATCH_WIN       = "match_win"       # winner payout (replaces TX_PAYOUT)
+TX_MATCH_LOSS      = "match_loss"      # loser record
+TX_FEE             = "fee"
+TX_REFUND          = "refund"
+TX_ESCROW_LOCK     = "escrow_lock"     # funds locked in smart contract
+TX_ESCROW_RELEASE  = "escrow_release"  # funds released from smart contract
+
+# Backward-compatible alias
+TX_PAYOUT = TX_MATCH_WIN
 
 
 # ── Data model ────────────────────────────────────────────────────────────────
