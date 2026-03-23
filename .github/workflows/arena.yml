@@ -51,12 +51,23 @@ jobs:
         RUN_ALL_ENGINE=0
         RUN_CLIENT_SMOKE=0
 
+        RUN_CLIENT_TESTS=0
+
         for FILE in $CHANGED; do
-          if [[ "$FILE" == client/*.py ]]; then
-            RUN_CLIENT_SMOKE=1
+          # Client test file changed -> run full client test suite
+          if [[ "$FILE" == client/tests/test_*.py ]]; then
+            echo "Changed client test file: $FILE"
+            RUN_CLIENT_TESTS=1
+            continue
           fi
 
-          # If test file itself changed, run it directly
+          # Client source changed -> run smoke compile + client tests
+          if [[ "$FILE" == client/main.py || "$FILE" == client/*.py ]]; then
+            RUN_CLIENT_SMOKE=1
+            RUN_CLIENT_TESTS=1
+          fi
+
+          # If engine test file itself changed, run it directly
           if [[ "$FILE" == engine/tests/test_*.py ]]; then
             echo "Changed test file: $FILE"
             TEST_FILES+=("$FILE")
@@ -96,6 +107,12 @@ jobs:
         if [ "$RUN_CLIENT_SMOKE" -eq 1 ]; then
           echo "Client Python changed - running smoke compile"
           python -m py_compile client/main.py
+        fi
+
+        if [ "$RUN_CLIENT_TESTS" -eq 1 ]; then
+          echo "Running client test suite"
+          pip install -r client/requirements.txt --quiet
+          pytest client/tests -v
         fi
 
   issue-management:
