@@ -8,7 +8,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from src.wallet.ledger import TransactionLedger
 
 import ccxt
 
@@ -60,9 +63,11 @@ class WalletManager:
         self,
         client: BinanceClient,
         platform_address: str,
+        ledger: Optional[TransactionLedger] = None,
     ) -> None:
         self._client = client
         self._platform_address = platform_address
+        self._ledger = ledger          # Issue #22 — optional persistent ledger
         self._log: list[Transaction] = []
 
     # ── Balance ──────────────────────────────────────────────────────────────
@@ -92,6 +97,8 @@ class WalletManager:
         to_address: str,
         amount: float,
         asset: str = DEFAULT_ASSET,
+        match_id: Optional[str] = None,
+        tx_type: str = "payout",
     ) -> Transaction:
         """
         Send *amount* of *asset* to *to_address*.
@@ -128,7 +135,7 @@ class WalletManager:
                 )
                 tx.tx_hash = result.get("id") or result.get("txid", "unknown")
                 tx.status = "success"
-                self._log_transaction(tx)
+                self._log_transaction(tx, to_address, match_id, tx_type)
                 logger.info(
                     "Payment sent: %.4f %s → %s (tx=%s)",
                     amount, asset, to_address, tx.tx_hash,
@@ -144,7 +151,7 @@ class WalletManager:
                     )
 
         tx.status = "failed"
-        self._log_transaction(tx)
+        self._log_transaction(tx, to_address, match_id, tx_type)
         raise TransactionError(
             f"Payment of {amount} {asset} to {to_address} failed "
             f"after {MAX_RETRIES} attempts: {last_error}"
@@ -152,8 +159,17 @@ class WalletManager:
 
     # ── Transaction log ──────────────────────────────────────────────────────
 
-    def _log_transaction(self, tx: Transaction) -> None:
+    def _log_transaction(
+        self,
+        tx: Transaction,
+        wallet_address: str = "",
+        match_id: Optional[str] = None,
+        tx_type: str = "payout",
+    ) -> None:
         self._log.append(tx)
+        if self._ledger is not None:
+            self._ledger.record(tx, wallet_address=wallet_address,
+                                tx_type=tx_type, match_id=match_id)
 
     def get_transaction_log(self) -> list[Transaction]:
         """Return a copy of all logged transactions (used by Issue #22 ledger)."""
