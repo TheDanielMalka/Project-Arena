@@ -8,6 +8,8 @@ from .fee_engine import FeeEngine, FeeResult, FeeConfigError, DEFAULT_FEE_PERCEN
 __all__ = [
     "BinanceClient", "BinanceClientError",
     "WalletManager", "Transaction", "InsufficientBalanceError", "TransactionError",
-    "TransactionLedger", "LedgerEntry", "TX_DEPOSIT", "TX_PAYOUT", "TX_FEE",
+    "TransactionLedger", "LedgerEntry",
+    "TX_DEPOSIT", "TX_WITHDRAWAL", "TX_MATCH_WIN", "TX_MATCH_LOSS",
+    "TX_FEE", "TX_REFUND", "TX_ESCROW_LOCK", "TX_ESCROW_RELEASE", "TX_PAYOUT",
     "FeeEngine", "FeeResult", "FeeConfigError", "DEFAULT_FEE_PERCENT",
 ]

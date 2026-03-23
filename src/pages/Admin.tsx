@@ -64,7 +64,7 @@ import { useNotificationStore } from "@/stores/notificationStore";
 // ─── Types ───────────────────────────────────────────────────
 
 type DisputeStatus = "open" | "reviewing" | "resolved" | "escalated";
-type DisputeResolution = "pending" | "player_a_wins" | "player_b_wins" | "refund" | "void";
+type DisputeResolution = "pending" | "approved" | "rejected" | "player_a_wins" | "player_b_wins" | "refund" | "void";
 
 interface Dispute {
   id: string;
