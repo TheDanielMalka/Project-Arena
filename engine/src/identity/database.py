@@ -30,8 +30,9 @@ _STEAM_RE  = re.compile(r"^\d{17}$")               # Steam ID: exactly 17 digits
 class Dispute:
     wallet_address: str   # who is appealing
     reason:         str   # what they wrote
-    status:         str   # "pending" | "approved" | "rejected"
-    admin_note:     str = ""  # what the admin wrote when deciding
+    status:         str   # "open" | "reviewing" | "escalated" | "resolved"
+    resolution:     str = ""   # "approved" | "rejected" | "refund" | "void" | "player_a_wins" | "player_b_wins"
+    admin_note:     str = ""   # what the admin wrote when deciding
 
 
 # ── Player dataclass ─────────────────────────────────────────────────────────
@@ -88,7 +89,8 @@ class PlayerDatabase:
             CREATE TABLE IF NOT EXISTS disputes (
                 wallet_address TEXT PRIMARY KEY,
                 reason         TEXT NOT NULL,
-                status         TEXT NOT NULL DEFAULT 'pending',
+                status         TEXT NOT NULL DEFAULT 'open',
+                resolution     TEXT NOT NULL DEFAULT '',
                 admin_note     TEXT NOT NULL DEFAULT ''
             )
         """)
@@ -210,43 +212,67 @@ class PlayerDatabase:
 
     # ── Disputes ──────────────────────────────────────────────────────────────
     def submit_dispute(self, wallet_address: str, reason: str) -> None:
-        """Player submits an appeal. Raises ValueError if not blacklisted or already pending."""
+        """Player submits an appeal. Raises ValueError if not blacklisted."""
         _validate_wallet(wallet_address)
         if not self.is_blacklisted(wallet_address):
             raise ValueError(f"Wallet '{wallet_address}' is not blacklisted — no dispute needed")
         self._conn.execute(
-            "INSERT OR REPLACE INTO disputes (wallet_address, reason, status, admin_note) VALUES (?, ?, 'pending', '')",
+            "INSERT OR REPLACE INTO disputes (wallet_address, reason, status, resolution, admin_note) VALUES (?, ?, 'open', '', '')",
             (wallet_address, reason),
         )
         self._conn.commit()
         log.info("dispute submitted | wallet=%s", wallet_address)
 
-    def get_pending_disputes(self) -> List[Dispute]:
-        """Return all disputes waiting for admin review."""
+    def get_open_disputes(self) -> List[Dispute]:
+        """Return all disputes not yet resolved (open / reviewing / escalated)."""
         rows = self._conn.execute(
-            "SELECT * FROM disputes WHERE status = 'pending'"
+            "SELECT * FROM disputes WHERE status != 'resolved'"
         ).fetchall()
-        return [Dispute(
-            wallet_address=r["wallet_address"],
-            reason=r["reason"],
-            status=r["status"],
-            admin_note=r["admin_note"],
-        ) for r in rows]
+        return [self._row_to_dispute(r) for r in rows]
 
-    def resolve_dispute(self, wallet_address: str, approved: bool, admin_note: str = "") -> None:
-        """Admin approves or rejects a dispute."""
+    def get_pending_disputes(self) -> List[Dispute]:
+        """Alias for get_open_disputes() — backward compatibility."""
+        return self.get_open_disputes()
+
+    def update_dispute_status(self, wallet_address: str, status: str) -> None:
+        """Admin updates dispute status: open → reviewing → escalated."""
         _validate_wallet(wallet_address)
-        status = "approved" if approved else "rejected"
+        valid = {"open", "reviewing", "escalated"}
+        if status not in valid:
+            raise ValueError(f"Invalid status '{status}' — must be one of {valid}")
         cursor = self._conn.execute(
-            "UPDATE disputes SET status=?, admin_note=? WHERE wallet_address=? AND status='pending'",
-            (status, admin_note, wallet_address),
+            "UPDATE disputes SET status=? WHERE wallet_address=? AND status != 'resolved'",
+            (status, wallet_address),
+        )
+        self._conn.commit()
+        if cursor.rowcount == 0:
+            raise ValueError(f"No active dispute found for wallet '{wallet_address}'")
+        log.info("dispute status → %s | wallet=%s", status, wallet_address)
+
+    def resolve_dispute(self, wallet_address: str, approved: bool, admin_note: str = "", resolution: str = "") -> None:
+        """Admin resolves a dispute. approved=True → unblacklist player."""
+        _validate_wallet(wallet_address)
+        res = resolution if resolution else ("approved" if approved else "rejected")
+        cursor = self._conn.execute(
+            "UPDATE disputes SET status='resolved', resolution=?, admin_note=? WHERE wallet_address=? AND status != 'resolved'",
+            (res, admin_note, wallet_address),
         )
         self._conn.commit()
         if cursor.rowcount == 0:
             raise ValueError(f"No pending dispute found for wallet '{wallet_address}'")
         if approved:
             self.unblacklist(wallet_address)
-        log.info("dispute %s | wallet=%s note=%s", status, wallet_address, admin_note)
+        log.info("dispute resolved | wallet=%s resolution=%s note=%s", wallet_address, res, admin_note)
+
+    @staticmethod
+    def _row_to_dispute(r) -> Dispute:
+        return Dispute(
+            wallet_address=r["wallet_address"],
+            reason=r["reason"],
+            status=r["status"],
+            resolution=r["resolution"],
+            admin_note=r["admin_note"],
+        )
 
     # ── Match Log ──────────────────────────────────────────────────────────────
     def log_match(self, wallet_address: str) -> None:
