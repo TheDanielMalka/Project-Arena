@@ -2,7 +2,7 @@
 ARENA Engine — Fee Engine (Platform Commission)
 Issue #24: Calculates and logs platform fees on every match payout.
 
-Default fee: 10% of the gross payout amount.
+Default fee: 5% of the gross payout amount.
 Fee deductions are logged in TransactionLedger (Issue #22) as tx_type="fee".
 
 TODO (requires M5 Smart Contract):
@@ -53,7 +53,7 @@ class FeeEngine:
     Calculates platform commission on match payouts.
 
     Usage:
-        engine = FeeEngine()                        # 10% default
+        engine = FeeEngine()                        # 5% default
         engine = FeeEngine(fee_percent=5.0)         # custom %
         engine = FeeEngine(ledger=my_ledger)        # with ledger logging
 
