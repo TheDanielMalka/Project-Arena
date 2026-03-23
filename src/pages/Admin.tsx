@@ -211,7 +211,7 @@ const Admin = () => {
   const [auditPage, setAuditPage] = useState(1);
 
   // Platform Settings
-  const [platformFee, setPlatformFee] = useState(10);
+  const [platformFee, setPlatformFee] = useState(5);
   const [dailyBetLimit, setDailyBetLimit] = useState(50);
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [newUserRegistration, setNewUserRegistration] = useState(true);
