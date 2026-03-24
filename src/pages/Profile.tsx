@@ -192,85 +192,71 @@ const Profile = () => {
         </Button>
       </div>
 
-      {/* Player Info */}
-      <Card className="bg-card border-border">
-        <CardHeader>
-          <CardTitle className="font-display flex items-center gap-2">
-            <User className="h-5 w-5 text-primary" /> Player Info
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex justify-between items-center">
-            <span className="text-muted-foreground">Username</span>
-            {editMode ? (
-              <Input
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="max-w-[200px] bg-secondary border-border text-right"
-              />
-            ) : (
-              <span className="font-medium">{username}</span>
-            )}
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-muted-foreground">Steam ID</span>
-            {editMode ? (
-              <Input
-                value={steamId}
-                onChange={(e) => setSteamId(e.target.value)}
-                className="max-w-[200px] bg-secondary border-border font-mono text-sm text-right"
-              />
-            ) : (
-              <span className="font-mono text-sm">{steamId}</span>
-            )}
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-muted-foreground">Rank</span>
-            <Badge className="bg-arena-gold/20 text-arena-gold border-arena-gold/30">Gold III</Badge>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-muted-foreground">Verification</span>
-            <Badge variant="default" className="flex items-center gap-1">
-              <Shield className="h-3 w-3" /> Verified
-            </Badge>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-muted-foreground">Preferred Game</span>
-            <span className="flex items-center gap-1">
-              <Gamepad2 className="h-4 w-4 text-arena-cyan" /> CS2
-            </span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-muted-foreground">Member Since</span>
-            <span className="text-sm">March 2026</span>
+      {/* Player Info — Gaming Card */}
+      <Card className="bg-card border-border overflow-hidden">
+        {/* Red accent bar */}
+        <div className="h-1 w-full bg-gradient-to-r from-primary via-primary/60 to-transparent" />
+        <CardContent className="p-6">
+          <div className="flex items-center gap-5">
+            {/* Avatar */}
+            <div className="relative shrink-0">
+              <div className="w-16 h-16 rounded-full bg-secondary border-2 border-primary/50 flex items-center justify-center shadow-[0_0_16px_hsl(355_78%_52%/0.25)]">
+                <span className="font-display text-xl font-bold text-primary">
+                  {username.slice(0, 2).toUpperCase()}
+                </span>
+              </div>
+              <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-primary border-2 border-background flex items-center justify-center">
+                <Shield className="h-2.5 w-2.5 text-white" />
+              </div>
+            </div>
+
+            {/* Name + rank + info */}
+            <div className="flex-1 min-w-0">
+              {editMode ? (
+                <Input
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="bg-secondary border-border font-display text-lg font-bold mb-1 h-8"
+                />
+              ) : (
+                <h2 className="font-display text-xl font-bold tracking-wide truncate">{username}</h2>
+              )}
+              <div className="flex items-center gap-2 mt-1">
+                <Badge className="bg-arena-gold/15 text-arena-gold border border-arena-gold/30 font-display text-xs px-2">
+                  <Trophy className="h-3 w-3 mr-1" /> Gold III
+                </Badge>
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Gamepad2 className="h-3 w-3" /> CS2
+                </span>
+              </div>
+              <div className="flex items-center gap-4 mt-2">
+                <span className="text-xs text-muted-foreground font-mono">{steamId}</span>
+                <span className="text-xs text-muted-foreground">Since March 2026</span>
+              </div>
+            </div>
+
+            {/* Stats — right side */}
+            <div className="flex items-center gap-4 shrink-0 border-l border-border/50 pl-5">
+              <div className="text-center">
+                <Trophy className="h-4 w-4 text-arena-gold mx-auto mb-0.5" />
+                <p className="font-display text-lg font-bold leading-none">{user?.stats.matches ?? 0}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Matches</p>
+              </div>
+              <div className="text-center">
+                <TrendingUp className="h-4 w-4 text-primary mx-auto mb-0.5" />
+                <p className="font-display text-lg font-bold leading-none">{user?.stats.winRate ?? 0}%</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Win Rate</p>
+              </div>
+              <div className="text-center">
+                <Zap className="h-4 w-4 text-arena-orange mx-auto mb-0.5" />
+                <p className="font-display text-lg font-bold leading-none">${user?.stats.totalEarnings?.toLocaleString() ?? "0"}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Earnings</p>
+              </div>
+            </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Quick Stats */}
-      <div className="grid grid-cols-3 gap-3">
-        <Card className="bg-card border-border">
-          <CardContent className="p-4 text-center">
-            <Trophy className="h-5 w-5 text-arena-gold mx-auto mb-1" />
-            <p className="font-display text-xl font-bold">{user?.stats.matches ?? 0}</p>
-            <p className="text-xs text-muted-foreground">Matches</p>
-          </CardContent>
-        </Card>
-        <Card className="bg-card border-border">
-          <CardContent className="p-4 text-center">
-            <TrendingUp className="h-5 w-5 text-primary mx-auto mb-1" />
-            <p className="font-display text-xl font-bold">{user?.stats.winRate ?? 0}%</p>
-            <p className="text-xs text-muted-foreground">Win Rate</p>
-          </CardContent>
-        </Card>
-        <Card className="bg-card border-border">
-          <CardContent className="p-4 text-center">
-            <Zap className="h-5 w-5 text-arena-orange mx-auto mb-1" />
-            <p className="font-display text-xl font-bold">${user?.stats.totalEarnings?.toLocaleString() ?? "0"}</p>
-            <p className="text-xs text-muted-foreground">Earnings</p>
-          </CardContent>
-        </Card>
-      </div>
 
       {/* Connections */}
       <Card className="bg-card border-border">
