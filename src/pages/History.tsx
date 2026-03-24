@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useMatchStore } from "@/stores/matchStore";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Search, Swords, Inbox, ChevronLeft, ChevronRight, Gamepad2, Filter, Users, Trophy, ChevronDown, ChevronUp } from "lucide-react";
 import type { Game, MatchStatus } from "@/types";
 
@@ -13,9 +13,10 @@ const ITEMS_PER_PAGE = 8;
 
 const History = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { matches } = useMatchStore();
   const [search, setSearch] = useState("");
-  const [gameFilter, setGameFilter] = useState<Game | "all">("all");
+  const [gameFilter, setGameFilter] = useState<Game | "all">((searchParams.get("game") as Game) ?? "all");
   const [statusFilter, setStatusFilter] = useState<MatchStatus | "all">("all");
   const [page, setPage] = useState(1);
   const [expandedMatchId, setExpandedMatchId] = useState<string | null>(null);
