@@ -86,6 +86,18 @@ const Profile = () => {
     "Fortnite Mobile":  { abbr: "FN",   color: "#38BDF8", bg: "rgba(56,189,248,0.12)", img: "https://play-lh.googleusercontent.com/FxJDPDIDJKlG9C8lOxaS041X27A0SrHAa46SGDIpPusAd4IEJihZTyGf-8rTZ_GpF34aeLvULilVuO0cpCJxTg=s120-rw" },
   };
 
+  // Game stats per connected game (mock data — display only)
+  const gameStats: Record<string, { matches: number; winRate: number; earnings: number; kd: number; rank: string; streak: number }> = {
+    "CS2":         { matches: 89, winRate: 67.4, earnings: 1240, kd: 1.8,  rank: "Gold",     streak: 4 },
+    "Valorant":    { matches: 58, winRate: 61.2, earnings: 1607, kd: 1.4,  rank: "Platinum", streak: 2 },
+    "Fortnite":    { matches: 21, winRate: 47.6, earnings: 310,  kd: 1.1,  rank: "Bronze",   streak: 1 },
+    "PUBG Mobile": { matches: 34, winRate: 52.9, earnings: 0,    kd: 2.1,  rank: "Crown",    streak: 0 },
+    "MLBB":        { matches: 12, winRate: 58.3, earnings: 0,    kd: 1.6,  rank: "Epic",     streak: 3 },
+  };
+
+  const connectedGames = gameConnections.filter(g => g.status === "connected");
+  const [activeGameTab, setActiveGameTab] = useState<string>(connectedGames[0]?.name ?? "CS2");
+
   const addNotification = useNotificationStore((s) => s.addNotification);
 
   const handleCopyWallet = () => {
@@ -408,43 +420,109 @@ const Profile = () => {
         </CardContent>
       </Card>
 
-      {/* Wallet Details */}
+      {/* Game Stats */}
       <Card className="bg-card border-border">
-        <CardHeader>
+        <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
-            <CardTitle className="font-display flex items-center gap-2">
-              <Wallet className="h-5 w-5 text-primary" /> Wallet
+            <CardTitle className="font-display text-sm tracking-widest uppercase text-muted-foreground flex items-center gap-2">
+              <Trophy className="h-4 w-4" /> Game Stats
             </CardTitle>
-            <Button size="sm" variant="outline" className="border-primary/30 text-primary hover:bg-primary/10 font-display text-xs" onClick={() => navigate("/wallet")}>
-              Open Wallet →
-            </Button>
+            <button onClick={() => navigate("/wallet")} className="text-[10px] font-display text-muted-foreground hover:text-primary transition-colors tracking-wider uppercase">
+              Full Stats →
+            </button>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex justify-between items-center">
-            <span className="text-muted-foreground">Address</span>
-            <span className="font-mono text-sm">{user?.walletShort ?? walletAddress}</span>
+        <CardContent className="pt-0 space-y-3">
+          {/* Game Tabs */}
+          <div className="flex gap-1.5 flex-wrap">
+            {connectedGames.map((game) => {
+              const cfg = gameConfig[game.name] ?? { abbr: game.name.slice(0,2).toUpperCase(), color: "#888", bg: "rgba(136,136,136,0.1)" };
+              const isActive = activeGameTab === game.name;
+              return (
+                <button
+                  key={game.name}
+                  onClick={() => setActiveGameTab(game.name)}
+                  className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-display font-semibold transition-all"
+                  style={{
+                    background: isActive ? cfg.bg : "transparent",
+                    border: `1px solid ${isActive ? cfg.color + "60" : "rgba(255,255,255,0.06)"}`,
+                    color: isActive ? cfg.color : "var(--muted-foreground)",
+                  }}
+                >
+                  <div className="w-4 h-4 rounded overflow-hidden flex items-center justify-center flex-shrink-0" style={{ background: cfg.bg }}>
+                    {cfg.img
+                      ? <img src={cfg.img} alt={game.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display="none"; }} />
+                      : <span style={{ color: cfg.color, fontSize: "7px", fontWeight: 700 }}>{cfg.abbr.slice(0,2)}</span>
+                    }
+                  </div>
+                  {cfg.abbr}
+                </button>
+              );
+            })}
           </div>
-          <div className="flex justify-between items-center">
-            <span className="text-muted-foreground">Balance</span>
-            <span className="font-display text-lg font-bold text-primary">
-              ${user?.balance.available.toLocaleString("en-US", { minimumFractionDigits: 2 }) ?? "0.00"}
-            </span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-muted-foreground">In Escrow</span>
-            <span className="font-display text-arena-gold">
-              ${user?.balance.inEscrow.toFixed(2) ?? "0.00"}
-            </span>
-          </div>
-          <div className="flex gap-2 pt-2">
-            <Button className="flex-1 glow-green font-display" size="sm" onClick={() => navigate("/wallet")}>
-              Deposit
-            </Button>
-            <Button variant="outline" className="flex-1 font-display border-border" size="sm" onClick={() => navigate("/wallet")}>
-              Withdraw
-            </Button>
-          </div>
+
+          {/* Active Game Stats */}
+          {(() => {
+            const stats = gameStats[activeGameTab];
+            const cfg = gameConfig[activeGameTab] ?? { abbr: activeGameTab?.slice(0,2) ?? "??", color: "#888", bg: "rgba(136,136,136,0.1)" };
+            if (!stats) return (
+              <div className="text-center py-4 text-muted-foreground text-xs font-display">No stats available for {activeGameTab}</div>
+            );
+            const winColor = stats.winRate >= 65 ? "#22C55E" : stats.winRate >= 55 ? "#F59E0B" : stats.winRate >= 45 ? "#F97316" : "#EF4444";
+            const segments = 20;
+            const filled = Math.round((stats.winRate / 100) * segments);
+            return (
+              <div className="space-y-3">
+                {/* Win Rate + Bar */}
+                <div className="flex items-end justify-between gap-3">
+                  <div>
+                    <div className="text-[10px] font-display uppercase tracking-widest text-muted-foreground mb-0.5">Win Rate</div>
+                    <div className="font-display font-bold text-3xl leading-none" style={{ color: winColor }}>
+                      {stats.winRate}%
+                    </div>
+                  </div>
+                  <div className="flex-1 space-y-1">
+                    <div className="flex gap-0.5">
+                      {Array.from({ length: segments }).map((_, i) => (
+                        <div
+                          key={i}
+                          className="flex-1 h-2 rounded-sm transition-all"
+                          style={{ background: i < filled ? winColor : "rgba(255,255,255,0.06)" }}
+                        />
+                      ))}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground font-mono text-right">
+                      {Math.round(stats.matches * stats.winRate / 100)}W – {Math.round(stats.matches * (1 - stats.winRate / 100))}L
+                    </div>
+                  </div>
+                </div>
+
+                {/* Stats Row */}
+                <div className="grid grid-cols-4 gap-1.5">
+                  {[
+                    { label: "Matches", value: stats.matches, icon: "⚔" },
+                    { label: "K/D",     value: stats.kd.toFixed(1), icon: "🎯" },
+                    { label: "Rank",    value: stats.rank, icon: "🏅" },
+                    { label: "Streak",  value: stats.streak > 0 ? `${stats.streak}🔥` : "—", icon: "⚡" },
+                  ].map(({ label, value, icon }) => (
+                    <div key={label} className="rounded-md p-2 text-center" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
+                      <div className="text-sm">{icon}</div>
+                      <div className="font-display font-bold text-xs mt-0.5">{value}</div>
+                      <div className="text-[9px] text-muted-foreground uppercase tracking-wider">{label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Earnings if any */}
+                {stats.earnings > 0 && (
+                  <div className="flex items-center justify-between px-2 py-1.5 rounded-md" style={{ background: "rgba(34,197,94,0.06)", border: "1px solid rgba(34,197,94,0.15)" }}>
+                    <span className="text-[10px] font-display uppercase tracking-widest text-muted-foreground">Earned in {activeGameTab}</span>
+                    <span className="font-display font-bold text-sm text-green-400">${stats.earnings.toLocaleString()}</span>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </CardContent>
       </Card>
 
