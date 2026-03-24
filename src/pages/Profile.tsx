@@ -68,6 +68,25 @@ const Profile = () => {
 
   const walletAddress = user?.walletShort ?? "0x1a2B...9fE4";
 
+  const gameConfig: Record<string, { abbr: string; color: string; bg: string; img?: string }> = {
+    "CS2":              { abbr: "CS2",  color: "#F97316", bg: "rgba(249,115,22,0.12)",  img: "https://cdn.cloudflare.steamstatic.com/steam/apps/730/capsule_sm_120.jpg" },
+    "Valorant":         { abbr: "VLR",  color: "#FF4655", bg: "rgba(255,70,85,0.12)",   img: "https://cdn.cloudflare.steamstatic.com/steam/apps/2181130/capsule_sm_120.jpg" },
+    "COD":              { abbr: "COD",  color: "#84CC16", bg: "rgba(132,204,22,0.12)",  img: "https://cdn.cloudflare.steamstatic.com/steam/apps/1938090/capsule_sm_120.jpg" },
+    "League of Legends":{ abbr: "LoL",  color: "#EAB308", bg: "rgba(234,179,8,0.12)",   img: "https://cdn.cloudflare.steamstatic.com/steam/apps/2801460/capsule_sm_120.jpg" },
+    "PUBG":             { abbr: "PUBG", color: "#F59E0B", bg: "rgba(245,158,11,0.12)",  img: "https://cdn.cloudflare.steamstatic.com/steam/apps/578080/capsule_sm_120.jpg" },
+    "Overwatch 2":      { abbr: "OW2",  color: "#F97316", bg: "rgba(249,115,22,0.12)",  img: "https://cdn.cloudflare.steamstatic.com/steam/apps/2357570/capsule_sm_120.jpg" },
+    "Team Fortress 2":  { abbr: "TF2",  color: "#EF4444", bg: "rgba(239,68,68,0.12)",   img: "https://cdn.cloudflare.steamstatic.com/steam/apps/440/capsule_sm_120.jpg" },
+    "Fortnite":         { abbr: "FN",   color: "#38BDF8", bg: "rgba(56,189,248,0.12)",  img: "https://cdn.cloudflare.steamstatic.com/steam/apps/1172620/capsule_sm_120.jpg" },
+    "FIFA / EA FC":     { abbr: "FC",   color: "#22C55E", bg: "rgba(34,197,94,0.12)",   img: "https://cdn.cloudflare.steamstatic.com/steam/apps/2195250/capsule_sm_120.jpg" },
+    "PES / eFootball":  { abbr: "PES",  color: "#3B82F6", bg: "rgba(59,130,246,0.12)",  img: "https://cdn.cloudflare.steamstatic.com/steam/apps/1665460/capsule_sm_120.jpg" },
+    "Arena of Valor":   { abbr: "AoV",  color: "#A855F7", bg: "rgba(168,85,247,0.12)" },
+    "MLBB":             { abbr: "ML",   color: "#EF4444", bg: "rgba(239,68,68,0.12)"  },
+    "Wild Rift":        { abbr: "WR",   color: "#6366F1", bg: "rgba(99,102,241,0.12)" },
+    "COD Mobile":       { abbr: "COD",  color: "#84CC16", bg: "rgba(132,204,22,0.12)" },
+    "PUBG Mobile":      { abbr: "PUBG", color: "#F59E0B", bg: "rgba(245,158,11,0.12)" },
+    "Fortnite Mobile":  { abbr: "FN",   color: "#38BDF8", bg: "rgba(56,189,248,0.12)" },
+  };
+
   const addNotification = useNotificationStore((s) => s.addNotification);
 
   const handleCopyWallet = () => {
@@ -260,117 +279,47 @@ const Profile = () => {
 
       {/* Connections */}
       <Card className="bg-card border-border">
-        <CardHeader>
-          <CardTitle className="font-display flex items-center gap-2">
-            <Link2 className="h-5 w-5 text-arena-purple" /> Connections
+        <CardHeader className="pb-3">
+          <CardTitle className="font-display text-sm tracking-widest uppercase text-muted-foreground flex items-center gap-2">
+            <Link2 className="h-4 w-4" /> Connections
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
-          {connections.map((conn) => (
-            <div
-              key={conn.name}
-              className={`flex items-center justify-between p-3 rounded-lg border ${conn.borderColor} ${conn.bgColor}`}
-            >
-              <div className="flex items-center gap-3">
-                <conn.icon className={`h-5 w-5 ${conn.color}`} />
-                <div>
-                  <p className="font-medium text-sm">{conn.name}</p>
-                  <p className="text-xs text-muted-foreground flex items-center gap-1">
-                    {conn.status === "connected" ? (
-                      <>
-                        <CheckCircle className="h-3 w-3 text-primary" />
-                        <span className="font-mono">{conn.detail}</span>
-                      </>
-                    ) : (
-                      <>
-                        <XCircle className="h-3 w-3 text-muted-foreground" />
-                        {conn.detail}
-                      </>
-                    )}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                {conn.status === "connected" && conn.name === "Wallet" && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={handleCopyWallet}
-                    className="h-8 px-2 text-xs"
-                  >
-                    <Copy className="h-3 w-3 mr-1" />
-                    {copiedWallet ? "Copied!" : "Copy"}
-                  </Button>
-                )}
-                {conn.status === "connected" ? (
-                  "onDisconnect" in conn && conn.onDisconnect ? (
-                    <Button size="sm" variant="outline" onClick={conn.onDisconnect as () => void} className="font-display text-xs border-destructive/30 text-destructive hover:bg-destructive/10">
-                      Disconnect
-                    </Button>
-                  ) : (
-                    <Badge variant="outline" className="text-xs border-primary/30 text-primary">
-                      Connected
-                    </Badge>
-                  )
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className={`font-display text-xs ${conn.borderColor} ${conn.color}`}
-                    onClick={"onConnect" in conn && conn.onConnect ? conn.onConnect as () => void : undefined}
-                  >
-                    <ExternalLink className="h-3 w-3 mr-1" /> Connect
-                  </Button>
-                )}
-              </div>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-
-      {/* Game Connections - PC */}
-      <Card className="bg-card border-border">
-        <CardHeader>
-          <CardTitle className="font-display flex items-center gap-2">
-            <Monitor className="h-5 w-5 text-arena-cyan" /> PC Games
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {gameConnections.filter(g => g.platform === "pc").map((game) => (
+        <CardContent className="pt-0">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {connections.map((conn) => (
               <div
-                key={game.name}
-                className="flex items-center justify-between p-3 rounded-lg border border-border bg-secondary/30 arena-hover"
+                key={conn.name}
+                className="relative flex flex-col items-center justify-center gap-1.5 p-3 rounded-lg bg-secondary/40 border border-border/50 hover:border-primary/20 transition-all group"
               >
-                <div className="flex items-center gap-2">
-                  <Gamepad2 className="h-4 w-4 text-arena-cyan" />
-                  <div>
-                    <p className="font-medium text-sm">{game.name}</p>
-                    {game.status === "connected" && (
-                      <p className="text-xs text-muted-foreground font-mono flex items-center gap-1">
-                        <CheckCircle className="h-3 w-3 text-primary" /> {game.accountId}
-                      </p>
-                    )}
+                {/* Status dot */}
+                <div className={`absolute top-2 right-2 w-1.5 h-1.5 rounded-full ${conn.status === "connected" ? "bg-primary" : "bg-muted-foreground/30"}`} />
+
+                <conn.icon className={`h-5 w-5 ${conn.status === "connected" ? conn.color : "text-muted-foreground/50"}`} />
+                <span className="font-display text-xs font-semibold tracking-wide">{conn.name}</span>
+
+                {conn.status === "connected" ? (
+                  <div className="flex flex-col items-center gap-1 w-full">
+                    <span className="text-[10px] text-muted-foreground font-mono truncate max-w-full px-1 text-center">{conn.detail}</span>
+                    <div className="flex gap-1 w-full">
+                      {conn.name === "Wallet" && (
+                        <button onClick={handleCopyWallet} className="flex-1 text-[10px] py-0.5 rounded bg-secondary hover:bg-secondary/80 text-muted-foreground transition-colors">
+                          {copiedWallet ? "✓" : <Copy className="h-2.5 w-2.5 mx-auto" />}
+                        </button>
+                      )}
+                      {"onDisconnect" in conn && conn.onDisconnect && (
+                        <button onClick={conn.onDisconnect as () => void} className="flex-1 text-[10px] py-0.5 rounded bg-destructive/10 hover:bg-destructive/20 text-destructive transition-colors">
+                          ✕
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-                {game.status === "connected" ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleUnlinkGame(game.name)}
-                    className="font-display text-xs border-destructive/30 text-destructive hover:bg-destructive/10"
-                  >
-                    Unlink
-                  </Button>
                 ) : (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleOpenLinkDialog(game.name, "game", game.platform)}
-                    className="font-display text-xs border-border hover:border-primary/50"
+                  <button
+                    onClick={"onConnect" in conn && conn.onConnect ? conn.onConnect as () => void : undefined}
+                    className={`text-[10px] font-display px-3 py-0.5 rounded border ${conn.borderColor} ${conn.color} hover:opacity-80 transition-opacity`}
                   >
-                    <Link2 className="h-3 w-3 mr-1" /> Link
-                  </Button>
+                    Connect
+                  </button>
                 )}
               </div>
             ))}
@@ -378,52 +327,81 @@ const Profile = () => {
         </CardContent>
       </Card>
 
-      {/* Game Connections - Mobile */}
+      {/* Game Connections - PC */}
       <Card className="bg-card border-border">
-        <CardHeader>
-          <CardTitle className="font-display flex items-center gap-2">
-            <Smartphone className="h-5 w-5 text-arena-orange" /> Mobile Games
+        <CardHeader className="pb-3">
+          <CardTitle className="font-display text-sm tracking-widest uppercase text-muted-foreground flex items-center gap-2">
+            <Monitor className="h-4 w-4" /> PC Games
           </CardTitle>
         </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {gameConnections.filter(g => g.platform === "mobile").map((game) => (
-              <div
-                key={game.name}
-                className="flex items-center justify-between p-3 rounded-lg border border-border bg-secondary/30 arena-hover"
-              >
-                <div className="flex items-center gap-2">
-                  <Smartphone className="h-4 w-4 text-arena-orange" />
-                  <div>
-                    <p className="font-medium text-sm">{game.name}</p>
-                    {game.status === "connected" && (
-                      <p className="text-xs text-muted-foreground font-mono flex items-center gap-1">
-                        <CheckCircle className="h-3 w-3 text-primary" /> {game.accountId}
-                      </p>
-                    )}
+        <CardContent className="pt-0">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+            {gameConnections.filter(g => g.platform === "pc").map((game) => {
+              const cfg = gameConfig[game.name] ?? { abbr: game.name.slice(0,2).toUpperCase(), color: "#888", bg: "rgba(136,136,136,0.1)" };
+              return (
+                <div key={game.name} className="relative flex flex-col items-center gap-1.5 p-3 rounded-lg bg-secondary/40 border border-border/50 hover:border-primary/20 transition-all">
+                  {/* status dot */}
+                  <div className={`absolute top-2 right-2 w-1.5 h-1.5 rounded-full ${game.status === "connected" ? "bg-primary" : "bg-muted-foreground/30"}`} />
+                  {/* game badge */}
+                  <div className="w-9 h-9 rounded-lg overflow-hidden flex items-center justify-center font-display font-bold text-xs" style={{ background: cfg.bg, border: `1px solid ${cfg.color}30` }}>
+                    {cfg.img
+                      ? <img src={cfg.img} alt={game.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display="none"; (e.target as HTMLImageElement).parentElement!.innerHTML = `<span style="color:${cfg.color};font-size:10px;font-weight:700">${cfg.abbr}</span>`; }} />
+                      : <span style={{ color: cfg.color }}>{cfg.abbr}</span>
+                    }
                   </div>
+                  <span className="font-display text-xs font-semibold text-center leading-tight">{game.name}</span>
+                  {game.status === "connected" && (
+                    <span className="text-[10px] text-muted-foreground font-mono truncate max-w-full px-1 text-center">{game.accountId}</span>
+                  )}
+                  {game.status === "connected" ? (
+                    <button onClick={() => handleUnlinkGame(game.name)} className="text-[10px] font-display px-2 py-0.5 rounded border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors">
+                      Unlink
+                    </button>
+                  ) : (
+                    <button onClick={() => handleOpenLinkDialog(game.name, "game", game.platform)} className="text-[10px] font-display px-2 py-0.5 rounded border border-border hover:border-primary/50 text-muted-foreground hover:text-foreground transition-colors">
+                      Link
+                    </button>
+                  )}
                 </div>
-                {game.status === "connected" ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleUnlinkGame(game.name)}
-                    className="font-display text-xs border-destructive/30 text-destructive hover:bg-destructive/10"
-                  >
-                    Unlink
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleOpenLinkDialog(game.name, "game", game.platform)}
-                    className="font-display text-xs border-border hover:border-primary/50"
-                  >
-                    <Link2 className="h-3 w-3 mr-1" /> Link
-                  </Button>
-                )}
-              </div>
-            ))}
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Game Connections - Mobile */}
+      <Card className="bg-card border-border">
+        <CardHeader className="pb-3">
+          <CardTitle className="font-display text-sm tracking-widest uppercase text-muted-foreground flex items-center gap-2">
+            <Smartphone className="h-4 w-4" /> Mobile Games
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+            {gameConnections.filter(g => g.platform === "mobile").map((game) => {
+              const cfg = gameConfig[game.name] ?? { abbr: game.name.slice(0,2).toUpperCase(), color: "#888", bg: "rgba(136,136,136,0.1)" };
+              return (
+                <div key={game.name} className="relative flex flex-col items-center gap-1.5 p-3 rounded-lg bg-secondary/40 border border-border/50 hover:border-primary/20 transition-all">
+                  <div className={`absolute top-2 right-2 w-1.5 h-1.5 rounded-full ${game.status === "connected" ? "bg-primary" : "bg-muted-foreground/30"}`} />
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center font-display font-bold text-xs" style={{ background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.color}30` }}>
+                    {cfg.abbr}
+                  </div>
+                  <span className="font-display text-xs font-semibold text-center leading-tight">{game.name}</span>
+                  {game.status === "connected" && (
+                    <span className="text-[10px] text-muted-foreground font-mono truncate max-w-full px-1 text-center">{game.accountId}</span>
+                  )}
+                  {game.status === "connected" ? (
+                    <button onClick={() => handleUnlinkGame(game.name)} className="text-[10px] font-display px-2 py-0.5 rounded border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors">
+                      Unlink
+                    </button>
+                  ) : (
+                    <button onClick={() => handleOpenLinkDialog(game.name, "game", game.platform)} className="text-[10px] font-display px-2 py-0.5 rounded border border-border hover:border-primary/50 text-muted-foreground hover:text-foreground transition-colors">
+                      Link
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </CardContent>
       </Card>
