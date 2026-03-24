@@ -205,10 +205,6 @@ const Profile = () => {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="font-display text-3xl font-bold tracking-wide">Profile</h1>
-          <p className="text-muted-foreground mt-1">Manage your account & connections</p>
-        </div>
         <Button
           variant="outline"
           size="sm"
@@ -427,7 +423,7 @@ const Profile = () => {
             <CardTitle className="font-display text-sm tracking-widest uppercase text-muted-foreground flex items-center gap-2">
               <Trophy className="h-4 w-4" /> Game Stats
             </CardTitle>
-            <button onClick={() => navigate("/wallet")} className="text-[10px] font-display text-muted-foreground hover:text-primary transition-colors tracking-wider uppercase">
+            <button onClick={() => navigate(`/history?game=${encodeURIComponent(activeGameTab)}`)} className="text-[10px] font-display text-muted-foreground hover:text-primary transition-colors tracking-wider uppercase">
               Full Stats →
             </button>
           </div>
