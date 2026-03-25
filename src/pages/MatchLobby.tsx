@@ -1,37 +1,195 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { useUserStore } from "@/stores/userStore";
 import { useMatchStore } from "@/stores/matchStore";
 import { useWalletStore } from "@/stores/walletStore";
 import { useMatchPolling } from "@/hooks/useMatchPolling";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Swords, Clock, Users, DollarSign, Lock, Gamepad2, CheckCircle,
-  Search, Copy, UserPlus, Crown, Shield, Hash, KeyRound, Eye, EyeOff, AlertCircle
+  Swords, Clock, Users, Lock, Gamepad2, CheckCircle,
+  Search, Copy, UserPlus, Crown, Shield, Hash, KeyRound, Eye, EyeOff,
+  AlertCircle, ChevronDown, Monitor, Smartphone, Zap, TrendingUp,
 } from "lucide-react";
 import type { MatchStatus, Game, Match } from "@/types";
 
-const betAmounts = [10, 25, 50, 100];
-const games: Game[] = ["CS2", "Valorant", "Fortnite", "Apex Legends"];
+// ─── Game configs ─────────────────────────────────────────────────────────────
+const PC_GAME_CONFIG: Record<string, { logo: string; color: string }> = {
+  "CS2":          { logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/730/capsule_sm_120.jpg",     color: "#F97316" },
+  "Valorant":     { logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/2181130/capsule_sm_120.jpg", color: "#FF4655" },
+  "Fortnite":     { logo: "https://play-lh.googleusercontent.com/FxJDPDIDJKlG9C8lOxaS041X27A0SrHAa46SGDIpPusAd4IEJihZTyGf-8rTZ_GpF34aeLvULilVuO0cpCJxTg=s120-rw", color: "#38BDF8" },
+  "Apex Legends": { logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/1172470/capsule_sm_120.jpg", color: "#FC4B08" },
+};
+const MOBILE_GAME_CONFIG: Record<string, { logo: string; color: string }> = {
+  "MLBB":        { logo: "https://play-lh.googleusercontent.com/Op7v9XdsyxjrKImMD5RLyiLRCAHs3DMQFANwfsuMTw1hq0lH4j8tOqD3Fd7zyr4ixmC0xoqqRkQDBjAd46NsFQ=s120-rw", color: "#EF4444" },
+  "Wild Rift":   { logo: "https://play-lh.googleusercontent.com/7-kbcpgrCOE1mleJ9g0d61sJeoqKcQRIj4iFvJ8DjPlRIfocOWfOQsXzKWw2I5oHySVdbjR2fvzfCCz1FYQ-RQ=s120-rw",  color: "#6366F1" },
+  "COD Mobile":  { logo: "https://play-lh.googleusercontent.com/cfGSXkDwxa1jW3TlhhkDJBN16-1_KEtEDhnILPcs9rXcC25g14XY6MRGCtlXHFHs0g=s120-rw",                         color: "#84CC16" },
+  "PUBG Mobile": { logo: "https://play-lh.googleusercontent.com/zCSGnBtZk0Lmp1BAbyaZfLktDzHmC6oke67qzz3G1lBegAF2asyt5KzXOJ2PVdHDYkU=s120-rw",                         color: "#F59E0B" },
+};
+const ALL_GAME_CONFIG = { ...PC_GAME_CONFIG, ...MOBILE_GAME_CONFIG };
+
+const BET_AMOUNTS = [5, 10, 25, 50];
+const CREATE_BET_AMOUNTS = [5, 10, 25, 50, 100];
 
 const statusConfig: Record<MatchStatus, { label: string; color: string; icon: React.ElementType }> = {
-  waiting: { label: "Waiting", color: "bg-arena-gold/20 text-arena-gold border-arena-gold/30", icon: Clock },
-  in_progress: { label: "In Progress", color: "bg-arena-cyan/20 text-arena-cyan border-arena-cyan/30", icon: Gamepad2 },
-  completed: { label: "Completed", color: "bg-muted text-muted-foreground border-border", icon: CheckCircle },
-  cancelled: { label: "Cancelled", color: "bg-destructive/20 text-destructive border-destructive/30", icon: CheckCircle },
-  disputed: { label: "Disputed", color: "bg-arena-orange/20 text-arena-orange border-arena-orange/30", icon: AlertCircle },
+  waiting:     { label: "Waiting",   color: "bg-arena-gold/15 text-arena-gold border-arena-gold/30",       icon: Clock },
+  in_progress: { label: "Live",      color: "bg-arena-cyan/15 text-arena-cyan border-arena-cyan/30",       icon: Zap },
+  completed:   { label: "Completed", color: "bg-muted text-muted-foreground border-border",                icon: CheckCircle },
+  cancelled:   { label: "Cancelled", color: "bg-destructive/15 text-destructive border-destructive/30",    icon: CheckCircle },
+  disputed:    { label: "Disputed",  color: "bg-arena-orange/15 text-arena-orange border-arena-orange/30", icon: AlertCircle },
 };
 
+// Player avatar color — deterministic, DB-ready (will be replaced by real avatar)
+const playerColor = (name: string) => {
+  const palette = ["#F97316","#38BDF8","#A855F7","#22C55E","#EAB308","#EC4899","#14B8A6","#F43F5E","#6366F1","#84CC16"];
+  return palette[(name.charCodeAt(0) + name.charCodeAt(name.length - 1)) % palette.length];
+};
+
+// ─── MiniAvatar ───────────────────────────────────────────────────────────────
+// avatar prop: undefined = initials fallback (DB-ready: will accept "emoji" | "upload:{url}" | CDN)
+const MiniAvatar = ({ name, avatar, size = 20 }: { name: string; avatar?: string; size?: number }) => {
+  const style = { width: size, height: size, background: playerColor(name), fontSize: size * 0.45 };
+  if (avatar && avatar.startsWith("upload:")) return (
+    <img src={avatar.slice(7)} alt={name} style={{ width: size, height: size }}
+      className="rounded-full object-cover border-2 border-card shrink-0" />
+  );
+  if (avatar && avatar !== "initials") return (
+    <span style={{ ...style, fontSize: size * 0.6 }} className="rounded-full flex items-center justify-center border-2 border-card shrink-0">{avatar}</span>
+  );
+  return (
+    <div style={style} className="rounded-full flex items-center justify-center font-bold border-2 border-card text-white shrink-0">
+      {name[0]?.toUpperCase()}
+    </div>
+  );
+};
+
+// ─── AvatarStack — player pile shown inline on match rows ─────────────────────
+const AvatarStack = ({ players, max = 5 }: { players: string[]; max?: number }) => {
+  const shown = players.slice(0, max);
+  const extra = players.length - shown.length;
+  return (
+    <div className="flex items-center">
+      {shown.map((p, i) => (
+        <div key={i} style={{ marginLeft: i === 0 ? 0 : -6, zIndex: shown.length - i }}>
+          <MiniAvatar name={p} size={20} />
+        </div>
+      ))}
+      {extra > 0 && (
+        <div className="w-5 h-5 rounded-full bg-secondary border-2 border-card flex items-center justify-center text-[9px] text-muted-foreground font-bold"
+          style={{ marginLeft: -6 }}>
+          +{extra}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── PlayerRow ────────────────────────────────────────────────────────────────
+const PlayerRow = ({ name, isHost, index }: { name: string; isHost?: boolean; index: number }) => (
+  <div className="flex items-center gap-2 py-0.5">
+    {isHost && index === 0 ? <Crown className="h-3 w-3 text-arena-gold shrink-0" /> : <div className="w-3 h-3 shrink-0" />}
+    <MiniAvatar name={name} size={18} />
+    <span className="text-sm truncate">{name}</span>
+  </div>
+);
+
+// ─── GameLogo ─────────────────────────────────────────────────────────────────
+const GameLogo = ({ game, size = 28 }: { game: string; size?: number }) => {
+  const cfg = ALL_GAME_CONFIG[game];
+  if (!cfg) return <Gamepad2 style={{ width: size, height: size }} className="text-muted-foreground" />;
+  return (
+    <img src={cfg.logo} alt={game} style={{ width: size, height: size }}
+      className="rounded object-cover shrink-0"
+      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+  );
+};
+
+// ─── GameDropdown ─────────────────────────────────────────────────────────────
+interface GameDropdownProps {
+  label: string; icon: React.ElementType;
+  games: Record<string, { logo: string; color: string }>;
+  activeGame: string; onSelect: (g: string) => void; comingSoon?: boolean;
+}
+const GameDropdown = ({ label, icon: Icon, games, activeGame, onSelect, comingSoon }: GameDropdownProps) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const hasActive = !comingSoon && Object.keys(games).some((g) => g === activeGame);
+  useEffect(() => {
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+  return (
+    <div ref={ref} className="relative">
+      <button onClick={() => setOpen(o => !o)}
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-display transition-all ${
+          hasActive ? "border-primary/60 bg-primary/10 text-primary" : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+        }`}>
+        <Icon className="h-3.5 w-3.5" />{label}
+        <ChevronDown className={`h-3 w-3 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 z-50 min-w-[170px] rounded-xl border border-border bg-card shadow-2xl overflow-hidden">
+          {comingSoon
+            ? <div className="px-4 py-3 text-xs text-muted-foreground text-center">Coming soon</div>
+            : Object.entries(games).map(([name, cfg]) => (
+              <button key={name} onClick={() => { onSelect(name); setOpen(false); }}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-secondary/60 transition-colors text-left ${activeGame === name ? "bg-primary/10 text-primary" : "text-foreground"}`}>
+                <img src={cfg.logo} alt={name} className="w-6 h-6 rounded object-cover shrink-0"
+                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                <span className="font-medium truncate">{name}</span>
+                {activeGame === name && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-primary" />}
+              </button>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── LiveTicker ──────────────────────────────────────────────────────────────
+// Displays a scrolling strip of recent completed matches
+// DB-ready: receives Match[] — will be real data when connected
+const LiveTicker = ({ matches }: { matches: Match[] }) => {
+  const completed = matches.filter(m => m.status === "completed" && m.winnerId);
+  if (completed.length === 0) return null;
+  const items = [...completed, ...completed]; // duplicate for seamless loop
+  return (
+    <div className="relative w-full rounded-xl border border-border bg-secondary/30 h-8" style={{ overflow: "hidden" }}>
+      <div className="absolute left-0 top-0 bottom-0 w-10 z-10 bg-gradient-to-r from-card to-transparent pointer-events-none" />
+      <div className="absolute right-0 top-0 bottom-0 w-10 z-10 bg-gradient-to-l from-card to-transparent pointer-events-none" />
+      <div className="absolute left-2 top-1/2 -translate-y-1/2 z-20">
+        <TrendingUp className="h-3 w-3 text-arena-gold" />
+      </div>
+      <style>{`@keyframes arenaT { 0% { transform: translateX(0) } 100% { transform: translateX(-50%) } }`}</style>
+      <div className="absolute top-0 left-0 h-full flex items-center" style={{ animation: "arenaT 32s linear infinite", whiteSpace: "nowrap" }}>
+        {items.map((m, i) => {
+          const cfg = ALL_GAME_CONFIG[m.game];
+          const winner = m.winnerId === m.host ? m.host : (m.players.find(p => p === m.winnerId) ?? m.winnerId);
+          return (
+            <span key={`${m.id}-${i}`} className="inline-flex items-center gap-1.5 pl-8 text-xs text-muted-foreground">
+              {cfg && <img src={cfg.logo} alt={m.game} className="w-4 h-4 rounded object-cover"
+                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />}
+              <span className="text-foreground font-medium">{winner}</span>
+              <span>won</span>
+              <span className="text-arena-gold font-bold">${m.betAmount}</span>
+              <span style={{ color: cfg?.color }}>· {m.game}</span>
+              <span className="text-border mx-3">|</span>
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
 const MatchLobby = () => {
   const { user } = useUserStore();
   const { matches, addMatch, joinMatch, getMatchByCode } = useMatchStore();
   const { lockEscrow } = useWalletStore();
-
-  // Poll engine for live match updates (desktop client results)
   useMatchPolling({ interval: 5000 });
 
   const [selectedBet, setSelectedBet] = useState<number | null>(null);
@@ -45,659 +203,536 @@ const MatchLobby = () => {
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [newMatchPassword, setNewMatchPassword] = useState("");
   const [selectedPublicLobbyId, setSelectedPublicLobbyId] = useState<string | null>(null);
-
-  // Password prompt state
   const [passwordPrompt, setPasswordPrompt] = useState<{ matchId: string; bet: number } | null>(null);
   const [passwordInput, setPasswordInput] = useState("");
   const [passwordError, setPasswordError] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  const publicMatches = matches.filter((m) => m.type === "public");
-  const customMatches = matches.filter((m) => m.type === "custom");
+  const publicMatches = matches.filter(m => m.type === "public");
+  const customMatches = matches.filter(m => m.type === "custom");
   const selectedPublicLobby = selectedPublicLobbyId
-    ? publicMatches.find((m) => m.id === selectedPublicLobbyId) ?? null
-    : null;
+    ? publicMatches.find(m => m.id === selectedPublicLobbyId) ?? null : null;
 
   const getPublicLobbyTeams = (match: Match) => {
     const maxPerTeam = Math.max(1, Math.ceil(match.maxPlayers / 2));
-    return {
-      maxPerTeam,
-      teamA: match.players.slice(0, maxPerTeam),
-      teamB: match.players.slice(maxPerTeam, maxPerTeam * 2),
-    };
+    return { maxPerTeam, teamA: match.players.slice(0, maxPerTeam), teamB: match.players.slice(maxPerTeam, maxPerTeam * 2) };
   };
 
-  const handleJoinPublic = (matchId: string) => {
-    if (!selectedBet || !user) return;
+  const handleJoinPublic = (matchId: string, betAmount?: number) => {
+    if (!user) return;
+    const bet = betAmount ?? selectedBet;
+    if (!bet) return;
+    setSelectedBet(bet);
     setJoiningMatch(matchId);
     setEscrowConfirm(true);
   };
-
-  const handleOpenPublicLobby = (matchId: string) => {
-    setSelectedPublicLobbyId(matchId);
-  };
-
+  const handleOpenPublicLobby = (matchId: string) => setSelectedPublicLobbyId(matchId);
   const handleJoinCustom = (matchId: string, bet: number) => {
-    setPasswordPrompt({ matchId, bet });
-    setPasswordInput("");
-    setPasswordError(false);
-    setShowPassword(false);
+    setPasswordPrompt({ matchId, bet }); setPasswordInput(""); setPasswordError(false); setShowPassword(false);
   };
-
   const handlePasswordSubmit = () => {
     if (!passwordPrompt) return;
     const match = customMatches.find(m => m.id === passwordPrompt.matchId);
     if (match && passwordInput === match.password) {
-      setPasswordPrompt(null);
-      setPasswordInput("");
-      setSelectedBet(passwordPrompt.bet);
-      setJoiningMatch(passwordPrompt.matchId);
-      setEscrowConfirm(true);
-    } else {
-      setPasswordError(true);
-    }
+      setPasswordPrompt(null); setPasswordInput(""); setSelectedBet(passwordPrompt.bet);
+      setJoiningMatch(passwordPrompt.matchId); setEscrowConfirm(true);
+    } else { setPasswordError(true); }
   };
-
   const handleConfirmEscrow = () => {
     if (!joiningMatch || !selectedBet || !user) return;
-    // Lock funds in escrow
-    lockEscrow(selectedBet, joiningMatch);
-    // Join the match
-    joinMatch(joiningMatch, user.username);
+    lockEscrow(selectedBet, joiningMatch); joinMatch(joiningMatch, user.username);
     const { addNotification } = useNotificationStore.getState();
-    addNotification({
-      type: "system",
-      title: "🔒 Funds Locked",
-      message: `$${selectedBet} has been locked in escrow for match ${joiningMatch}. Good luck!`,
-    });
-    setEscrowConfirm(false);
-    setJoiningMatch(null);
-    setSelectedBet(null);
+    addNotification({ type: "system", title: "🔒 Funds Locked", message: `$${selectedBet} locked in escrow for match ${joiningMatch}. Good luck!` });
+    setEscrowConfirm(false); setJoiningMatch(null); setSelectedBet(null);
   };
-
   const handleCopyCode = (code: string) => {
-    navigator.clipboard.writeText(code);
-    setCopiedCode(code);
+    navigator.clipboard.writeText(code); setCopiedCode(code);
     const { addNotification } = useNotificationStore.getState();
-    addNotification({ type: "system", title: "📋 Code Copied", message: `Match code ${code} copied to clipboard. Share it with your team!` });
+    addNotification({ type: "system", title: "📋 Code Copied", message: `Match code ${code} copied. Share with your team!` });
     setTimeout(() => setCopiedCode(null), 2000);
   };
 
-  const filteredCustom = customMatches.filter(
-    (m) => !selectedGame || m.game === selectedGame
-  );
-  const filteredPublicMatches = selectedBet
-    ? publicMatches.filter((m) => m.betAmount === selectedBet)
-    : publicMatches;
+  const filteredCustom = customMatches.filter(m => !selectedGame || m.game === selectedGame);
+  const filteredPublicMatches = selectedBet ? publicMatches.filter(m => m.betAmount === selectedBet) : publicMatches;
+
+  // Stats for header strip — DB-ready: computed from real matches when connected
+  const liveCount   = publicMatches.filter(m => m.status === "in_progress").length;
+  const openCount   = publicMatches.filter(m => m.status === "waiting").length;
+  const totalPool   = publicMatches.reduce((s, m) => s + m.betAmount * m.players.length, 0);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="font-display text-3xl font-bold tracking-wide">Match Lobby</h1>
-        <p className="text-muted-foreground mt-1">Find a match and play for stakes</p>
+    <div className="space-y-5">
+      {/* ── Header ── */}
+      <div className="flex items-end justify-between">
+        <div>
+          <p className="text-[10px] text-muted-foreground uppercase tracking-[0.2em] mb-0.5">Arena</p>
+          <h1 className="font-display text-3xl font-bold tracking-wide">Match Lobby</h1>
+        </div>
+        {/* Live stats strip */}
+        <div className="hidden sm:flex items-center gap-4 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-arena-cyan animate-pulse" />
+            <span className="text-arena-cyan font-semibold">{liveCount}</span> live
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-arena-gold" />
+            <span className="text-arena-gold font-semibold">{openCount}</span> open
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+            <span className="text-foreground font-semibold">${totalPool.toLocaleString()}</span> in pool
+          </span>
+        </div>
       </div>
 
-      {/* Password Prompt Overlay */}
+      {/* ── Live Activity Ticker ── */}
+      <LiveTicker matches={matches} />
+
+      {/* ── Password Prompt ── */}
       {passwordPrompt && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
-          <Card className="bg-card border-arena-cyan/30 glow-purple w-full max-w-md mx-4">
-            <CardContent className="p-6">
-              <div className="flex items-center gap-3 mb-4">
-                <KeyRound className="h-6 w-6 text-arena-cyan" />
-                <h3 className="font-display text-xl font-bold">Enter Match Password</h3>
+          <div className="w-full max-w-md mx-4 rounded-2xl border border-arena-cyan/30 bg-card shadow-2xl p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-arena-cyan/10 flex items-center justify-center">
+                <KeyRound className="h-5 w-5 text-arena-cyan" />
               </div>
-              <p className="text-muted-foreground mb-4 text-sm">
-                This match is password-protected. Enter the password shared by the host to join.
-              </p>
-              <div className="flex gap-2 mb-3">
-                <div className="relative flex-1">
-                  <Input
-                    type={showPassword ? "text" : "password"}
-                    placeholder="Enter password..."
-                    value={passwordInput}
-                    onChange={(e) => { setPasswordInput(e.target.value); setPasswordError(false); }}
-                    onKeyDown={(e) => e.key === "Enter" && handlePasswordSubmit()}
-                    autoFocus
-                    className={`font-mono bg-secondary border-border pr-10 ${passwordError ? "border-destructive" : ""}`}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-                <Button onClick={handlePasswordSubmit} className="font-display">
-                  <Lock className="mr-2 h-4 w-4" /> Verify
-                </Button>
+              <div>
+                <h3 className="font-display text-lg font-bold">Match Password</h3>
+                <p className="text-xs text-muted-foreground">Enter the host's password to join</p>
               </div>
-              {passwordError && (
-                <p className="text-destructive text-sm flex items-center gap-1 mb-3">
-                  <AlertCircle className="h-3 w-3" /> Wrong password. Try again.
-                </p>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setPasswordPrompt(null)}
-                className="text-muted-foreground"
-              >
-                Cancel
+            </div>
+            <div className="flex gap-2 mb-3">
+              <div className="relative flex-1">
+                <Input type={showPassword ? "text" : "password"} placeholder="Enter password..."
+                  value={passwordInput}
+                  onChange={(e) => { setPasswordInput(e.target.value); setPasswordError(false); }}
+                  onKeyDown={(e) => e.key === "Enter" && handlePasswordSubmit()}
+                  autoFocus
+                  className={`font-mono bg-secondary border-border pr-10 ${passwordError ? "border-destructive" : ""}`} />
+                <button type="button" onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              <Button onClick={handlePasswordSubmit} className="font-display shrink-0">
+                <Lock className="mr-2 h-4 w-4" /> Verify
               </Button>
-            </CardContent>
-          </Card>
+            </div>
+            {passwordError && (
+              <p className="text-destructive text-sm flex items-center gap-1 mb-3">
+                <AlertCircle className="h-3 w-3" /> Wrong password. Try again.
+              </p>
+            )}
+            <button onClick={() => setPasswordPrompt(null)} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Cancel</button>
+          </div>
         </div>
       )}
 
-      {/* Escrow Confirmation */}
+      {/* ── Escrow Confirmation ── */}
       {escrowConfirm && joiningMatch && (
-        <Card className="bg-card border-primary/30 glow-green">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <Lock className="h-6 w-6 text-primary" />
-              <h3 className="font-display text-xl font-bold">Escrow Confirmation</h3>
+        <div className="rounded-2xl border border-primary/30 bg-primary/5 p-5">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
+              <Lock className="h-4 w-4 text-primary" />
             </div>
-            <p className="text-muted-foreground mb-4">
-              ${selectedBet} will be locked in escrow until the match is resolved.
-              This amount will be deducted from your connected wallet.
-            </p>
-            <div className="flex gap-3">
-              <Button onClick={handleConfirmEscrow} className="glow-green font-display">
-                <Lock className="mr-2 h-4 w-4" /> Confirm & Lock ${selectedBet}
-              </Button>
-              <Button variant="outline" onClick={() => { setEscrowConfirm(false); setJoiningMatch(null); }}>
-                Cancel
-              </Button>
+            <div>
+              <h3 className="font-display font-bold">Confirm Escrow</h3>
+              <p className="text-xs text-muted-foreground">${selectedBet} locked until match resolves</p>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={handleConfirmEscrow} className="glow-green font-display">
+              <Lock className="mr-2 h-4 w-4" /> Lock ${selectedBet}
+            </Button>
+            <Button variant="outline" onClick={() => { setEscrowConfirm(false); setJoiningMatch(null); }}>Cancel</Button>
+          </div>
+        </div>
       )}
 
-      {/* Public Lobby Details Overlay */}
-      {selectedPublicLobby && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-          <Card className="w-full max-w-5xl bg-card border-border">
-            <CardContent className="p-4 md:p-6 space-y-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Lobby Details</p>
-                  <h3 className="font-display text-xl font-bold truncate">{selectedPublicLobby.host}'s Match</h3>
-                  <p className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
-                    <Gamepad2 className="h-3 w-3" /> {selectedPublicLobby.game}
-                    <span>•</span>
-                    <Hash className="h-3 w-3" /> {selectedPublicLobby.id}
-                  </p>
+      {/* ── Public Lobby Details Overlay ── */}
+      {selectedPublicLobby && (() => {
+        const { teamA, teamB, maxPerTeam } = getPublicLobbyTeams(selectedPublicLobby);
+        const cfg = ALL_GAME_CONFIG[selectedPublicLobby.game];
+        const isLive = selectedPublicLobby.status === "in_progress";
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+            <div className="w-full max-w-5xl rounded-2xl border border-border bg-card shadow-2xl overflow-hidden">
+              {isLive && <div className="h-0.5 w-full bg-gradient-to-r from-arena-cyan via-primary to-arena-purple animate-pulse" />}
+              <div className="p-5 space-y-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <GameLogo game={selectedPublicLobby.game} size={36} />
+                    <div className="min-w-0">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-[0.15em]">Lobby Details</p>
+                      <h3 className="font-display text-xl font-bold truncate">{selectedPublicLobby.host}'s Match</h3>
+                      <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
+                        <span>{selectedPublicLobby.game}</span><span>•</span>
+                        <Hash className="h-3 w-3 inline" /> {selectedPublicLobby.id}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="font-display text-2xl font-bold text-arena-gold">${selectedPublicLobby.betAmount}</span>
+                    <button onClick={() => setSelectedPublicLobbyId(null)}
+                      className="px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors font-display">
+                      Close
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="font-display text-xl font-bold text-arena-gold">${selectedPublicLobby.betAmount}</span>
-                  <Button variant="outline" size="sm" onClick={() => setSelectedPublicLobbyId(null)}>
-                    Close
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {[
+                    { label: "Team A", players: teamA, accent: "primary", border: "border-primary/20", bg: "bg-primary/5", text: "text-primary" },
+                    { label: "Team B", players: teamB, accent: "arena-orange", border: "border-arena-orange/20", bg: "bg-arena-orange/5", text: "text-arena-orange" },
+                  ].map(({ label, players, border, bg, text }) => (
+                    <div key={label} className={`rounded-xl border ${border} ${bg} p-3`}>
+                      <p className={`text-xs ${text} font-display uppercase tracking-wider mb-2 flex items-center gap-1`}>
+                        <Shield className="h-3 w-3" /> {label} ({players.length}/{maxPerTeam})
+                      </p>
+                      <div className="space-y-0.5">
+                        {players.map((p, i) => <PlayerRow key={`${p}-${i}`} name={p} isHost={label === "Team A"} index={i} />)}
+                        {Array.from({ length: maxPerTeam - players.length }).map((_, i) => (
+                          <p key={i} className="text-sm text-muted-foreground/30 italic pl-5">Empty slot</p>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-border">
+                  <p className="text-xs text-muted-foreground">{selectedPublicLobby.players.length}/{selectedPublicLobby.maxPlayers} players in lobby</p>
+                  <Button
+                    disabled={selectedPublicLobby.status !== "waiting" || selectedPublicLobby.players.length >= selectedPublicLobby.maxPlayers}
+                    onClick={() => { setSelectedPublicLobbyId(null); handleJoinPublic(selectedPublicLobby.id, selectedPublicLobby.betAmount); }}
+                    className="font-display"
+                    style={cfg ? { boxShadow: `0 0 16px ${cfg.color}40` } : {}}>
+                    <Swords className="mr-1.5 h-4 w-4" /> Join This Lobby
                   </Button>
                 </div>
               </div>
+            </div>
+          </div>
+        );
+      })()}
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
-                  <p className="text-xs text-primary font-display uppercase tracking-wider mb-2 flex items-center gap-1">
-                    <Shield className="h-3 w-3" /> Team A ({getPublicLobbyTeams(selectedPublicLobby).teamA.length}/{getPublicLobbyTeams(selectedPublicLobby).maxPerTeam})
-                  </p>
-                  <div className="space-y-1">
-                    {getPublicLobbyTeams(selectedPublicLobby).teamA.map((player, i) => (
-                      <p key={`public-team-a-${player}-${i}`} className="text-sm flex items-center gap-1.5">
-                        {i === 0 && <Crown className="h-3 w-3 text-arena-gold" />}
-                        {player}
-                      </p>
-                    ))}
-                    {Array.from({
-                      length: getPublicLobbyTeams(selectedPublicLobby).maxPerTeam - getPublicLobbyTeams(selectedPublicLobby).teamA.length,
-                    }).map((_, i) => (
-                      <p key={`public-empty-a-${i}`} className="text-sm text-muted-foreground/30 italic">
-                        Empty slot
-                      </p>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-arena-orange/20 bg-arena-orange/5 p-3">
-                  <p className="text-xs text-arena-orange font-display uppercase tracking-wider mb-2 flex items-center gap-1">
-                    <Shield className="h-3 w-3" /> Team B ({getPublicLobbyTeams(selectedPublicLobby).teamB.length}/{getPublicLobbyTeams(selectedPublicLobby).maxPerTeam})
-                  </p>
-                  <div className="space-y-1">
-                    {getPublicLobbyTeams(selectedPublicLobby).teamB.map((player, i) => (
-                      <p key={`public-team-b-${player}-${i}`} className="text-sm">
-                        {player}
-                      </p>
-                    ))}
-                    {Array.from({
-                      length: getPublicLobbyTeams(selectedPublicLobby).maxPerTeam - getPublicLobbyTeams(selectedPublicLobby).teamB.length,
-                    }).map((_, i) => (
-                      <p key={`public-empty-b-${i}`} className="text-sm text-muted-foreground/30 italic">
-                        Empty slot
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                <p className="text-xs text-muted-foreground">
-                  {selectedPublicLobby.players.length}/{selectedPublicLobby.maxPlayers} players in lobby
-                </p>
-                <Button
-                  disabled={
-                    !selectedBet ||
-                    selectedBet !== selectedPublicLobby.betAmount ||
-                    selectedPublicLobby.status !== "waiting" ||
-                    selectedPublicLobby.players.length >= selectedPublicLobby.maxPlayers
-                  }
-                  onClick={() => {
-                    setSelectedPublicLobbyId(null);
-                    handleJoinPublic(selectedPublicLobby.id);
-                  }}
-                  className="font-display"
-                >
-                  <Swords className="mr-1 h-4 w-4" /> Join This Lobby
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
+      {/* ── Tabs ── */}
       <Tabs defaultValue="public" className="w-full">
         <TabsList className="bg-secondary border border-border w-full sm:w-auto">
           <TabsTrigger value="public" className="font-display data-[state=active]:bg-primary/20 data-[state=active]:text-primary flex-1 sm:flex-none gap-2">
-            <Swords className="h-4 w-4" />
-            Public Matches
+            <Swords className="h-4 w-4" /> Public Matches
           </TabsTrigger>
           <TabsTrigger value="custom" className="font-display data-[state=active]:bg-arena-purple/20 data-[state=active]:text-arena-purple flex-1 sm:flex-none gap-2">
-            <Users className="h-4 w-4" />
-            Custom 5v5
+            <Users className="h-4 w-4" /> Custom 5v5
           </TabsTrigger>
         </TabsList>
 
-        {/* ===== PUBLIC / SOLO MATCHES ===== */}
+        {/* ═══════════ PUBLIC ═══════════ */}
         <TabsContent value="public" className="space-y-4 mt-4">
-          <Card className="bg-card border-border">
-            <CardHeader className="pb-3">
-              <CardTitle className="font-display text-lg flex items-center gap-2">
-                <DollarSign className="h-5 w-5 text-arena-gold" />
-                Select Bet Amount
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex gap-3 flex-wrap">
-                {betAmounts.slice(0, 3).map((amount) => (
-                  <Button
-                    key={amount}
-                    variant={selectedBet === amount ? "default" : "outline"}
-                    disabled={escrowConfirm}
-                    onClick={() => setSelectedBet(amount)}
-                    className={
+          {/* Bet selector */}
+          <div className="rounded-2xl border border-border bg-card p-4">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-[0.18em] mb-3 flex items-center gap-1.5">
+              <span className="w-1 h-3 rounded-full bg-arena-gold inline-block" /> Select Bet Amount
+            </p>
+            <div className="flex gap-2 flex-wrap">
+              {BET_AMOUNTS.map((amount) => {
+                const matchCount = publicMatches.filter(m => m.status === "waiting" && m.betAmount === amount).length;
+                return (
+                  <button key={amount} disabled={escrowConfirm}
+                    onClick={() => setSelectedBet(selectedBet === amount ? null : amount)}
+                    className={`relative px-5 py-2 rounded-xl border font-display text-base font-bold transition-all ${
                       selectedBet === amount
-                        ? "glow-green font-display text-lg px-6"
-                        : "border-border font-display text-lg px-6 hover:border-primary/50"
-                    }
-                  >
+                        ? "border-primary bg-primary/15 text-primary shadow-[0_0_18px_rgba(var(--primary-rgb),0.4)]"
+                        : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                    }`}>
                     ${amount}
-                  </Button>
-                ))}
-              </div>
-              {selectedBet && (
-                <p className="text-sm text-primary mt-3 animate-pulse-glow">
-                  ✓ Selected: ${selectedBet} per match
-                </p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className="bg-card border-border">
-            <CardHeader className="pb-3">
-              <CardTitle className="font-display text-lg flex items-center gap-2">
-                <Swords className="h-5 w-5 text-arena-purple" />
-                Available Matches
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {filteredPublicMatches.map((match) => {
-                  const status = statusConfig[match.status];
-                  const StatusIcon = status.icon;
-                  const canJoin = match.status === "waiting" && match.players.length < match.maxPlayers;
-
-                  return (
-                    <div
-                      key={match.id}
-                      className="flex items-center justify-between p-4 rounded-lg border border-border bg-secondary/30 cursor-pointer arena-hover"
-                      onClick={() => handleOpenPublicLobby(match.id)}
-                    >
-                      <div className="flex items-center gap-4">
-                        <Badge className={`${status.color} border text-xs gap-1`}>
-                          <StatusIcon className="h-3 w-3" />
-                          {status.label}
-                        </Badge>
-                        <div>
-                          <p className="font-medium">{match.host}'s Match</p>
-                          <p className="text-xs text-muted-foreground flex items-center gap-2">
-                            <Gamepad2 className="h-3 w-3" /> {match.game}
-                            <span>•</span>
-                            <Users className="h-3 w-3" /> {match.players.length}/{match.maxPlayers}
-                            {match.timeLeft && (
-                              <>
-                                <span>•</span>
-                                <Clock className="h-3 w-3" /> {match.timeLeft}
-                              </>
-                            )}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className="font-display text-lg font-bold text-arena-gold">${match.betAmount}</span>
-                        {canJoin ? (
-                          <Button
-                            size="sm"
-                            disabled={!selectedBet || selectedBet !== match.betAmount || escrowConfirm}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleJoinPublic(match.id);
-                            }}
-                            className="font-display"
-                          >
-                            <Swords className="mr-1 h-4 w-4" /> Join
-                          </Button>
-                        ) : (
-                          <Button size="sm" variant="outline" disabled className="font-display">
-                            {match.status === "completed" ? "Ended" : "Full"}
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-                {filteredPublicMatches.length === 0 && selectedBet && (
-                  <div className="rounded-lg border border-border bg-secondary/20 p-4 text-sm text-muted-foreground">
-                    No open matches found for ${selectedBet}. Try another bet amount.
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* ===== CUSTOM 5v5 MATCHES ===== */}
-        <TabsContent value="custom" className="space-y-4 mt-4">
-          <Card className="bg-card border-border">
-            <CardHeader className="pb-3">
-              <CardTitle className="font-display text-lg flex items-center gap-2">
-                <Hash className="h-5 w-5 text-arena-cyan" />
-                Join or Create Custom Match
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Join by code */}
-              <div>
-                <label className="text-sm text-muted-foreground mb-2 block">Join by Game ID</label>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Enter match code (e.g. ARENA-7X2K)"
-                    value={customCode}
-                    onChange={(e) => setCustomCode(e.target.value.toUpperCase())}
-                    className="font-mono bg-secondary border-border placeholder:text-muted-foreground/40"
-                  />
-                  <Button
-                    disabled={!customCode}
-                    onClick={() => {
-                      const found = customMatches.find(m => m.code === customCode);
-                      if (found) handleJoinCustom(found.id, found.betAmount);
-                    }}
-                    className="font-display shrink-0"
-                  >
-                    <Search className="mr-2 h-4 w-4" /> Find
-                  </Button>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <div className="h-px flex-1 bg-border" />
-                <span className="text-xs text-muted-foreground uppercase tracking-widest">or</span>
-                <div className="h-px flex-1 bg-border" />
-              </div>
-
-              {/* Create new match */}
-              {!createMode ? (
-                <Button
-                  variant="outline"
-                  onClick={() => setCreateMode(true)}
-                  className="w-full border-arena-purple/30 text-arena-purple hover:bg-arena-purple/10 font-display"
-                >
-                  <Crown className="mr-2 h-4 w-4" /> Create Custom Match
-                </Button>
-              ) : (
-                <div className="space-y-3 p-4 rounded-lg border border-arena-purple/30 bg-arena-purple/5">
-                  <h4 className="font-display font-semibold flex items-center gap-2">
-                    <Crown className="h-4 w-4 text-arena-purple" /> New Custom Match
-                  </h4>
-
-                  <div>
-                    <label className="text-sm text-muted-foreground mb-1 block">Game</label>
-                    <div className="flex gap-2 flex-wrap">
-                      {games.map((g) => (
-                        <Button
-                          key={g}
-                          size="sm"
-                          variant={newMatchGame === g ? "default" : "outline"}
-                          onClick={() => setNewMatchGame(g)}
-                          className={newMatchGame === g ? "font-display" : "border-border font-display hover:border-primary/50"}
-                        >
-                          {g}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-sm text-muted-foreground mb-1 block">Bet Amount</label>
-                    <div className="flex gap-2 flex-wrap">
-                      {betAmounts.map((a) => (
-                        <Button
-                          key={a}
-                          size="sm"
-                          variant={newMatchBet === a ? "default" : "outline"}
-                          onClick={() => setNewMatchBet(a)}
-                          className={newMatchBet === a ? "glow-green font-display" : "border-border font-display hover:border-primary/50"}
-                        >
-                          ${a}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Match Password */}
-                  <div>
-                    <label className="text-sm text-muted-foreground mb-1 flex items-center gap-1">
-                      <KeyRound className="h-3 w-3" /> Match Password
-                    </label>
-                    <Input
-                      type="text"
-                      placeholder="Set a password for your match"
-                      value={newMatchPassword}
-                      onChange={(e) => setNewMatchPassword(e.target.value)}
-                      className="font-mono bg-secondary border-border placeholder:text-muted-foreground/40"
-                      maxLength={20}
-                    />
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Share this password with your teammates to join
-                    </p>
-                  </div>
-
-                  <div className="flex gap-2 pt-2">
-                    <Button
-                      disabled={!newMatchGame || !newMatchBet || !newMatchPassword}
-                      onClick={() => {
-                        if (!newMatchGame || !newMatchBet || !user) return;
-                        const created = addMatch({
-                          type: "custom",
-                          host: user.username,
-                          hostId: user.id,
-                          game: newMatchGame as Game,
-                          mode: "5v5",
-                          betAmount: newMatchBet,
-                          players: [],
-                          maxPlayers: 10,
-                          status: "waiting",
-                          password: newMatchPassword,
-                          teamA: [user.username],
-                          teamB: [],
-                          maxPerTeam: 5,
-                        });
-                        lockEscrow(newMatchBet, created.id);
-                        const { addNotification } = useNotificationStore.getState();
-                        addNotification({ type: "match_invite", title: "⚔️ Match Created", message: `Your ${newMatchGame} 5v5 match ($${newMatchBet}) is live! Code: ${created.code}` });
-                        setCreateMode(false); setNewMatchPassword(""); setNewMatchGame(""); setNewMatchBet(null);
-                      }}
-                      className="glow-green font-display"
-                    >
-                      <Swords className="mr-2 h-4 w-4" /> Create 5v5 Match
-                    </Button>
-                    <Button variant="outline" onClick={() => { setCreateMode(false); setNewMatchPassword(""); }}>
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Filter by game */}
-          <div className="flex gap-2 flex-wrap">
-            <Button
-              size="sm"
-              variant={!selectedGame ? "default" : "outline"}
-              onClick={() => setSelectedGame("")}
-              className="font-display"
-            >
-              All Games
-            </Button>
-            {games.slice(0, 2).map((g) => (
-              <Button
-                key={g}
-                size="sm"
-                variant={selectedGame === g ? "default" : "outline"}
-                onClick={() => setSelectedGame(g)}
-                className={selectedGame === g ? "font-display" : "border-border font-display hover:border-primary/50"}
-              >
-                {g}
-              </Button>
-            ))}
+                    {matchCount > 0 && (
+                      <span className={`absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center ${
+                        selectedBet === amount ? "bg-primary text-primary-foreground" : "bg-arena-gold text-black"
+                      }`}>{matchCount}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            {selectedBet && (
+              <p className="text-xs text-primary mt-2.5 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                ${selectedBet} selected — showing {filteredPublicMatches.length} matching {filteredPublicMatches.length === 1 ? "lobby" : "lobbies"}
+              </p>
+            )}
           </div>
 
-          {/* Custom matches list */}
-          <div className="space-y-4">
+          {/* Match list */}
+          <div className="rounded-2xl border border-border bg-card overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+              <div className="flex items-center gap-2">
+                <Swords className="h-4 w-4 text-arena-purple" />
+                <span className="font-display text-sm font-semibold uppercase tracking-wider">Available Matches</span>
+              </div>
+              <span className="text-xs text-muted-foreground">{filteredPublicMatches.length} lobbies</span>
+            </div>
+            <div className="divide-y divide-border/40">
+              {filteredPublicMatches.map((match) => {
+                const status = statusConfig[match.status];
+                const StatusIcon = status.icon;
+                const isLive = match.status === "in_progress";
+                const canJoin = match.status === "waiting" && match.players.length < match.maxPlayers;
+                const cfg = ALL_GAME_CONFIG[match.game];
+                // Smart dimming: when a bet is selected, grey out non-matching matches
+                const dimmed = selectedBet !== null && match.betAmount !== selectedBet;
+                const glowing = selectedBet !== null && match.betAmount === selectedBet && canJoin;
+
+                return (
+                  <div key={match.id}
+                    className={`relative flex items-center justify-between px-4 py-3.5 cursor-pointer transition-all ${
+                      dimmed ? "opacity-35 grayscale pointer-events-none" : "hover:bg-secondary/30"
+                    }`}
+                    style={{
+                      borderLeft: `3px solid ${cfg?.color ?? "#555"}`,
+                      ...(glowing ? { boxShadow: `inset 0 0 30px ${cfg?.color ?? "#888"}08` } : {}),
+                    }}
+                    onClick={() => !dimmed && handleOpenPublicLobby(match.id)}>
+                    {isLive && <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-arena-cyan/50 to-transparent" />}
+                    {dimmed && (
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2 opacity-40">
+                        <Lock className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    )}
+                    <div className="flex items-center gap-3 min-w-0">
+                      <GameLogo game={match.game} size={32} />
+                      <div className="min-w-0">
+                        <p className="font-medium text-sm truncate">{match.host}'s Match</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          {/* Mini avatar stack */}
+                          <AvatarStack players={match.players} max={5} />
+                          <span className="text-xs text-muted-foreground">{match.players.length}/{match.maxPlayers}</span>
+                          {match.timeLeft && (
+                            <span className="text-xs text-arena-cyan flex items-center gap-0.5">
+                              <Clock className="h-3 w-3" />{match.timeLeft}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <Badge className={`${status.color} border text-xs gap-1`}>
+                        <StatusIcon className="h-3 w-3" />{status.label}
+                      </Badge>
+                      <span className="font-display text-base font-bold text-arena-gold">${match.betAmount}</span>
+                      {canJoin ? (
+                        <Button size="sm" disabled={escrowConfirm}
+                          onClick={(e) => { e.stopPropagation(); handleJoinPublic(match.id, match.betAmount); }}
+                          className="font-display text-xs"
+                          style={glowing && cfg ? { boxShadow: `0 0 12px ${cfg.color}60` } : {}}>
+                          <Swords className="mr-1 h-3 w-3" /> Join
+                        </Button>
+                      ) : (
+                        <Button size="sm" variant="outline" disabled className="font-display text-xs">
+                          {match.status === "completed" ? "Ended" : match.status === "in_progress" ? "Live" : "Full"}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              {filteredPublicMatches.length === 0 && (
+                <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                  {selectedBet ? `No open lobbies for $${selectedBet}.` : "No matches available."}
+                </div>
+              )}
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* ═══════════ CUSTOM ═══════════ */}
+        <TabsContent value="custom" className="space-y-4 mt-4">
+          {/* Join / Create */}
+          <div className="rounded-2xl border border-border bg-card p-4 space-y-4">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-[0.18em] flex items-center gap-1.5">
+              <span className="w-1 h-3 rounded-full bg-arena-cyan inline-block" /> Join or Create
+            </p>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1.5 block uppercase tracking-wider">Join by Game ID</label>
+              <div className="flex gap-2">
+                <Input placeholder="Enter match code (e.g. ARENA-7X2K)" value={customCode}
+                  onChange={(e) => setCustomCode(e.target.value.toUpperCase())}
+                  className="font-mono bg-secondary border-border placeholder:text-muted-foreground/40" />
+                <Button disabled={!customCode}
+                  onClick={() => { const found = customMatches.find(m => m.code === customCode); if (found) handleJoinCustom(found.id, found.betAmount); }}
+                  className="font-display shrink-0">
+                  <Search className="mr-2 h-4 w-4" /> Find
+                </Button>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="h-px flex-1 bg-border" />
+              <span className="text-xs text-muted-foreground uppercase tracking-widest">or</span>
+              <div className="h-px flex-1 bg-border" />
+            </div>
+            {!createMode ? (
+              <button onClick={() => setCreateMode(true)}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-arena-purple/30 text-arena-purple hover:bg-arena-purple/10 transition-colors font-display text-sm font-semibold">
+                <Crown className="h-4 w-4" /> Create Custom Match
+              </button>
+            ) : (
+              <div className="space-y-4 p-4 rounded-xl border border-arena-purple/30 bg-arena-purple/5">
+                <h4 className="font-display font-semibold flex items-center gap-2 text-sm">
+                  <Crown className="h-4 w-4 text-arena-purple" /> New Custom Match
+                </h4>
+                {/* Game selection */}
+                <div>
+                  <label className="text-xs text-muted-foreground mb-2 block uppercase tracking-wider">Select Game</label>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {newMatchGame && (
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-secondary border border-border text-xs font-medium">
+                        <GameLogo game={newMatchGame} size={16} />
+                        {newMatchGame}
+                        <button onClick={() => setNewMatchGame("")} className="ml-1 text-muted-foreground hover:text-foreground">✕</button>
+                      </div>
+                    )}
+                    <GameDropdown label="PC Games" icon={Monitor} games={PC_GAME_CONFIG}
+                      activeGame={newMatchGame} onSelect={(g) => setNewMatchGame(g as Game)} />
+                    <GameDropdown label="Mobile" icon={Smartphone} games={MOBILE_GAME_CONFIG}
+                      activeGame={newMatchGame} onSelect={(g) => setNewMatchGame(g as Game)} comingSoon />
+                  </div>
+                </div>
+                {/* Bet */}
+                <div>
+                  <label className="text-xs text-muted-foreground mb-2 block uppercase tracking-wider">Bet Amount</label>
+                  <div className="flex gap-2 flex-wrap">
+                    {CREATE_BET_AMOUNTS.map((a) => (
+                      <button key={a} onClick={() => setNewMatchBet(a)}
+                        className={`px-4 py-1.5 rounded-xl border font-display text-sm font-bold transition-all ${
+                          newMatchBet === a
+                            ? "border-primary bg-primary/15 text-primary shadow-[0_0_12px_rgba(var(--primary-rgb),0.3)]"
+                            : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                        }`}>
+                        ${a}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {/* Password */}
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1 uppercase tracking-wider">
+                    <KeyRound className="h-3 w-3" /> Match Password
+                  </label>
+                  <Input type="text" placeholder="Set a password for your match" value={newMatchPassword}
+                    onChange={(e) => setNewMatchPassword(e.target.value)}
+                    className="font-mono bg-secondary border-border placeholder:text-muted-foreground/40" maxLength={20} />
+                  <p className="text-xs text-muted-foreground mt-1">Share with teammates to join</p>
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <Button
+                    disabled={!newMatchGame || !newMatchBet || !newMatchPassword}
+                    onClick={() => {
+                      if (!newMatchGame || !newMatchBet || !user) return;
+                      const created = addMatch({
+                        type: "custom", host: user.username, hostId: user.id, game: newMatchGame as Game,
+                        mode: "5v5", betAmount: newMatchBet, players: [], maxPlayers: 10, status: "waiting",
+                        password: newMatchPassword, teamA: [user.username], teamB: [], maxPerTeam: 5,
+                      });
+                      lockEscrow(newMatchBet, created.id);
+                      const { addNotification } = useNotificationStore.getState();
+                      addNotification({ type: "match_invite", title: "⚔️ Match Created", message: `Your ${newMatchGame} 5v5 ($${newMatchBet}) is live! Code: ${created.code}` });
+                      setCreateMode(false); setNewMatchPassword(""); setNewMatchGame(""); setNewMatchBet(null);
+                    }}
+                    className="glow-green font-display">
+                    <Swords className="mr-2 h-4 w-4" /> Create 5v5 Match
+                  </Button>
+                  <Button variant="outline" onClick={() => { setCreateMode(false); setNewMatchPassword(""); }}>Cancel</Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Game filter */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={() => setSelectedGame("")}
+              className={`px-3 py-1.5 rounded-lg border text-sm font-display transition-all ${
+                !selectedGame ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+              }`}>
+              All Games
+            </button>
+            <GameDropdown label="PC Games" icon={Monitor} games={PC_GAME_CONFIG}
+              activeGame={selectedGame} onSelect={(g) => setSelectedGame(selectedGame === g ? "" : g)} />
+            <GameDropdown label="Mobile" icon={Smartphone} games={MOBILE_GAME_CONFIG}
+              activeGame={selectedGame} onSelect={(g) => setSelectedGame(selectedGame === g ? "" : g)} comingSoon />
+          </div>
+
+          {/* Custom cards */}
+          <div className="space-y-3">
             {filteredCustom.map((match) => {
               const status = statusConfig[match.status];
               const StatusIcon = status.icon;
+              const isLive = match.status === "in_progress";
               const teamAFull = match.teamA.length >= match.maxPerTeam;
               const teamBFull = match.teamB.length >= match.maxPerTeam;
               const canJoin = match.status === "waiting" && (!teamAFull || !teamBFull);
+              const cfg = ALL_GAME_CONFIG[match.game];
 
               return (
-                <Card key={match.id} className="bg-card border-border cursor-pointer arena-hover">
-                  <CardContent className="p-4 space-y-3">
-                    {/* Header */}
+                <div key={match.id} className="rounded-2xl border border-border bg-card overflow-hidden"
+                  style={{ borderLeftWidth: "3px", borderLeftColor: cfg?.color ?? "#555" }}>
+                  {isLive && <div className="h-0.5 w-full bg-gradient-to-r from-arena-cyan via-primary to-arena-purple animate-pulse" />}
+                  <div className="p-4 space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <Badge className={`${status.color} border text-xs gap-1`}>
-                          <StatusIcon className="h-3 w-3" />
-                          {status.label}
-                        </Badge>
+                        <GameLogo game={match.game} size={32} />
                         <div>
-                          <p className="font-medium flex items-center gap-2">
-                            <Crown className="h-4 w-4 text-arena-gold" />
+                          <p className="font-medium text-sm flex items-center gap-1.5">
+                            <Crown className="h-3.5 w-3.5 text-arena-gold" />
                             {match.host}'s {match.mode}
                           </p>
-                          <p className="text-xs text-muted-foreground flex items-center gap-2">
-                            <Gamepad2 className="h-3 w-3" /> {match.game}
-                            <span>•</span>
-                            <KeyRound className="h-3 w-3" /> Password Protected
+                          <p className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
+                            <span>{match.game}</span><span>·</span>
+                            <KeyRound className="h-3 w-3" /> Protected
                           </p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <button
-                          onClick={() => handleCopyCode(match.code)}
-                          className="flex items-center gap-1 text-xs font-mono bg-secondary px-2 py-1 rounded border border-border hover:border-primary/50 transition-colors"
-                        >
+                      <div className="flex items-center gap-2">
+                        <Badge className={`${status.color} border text-xs gap-1`}>
+                          <StatusIcon className="h-3 w-3" />{status.label}
+                        </Badge>
+                        <button onClick={() => handleCopyCode(match.code)}
+                          className="flex items-center gap-1 text-xs font-mono bg-secondary px-2 py-1 rounded-lg border border-border hover:border-primary/50 transition-colors">
                           <Copy className="h-3 w-3" />
                           {copiedCode === match.code ? "Copied!" : match.code}
                         </button>
-                        <span className="font-display text-lg font-bold text-arena-gold">${match.betAmount}</span>
+                        <span className="font-display text-base font-bold text-arena-gold">${match.betAmount}</span>
                       </div>
                     </div>
-
-                    {/* Teams */}
                     <div className="grid grid-cols-2 gap-3">
-                      {/* Team A */}
-                      <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
-                        <p className="text-xs text-primary font-display uppercase tracking-wider mb-2 flex items-center gap-1">
-                          <Shield className="h-3 w-3" /> Team A ({match.teamA.length}/{match.maxPerTeam})
-                        </p>
-                        <div className="space-y-1">
-                          {match.teamA.map((player, i) => (
-                            <p key={i} className="text-sm flex items-center gap-1.5">
-                              {i === 0 && <Crown className="h-3 w-3 text-arena-gold" />}
-                              {player}
-                            </p>
-                          ))}
-                          {Array.from({ length: match.maxPerTeam - match.teamA.length }).map((_, i) => (
-                            <p key={`empty-a-${i}`} className="text-sm text-muted-foreground/30 italic">
-                              Empty slot
-                            </p>
-                          ))}
+                      {[
+                        { label: "Team A", players: match.teamA, full: teamAFull, border: "border-primary/20", bg: "bg-primary/5", text: "text-primary", joinBorder: "border-primary/30", joinText: "text-primary", joinHover: "hover:bg-primary/10", isA: true },
+                        { label: "Team B", players: match.teamB, full: teamBFull, border: "border-arena-orange/20", bg: "bg-arena-orange/5", text: "text-arena-orange", joinBorder: "border-arena-orange/30", joinText: "text-arena-orange", joinHover: "hover:bg-arena-orange/10", isA: false },
+                      ].map(({ label, players, full, border, bg, text, joinBorder, joinText, joinHover, isA }) => (
+                        <div key={label} className={`rounded-xl border ${border} ${bg} p-3`}>
+                          <p className={`text-xs ${text} font-display uppercase tracking-wider mb-2 flex items-center gap-1`}>
+                            <Shield className="h-3 w-3" /> {label} ({players.length}/{match.maxPerTeam})
+                          </p>
+                          <div className="space-y-0.5">
+                            {players.map((p, i) => <PlayerRow key={i} name={p} isHost={isA} index={i} />)}
+                            {Array.from({ length: match.maxPerTeam - players.length }).map((_, i) => (
+                              <p key={i} className="text-sm text-muted-foreground/30 italic pl-5">Empty slot</p>
+                            ))}
+                          </div>
+                          {canJoin && !full && (
+                            <button onClick={() => handleJoinCustom(match.id, match.betAmount)}
+                              className={`mt-2 w-full flex items-center justify-center gap-1 py-1.5 rounded-lg border ${joinBorder} ${joinText} ${joinHover} transition-colors text-xs font-display`}>
+                              <UserPlus className="h-3 w-3" /> Join {label}
+                            </button>
+                          )}
                         </div>
-                        {canJoin && !teamAFull && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleJoinCustom(match.id, match.betAmount)}
-                            className="mt-2 w-full border-primary/30 text-primary hover:bg-primary/10 font-display text-xs"
-                          >
-                            <UserPlus className="mr-1 h-3 w-3" /> Join Team A
-                          </Button>
-                        )}
-                      </div>
-
-                      {/* Team B */}
-                      <div className="rounded-lg border border-arena-orange/20 bg-arena-orange/5 p-3">
-                        <p className="text-xs text-arena-orange font-display uppercase tracking-wider mb-2 flex items-center gap-1">
-                          <Shield className="h-3 w-3" /> Team B ({match.teamB.length}/{match.maxPerTeam})
-                        </p>
-                        <div className="space-y-1">
-                          {match.teamB.map((player, i) => (
-                            <p key={i} className="text-sm">{player}</p>
-                          ))}
-                          {Array.from({ length: match.maxPerTeam - match.teamB.length }).map((_, i) => (
-                            <p key={`empty-b-${i}`} className="text-sm text-muted-foreground/30 italic">
-                              Empty slot
-                            </p>
-                          ))}
-                        </div>
-                        {canJoin && !teamBFull && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleJoinCustom(match.id, match.betAmount)}
-                            className="mt-2 w-full border-arena-orange/30 text-arena-orange hover:bg-arena-orange/10 font-display text-xs"
-                          >
-                            <UserPlus className="mr-1 h-3 w-3" /> Join Team B
-                          </Button>
-                        )}
-                      </div>
+                      ))}
                     </div>
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
               );
             })}
+            {filteredCustom.length === 0 && (
+              <div className="rounded-2xl border border-border bg-card/50 px-4 py-8 text-center text-sm text-muted-foreground">
+                No custom matches found{selectedGame ? ` for ${selectedGame}` : ""}.
+              </div>
+            )}
           </div>
         </TabsContent>
       </Tabs>

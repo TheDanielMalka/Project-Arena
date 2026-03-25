@@ -14,6 +14,18 @@ import type { Game, MatchStatus } from "@/types";
 
 const ITEMS_PER_PAGE = 8;
 
+// ── Timestamp formatter — DB-ready: accepts ISO 8601 string (endedAt / createdAt) ──
+// Returns: "Today · 09:45" | "Yesterday · 18:40" | "Mar 24 · 14:30"
+const fmtDate = (iso: string): string => {
+  const d = new Date(iso);
+  const now = new Date();
+  const diffDays = Math.floor((now.getTime() - d.getTime()) / 86_400_000);
+  const time = d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+  if (diffDays === 0) return `Today · ${time}`;
+  if (diffDays === 1) return `Yesterday · ${time}`;
+  return `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })} · ${time}`;
+};
+
 // ── Game configs — identical URLs to Profile.tsx ─────────────────────────
 const PC_GAME_CONFIG: Record<string, { logo: string; color: string }> = {
   CS2: {
@@ -477,6 +489,14 @@ const History = () => {
                             <>
                               <span className="text-border">•</span>
                               <span className="font-mono text-arena-cyan">{m.code}</span>
+                            </>
+                          )}
+                          {(m.endedAt ?? m.createdAt) && (
+                            <>
+                              <span className="text-border">•</span>
+                              <span className="font-mono text-[10px] text-muted-foreground/70">
+                                {fmtDate(m.endedAt ?? m.createdAt)}
+                              </span>
                             </>
                           )}
                         </p>
