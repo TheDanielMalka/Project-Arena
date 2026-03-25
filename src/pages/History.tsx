@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,41 +8,69 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Search, Swords, Inbox, Gamepad2, Users, Trophy,
   ChevronDown, ChevronUp, TrendingUp, DollarSign, Shield,
+  Monitor, Smartphone,
 } from "lucide-react";
 import type { Game, MatchStatus } from "@/types";
 
 const ITEMS_PER_PAGE = 8;
 
-// ── Game logo config (mirrors Profile.tsx) ────────────────────────────────
-const gameConfig: Record<string, { logo: string; color: string }> = {
+// ── Game configs — identical URLs to Profile.tsx ─────────────────────────
+const PC_GAME_CONFIG: Record<string, { logo: string; color: string }> = {
   CS2: {
     logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/730/capsule_sm_120.jpg",
-    color: "#f0a500",
+    color: "#F97316",
   },
   Valorant: {
     logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/2181130/capsule_sm_120.jpg",
-    color: "#ff4655",
+    color: "#FF4655",
   },
   Fortnite: {
-    logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/1665460/capsule_sm_120.jpg",
-    color: "#00d4ff",
+    logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/1172620/capsule_sm_120.jpg",
+    color: "#38BDF8",
   },
   "Apex Legends": {
     logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/1172470/capsule_sm_120.jpg",
-    color: "#fc4b00",
+    color: "#FC4B00",
   },
+};
+
+const MOBILE_GAME_CONFIG: Record<string, { logo: string; color: string }> = {
+  MLBB: {
+    logo: "https://play-lh.googleusercontent.com/Op7v9XdsyxjrKImMD5RLyiLRCAHs3DMQFANwfsuMTw1hq0lH4j8tOqD3Fd7zyr4ixmC0xoqqRkQDBjAd46NsFQ=s120-rw",
+    color: "#EF4444",
+  },
+  "Wild Rift": {
+    logo: "https://play-lh.googleusercontent.com/7-kbcpgrCOE1mleJ9g0d61sJeoqKcQRIj4iFvJ8DjPlRIfocOWfOQsXzKWw2I5oHySVdbjR2fvzfCCz1FYQ-RQ=s120-rw",
+    color: "#6366F1",
+  },
+  "COD Mobile": {
+    logo: "https://play-lh.googleusercontent.com/cfGSXkDwxa1jW3TlhhkDJBN16-1_KEtEDhnILPcs9rXcC25g14XY6MRGCtlXHFHs0g=s120-rw",
+    color: "#84CC16",
+  },
+  "PUBG Mobile": {
+    logo: "https://play-lh.googleusercontent.com/zCSGnBtZk0Lmp1BAbyaZfLktDzHmC6oke67qzz3G1lBegAF2asyt5KzXOJ2PVdHDYkU=s120-rw",
+    color: "#F59E0B",
+  },
+  "Fortnite Mobile": {
+    logo: "https://play-lh.googleusercontent.com/FxJDPDIDJKlG9C8lOxaS041X27A0SrHAa46SGDIpPusAd4IEJihZTyGf-8rTZ_GpF34aeLvULilVuO0cpCJxTg=s120-rw",
+    color: "#38BDF8",
+  },
+};
+
+// Combined for match-card logo lookup
+const ALL_GAME_CONFIG: Record<string, { logo: string; color: string }> = {
+  ...PC_GAME_CONFIG,
+  ...MOBILE_GAME_CONFIG,
 };
 
 // ── Helper components ─────────────────────────────────────────────────────
 const GameLogo = ({ game, size = 32 }: { game: string; size?: number }) => {
-  const cfg = gameConfig[game];
-  if (!cfg) return <Gamepad2 className="h-6 w-6 text-muted-foreground" />;
+  const cfg = ALL_GAME_CONFIG[game];
+  if (!cfg) return <Gamepad2 style={{ width: size, height: size }} className="text-muted-foreground" />;
   return (
     <img
       src={cfg.logo}
       alt={game}
-      width={size}
-      height={size}
       className="rounded object-cover"
       style={{ width: size, height: size }}
       onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
@@ -52,7 +80,7 @@ const GameLogo = ({ game, size = 32 }: { game: string; size?: number }) => {
 
 const PlayerInitial = ({ name, isYou = false }: { name: string; isYou?: boolean }) => (
   <div
-    className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border ${
+    className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border shrink-0 ${
       isYou
         ? "border-primary/60 bg-primary/20 text-primary"
         : "border-border bg-secondary/40 text-muted-foreground"
@@ -63,12 +91,103 @@ const PlayerInitial = ({ name, isYou = false }: { name: string; isYou?: boolean 
 );
 
 // ── Status config ─────────────────────────────────────────────────────────
-const STATUS_CONFIG: Record<MatchStatus, { label: string; pillClass: string; borderClass: string }> = {
-  waiting:     { label: "Waiting",     pillClass: "bg-arena-gold/20 text-arena-gold border-arena-gold/40",       borderClass: "border-l-arena-gold" },
-  in_progress: { label: "Live",        pillClass: "bg-arena-cyan/20 text-arena-cyan border-arena-cyan/40",       borderClass: "border-l-arena-cyan" },
-  completed:   { label: "Completed",   pillClass: "bg-muted text-muted-foreground border-border",                borderClass: "border-l-border" },
-  cancelled:   { label: "Cancelled",   pillClass: "bg-destructive/20 text-destructive border-destructive/40",   borderClass: "border-l-destructive" },
-  disputed:    { label: "Disputed",    pillClass: "bg-arena-orange/20 text-arena-orange border-arena-orange/40", borderClass: "border-l-arena-orange" },
+const STATUS_CONFIG: Record<MatchStatus, { label: string; pillClass: string }> = {
+  waiting:     { label: "Waiting",   pillClass: "bg-arena-gold/20 text-arena-gold border-arena-gold/40" },
+  in_progress: { label: "Live",      pillClass: "bg-arena-cyan/20 text-arena-cyan border-arena-cyan/40" },
+  completed:   { label: "Completed", pillClass: "bg-muted text-muted-foreground border-border" },
+  cancelled:   { label: "Cancelled", pillClass: "bg-destructive/20 text-destructive border-destructive/40" },
+  disputed:    { label: "Disputed",  pillClass: "bg-arena-orange/20 text-arena-orange border-arena-orange/40" },
+};
+
+// ── Dropdown component ────────────────────────────────────────────────────
+interface GameDropdownProps {
+  label: string;
+  icon: React.ReactNode;
+  games: Record<string, { logo: string; color: string }>;
+  activeGame: Game | "all";
+  onSelect: (game: Game | "all") => void;
+  comingSoon?: boolean;
+}
+
+const GameDropdown = ({ label, icon, games, activeGame, onSelect, comingSoon }: GameDropdownProps) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const hasActive = !comingSoon && Object.keys(games).some((g) => g === activeGame);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+          hasActive
+            ? "bg-primary/20 border-primary/50 text-primary"
+            : "bg-secondary/50 border-border text-muted-foreground hover:text-foreground hover:border-border/80"
+        }`}
+      >
+        {icon}
+        {label}
+        <ChevronDown className={`h-3 w-3 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && (
+        <div className="absolute top-full mt-1.5 left-0 z-50 min-w-[180px] rounded-xl border border-border bg-card shadow-xl overflow-hidden">
+          {comingSoon ? (
+            <div className="px-3 py-2">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Coming Soon</p>
+              {Object.entries(games).map(([name, cfg]) => (
+                <div key={name} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg opacity-40 cursor-not-allowed">
+                  <img
+                    src={cfg.logo}
+                    alt={name}
+                    className="rounded object-cover"
+                    style={{ width: 20, height: 20 }}
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                  />
+                  <span className="text-xs">{name}</span>
+                  <span className="ml-auto text-[9px] bg-secondary px-1.5 py-0.5 rounded-full text-muted-foreground">Soon</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="py-1">
+              {Object.entries(games).map(([name, cfg]) => {
+                const isActive = activeGame === name;
+                return (
+                  <button
+                    key={name}
+                    onClick={() => { onSelect(name as Game); setOpen(false); }}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs transition-all ${
+                      isActive
+                        ? "bg-primary/15 text-primary"
+                        : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+                    }`}
+                  >
+                    <img
+                      src={cfg.logo}
+                      alt={name}
+                      className="rounded object-cover"
+                      style={{ width: 20, height: 20 }}
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                    />
+                    <span className="font-medium">{name}</span>
+                    {isActive && <span className="ml-auto text-[9px] bg-primary/20 px-1.5 py-0.5 rounded-full">Active</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -82,10 +201,11 @@ const History = () => {
   const [page, setPage] = useState(1);
   const [expandedMatchId, setExpandedMatchId] = useState<string | null>(null);
 
-  // ── Only matches the current user participated in, excluding lobbies ──
   const MY_ID = "user-001";
+
+  // ── Only user's matches, no waiting ───────────────────────────────────
   const userMatches = matches.filter((m) => {
-    if (m.status === "waiting") return false; // waiting = lobby, not history
+    if (m.status === "waiting") return false;
     return (
       m.players.includes(MY_ID) ||
       m.hostId === MY_ID ||
@@ -94,7 +214,7 @@ const History = () => {
     );
   });
 
-  // ── Quick stats from user's matches ────────────────────────────────────
+  // ── Quick stats ────────────────────────────────────────────────────────
   const completedMatches = userMatches.filter((m) => m.status === "completed");
   const wins = completedMatches.filter((m) => m.winnerId === MY_ID).length;
   const losses = completedMatches.filter((m) => m.winnerId && m.winnerId !== MY_ID).length;
@@ -118,12 +238,10 @@ const History = () => {
   const totalPages = Math.max(1, Math.ceil(filtered.length / ITEMS_PER_PAGE));
   const paged = filtered.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
 
-  // Count per status for pill badges (from user's matches only)
   const countForStatus = (s: MatchStatus | "all") =>
     s === "all" ? userMatches.length : userMatches.filter((m) => m.status === s).length;
 
-  const GAMES: (Game | "all")[] = ["all", "CS2", "Valorant", "Fortnite", "Apex Legends"];
-  // "waiting" is excluded — history only shows matches that have progressed past lobby
+  // No "waiting" in history status filters
   const STATUSES: (MatchStatus | "all")[] = ["all", "in_progress", "completed", "cancelled", "disputed"];
 
   return (
@@ -183,7 +301,9 @@ const History = () => {
                 key={i}
                 title={win ? "Win" : "Loss"}
                 className={`h-5 w-4 rounded-sm font-display text-[9px] flex items-center justify-center font-bold ${
-                  win ? "bg-primary/30 text-primary border border-primary/40" : "bg-destructive/30 text-destructive border border-destructive/40"
+                  win
+                    ? "bg-primary/30 text-primary border border-primary/40"
+                    : "bg-destructive/30 text-destructive border border-destructive/40"
                 }`}
               >
                 {win ? "W" : "L"}
@@ -204,21 +324,40 @@ const History = () => {
             className="pl-9 bg-secondary border-border"
           />
         </div>
-        <div className="flex gap-1.5 flex-wrap">
-          {GAMES.map((g) => (
-            <button
-              key={g}
-              onClick={() => { setGameFilter(g); setPage(1); }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
-                gameFilter === g
-                  ? "bg-primary/20 border-primary/50 text-primary"
-                  : "bg-secondary/50 border-border text-muted-foreground hover:text-foreground hover:border-border/80"
-              }`}
-            >
-              {g !== "all" && <GameLogo game={g} size={14} />}
-              {g === "all" ? "All Games" : g}
-            </button>
-          ))}
+
+        {/* Game filter: All Games + PC dropdown + Mobile dropdown */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {/* All Games */}
+          <button
+            onClick={() => { setGameFilter("all"); setPage(1); }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+              gameFilter === "all"
+                ? "bg-primary/20 border-primary/50 text-primary"
+                : "bg-secondary/50 border-border text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Gamepad2 className="h-3.5 w-3.5" />
+            All Games
+          </button>
+
+          {/* PC Games dropdown */}
+          <GameDropdown
+            label="PC"
+            icon={<Monitor className="h-3.5 w-3.5" />}
+            games={PC_GAME_CONFIG}
+            activeGame={gameFilter}
+            onSelect={(g) => { setGameFilter(g); setPage(1); }}
+          />
+
+          {/* Mobile Games dropdown */}
+          <GameDropdown
+            label="Mobile"
+            icon={<Smartphone className="h-3.5 w-3.5" />}
+            games={MOBILE_GAME_CONFIG}
+            activeGame={gameFilter}
+            onSelect={(g) => { setGameFilter(g); setPage(1); }}
+            comingSoon
+          />
         </div>
       </div>
 
@@ -268,7 +407,7 @@ const History = () => {
       ) : (
         <div className="space-y-3">
           {paged.map((m) => {
-            const isWin = m.status === "completed" && m.winnerId === MY_ID;
+            const isWin  = m.status === "completed" && m.winnerId === MY_ID;
             const isLoss = m.status === "completed" && !!m.winnerId && m.winnerId !== MY_ID;
             const isLive = m.status === "in_progress";
             const isExpanded = expandedMatchId === m.id;
@@ -276,7 +415,7 @@ const History = () => {
             const teamA = m.teamA ?? m.players.slice(0, maxPerTeam);
             const teamB = m.teamB ?? m.players.slice(maxPerTeam, maxPerTeam * 2);
             const statusCfg = STATUS_CONFIG[m.status];
-            const gameCfg = gameConfig[m.game];
+            const gameCfg = ALL_GAME_CONFIG[m.game];
 
             const borderColor = isWin
               ? "border-l-primary"
@@ -292,21 +431,18 @@ const History = () => {
                 className={`bg-card border-border border-l-4 ${borderColor} cursor-pointer arena-hover overflow-hidden`}
                 onClick={() => setExpandedMatchId((prev) => (prev === m.id ? null : m.id))}
               >
-                {/* Live pulse bar */}
                 {isLive && (
                   <div className="h-0.5 w-full bg-gradient-to-r from-arena-cyan/0 via-arena-cyan to-arena-cyan/0 animate-pulse" />
                 )}
 
                 <CardContent className="p-4">
                   <div className="flex items-center justify-between gap-3">
-                    {/* Left: game logo + info */}
                     <div className="flex items-center gap-3 min-w-0">
                       <div className="shrink-0">
                         <GameLogo game={m.game} size={36} />
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          {/* W / L / LIVE badge */}
                           {isWin && (
                             <span className="text-[10px] font-display font-bold px-1.5 py-0.5 rounded bg-primary/20 text-primary border border-primary/30">
                               WIN
@@ -332,10 +468,7 @@ const History = () => {
                           </p>
                         </div>
                         <p className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5 flex-wrap">
-                          <span
-                            className="font-medium"
-                            style={{ color: gameCfg?.color ?? "inherit" }}
-                          >
+                          <span className="font-medium" style={{ color: gameCfg?.color ?? "inherit" }}>
                             {m.game}
                           </span>
                           <span className="text-border">•</span>
@@ -350,39 +483,28 @@ const History = () => {
                       </div>
                     </div>
 
-                    {/* Right: amount + chevron */}
                     <div className="text-right flex items-center gap-2 shrink-0">
                       <div>
-                        <p
-                          className={`font-display text-lg font-bold ${
-                            isWin ? "text-primary" : isLoss ? "text-destructive" : "text-arena-gold"
-                          }`}
-                        >
+                        <p className={`font-display text-lg font-bold ${isWin ? "text-primary" : isLoss ? "text-destructive" : "text-arena-gold"}`}>
                           ${m.betAmount}
                         </p>
                         <p className="text-[10px] text-muted-foreground font-mono">{m.id.slice(0, 8)}</p>
                       </div>
-                      {isExpanded ? (
-                        <ChevronUp className="h-4 w-4 text-muted-foreground" />
-                      ) : (
-                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                      )}
+                      {isExpanded
+                        ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                        : <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                      }
                     </div>
                   </div>
 
-                  {/* ── Battle Report (expanded) ── */}
+                  {/* ── Battle Report ── */}
                   {isExpanded && (
                     <div className="mt-4 pt-4 border-t border-border space-y-4">
-                      {/* Result banner */}
-                      <div
-                        className={`rounded-lg p-3 flex items-center justify-between ${
-                          isWin
-                            ? "bg-primary/10 border border-primary/20"
-                            : isLoss
-                            ? "bg-destructive/10 border border-destructive/20"
-                            : "bg-secondary/30 border border-border"
-                        }`}
-                      >
+                      <div className={`rounded-lg p-3 flex items-center justify-between ${
+                        isWin  ? "bg-primary/10 border border-primary/20"
+                        : isLoss ? "bg-destructive/10 border border-destructive/20"
+                        : "bg-secondary/30 border border-border"
+                      }`}>
                         <div className="flex items-center gap-2">
                           <Trophy className={`h-4 w-4 ${isWin ? "text-primary" : isLoss ? "text-destructive" : "text-arena-gold"}`} />
                           <span className="text-sm font-display font-bold">
@@ -394,9 +516,7 @@ const History = () => {
                         </div>
                       </div>
 
-                      {/* VS graphic + teams */}
                       <div className="grid grid-cols-[1fr_auto_1fr] gap-3 items-start">
-                        {/* Team A */}
                         <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
                           <p className="text-[10px] text-primary uppercase tracking-wider mb-2 flex items-center gap-1">
                             <Users className="h-3 w-3" /> Team A ({teamA.length}/{maxPerTeam})
@@ -404,25 +524,21 @@ const History = () => {
                           <div className="space-y-1.5">
                             {teamA.map((player, i) => (
                               <div key={`${m.id}-a-${player}-${i}`} className="flex items-center gap-2">
-                                <PlayerInitial name={player} isYou={player === "You" || player === "user-001"} />
-                                <span className="text-xs truncate">{player}</span>
+                                <PlayerInitial name={player} isYou={player === MY_ID} />
+                                <span className="text-xs truncate">{player === MY_ID ? "You" : player}</span>
                               </div>
                             ))}
                             {Array.from({ length: maxPerTeam - teamA.length }).map((_, i) => (
-                              <p key={`${m.id}-a-empty-${i}`} className="text-xs text-muted-foreground/40 italic pl-1">
-                                Empty slot
-                              </p>
+                              <p key={`${m.id}-a-empty-${i}`} className="text-xs text-muted-foreground/40 italic pl-1">Empty slot</p>
                             ))}
                           </div>
                         </div>
 
-                        {/* VS */}
                         <div className="flex flex-col items-center justify-center gap-1 pt-4">
                           <Swords className="h-5 w-5 text-muted-foreground/50" />
                           <span className="font-display text-[10px] text-muted-foreground/50 uppercase tracking-widest">vs</span>
                         </div>
 
-                        {/* Team B */}
                         <div className="rounded-lg border border-arena-orange/20 bg-arena-orange/5 p-3">
                           <p className="text-[10px] text-arena-orange uppercase tracking-wider mb-2 flex items-center gap-1">
                             <Users className="h-3 w-3" /> Team B ({teamB.length}/{maxPerTeam})
@@ -430,25 +546,22 @@ const History = () => {
                           <div className="space-y-1.5">
                             {teamB.map((player, i) => (
                               <div key={`${m.id}-b-${player}-${i}`} className="flex items-center gap-2">
-                                <PlayerInitial name={player} />
-                                <span className="text-xs truncate">{player}</span>
+                                <PlayerInitial name={player} isYou={player === MY_ID} />
+                                <span className="text-xs truncate">{player === MY_ID ? "You" : player}</span>
                               </div>
                             ))}
                             {Array.from({ length: maxPerTeam - teamB.length }).map((_, i) => (
-                              <p key={`${m.id}-b-empty-${i}`} className="text-xs text-muted-foreground/40 italic pl-1">
-                                Empty slot
-                              </p>
+                              <p key={`${m.id}-b-empty-${i}`} className="text-xs text-muted-foreground/40 italic pl-1">Empty slot</p>
                             ))}
                           </div>
                         </div>
                       </div>
 
-                      {/* Winner row */}
                       {m.status === "completed" && m.winnerId && (
                         <div className="flex items-center gap-2 text-xs text-muted-foreground">
                           <Trophy className="h-3 w-3 text-arena-gold" />
                           <span>Winner:</span>
-                          <span className="text-foreground font-medium">{m.winnerId}</span>
+                          <span className="text-foreground font-medium">{m.winnerId === MY_ID ? "You" : m.winnerId}</span>
                           <span>·</span>
                           <span className="text-arena-gold font-medium">+${m.betAmount}</span>
                         </div>
