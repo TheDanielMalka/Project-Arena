@@ -22,7 +22,7 @@ describe("MatchLobby page", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "$10" }));
+    fireEvent.click(screen.getByRole("button", { name: /\$10/ }));
 
     expect(screen.getByText("BlazeFury's Match")).toBeInTheDocument();
     expect(screen.queryByText("ShadowKill3r's Match")).not.toBeInTheDocument();
@@ -36,7 +36,7 @@ describe("MatchLobby page", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "$50" }));
+    fireEvent.click(screen.getByRole("button", { name: /\$50/ }));
     fireEvent.click(screen.getByText("NightHawk's Match"));
 
     expect(screen.getByText("Lobby Details")).toBeInTheDocument();

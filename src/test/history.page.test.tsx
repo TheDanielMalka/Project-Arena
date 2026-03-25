@@ -18,15 +18,15 @@ describe("History page", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("vs ShadowKill3r")).toBeInTheDocument();
-    expect(screen.getByText("vs NightHawk")).toBeInTheDocument();
+    expect(screen.getByText("YOU vs ShadowKill3r")).toBeInTheDocument();
+    expect(screen.getByText("YOU vs NightHawk")).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText(/search by opponent/i), {
       target: { value: "NightHawk" },
     });
 
-    expect(screen.getByText("vs NightHawk")).toBeInTheDocument();
-    expect(screen.queryByText("vs ShadowKill3r")).not.toBeInTheDocument();
+    expect(screen.getByText("YOU vs NightHawk")).toBeInTheDocument();
+    expect(screen.queryByText("YOU vs ShadowKill3r")).not.toBeInTheDocument();
   });
 
   it("expands and collapses match details on card click", () => {
@@ -36,7 +36,7 @@ describe("History page", () => {
       </MemoryRouter>,
     );
 
-    const targetCardTitle = screen.getByText("vs ShadowKill3r");
+    const targetCardTitle = screen.getByText("YOU vs ShadowKill3r");
     fireEvent.click(targetCardTitle);
 
     expect(screen.getByText(/team a \(/i)).toBeInTheDocument();
