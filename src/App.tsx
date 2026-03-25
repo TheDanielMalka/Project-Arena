@@ -23,6 +23,12 @@ import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
+const PublicLegal = ({ children }: { children: React.ReactNode }) => (
+  <div className="min-h-screen bg-background text-foreground">
+    <div className="max-w-4xl mx-auto px-6 py-10">{children}</div>
+  </div>
+);
+
 const AdminRoute = () => {
   const user = useUserStore((s) => s.user);
   return user?.role === "admin" ? <AppLayout><Admin /></AppLayout> : <Navigate to="/dashboard" replace />;
@@ -48,6 +54,10 @@ const App = () => (
           <Route path="/terms-of-service" element={<AppLayout><TermsOfService /></AppLayout>} />
           <Route path="/privacy-policy" element={<AppLayout><PrivacyPolicy /></AppLayout>} />
           <Route path="/responsible-gaming" element={<AppLayout><ResponsibleGaming /></AppLayout>} />
+          {/* Public legal pages — accessible without authentication */}
+          <Route path="/legal/terms" element={<PublicLegal><TermsOfService /></PublicLegal>} />
+          <Route path="/legal/privacy" element={<PublicLegal><PrivacyPolicy /></PublicLegal>} />
+          <Route path="/legal/responsible-gaming" element={<PublicLegal><ResponsibleGaming /></PublicLegal>} />
           <Route path="/admin" element={<AdminRoute />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
