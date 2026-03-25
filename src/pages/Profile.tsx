@@ -163,6 +163,8 @@ const Profile = () => {
     {
       name: "Steam",
       icon: Gamepad2,
+      img: "https://cdn.simpleicons.org/steam/ffffff",
+      imgBg: "rgba(27,40,56,0.9)",
       status: "connected" as const,
       detail: steamId,
       color: "text-arena-cyan",
@@ -172,6 +174,8 @@ const Profile = () => {
     {
       name: "Wallet",
       icon: Wallet,
+      img: "https://cdn.simpleicons.org/ethereum/627EEA",
+      imgBg: "rgba(98,126,234,0.12)",
       status: "connected" as const,
       detail: walletAddress,
       color: "text-primary",
@@ -181,6 +185,8 @@ const Profile = () => {
     {
       name: "Discord",
       icon: Link2,
+      img: "https://cdn.simpleicons.org/discord/5865F2",
+      imgBg: "rgba(88,101,242,0.12)",
       status: serviceConnections.discord ? "connected" as const : "disconnected" as const,
       detail: serviceConnections.discord || "Not connected",
       color: "text-arena-purple",
@@ -192,6 +198,8 @@ const Profile = () => {
     {
       name: "FACEIT",
       icon: Shield,
+      img: "https://cdn.simpleicons.org/faceit/FF5500",
+      imgBg: "rgba(255,85,0,0.12)",
       status: serviceConnections.faceit ? "connected" as const : "disconnected" as const,
       detail: serviceConnections.faceit || "Not connected",
       color: "text-arena-orange",
@@ -301,7 +309,21 @@ const Profile = () => {
                 {/* Status dot */}
                 <div className={`absolute top-2 right-2 w-1.5 h-1.5 rounded-full ${conn.status === "connected" ? "bg-primary" : "bg-muted-foreground/30"}`} />
 
-                <conn.icon className={`h-5 w-5 ${conn.status === "connected" ? conn.color : "text-muted-foreground/50"}`} />
+                {conn.img ? (
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden" style={{ background: conn.imgBg }}>
+                    <img
+                      src={conn.img}
+                      alt={conn.name}
+                      className="w-5 h-5 object-contain"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = "none";
+                        (e.target as HTMLImageElement).parentElement!.innerHTML = `<span class="${conn.status === "connected" ? conn.color : "text-muted-foreground/50"}">${conn.name.slice(0,2)}</span>`;
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <conn.icon className={`h-5 w-5 ${conn.status === "connected" ? conn.color : "text-muted-foreground/50"}`} />
+                )}
                 <span className="font-display text-xs font-semibold tracking-wide">{conn.name}</span>
 
                 {conn.status === "connected" ? (
