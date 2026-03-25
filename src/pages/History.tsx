@@ -42,7 +42,7 @@ const PC_GAME_CONFIG: Record<string, { logo: string; color: string }> = {
   },
   "Apex Legends": {
     logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/1172470/capsule_sm_120.jpg",
-    color: "#FC4B00",
+    color: "#FC4B08",
   },
 };
 
