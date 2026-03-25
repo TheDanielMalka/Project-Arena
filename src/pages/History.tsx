@@ -25,7 +25,7 @@ const PC_GAME_CONFIG: Record<string, { logo: string; color: string }> = {
     color: "#FF4655",
   },
   Fortnite: {
-    logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/1172620/capsule_sm_120.jpg",
+    logo: "https://play-lh.googleusercontent.com/FxJDPDIDJKlG9C8lOxaS041X27A0SrHAa46SGDIpPusAd4IEJihZTyGf-8rTZ_GpF34aeLvULilVuO0cpCJxTg=s120-rw",
     color: "#38BDF8",
   },
   "Apex Legends": {
