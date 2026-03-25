@@ -37,10 +37,14 @@ const Profile = () => {
 
   // Avatar picker state
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
-  const [selectedAvatar, setSelectedAvatar] = useState<string>("initials");
-  const [avatarTab, setAvatarTab] = useState<"free" | "event" | "premium" | "upload">("free");
-  const [uploadedAvatar, setUploadedAvatar] = useState<string | null>(null);
+  const [pickerMode, setPickerMode]             = useState<"avatar" | "background">("avatar");
+  const [selectedAvatar, setSelectedAvatar]     = useState<string>("initials");
+  const [avatarTab, setAvatarTab]               = useState<"free" | "event" | "premium" | "upload">("free");
+  const [uploadedAvatar, setUploadedAvatar]     = useState<string | null>(null);
+  const [selectedBg, setSelectedBg]             = useState<string>("default");
+  const [bgTab, setBgTab]                       = useState<"free" | "event" | "premium">("free");
 
+  // ── Avatar options ──
   const FREE_AVATARS   = ["🎮","💀","🔥","⚡","🎯","👾","🐺","🦁","🐉","🤖"];
   const EVENT_AVATARS  = [
     { emoji: "🌟", label: "Season 1 Champion", unlocked: false },
@@ -54,6 +58,32 @@ const Profile = () => {
     { emoji: "🦅", label: "Eagle",   price: "$1.99" },
     { emoji: "🏹", label: "Hunter",  price: "$2.99" },
   ];
+
+  // ── Background options ──
+  type BgDef = { id: string; label: string; border: string; shadow: string; preview: string; pulse?: boolean; locked?: boolean; eventName?: string; price?: string };
+  const BG_FREE: BgDef[] = [
+    { id: "default",  label: "Default", border: "border-primary/50",      shadow: "shadow-[0_0_16px_hsl(355_78%_52%/0.25)]",  preview: "#EF4444" },
+    { id: "blue",     label: "Blue",    border: "border-blue-500/60",      shadow: "shadow-[0_0_16px_rgba(59,130,246,0.35)]",   preview: "#3B82F6" },
+    { id: "purple",   label: "Purple",  border: "border-purple-500/60",    shadow: "shadow-[0_0_16px_rgba(168,85,247,0.35)]",   preview: "#A855F7" },
+    { id: "cyan",     label: "Cyan",    border: "border-cyan-400/60",      shadow: "shadow-[0_0_16px_rgba(34,211,238,0.35)]",   preview: "#22D3EE" },
+    { id: "green",    label: "Green",   border: "border-green-500/60",     shadow: "shadow-[0_0_16px_rgba(34,197,94,0.35)]",    preview: "#22C55E" },
+    { id: "orange",   label: "Orange",  border: "border-orange-500/60",    shadow: "shadow-[0_0_16px_rgba(249,115,22,0.35)]",   preview: "#F97316" },
+  ];
+  const BG_EVENT: BgDef[] = [
+    { id: "fire",     label: "🔥 Fire",     border: "border-orange-500/90", shadow: "shadow-[0_0_24px_rgba(249,115,22,0.7)]",  preview: "#F97316", pulse: true,  locked: true,  eventName: "Summer Blaze 2025" },
+    { id: "ice",      label: "❄️ Ice",      border: "border-cyan-300/90",   shadow: "shadow-[0_0_24px_rgba(125,211,252,0.7)]", preview: "#7DD3FC", pulse: true,  locked: false, eventName: "Winter Cup 2025" },
+    { id: "electric", label: "⚡ Electric", border: "border-yellow-400/90", shadow: "shadow-[0_0_24px_rgba(250,204,21,0.7)]",  preview: "#FACC15", pulse: true,  locked: true,  eventName: "Arena Open S2" },
+    { id: "void",     label: "🌑 Void",     border: "border-violet-600/90", shadow: "shadow-[0_0_24px_rgba(124,58,237,0.7)]",  preview: "#7C3AED", pulse: true,  locked: true,  eventName: "Dark Tournament" },
+  ];
+  const BG_PREMIUM: BgDef[] = [
+    { id: "gold",    label: "👑 Gold",    border: "border-yellow-400/90", shadow: "shadow-[0_0_28px_rgba(234,179,8,0.8)]",    preview: "#EAB308", pulse: true, price: "$1.99" },
+    { id: "rainbow", label: "🌈 Rainbow", border: "border-pink-500/80",   shadow: "shadow-[0_0_24px_rgba(236,72,153,0.6)]",   preview: "#EC4899", pulse: true, price: "$2.99" },
+    { id: "aurora",  label: "🌌 Aurora",  border: "border-emerald-400/80",shadow: "shadow-[0_0_24px_rgba(52,211,153,0.6)]",   preview: "#34D399", pulse: true, price: "$2.99" },
+    { id: "lava",    label: "🌋 Lava",    border: "border-red-600/90",    shadow: "shadow-[0_0_28px_rgba(220,38,38,0.8)]",    preview: "#DC2626", pulse: true, price: "$1.99" },
+  ];
+
+  const allBgs = [...BG_FREE, ...BG_EVENT, ...BG_PREMIUM];
+  const getBg = (id: string): BgDef => allBgs.find(b => b.id === id) ?? BG_FREE[0];
 
   const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -278,7 +308,7 @@ const Profile = () => {
             <div className="relative shrink-0">
               <button
                 onClick={() => setShowAvatarPicker(true)}
-                className="group w-16 h-16 rounded-full bg-secondary border-2 border-primary/50 flex items-center justify-center shadow-[0_0_16px_hsl(355_78%_52%/0.25)] overflow-hidden relative transition-all hover:border-primary"
+                className={`group w-16 h-16 rounded-full bg-secondary border-2 ${getBg(selectedBg).border} ${getBg(selectedBg).shadow} ${getBg(selectedBg).pulse ? "animate-pulse" : ""} flex items-center justify-center overflow-hidden relative transition-all`}
               >
                 {renderAvatarContent(selectedAvatar)}
                 {/* Camera overlay on hover */}
@@ -338,6 +368,107 @@ const Profile = () => {
         </CardContent>
       </Card>
 
+
+      {/* Game Stats */}
+      <Card className="bg-card border-border">
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="font-display text-sm tracking-widest uppercase text-muted-foreground flex items-center gap-2">
+              <Trophy className="h-4 w-4" /> Game Stats
+            </CardTitle>
+            <button onClick={() => navigate(`/history?game=${encodeURIComponent(activeGameTab)}`)} className="text-[10px] font-display text-muted-foreground hover:text-primary transition-colors tracking-wider uppercase">
+              Full Stats →
+            </button>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-0 space-y-3">
+          {/* Game Tabs */}
+          <div className="flex gap-1.5 flex-wrap">
+            {connectedGames.map((game) => {
+              const cfg = gameConfig[game.name] ?? { abbr: game.name.slice(0,2).toUpperCase(), color: "#888", bg: "rgba(136,136,136,0.1)" };
+              const isActive = activeGameTab === game.name;
+              return (
+                <button
+                  key={game.name}
+                  onClick={() => setActiveGameTab(game.name)}
+                  className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-display font-semibold transition-all"
+                  style={{
+                    background: isActive ? cfg.bg : "transparent",
+                    border: `1px solid ${isActive ? cfg.color + "60" : "rgba(255,255,255,0.06)"}`,
+                    color: isActive ? cfg.color : "var(--muted-foreground)",
+                  }}
+                >
+                  <div className="w-4 h-4 rounded overflow-hidden flex items-center justify-center flex-shrink-0" style={{ background: cfg.bg }}>
+                    {cfg.img
+                      ? <img src={cfg.img} alt={game.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display="none"; }} />
+                      : <span style={{ color: cfg.color, fontSize: "7px", fontWeight: 700 }}>{cfg.abbr.slice(0,2)}</span>
+                    }
+                  </div>
+                  {cfg.abbr}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Active Game Stats */}
+          {(() => {
+            const stats = gameStats[activeGameTab];
+            const cfg = gameConfig[activeGameTab] ?? { abbr: activeGameTab?.slice(0,2) ?? "??", color: "#888", bg: "rgba(136,136,136,0.1)" };
+            if (!stats) return (
+              <div className="text-center py-4 text-muted-foreground text-xs font-display">No stats available for {activeGameTab}</div>
+            );
+            const winColor = stats.winRate >= 65 ? "#22C55E" : stats.winRate >= 55 ? "#F59E0B" : stats.winRate >= 45 ? "#F97316" : "#EF4444";
+            const segments = 20;
+            const filled = Math.round((stats.winRate / 100) * segments);
+            return (
+              <div className="space-y-3">
+                {/* Win Rate + Bar */}
+                <div className="flex items-end justify-between gap-3">
+                  <div>
+                    <div className="text-[10px] font-display uppercase tracking-widest text-muted-foreground mb-0.5">Win Rate</div>
+                    <div className="font-display font-bold text-3xl leading-none" style={{ color: winColor }}>
+                      {stats.winRate}%
+                    </div>
+                  </div>
+                  <div className="flex-1 space-y-1">
+                    <div className="flex gap-0.5">
+                      {Array.from({ length: segments }).map((_, i) => (
+                        <div key={i} className="flex-1 h-2 rounded-sm transition-all"
+                          style={{ background: i < filled ? winColor : "rgba(255,255,255,0.06)" }} />
+                      ))}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground font-mono text-right">
+                      {Math.round(stats.matches * stats.winRate / 100)}W – {Math.round(stats.matches * (1 - stats.winRate / 100))}L
+                    </div>
+                  </div>
+                </div>
+                {/* Stats Row */}
+                <div className="grid grid-cols-4 gap-1.5">
+                  {[
+                    { label: "Matches", value: stats.matches,          icon: "⚔" },
+                    { label: "K/D",     value: stats.kd.toFixed(1),    icon: "🎯" },
+                    { label: "Rank",    value: stats.rank,             icon: "🏅" },
+                    { label: "Streak",  value: stats.streak > 0 ? `${stats.streak}🔥` : "—", icon: "⚡" },
+                  ].map(({ label, value, icon }) => (
+                    <div key={label} className="rounded-md p-2 text-center" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
+                      <div className="text-sm">{icon}</div>
+                      <div className="font-display font-bold text-xs mt-0.5">{value}</div>
+                      <div className="text-[9px] text-muted-foreground uppercase tracking-wider">{label}</div>
+                    </div>
+                  ))}
+                </div>
+                {/* Earnings */}
+                {stats.earnings > 0 && (
+                  <div className="flex items-center justify-between px-2 py-1.5 rounded-md" style={{ background: "rgba(34,197,94,0.06)", border: "1px solid rgba(34,197,94,0.15)" }}>
+                    <span className="text-[10px] font-display uppercase tracking-widest text-muted-foreground">Earned in {activeGameTab}</span>
+                    <span className="font-display font-bold text-sm text-green-400">${stats.earnings.toLocaleString()}</span>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </CardContent>
+      </Card>
 
       {/* Connections */}
       <Card className="bg-card border-border">
@@ -485,112 +616,6 @@ const Profile = () => {
         </CardContent>
       </Card>
 
-      {/* Game Stats */}
-      <Card className="bg-card border-border">
-        <CardHeader className="pb-2">
-          <div className="flex items-center justify-between">
-            <CardTitle className="font-display text-sm tracking-widest uppercase text-muted-foreground flex items-center gap-2">
-              <Trophy className="h-4 w-4" /> Game Stats
-            </CardTitle>
-            <button onClick={() => navigate(`/history?game=${encodeURIComponent(activeGameTab)}`)} className="text-[10px] font-display text-muted-foreground hover:text-primary transition-colors tracking-wider uppercase">
-              Full Stats →
-            </button>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-0 space-y-3">
-          {/* Game Tabs */}
-          <div className="flex gap-1.5 flex-wrap">
-            {connectedGames.map((game) => {
-              const cfg = gameConfig[game.name] ?? { abbr: game.name.slice(0,2).toUpperCase(), color: "#888", bg: "rgba(136,136,136,0.1)" };
-              const isActive = activeGameTab === game.name;
-              return (
-                <button
-                  key={game.name}
-                  onClick={() => setActiveGameTab(game.name)}
-                  className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-display font-semibold transition-all"
-                  style={{
-                    background: isActive ? cfg.bg : "transparent",
-                    border: `1px solid ${isActive ? cfg.color + "60" : "rgba(255,255,255,0.06)"}`,
-                    color: isActive ? cfg.color : "var(--muted-foreground)",
-                  }}
-                >
-                  <div className="w-4 h-4 rounded overflow-hidden flex items-center justify-center flex-shrink-0" style={{ background: cfg.bg }}>
-                    {cfg.img
-                      ? <img src={cfg.img} alt={game.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display="none"; }} />
-                      : <span style={{ color: cfg.color, fontSize: "7px", fontWeight: 700 }}>{cfg.abbr.slice(0,2)}</span>
-                    }
-                  </div>
-                  {cfg.abbr}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Active Game Stats */}
-          {(() => {
-            const stats = gameStats[activeGameTab];
-            const cfg = gameConfig[activeGameTab] ?? { abbr: activeGameTab?.slice(0,2) ?? "??", color: "#888", bg: "rgba(136,136,136,0.1)" };
-            if (!stats) return (
-              <div className="text-center py-4 text-muted-foreground text-xs font-display">No stats available for {activeGameTab}</div>
-            );
-            const winColor = stats.winRate >= 65 ? "#22C55E" : stats.winRate >= 55 ? "#F59E0B" : stats.winRate >= 45 ? "#F97316" : "#EF4444";
-            const segments = 20;
-            const filled = Math.round((stats.winRate / 100) * segments);
-            return (
-              <div className="space-y-3">
-                {/* Win Rate + Bar */}
-                <div className="flex items-end justify-between gap-3">
-                  <div>
-                    <div className="text-[10px] font-display uppercase tracking-widest text-muted-foreground mb-0.5">Win Rate</div>
-                    <div className="font-display font-bold text-3xl leading-none" style={{ color: winColor }}>
-                      {stats.winRate}%
-                    </div>
-                  </div>
-                  <div className="flex-1 space-y-1">
-                    <div className="flex gap-0.5">
-                      {Array.from({ length: segments }).map((_, i) => (
-                        <div
-                          key={i}
-                          className="flex-1 h-2 rounded-sm transition-all"
-                          style={{ background: i < filled ? winColor : "rgba(255,255,255,0.06)" }}
-                        />
-                      ))}
-                    </div>
-                    <div className="text-[10px] text-muted-foreground font-mono text-right">
-                      {Math.round(stats.matches * stats.winRate / 100)}W – {Math.round(stats.matches * (1 - stats.winRate / 100))}L
-                    </div>
-                  </div>
-                </div>
-
-                {/* Stats Row */}
-                <div className="grid grid-cols-4 gap-1.5">
-                  {[
-                    { label: "Matches", value: stats.matches, icon: "⚔" },
-                    { label: "K/D",     value: stats.kd.toFixed(1), icon: "🎯" },
-                    { label: "Rank",    value: stats.rank, icon: "🏅" },
-                    { label: "Streak",  value: stats.streak > 0 ? `${stats.streak}🔥` : "—", icon: "⚡" },
-                  ].map(({ label, value, icon }) => (
-                    <div key={label} className="rounded-md p-2 text-center" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
-                      <div className="text-sm">{icon}</div>
-                      <div className="font-display font-bold text-xs mt-0.5">{value}</div>
-                      <div className="text-[9px] text-muted-foreground uppercase tracking-wider">{label}</div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Earnings if any */}
-                {stats.earnings > 0 && (
-                  <div className="flex items-center justify-between px-2 py-1.5 rounded-md" style={{ background: "rgba(34,197,94,0.06)", border: "1px solid rgba(34,197,94,0.15)" }}>
-                    <span className="text-[10px] font-display uppercase tracking-widest text-muted-foreground">Earned in {activeGameTab}</span>
-                    <span className="font-display font-bold text-sm text-green-400">${stats.earnings.toLocaleString()}</span>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-        </CardContent>
-      </Card>
-
       {/* Link Game Dialog */}
       <Dialog open={!!linkDialog} onOpenChange={(open) => { if (!open) setLinkDialog(null); }}>
         <DialogContent className="bg-card border-border max-w-md">
@@ -647,26 +672,55 @@ const Profile = () => {
           </DialogHeader>
 
           {/* Preview */}
-          <div className="flex justify-center mb-2">
-            <div className="w-16 h-16 rounded-full bg-secondary border-2 border-primary/50 flex items-center justify-center overflow-hidden shadow-[0_0_16px_hsl(355_78%_52%/0.25)]">
+          <div className="flex justify-center mb-3">
+            <div className={`w-16 h-16 rounded-full bg-secondary border-2 ${getBg(selectedBg).border} ${getBg(selectedBg).shadow} ${getBg(selectedBg).pulse ? "animate-pulse" : ""} flex items-center justify-center overflow-hidden`}>
               {renderAvatarContent(selectedAvatar)}
             </div>
           </div>
 
-          {/* Tabs */}
-          <div className="flex gap-1 mb-3 bg-secondary/40 rounded-lg p-0.5">
-            {(["free","event","premium","upload"] as const).map((tab) => (
-              <button key={tab} onClick={() => setAvatarTab(tab)}
-                className={`flex-1 text-[10px] font-display uppercase tracking-widest py-1.5 rounded-md transition-all ${
-                  avatarTab === tab ? "bg-primary text-white" : "text-muted-foreground hover:text-foreground"
+          {/* Mode toggle: AVATAR | BACKGROUND */}
+          <div className="flex gap-1 mb-3 bg-secondary/60 rounded-lg p-0.5">
+            {(["avatar","background"] as const).map((mode) => (
+              <button key={mode} onClick={() => setPickerMode(mode)}
+                className={`flex-1 text-[10px] font-display uppercase tracking-widest py-1.5 rounded-md transition-all font-semibold ${
+                  pickerMode === mode ? "bg-primary text-white" : "text-muted-foreground hover:text-foreground"
                 }`}>
-                {tab === "free" ? "Free" : tab === "event" ? "Event" : tab === "premium" ? "Premium" : "Upload"}
+                {mode === "avatar" ? "Avatar" : "Background"}
               </button>
             ))}
           </div>
 
+          {/* ── AVATAR MODE sub-tabs ── */}
+          {pickerMode === "avatar" && (
+            <div className="flex gap-1 mb-3 bg-secondary/40 rounded-lg p-0.5">
+              {(["free","event","premium","upload"] as const).map((tab) => (
+                <button key={tab} onClick={() => setAvatarTab(tab)}
+                  className={`flex-1 text-[10px] font-display uppercase tracking-widest py-1.5 rounded-md transition-all ${
+                    avatarTab === tab ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}>
+                  {tab === "free" ? "Free" : tab === "event" ? "Event" : tab === "premium" ? "Premium" : "Upload"}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* ── BACKGROUND MODE sub-tabs ── */}
+          {pickerMode === "background" && (
+            <div className="flex gap-1 mb-3 bg-secondary/40 rounded-lg p-0.5">
+              {(["free","event","premium"] as const).map((tab) => (
+                <button key={tab} onClick={() => setBgTab(tab)}
+                  className={`flex-1 text-[10px] font-display uppercase tracking-widest py-1.5 rounded-md transition-all ${
+                    bgTab === tab ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}>
+                  {tab === "free" ? "Free" : tab === "event" ? "Event" : "Premium"}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* ══ AVATAR CONTENT ══ */}
           {/* FREE */}
-          {avatarTab === "free" && (
+          {pickerMode === "avatar" && avatarTab === "free" && (
             <div className="grid grid-cols-5 gap-2">
               {/* Initials option */}
               <button
@@ -691,7 +745,7 @@ const Profile = () => {
           )}
 
           {/* EVENT */}
-          {avatarTab === "event" && (
+          {pickerMode === "avatar" && avatarTab === "event" && (
             <div className="grid grid-cols-2 gap-2">
               {EVENT_AVATARS.map(({ emoji, label, unlocked }) => (
                 <button key={label}
@@ -714,7 +768,7 @@ const Profile = () => {
           )}
 
           {/* PREMIUM */}
-          {avatarTab === "premium" && (
+          {pickerMode === "avatar" && avatarTab === "premium" && (
             <div className="grid grid-cols-2 gap-2">
               {PREMIUM_AVATARS.map(({ emoji, label, price }) => (
                 <button key={label}
@@ -734,7 +788,7 @@ const Profile = () => {
           )}
 
           {/* UPLOAD */}
-          {avatarTab === "upload" && (
+          {pickerMode === "avatar" && avatarTab === "upload" && (
             <div className="flex flex-col items-center gap-3 py-4">
               <div className="w-14 h-14 rounded-full border-2 border-dashed border-border flex items-center justify-center">
                 <Upload className="h-5 w-5 text-muted-foreground" />
@@ -752,6 +806,72 @@ const Profile = () => {
                   Use last uploaded image
                 </button>
               )}
+            </div>
+          )}
+
+          {/* ══ BACKGROUND CONTENT ══ */}
+          {/* BG FREE */}
+          {pickerMode === "background" && bgTab === "free" && (
+            <div className="grid grid-cols-3 gap-2">
+              {BG_FREE.map((bg) => (
+                <button key={bg.id} onClick={() => { setSelectedBg(bg.id); }}
+                  className={`flex items-center gap-2 p-2.5 rounded-lg border transition-all ${
+                    selectedBg === bg.id ? "border-primary bg-primary/10" : "border-border hover:border-primary/30 bg-secondary/20"
+                  }`}
+                >
+                  <div className="w-6 h-6 rounded-full border-2 shrink-0" style={{ borderColor: bg.preview, boxShadow: `0 0 8px ${bg.preview}60` }} />
+                  <span className="text-[11px] font-display font-semibold">{bg.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* BG EVENT */}
+          {pickerMode === "background" && bgTab === "event" && (
+            <div className="grid grid-cols-2 gap-2">
+              {BG_EVENT.map((bg) => (
+                <button key={bg.id}
+                  onClick={() => { if (!bg.locked) setSelectedBg(bg.id); }}
+                  className={`flex items-center gap-3 p-3 rounded-lg border transition-all ${
+                    bg.locked
+                      ? "border-border bg-secondary/20 cursor-not-allowed opacity-60"
+                      : selectedBg === bg.id
+                        ? "border-primary bg-primary/10 cursor-pointer"
+                        : "border-arena-gold/30 bg-arena-gold/5 hover:bg-arena-gold/10 cursor-pointer"
+                  }`}
+                >
+                  <div className={`w-7 h-7 rounded-full border-2 shrink-0 ${bg.pulse ? "animate-pulse" : ""}`}
+                    style={{ borderColor: bg.preview, boxShadow: `0 0 12px ${bg.preview}80` }} />
+                  <div className="text-left min-w-0">
+                    <p className="text-[11px] font-display font-semibold truncate">{bg.label}</p>
+                    {bg.locked
+                      ? <p className="text-[9px] text-muted-foreground flex items-center gap-1"><Lock className="h-2.5 w-2.5" /> {bg.eventName}</p>
+                      : <p className="text-[9px] text-arena-gold flex items-center gap-1"><Star className="h-2.5 w-2.5" /> {bg.eventName}</p>
+                    }
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* BG PREMIUM */}
+          {pickerMode === "background" && bgTab === "premium" && (
+            <div className="grid grid-cols-2 gap-2">
+              {BG_PREMIUM.map((bg) => (
+                <button key={bg.id}
+                  onClick={() => toast({ title: "Coming Soon", description: "Premium backgrounds will be available in the shop." })}
+                  className="flex items-center gap-3 p-3 rounded-lg border border-arena-purple/30 bg-arena-purple/5 hover:bg-arena-purple/10 transition-all cursor-pointer"
+                >
+                  <div className={`w-7 h-7 rounded-full border-2 shrink-0 animate-pulse`}
+                    style={{ borderColor: bg.preview, boxShadow: `0 0 14px ${bg.preview}90` }} />
+                  <div className="text-left">
+                    <p className="text-[11px] font-display font-semibold">{bg.label}</p>
+                    <p className="text-[9px] text-arena-purple flex items-center gap-1">
+                      <Crown className="h-2.5 w-2.5" /> {bg.price}
+                    </p>
+                  </div>
+                </button>
+              ))}
             </div>
           )}
         </DialogContent>
