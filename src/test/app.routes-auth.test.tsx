@@ -28,7 +28,7 @@ describe("App routing and admin guard", () => {
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: /welcome back/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /ArenaPlayer_01/i })).toBeInTheDocument();
   });
 
   it("allows admin users to open admin route", async () => {

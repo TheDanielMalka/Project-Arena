@@ -162,6 +162,7 @@ const Leaderboard = () => {
 
       {/* ── COMPACT QUICK STATS ── */}
       <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3">
+        <span className="sr-only">{selectedTopPlayer.username} - Quick Stats (Top 3)</span>
         <div className="flex flex-col sm:flex-row sm:items-center gap-3">
           {/* Player identity */}
           <div className="flex items-center gap-2 shrink-0">
@@ -179,7 +180,7 @@ const Leaderboard = () => {
             <span className="text-muted-foreground">W <span className="text-primary font-bold">{selectedTopPlayer.wins}</span></span>
             <span className="text-muted-foreground">L <span className="text-destructive font-bold">{selectedTopPlayer.losses}</span></span>
             <span className="text-muted-foreground">WR <span className="text-foreground font-bold">{selectedTopPlayer.winRate}%</span></span>
-            <span className="text-muted-foreground">Avg <span className="text-arena-gold font-bold">${avgEarningsPerMatch.toFixed(2)}</span></span>
+            <span className="text-muted-foreground"><span className="sr-only">Avg $ / Match</span>Avg <span className="text-arena-gold font-bold">${avgEarningsPerMatch.toFixed(2)}</span></span>
           </div>
 
           {/* Win/Loss visual bar */}
@@ -313,7 +314,7 @@ const Leaderboard = () => {
                                 { label: "Losses",  value: player.losses, color: "text-destructive" },
                                 { label: "Win Rate",value: `${player.winRate}%`, color: "" },
                                 { label: "Streak",  value: null, color: "text-arena-orange", streak: player.streak },
-                                { label: "Avg$/Match", value: `$${(player.earnings / Math.max(player.wins + player.losses, 1)).toFixed(2)}`, color: "text-arena-gold" },
+                                { label: "Avg $ / Match", value: `$${(player.earnings / Math.max(player.wins + player.losses, 1)).toFixed(2)}`, color: "text-arena-gold" },
                               ].map(({ label, value, color, streak }) => (
                                 <div key={label} className="rounded-md border border-border/40 bg-background/40 p-2">
                                   <p className="text-[9px] text-muted-foreground uppercase tracking-widest font-display">{label}</p>
