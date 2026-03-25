@@ -7,7 +7,13 @@ import { DailyChallenges } from "@/components/dashboard/DailyChallenges";
 import LiveMatchTracker from "@/components/match/LiveMatchTracker";
 import { useUserStore } from "@/stores/userStore";
 import { useMatchStore } from "@/stores/matchStore";
-import { Swords, Wallet, History, TrendingUp, Radio, Gift } from "lucide-react";
+import { Swords, Wallet, History, TrendingUp, Radio, Gift, Medal, Shield, Trophy, Gem, Sparkles, Crown, type LucideIcon } from "lucide-react";
+import { getXpInfo } from "@/lib/xp";
+import { getBgColor } from "@/lib/avatarBgs";
+
+const XP_ICON_MAP: Record<string, LucideIcon> = {
+  Medal, Shield, Trophy, Gem, Sparkles, Crown,
+};
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -16,8 +22,11 @@ const Dashboard = () => {
 
   const liveCount = matches.filter(m => m.status === "in_progress").length;
   const initials = (user?.username ?? "??").slice(0, 2).toUpperCase();
+  const xpInfo = getXpInfo(user?.stats.xp ?? 0);
+  const XpIcon = XP_ICON_MAP[xpInfo.iconName] ?? Medal;
+  const avatarBgColor = getBgColor(user?.avatarBg);
 
-  // Rank color
+  // Rank color (win-rate based)
   const rankColors: Record<string, string> = {
     Bronze: "#CD7F32", Silver: "#9CA3AF", Gold: "#EAB308",
     Platinum: "#22D3EE", Diamond: "#818CF8", Master: "#F43F5E",
@@ -32,6 +41,14 @@ const Dashboard = () => {
     : "Bronze";
   const rankColor = rankColors[rank] ?? "#EAB308";
 
+  // Avatar content renderer
+  const renderAvatar = (size: number) => {
+    const av = user?.avatar ?? "initials";
+    if (av === "initials") return <span className="font-display font-bold text-white" style={{ fontSize: size * 0.4 }}>{initials}</span>;
+    if (av.startsWith("upload:")) return <img src={av.slice(7)} className="w-full h-full object-cover rounded-2xl" alt="avatar" />;
+    return <span style={{ fontSize: size * 0.45 }}>{av}</span>;
+  };
+
   return (
     <div className="space-y-6">
 
@@ -45,9 +62,13 @@ const Dashboard = () => {
           {/* Avatar + identity */}
           <div className="flex items-center gap-4 flex-1 min-w-0">
             <div className="relative shrink-0">
-              <div className="w-14 h-14 rounded-2xl flex items-center justify-center font-display text-xl font-bold text-white"
-                style={{ background: `linear-gradient(135deg, ${rankColor}40, ${rankColor}20)`, border: `1.5px solid ${rankColor}50` }}>
-                {initials}
+              <div className="w-14 h-14 rounded-2xl flex items-center justify-center overflow-hidden"
+                style={{
+                  background: `linear-gradient(135deg, ${avatarBgColor}35, ${avatarBgColor}15)`,
+                  border: `2px solid ${avatarBgColor}55`,
+                  boxShadow: `0 0 18px ${avatarBgColor}30`,
+                }}>
+                {renderAvatar(56)}
               </div>
               {liveCount > 0 && (
                 <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-arena-cyan border-2 border-card animate-pulse" />
@@ -71,6 +92,20 @@ const Dashboard = () => {
                     {Math.min(user!.stats.wins, 7)}🔥
                   </span>
                 )}
+                {/* XP level badge */}
+                <span className="inline-flex items-center gap-1 text-[10px] font-display font-bold px-1.5 py-0.5 rounded-full"
+                  style={{ background: `${xpInfo.color}15`, color: xpInfo.color, border: `1px solid ${xpInfo.color}30` }}>
+                  <XpIcon className="h-2.5 w-2.5" />
+                  {xpInfo.label}
+                </span>
+              </div>
+              {/* XP mini progress bar */}
+              <div className="mt-1 flex items-center gap-1.5 max-w-[180px]">
+                <div className="flex-1 h-1 rounded-full bg-secondary overflow-hidden">
+                  <div className="h-full rounded-full transition-all duration-700"
+                    style={{ width: `${Math.round(xpInfo.progress * 100)}%`, background: xpInfo.color, boxShadow: `0 0 4px ${xpInfo.color}60` }} />
+                </div>
+                <span className="text-[9px] font-mono text-muted-foreground/60 tabular-nums shrink-0">{xpInfo.xp} XP</span>
               </div>
             </div>
           </div>

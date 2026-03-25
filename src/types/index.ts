@@ -30,6 +30,8 @@ export interface UserProfile {
   tier: string;
   verified: boolean;
   avatarInitials: string;
+  avatar?: string;    // "initials" | emoji | "upload:{dataURL}" — DB: stored as text
+  avatarBg?: string;  // bgId from avatarBgs.ts — DB: stored as text, defaults to "default"
   preferredGame: Game;
   memberSince: string;
   status: UserStatus;
@@ -44,6 +46,7 @@ export interface UserStats {
   winRate: number;
   totalEarnings: number;
   inEscrow: number;
+  xp: number;  // DB-ready: stored in user_stats table, earned by completing challenges
 }
 
 export interface UserBalance {

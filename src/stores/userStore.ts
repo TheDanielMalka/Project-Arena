@@ -29,6 +29,8 @@ const MOCK_USER: UserProfile = {
   preferredGame: "CS2",
   memberSince: "March 2026",
   status: "active",
+  avatar: "initials",
+  avatarBg: "default",
   stats: {
     matches: 147,
     wins: 94,
@@ -36,6 +38,7 @@ const MOCK_USER: UserProfile = {
     winRate: 64.2,
     totalEarnings: 2847,
     inEscrow: 50,
+    xp: 840,
   },
   balance: {
     total: 7248.20,
@@ -72,7 +75,7 @@ export const useUserStore = create<UserState>((set) => ({
       email,
       steamId: steamId || "",
       avatarInitials: initials,
-      stats: { matches: 0, wins: 0, losses: 0, winRate: 0, totalEarnings: 0, inEscrow: 0 },
+      stats: { matches: 0, wins: 0, losses: 0, winRate: 0, totalEarnings: 0, inEscrow: 0, xp: 0 },
       balance: { total: 0, available: 0, inEscrow: 0 },
     };
     set({ user, isAuthenticated: true, walletConnected: false });

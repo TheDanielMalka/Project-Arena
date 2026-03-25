@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useMatchStore } from "@/stores/matchStore";
+import { useUserStore } from "@/stores/userStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { Trophy, Zap, DollarSign, Swords, Target, Flame, Clock, CheckCircle, Gift } from "lucide-react";
 import type { DailyChallenge, ChallengeType, Game } from "@/types";
@@ -97,8 +98,12 @@ const TYPE_COLOR: Record<ChallengeType, string> = {
 };
 
 // ── Main component ─────────────────────────────────────────────────────────────
+// XP awarded per challenge claim (scales with reward value)
+const CLAIM_XP = 50;
+
 export function DailyChallenges() {
   const { matches } = useMatchStore();
+  const { user, updateProfile } = useUserStore();
   const [countdown, setCountdown] = useState(getMsUntilMidnight());
   const [claimed, setClaimed] = useState<Set<string>>(new Set());
   const [claimAnim, setClaimAnim] = useState<string | null>(null);
@@ -145,11 +150,15 @@ export function DailyChallenges() {
     setClaimed(prev => new Set([...prev, challenge.id]));
     setClaimAnim(challenge.id);
     setTimeout(() => setClaimAnim(null), 800);
+    // Award XP
+    if (user) {
+      updateProfile({ stats: { ...user.stats, xp: (user.stats.xp ?? 0) + CLAIM_XP } });
+    }
     const { addNotification } = useNotificationStore.getState();
     addNotification({
       type: "payout",
-      title: `🎁 Challenge Complete!`,
-      message: `"${challenge.title}" reward of $${challenge.reward} has been credited to your balance.`,
+      title: `🎁 Challenge Complete! +${CLAIM_XP} XP`,
+      message: `"${challenge.title}" reward of $${challenge.reward} credited. +${CLAIM_XP} XP earned!`,
     });
   };
 
