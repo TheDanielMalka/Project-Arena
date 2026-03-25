@@ -113,7 +113,7 @@ const Auth = () => {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-background px-4 gap-4">
       <Card className="w-full max-w-md bg-card border-border">
         <CardHeader className="text-center">
           <h1 className="font-display text-3xl font-bold text-primary text-glow-green tracking-wider mb-1">ARENA</h1>
@@ -291,7 +291,7 @@ const Auth = () => {
                     <span className="text-xs text-muted-foreground leading-relaxed">
                       I have read and agree to the{" "}
                       <Link
-                        to="/terms"
+                        to="/legal/terms"
                         target="_blank"
                         className="text-primary hover:underline"
                         onClick={(e) => e.stopPropagation()}
@@ -326,6 +326,21 @@ const Auth = () => {
           </Tabs>
         </CardContent>
       </Card>
+
+      {/* Public legal footer */}
+      <div className="flex items-center gap-4 text-xs text-muted-foreground/60">
+        <Link to="/legal/terms" target="_blank" className="hover:text-muted-foreground transition-colors">
+          Terms of Service
+        </Link>
+        <span>·</span>
+        <Link to="/legal/privacy" target="_blank" className="hover:text-muted-foreground transition-colors">
+          Privacy Policy
+        </Link>
+        <span>·</span>
+        <Link to="/legal/responsible-gaming" target="_blank" className="hover:text-muted-foreground transition-colors">
+          Responsible Gaming
+        </Link>
+      </div>
     </div>
   );
 };
