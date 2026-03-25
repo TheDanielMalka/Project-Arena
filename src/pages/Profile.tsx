@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input";
 import {
   User, Shield, Gamepad2, Wallet, Link2, CheckCircle, XCircle,
   Copy, ExternalLink, Edit2, Save, Trophy, TrendingUp, Zap, Smartphone, Monitor, X,
-  Camera, Lock, Upload, Star, Crown
+  Camera, Lock, Upload, Star, Crown, Medal, Gem, Sparkles,
+  type LucideIcon,
 } from "lucide-react";
 import {
   Dialog,
@@ -20,6 +21,7 @@ import {
 import { useUserStore } from "@/stores/userStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { useToast } from "@/hooks/use-toast";
+import { getXpInfo } from "@/lib/xp";
 
 type GameConnection = {
   name: string;
@@ -28,20 +30,27 @@ type GameConnection = {
   accountId?: string;
 };
 
+// ── XP level icon map ──────────────────────────────────────────────────────────
+const XP_ICON_MAP: Record<string, LucideIcon> = {
+  Medal, Shield, Trophy, Gem, Sparkles, Crown,
+};
+
 const Profile = () => {
-  const { user } = useUserStore();
+  const { user, updateProfile } = useUserStore();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const xpInfo = getXpInfo(user?.stats.xp ?? 0);
+  const XpIcon = XP_ICON_MAP[xpInfo.iconName] ?? Medal;
   const [editMode, setEditMode] = useState(false);
   const [username, setUsername] = useState(user?.username ?? "ArenaPlayer_01");
 
   // Avatar picker state
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const [pickerMode, setPickerMode]             = useState<"avatar" | "background">("avatar");
-  const [selectedAvatar, setSelectedAvatar]     = useState<string>("initials");
+  const [selectedAvatar, setSelectedAvatar]     = useState<string>(user?.avatar ?? "initials");
   const [avatarTab, setAvatarTab]               = useState<"free" | "event" | "premium" | "upload">("free");
-  const [uploadedAvatar, setUploadedAvatar]     = useState<string | null>(null);
-  const [selectedBg, setSelectedBg]             = useState<string>("default");
+  const [uploadedAvatar, setUploadedAvatar]     = useState<string | null>(user?.avatar?.startsWith("upload:") ? user.avatar.slice(7) : null);
+  const [selectedBg, setSelectedBg]             = useState<string>(user?.avatarBg ?? "default");
   const [bgTab, setBgTab]                       = useState<"free" | "event" | "premium">("free");
 
   // ── Avatar options ──
@@ -181,6 +190,7 @@ const Profile = () => {
 
   const handleSaveProfile = () => {
     setEditMode(false);
+    updateProfile({ username, avatar: selectedAvatar, avatarBg: selectedBg });
     addNotification({ type: "system", title: "✅ Profile Updated", message: `Username set to "${username}". Changes saved successfully.` });
   };
 
@@ -332,13 +342,36 @@ const Profile = () => {
               ) : (
                 <h2 className="font-display text-xl font-bold tracking-wide truncate">{username}</h2>
               )}
-              <div className="flex items-center gap-2 mt-1">
-                <Badge className="bg-arena-gold/15 text-arena-gold border border-arena-gold/30 font-display text-xs px-2">
-                  <Trophy className="h-3 w-3 mr-1" /> Gold III
-                </Badge>
+              {/* XP level badge + game badge */}
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-display text-xs font-bold"
+                  style={{ background: `${xpInfo.color}18`, color: xpInfo.color, border: `1px solid ${xpInfo.color}35` }}>
+                  <XpIcon className="h-3 w-3" />
+                  {xpInfo.label}
+                </span>
                 <span className="text-xs text-muted-foreground flex items-center gap-1">
                   <Gamepad2 className="h-3 w-3" /> CS2
                 </span>
+              </div>
+              {/* XP progress bar */}
+              <div className="mt-2">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-display font-bold uppercase tracking-widest"
+                    style={{ color: xpInfo.color }}>
+                    {xpInfo.label}
+                  </span>
+                  <span className="text-[10px] font-mono text-muted-foreground tabular-nums">
+                    {xpInfo.xp.toLocaleString()} XP
+                    {xpInfo.nextXp !== null && <span className="text-muted-foreground/50"> / {xpInfo.nextXp.toLocaleString()}</span>}
+                  </span>
+                </div>
+                <div className="h-1.5 rounded-full bg-secondary overflow-hidden w-full max-w-xs">
+                  <div className="h-full rounded-full transition-all duration-700"
+                    style={{ width: `${Math.round(xpInfo.progress * 100)}%`, background: xpInfo.color, boxShadow: `0 0 6px ${xpInfo.color}60` }} />
+                </div>
+                {xpInfo.nextXp !== null && (
+                  <p className="text-[9px] text-muted-foreground/50 mt-0.5">{xpInfo.remaining} XP to next level</p>
+                )}
               </div>
               <div className="flex items-center gap-4 mt-2">
                 <span className="text-xs text-muted-foreground font-mono">{steamId}</span>
