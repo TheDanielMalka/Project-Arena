@@ -15,6 +15,7 @@ interface LeaderboardEntry {
   streak: number;
   change: "up" | "down" | "same";
   game: string;
+  avatar?: string; // "initials" | emoji | "upload:{dataURL}" | CDN URL
 }
 
 const mockLeaderboard: LeaderboardEntry[] = [
@@ -126,8 +127,13 @@ const Leaderboard = () => {
                 {podiumRank === 1 && <Crown className="h-4 w-4 text-arena-gold" />}
 
                 {/* Avatar */}
-                <div className={`w-9 h-9 rounded-full flex items-center justify-center font-display text-sm font-bold ${avatarBg(player.username)} ${avatarRing(player.winRate)}`}>
-                  {player.username.slice(0, 2)}
+                <div className={`w-9 h-9 rounded-full flex items-center justify-center font-display text-sm font-bold overflow-hidden ${avatarBg(player.username)} ${avatarRing(player.winRate)}`}>
+                  {player.avatar && player.avatar !== "initials"
+                    ? player.avatar.startsWith("upload:")
+                      ? <img src={player.avatar.slice(7)} className="w-full h-full object-cover" alt={player.username} />
+                      : <span className="text-lg">{player.avatar}</span>
+                    : player.username.slice(0, 2)
+                  }
                 </div>
 
                 <p className="font-display font-bold text-sm leading-tight">{player.username}</p>
@@ -252,8 +258,13 @@ const Leaderboard = () => {
 
                           {/* Player */}
                           <div className="relative flex items-center gap-2.5 min-w-0">
-                            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-display font-bold shrink-0 ${avatarBg(player.username)} ${avatarRing(player.winRate)}`}>
-                              {player.username.slice(0, 2)}
+                            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-display font-bold shrink-0 overflow-hidden ${avatarBg(player.username)} ${avatarRing(player.winRate)}`}>
+                              {player.avatar && player.avatar !== "initials"
+                                ? player.avatar.startsWith("upload:")
+                                  ? <img src={player.avatar.slice(7)} className="w-full h-full object-cover" alt={player.username} />
+                                  : <span className="text-sm">{player.avatar}</span>
+                                : player.username.slice(0, 2)
+                              }
                             </div>
                             <div className="min-w-0">
                               <p className="font-display text-sm font-semibold truncate leading-tight">{player.username}</p>
