@@ -1,13 +1,26 @@
 import { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Radio, Clock, Gamepad2, Users, Zap, ChevronDown, ChevronUp, Hash, Shield } from "lucide-react";
+import { Radio, Clock, Users, Zap, ChevronDown, ChevronUp, Hash, Shield, Gamepad2 } from "lucide-react";
 import { useMatchStore } from "@/stores/matchStore";
 import type { Match } from "@/types";
 
+// Game logos — mirrors Profile.tsx / History.tsx
+const GAME_CONFIG: Record<string, { logo: string; color: string }> = {
+  "CS2":          { logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/730/capsule_sm_120.jpg",     color: "#F97316" },
+  "Valorant":     { logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/2181130/capsule_sm_120.jpg", color: "#FF4655" },
+  "Fortnite":     { logo: "https://play-lh.googleusercontent.com/FxJDPDIDJKlG9C8lOxaS041X27A0SrHAa46SGDIpPusAd4IEJihZTyGf-8rTZ_GpF34aeLvULilVuO0cpCJxTg=s120-rw", color: "#38BDF8" },
+  "Apex Legends": { logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/1172470/capsule_sm_120.jpg", color: "#FC4B08" },
+};
+
+// Player avatar color — DB-ready: will be replaced by real avatar field
+const playerColor = (name: string) => {
+  const palette = ["#F97316","#38BDF8","#A855F7","#22C55E","#EAB308","#EC4899","#14B8A6","#F43F5E"];
+  return palette[(name.charCodeAt(0) + name.charCodeAt(name.length - 1)) % palette.length];
+};
+
 const LiveMatchTracker = () => {
   const { matches } = useMatchStore();
-  const liveMatches = matches.filter((m) => m.status === "in_progress");
+  const liveMatches = matches.filter(m => m.status === "in_progress");
   const [now, setNow] = useState(Date.now());
   const [expandedMatchId, setExpandedMatchId] = useState<string | null>(null);
 
@@ -17,7 +30,7 @@ const LiveMatchTracker = () => {
   }, []);
 
   const getElapsed = (match: Match) => {
-    if (!match.startedAt) return "00:00";
+    if (!match.startedAt) return match.timeLeft ?? "--:--";
     const diff = Math.floor((now - new Date(match.startedAt).getTime()) / 1000);
     const mins = Math.floor(diff / 60).toString().padStart(2, "0");
     const secs = (diff % 60).toString().padStart(2, "0");
@@ -36,127 +49,141 @@ const LiveMatchTracker = () => {
     return pool[seed % pool.length];
   };
 
-  const getEstimatedPrize = (match: Match) => {
-    return match.betAmount * Math.max(match.maxPlayers, 2);
-  };
+  const getEstimatedPrize = (match: Match) =>
+    match.betAmount * Math.max(match.maxPlayers, 2);
 
   if (liveMatches.length === 0) {
     return (
-      <Card className="bg-card border-border">
-        <CardContent className="py-8 text-center">
-          <Radio className="h-8 w-8 text-muted-foreground mx-auto mb-3 animate-pulse" />
-          <p className="text-muted-foreground font-display">No live matches right now</p>
-          <p className="text-xs text-muted-foreground/60 mt-1">Active matches will appear here in real-time</p>
-        </CardContent>
-      </Card>
+      <div className="rounded-2xl border border-border bg-card px-4 py-8 flex flex-col items-center text-center">
+        <Radio className="h-7 w-7 text-muted-foreground/30 mb-3 animate-pulse" />
+        <p className="text-sm text-muted-foreground font-display">No live matches right now</p>
+        <p className="text-xs text-muted-foreground/50 mt-1">Active matches will appear here in real-time</p>
+      </div>
     );
   }
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <Radio className="h-4 w-4 text-destructive animate-pulse" />
-        <span className="font-display text-sm font-semibold uppercase tracking-wider text-destructive">
-          Live — {liveMatches.length} match{liveMatches.length > 1 ? "es" : ""}
-        </span>
-      </div>
+      {liveMatches.map((match) => {
+        const isExpanded = expandedMatchId === match.id;
+        const cfg = GAME_CONFIG[match.game];
 
-      {liveMatches.map((match) => (
-        <Card
-          key={match.id}
-          className={`bg-card border-arena-cyan/20 transition-colors cursor-pointer ${
-            expandedMatchId === match.id ? "border-arena-cyan/50" : "hover:border-arena-cyan/40"
-          }`}
-          onClick={() => setExpandedMatchId((prev) => (prev === match.id ? null : match.id))}
-        >
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
+        return (
+          <div key={match.id}
+            className="rounded-2xl border border-arena-cyan/20 bg-card overflow-hidden cursor-pointer hover:border-arena-cyan/40 transition-all"
+            style={{ borderLeftWidth: "3px", borderLeftColor: cfg?.color ?? "#38BDF8" }}
+            onClick={() => setExpandedMatchId(prev => prev === match.id ? null : match.id)}>
+
+            {/* Live pulse bar */}
+            <div className="h-px w-full bg-gradient-to-r from-transparent via-arena-cyan/50 to-transparent animate-pulse" />
+
+            <div className="p-4">
+              {/* Row */}
               <div className="flex items-center gap-3">
-                <div className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
-                <div>
-                  <p className="font-display font-semibold">{match.host}'s Match</p>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <Gamepad2 className="h-3 w-3" /> {match.game}
-                    <span>•</span>
+                {/* Game logo */}
+                {cfg ? (
+                  <img src={cfg.logo} alt={match.game} className="w-9 h-9 rounded-lg object-cover shrink-0"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                ) : (
+                  <div className="w-9 h-9 rounded-lg bg-secondary flex items-center justify-center shrink-0">
+                    <Gamepad2 className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                )}
+
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-arena-cyan animate-pulse shrink-0" />
+                    <p className="font-display font-semibold text-sm truncate">{match.host}'s Match</p>
+                  </div>
+                  <p className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
+                    <span style={{ color: cfg?.color }}>{match.game}</span>
+                    <span>·</span>
                     <Users className="h-3 w-3" /> {match.players.length}/{match.maxPlayers}
-                    <span>•</span>
-                    {match.mode}
+                    <span>·</span>
+                    <span>{match.mode}</span>
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3 shrink-0">
+                  {/* Timer */}
+                  <div className="text-right">
+                    <div className="flex items-center gap-1 text-arena-cyan font-mono text-sm font-bold">
+                      <Clock className="h-3.5 w-3.5" />
+                      {getElapsed(match)}
+                    </div>
+                    <div className="flex items-center gap-1 justify-end mt-0.5">
+                      <Zap className="h-3 w-3 text-arena-gold" />
+                      <span className="text-xs font-display font-bold text-arena-gold">${match.betAmount}</span>
+                    </div>
+                  </div>
+                  {isExpanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                </div>
+              </div>
+
+              {/* 1v1 progress bar */}
+              {match.mode === "1v1" && match.players.length === 2 && (
+                <div className="mt-3 flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0"
+                      style={{ background: playerColor(match.players[0]) }}>
+                      {match.players[0][0]?.toUpperCase()}
+                    </div>
+                    <span className="text-xs font-display font-medium text-primary truncate max-w-[80px]">{match.players[0]}</span>
+                  </div>
+                  <div className="flex-1 h-1 rounded-full bg-secondary overflow-hidden">
+                    <div className="h-full w-1/2 rounded-full bg-gradient-to-r from-primary to-arena-cyan animate-pulse" />
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-display font-medium text-arena-orange truncate max-w-[80px] text-right">{match.players[1]}</span>
+                    <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0"
+                      style={{ background: playerColor(match.players[1]) }}>
+                      {match.players[1][0]?.toUpperCase()}
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="text-right">
-                <div className="flex items-center gap-1 text-arena-cyan font-mono text-lg">
-                  <Clock className="h-4 w-4" />
-                  {getElapsed(match)}
-                </div>
-                <Badge variant="outline" className="text-xs border-arena-gold/30 text-arena-gold mt-1">
-                  <Zap className="h-3 w-3 mr-1" /> ${match.betAmount}
-                </Badge>
-                <div className="flex justify-end mt-2 text-muted-foreground">
-                  {expandedMatchId === match.id ? (
-                    <ChevronUp className="h-4 w-4" />
-                  ) : (
-                    <ChevronDown className="h-4 w-4" />
-                  )}
-                </div>
-              </div>
-            </div>
+              )}
 
-            {/* Player bars */}
-            {match.mode === "1v1" && match.players.length === 2 && (
-              <div className="flex items-center gap-2 mt-3">
-                <span className="text-xs font-display font-medium text-primary">{match.players[0]}</span>
-                <div className="flex-1 h-1 rounded bg-secondary overflow-hidden">
-                  <div className="h-full w-1/2 bg-gradient-to-r from-primary to-arena-cyan animate-pulse-glow" />
-                </div>
-                <span className="text-xs font-display font-medium text-arena-orange">{match.players[1]}</span>
-              </div>
-            )}
-
-            {expandedMatchId === match.id && (
-              <div className="mt-4 rounded-lg border border-border bg-secondary/20 p-3 space-y-3">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                  <div className="rounded-md bg-background/60 p-2">
-                    <p className="text-muted-foreground">Map</p>
-                    <p className="font-medium">{getMapForMatch(match)}</p>
+              {/* Expanded details */}
+              {isExpanded && (
+                <div className="mt-4 rounded-xl border border-border bg-secondary/20 p-3 space-y-3">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                    {[
+                      { label: "Map",          value: getMapForMatch(match) },
+                      { label: "Match ID",     value: match.id, mono: true },
+                      { label: "Type",         value: `${match.type} · ${match.mode}` },
+                      { label: "Pot",          value: `$${getEstimatedPrize(match)}`, gold: true },
+                    ].map(({ label, value, mono, gold }) => (
+                      <div key={label} className="rounded-lg bg-background/60 p-2">
+                        <p className="text-muted-foreground mb-0.5">{label}</p>
+                        <p className={`font-medium truncate ${gold ? "text-arena-gold" : ""} ${mono ? "font-mono" : ""}`}>{value}</p>
+                      </div>
+                    ))}
                   </div>
-                  <div className="rounded-md bg-background/60 p-2">
-                    <p className="text-muted-foreground">Match ID</p>
-                    <p className="font-mono flex items-center gap-1">
-                      <Hash className="h-3 w-3" />
-                      {match.id}
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
+                      <Shield className="h-3 w-3" /> Players in lobby
                     </p>
-                  </div>
-                  <div className="rounded-md bg-background/60 p-2">
-                    <p className="text-muted-foreground">Type</p>
-                    <p className="font-medium capitalize">{match.type} • {match.mode}</p>
-                  </div>
-                  <div className="rounded-md bg-background/60 p-2">
-                    <p className="text-muted-foreground">Estimated Pot</p>
-                    <p className="font-medium text-arena-gold">${getEstimatedPrize(match)}</p>
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-xs text-muted-foreground mb-2">Players in lobby</p>
-                  <div className="flex flex-wrap gap-2">
-                    {match.players.length > 0 ? (
-                      match.players.map((player) => (
-                        <Badge key={`${match.id}-${player}`} variant="outline" className="gap-1">
-                          <Shield className="h-3 w-3" />
+                    <div className="flex flex-wrap gap-2">
+                      {match.players.length > 0 ? match.players.map(player => (
+                        <div key={`${match.id}-${player}`}
+                          className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-border bg-secondary/40 text-xs">
+                          <div className="w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white"
+                            style={{ background: playerColor(player) }}>
+                            {player[0]?.toUpperCase()}
+                          </div>
                           {player}
-                        </Badge>
-                      ))
-                    ) : (
-                      <span className="text-xs text-muted-foreground">No players listed yet</span>
-                    )}
+                        </div>
+                      )) : (
+                        <span className="text-xs text-muted-foreground">No players listed yet</span>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      ))}
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 };
