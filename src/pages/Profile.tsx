@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   User, Shield, Gamepad2, Wallet, Link2, CheckCircle, XCircle,
-  Copy, ExternalLink, Edit2, Save, Trophy, TrendingUp, Zap, Smartphone, Monitor, X
+  Copy, ExternalLink, Edit2, Save, Trophy, TrendingUp, Zap, Smartphone, Monitor, X,
+  Camera, Lock, Upload, Star, Crown
 } from "lucide-react";
 import {
   Dialog,
@@ -33,6 +34,47 @@ const Profile = () => {
   const { toast } = useToast();
   const [editMode, setEditMode] = useState(false);
   const [username, setUsername] = useState(user?.username ?? "ArenaPlayer_01");
+
+  // Avatar picker state
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
+  const [selectedAvatar, setSelectedAvatar] = useState<string>("initials");
+  const [avatarTab, setAvatarTab] = useState<"free" | "event" | "premium" | "upload">("free");
+  const [uploadedAvatar, setUploadedAvatar] = useState<string | null>(null);
+
+  const FREE_AVATARS   = ["🎮","💀","🔥","⚡","🎯","👾","🐺","🦁","🐉","🤖"];
+  const EVENT_AVATARS  = [
+    { emoji: "🌟", label: "Season 1 Champion", unlocked: false },
+    { emoji: "🎃", label: "Halloween 2025",    unlocked: false },
+    { emoji: "❄️", label: "Winter Cup 2025",   unlocked: false },
+    { emoji: "🏆", label: "Tournament Winner", unlocked: true  },
+  ];
+  const PREMIUM_AVATARS = [
+    { emoji: "👑", label: "King",    price: "$2.99" },
+    { emoji: "💎", label: "Diamond", price: "$1.99" },
+    { emoji: "🦅", label: "Eagle",   price: "$1.99" },
+    { emoji: "🏹", label: "Hunter",  price: "$2.99" },
+  ];
+
+  const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const result = ev.target?.result as string;
+      setUploadedAvatar(result);
+      setSelectedAvatar("upload:" + result);
+      setShowAvatarPicker(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const renderAvatarContent = (avatar: string, size: "sm" | "lg" = "lg") => {
+    const textSize  = size === "lg" ? "text-xl" : "text-sm";
+    const emojiSize = size === "lg" ? "text-2xl" : "text-base";
+    if (avatar === "initials") return <span className={`font-display ${textSize} font-bold text-primary`}>{username.slice(0,2).toUpperCase()}</span>;
+    if (avatar.startsWith("upload:")) return <img src={avatar.slice(7)} className="w-full h-full object-cover rounded-full" alt="avatar" />;
+    return <span className={emojiSize}>{avatar}</span>;
+  };
   const [steamId, setSteamId] = useState(user?.steamId ?? "76561198XXXXXXXX");
   const [copiedWallet, setCopiedWallet] = useState(false);
 
@@ -234,11 +276,16 @@ const Profile = () => {
           <div className="flex items-center gap-5">
             {/* Avatar */}
             <div className="relative shrink-0">
-              <div className="w-16 h-16 rounded-full bg-secondary border-2 border-primary/50 flex items-center justify-center shadow-[0_0_16px_hsl(355_78%_52%/0.25)]">
-                <span className="font-display text-xl font-bold text-primary">
-                  {username.slice(0, 2).toUpperCase()}
-                </span>
-              </div>
+              <button
+                onClick={() => setShowAvatarPicker(true)}
+                className="group w-16 h-16 rounded-full bg-secondary border-2 border-primary/50 flex items-center justify-center shadow-[0_0_16px_hsl(355_78%_52%/0.25)] overflow-hidden relative transition-all hover:border-primary"
+              >
+                {renderAvatarContent(selectedAvatar)}
+                {/* Camera overlay on hover */}
+                <div className="absolute inset-0 rounded-full bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                  <Camera className="h-5 w-5 text-white" />
+                </div>
+              </button>
               <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-primary border-2 border-background flex items-center justify-center">
                 <Shield className="h-2.5 w-2.5 text-white" />
               </div>
@@ -584,6 +631,129 @@ const Profile = () => {
               <Link2 className="mr-2 h-4 w-4" /> Link Account
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Avatar Picker Dialog ── */}
+      <Dialog open={showAvatarPicker} onOpenChange={setShowAvatarPicker}>
+        <DialogContent className="bg-card border-border max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-display flex items-center gap-2">
+              <Camera className="h-4 w-4 text-primary" /> Choose Avatar
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Select an avatar, unlock event rewards, or upload your own.
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Preview */}
+          <div className="flex justify-center mb-2">
+            <div className="w-16 h-16 rounded-full bg-secondary border-2 border-primary/50 flex items-center justify-center overflow-hidden shadow-[0_0_16px_hsl(355_78%_52%/0.25)]">
+              {renderAvatarContent(selectedAvatar)}
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div className="flex gap-1 mb-3 bg-secondary/40 rounded-lg p-0.5">
+            {(["free","event","premium","upload"] as const).map((tab) => (
+              <button key={tab} onClick={() => setAvatarTab(tab)}
+                className={`flex-1 text-[10px] font-display uppercase tracking-widest py-1.5 rounded-md transition-all ${
+                  avatarTab === tab ? "bg-primary text-white" : "text-muted-foreground hover:text-foreground"
+                }`}>
+                {tab === "free" ? "Free" : tab === "event" ? "Event" : tab === "premium" ? "Premium" : "Upload"}
+              </button>
+            ))}
+          </div>
+
+          {/* FREE */}
+          {avatarTab === "free" && (
+            <div className="grid grid-cols-5 gap-2">
+              {/* Initials option */}
+              <button
+                onClick={() => { setSelectedAvatar("initials"); setShowAvatarPicker(false); }}
+                className={`h-12 rounded-lg border text-[10px] font-display font-bold transition-all ${
+                  selectedAvatar === "initials" ? "border-primary bg-primary/10 text-primary" : "border-border hover:border-primary/40"
+                }`}
+              >
+                {username.slice(0,2).toUpperCase()}
+              </button>
+              {FREE_AVATARS.map((emoji) => (
+                <button key={emoji}
+                  onClick={() => { setSelectedAvatar(emoji); setShowAvatarPicker(false); }}
+                  className={`h-12 rounded-lg border text-2xl transition-all flex items-center justify-center ${
+                    selectedAvatar === emoji ? "border-primary bg-primary/10" : "border-border hover:border-primary/40 bg-secondary/30"
+                  }`}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* EVENT */}
+          {avatarTab === "event" && (
+            <div className="grid grid-cols-2 gap-2">
+              {EVENT_AVATARS.map(({ emoji, label, unlocked }) => (
+                <button key={label}
+                  onClick={() => { if (unlocked) { setSelectedAvatar(emoji); setShowAvatarPicker(false); } }}
+                  className={`relative flex items-center gap-3 p-3 rounded-lg border transition-all ${
+                    unlocked ? "border-arena-gold/40 bg-arena-gold/5 hover:bg-arena-gold/10 cursor-pointer" : "border-border bg-secondary/20 cursor-not-allowed opacity-60"
+                  }`}
+                >
+                  <span className="text-2xl">{emoji}</span>
+                  <div className="text-left">
+                    <p className="text-xs font-display font-semibold">{label}</p>
+                    {unlocked
+                      ? <p className="text-[10px] text-arena-gold flex items-center gap-1"><Star className="h-2.5 w-2.5" /> Unlocked</p>
+                      : <p className="text-[10px] text-muted-foreground flex items-center gap-1"><Lock className="h-2.5 w-2.5" /> Complete event</p>
+                    }
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* PREMIUM */}
+          {avatarTab === "premium" && (
+            <div className="grid grid-cols-2 gap-2">
+              {PREMIUM_AVATARS.map(({ emoji, label, price }) => (
+                <button key={label}
+                  className="relative flex items-center gap-3 p-3 rounded-lg border border-arena-purple/30 bg-arena-purple/5 hover:bg-arena-purple/10 transition-all cursor-pointer"
+                  onClick={() => toast({ title: "Coming Soon", description: "Premium avatars will be available in the shop.", variant: "default" })}
+                >
+                  <span className="text-2xl">{emoji}</span>
+                  <div className="text-left">
+                    <p className="text-xs font-display font-semibold">{label}</p>
+                    <p className="text-[10px] text-arena-purple flex items-center gap-1">
+                      <Crown className="h-2.5 w-2.5" /> {price}
+                    </p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* UPLOAD */}
+          {avatarTab === "upload" && (
+            <div className="flex flex-col items-center gap-3 py-4">
+              <div className="w-14 h-14 rounded-full border-2 border-dashed border-border flex items-center justify-center">
+                <Upload className="h-5 w-5 text-muted-foreground" />
+              </div>
+              <p className="text-xs text-muted-foreground text-center">JPG, PNG or GIF · Max 2MB</p>
+              <label className="cursor-pointer">
+                <span className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-primary/40 text-primary text-xs font-display hover:bg-primary/10 transition-colors">
+                  <Upload className="h-3.5 w-3.5" /> Browse File
+                </span>
+                <input type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
+              </label>
+              {uploadedAvatar && (
+                <button onClick={() => { setSelectedAvatar("upload:" + uploadedAvatar); setShowAvatarPicker(false); }}
+                  className="text-[10px] font-display text-primary hover:underline">
+                  Use last uploaded image
+                </button>
+              )}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>
