@@ -20,7 +20,7 @@ const gameConfig: Record<string, { logo: string; color: string }> = {
     color: "#f0a500",
   },
   Valorant: {
-    logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/2694490/capsule_sm_120.jpg",
+    logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/2181130/capsule_sm_120.jpg",
     color: "#ff4655",
   },
   Fortnite: {
@@ -82,18 +82,30 @@ const History = () => {
   const [page, setPage] = useState(1);
   const [expandedMatchId, setExpandedMatchId] = useState<string | null>(null);
 
-  // ── Quick stats from ALL matches ───────────────────────────────────────
-  const completedMatches = matches.filter((m) => m.status === "completed");
-  const wins = completedMatches.filter((m) => m.winnerId === "user-001").length;
-  const losses = completedMatches.filter((m) => m.winnerId && m.winnerId !== "user-001").length;
+  // ── Only matches the current user participated in, excluding lobbies ──
+  const MY_ID = "user-001";
+  const userMatches = matches.filter((m) => {
+    if (m.status === "waiting") return false; // waiting = lobby, not history
+    return (
+      m.players.includes(MY_ID) ||
+      m.hostId === MY_ID ||
+      (m.teamA ?? []).includes(MY_ID) ||
+      (m.teamB ?? []).includes(MY_ID)
+    );
+  });
+
+  // ── Quick stats from user's matches ────────────────────────────────────
+  const completedMatches = userMatches.filter((m) => m.status === "completed");
+  const wins = completedMatches.filter((m) => m.winnerId === MY_ID).length;
+  const losses = completedMatches.filter((m) => m.winnerId && m.winnerId !== MY_ID).length;
   const totalEarned = completedMatches
-    .filter((m) => m.winnerId === "user-001")
+    .filter((m) => m.winnerId === MY_ID)
     .reduce((sum, m) => sum + m.betAmount, 0);
   const winRate = completedMatches.length > 0 ? Math.round((wins / completedMatches.length) * 100) : 0;
-  const last10 = completedMatches.slice(-10).map((m) => m.winnerId === "user-001");
+  const last10 = completedMatches.slice(-10).map((m) => m.winnerId === MY_ID);
 
   // ── Filter ─────────────────────────────────────────────────────────────
-  const filtered = matches.filter((m) => {
+  const filtered = userMatches.filter((m) => {
     const matchSearch =
       m.host.toLowerCase().includes(search.toLowerCase()) ||
       m.game.toLowerCase().includes(search.toLowerCase()) ||
@@ -106,12 +118,13 @@ const History = () => {
   const totalPages = Math.max(1, Math.ceil(filtered.length / ITEMS_PER_PAGE));
   const paged = filtered.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
 
-  // Count per status for pill badges
+  // Count per status for pill badges (from user's matches only)
   const countForStatus = (s: MatchStatus | "all") =>
-    s === "all" ? matches.length : matches.filter((m) => m.status === s).length;
+    s === "all" ? userMatches.length : userMatches.filter((m) => m.status === s).length;
 
   const GAMES: (Game | "all")[] = ["all", "CS2", "Valorant", "Fortnite", "Apex Legends"];
-  const STATUSES: (MatchStatus | "all")[] = ["all", "waiting", "in_progress", "completed", "cancelled", "disputed"];
+  // "waiting" is excluded — history only shows matches that have progressed past lobby
+  const STATUSES: (MatchStatus | "all")[] = ["all", "in_progress", "completed", "cancelled", "disputed"];
 
   return (
     <div className="space-y-6">
@@ -255,8 +268,8 @@ const History = () => {
       ) : (
         <div className="space-y-3">
           {paged.map((m) => {
-            const isWin = m.status === "completed" && m.winnerId === "user-001";
-            const isLoss = m.status === "completed" && m.winnerId && m.winnerId !== "user-001";
+            const isWin = m.status === "completed" && m.winnerId === MY_ID;
+            const isLoss = m.status === "completed" && !!m.winnerId && m.winnerId !== MY_ID;
             const isLive = m.status === "in_progress";
             const isExpanded = expandedMatchId === m.id;
             const maxPerTeam = m.maxPerTeam ?? Math.max(1, Math.ceil(m.maxPlayers / 2));
