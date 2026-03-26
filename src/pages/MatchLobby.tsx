@@ -228,7 +228,7 @@ const MatchLobby = () => {
   const [filterGame, setFilterGame]           = useState<string>("");
   const [filterMode, setFilterMode]           = useState<MatchMode | null>(null);
   const [depositConfirm, setDepositConfirm]   = useState<{ match: Match; team?: "A" | "B" } | null>(null);
-  const [depositStep, setDepositStep]         = useState<"idle" | "verifying">("idle");
+  const [depositStep, setDepositStep]         = useState<"idle" | "verifying" | "confirmed">("idle");
 
   const publicMatches = matches.filter(m => m.type === "public");
   const customMatches = matches.filter(m => m.type === "custom");
@@ -264,19 +264,23 @@ const MatchLobby = () => {
   const handleDepositConfirm = () => {
     if (!depositConfirm || !user) return;
     setDepositStep("verifying");
-    // DB-ready: replace setTimeout with wagmi writeContract(joinMatch) call in Issue #Frontend-Wallet
-    setTimeout(() => {
-      const { match, team } = depositConfirm;
-      lockEscrow(match.betAmount, match.id);
-      joinMatch(match.id, user.username, team);
-      useNotificationStore.getState().addNotification({
-        type: "system",
-        title: "🔒 Deposit Confirmed",
-        message: `$${match.betAmount} locked in escrow for ${match.game} ${match.mode}. Waiting for all players.`,
-      });
-      setDepositConfirm(null);
-      setDepositStep("idle");
-    }, 2200);
+    // Simulates contract pre-check (wallet + identity + amount).
+    // DB-ready: replace with wagmi readContract / balanceOf check in Issue #Frontend-Wallet
+    setTimeout(() => setDepositStep("confirmed"), 2200);
+  };
+  const handleDepositFinal = () => {
+    if (!depositConfirm || !user) return;
+    const { match, team } = depositConfirm;
+    // DB-ready: replace with wagmi writeContract(joinMatch, { value: stakePerPlayer }) in Issue #Frontend-Wallet
+    lockEscrow(match.betAmount, match.id);
+    joinMatch(match.id, user.username, team);
+    useNotificationStore.getState().addNotification({
+      type: "system",
+      title: "🔒 Deposit Confirmed",
+      message: `$${match.betAmount} locked in escrow for ${match.game} ${match.mode}. Waiting for all players.`,
+    });
+    setDepositConfirm(null);
+    setDepositStep("idle");
   };
   const handleConfirmEscrow = () => {
     if (!joiningMatch || !selectedBet || !user) return;
@@ -401,7 +405,8 @@ const MatchLobby = () => {
         const { match, team } = depositConfirm;
         const cfg = ALL_GAME_CONFIG[match.game];
         const idp = IDENTITY_PROVIDER[match.game] ?? { name: "Platform", field: "Account ID" };
-        const isVerifying = depositStep === "verifying";
+        const isVerifying  = depositStep === "verifying";
+        const isConfirmed  = depositStep === "confirmed";
         const checks: { icon: React.ElementType; label: string; detail: string }[] = [
           { icon: Wallet,      label: "Wallet connected",          detail: "0x•••••••" },
           { icon: ScanLine,    label: `${idp.field} verified`,     detail: idp.name    },
@@ -455,19 +460,44 @@ const MatchLobby = () => {
                     </p>
                   )}
                 </div>
-                {/* Actions */}
-                <div className="flex gap-2 pt-1">
-                  <Button onClick={handleDepositConfirm} disabled={isVerifying} className="flex-1 font-display glow-green">
-                    {isVerifying
-                      ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Confirming…</>
-                      : <><Lock className="mr-2 h-4 w-4" /> Deposit ${match.betAmount}</>}
-                  </Button>
-                  {!isVerifying && (
-                    <Button variant="outline" onClick={() => { setDepositConfirm(null); setDepositStep("idle"); }}>
-                      Cancel
+                {/* ── Final confirmation panel (appears after verification passes) ── */}
+                {isConfirmed && (
+                  <div className="rounded-xl border border-arena-gold/40 bg-arena-gold/5 p-4 space-y-3">
+                    <p className="text-sm font-medium flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4 text-green-500 shrink-0" />
+                      All checks passed — ready to lock funds
+                    </p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Pressing <span className="text-foreground font-semibold">Confirm &amp; Lock</span> will call the smart
+                      contract and transfer <span className="text-arena-gold font-bold">${match.betAmount}</span> into escrow.
+                      This action cannot be undone until the match resolves.
+                    </p>
+                    <div className="flex gap-2">
+                      <Button onClick={handleDepositFinal} className="flex-1 font-display glow-green">
+                        <Lock className="mr-2 h-4 w-4" /> Confirm &amp; Lock ${match.betAmount}
+                      </Button>
+                      <Button variant="outline" onClick={() => { setDepositConfirm(null); setDepositStep("idle"); }}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Initial deposit button (hidden once confirmed) ── */}
+                {!isConfirmed && (
+                  <div className="flex gap-2 pt-1">
+                    <Button onClick={handleDepositConfirm} disabled={isVerifying} className="flex-1 font-display glow-green">
+                      {isVerifying
+                        ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verifying…</>
+                        : <><Lock className="mr-2 h-4 w-4" /> Deposit ${match.betAmount}</>}
                     </Button>
-                  )}
-                </div>
+                    {!isVerifying && (
+                      <Button variant="outline" onClick={() => { setDepositConfirm(null); setDepositStep("idle"); }}>
+                        Cancel
+                      </Button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>
