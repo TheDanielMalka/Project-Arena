@@ -38,7 +38,7 @@ const SEED_TOKENS: Token[] = [
 const SEED_TRANSACTIONS: Transaction[] = [
   { id: "TX-001", userId: "user-001", type: "deposit", amount: 500, token: "USDT", usdValue: 500, status: "completed", timestamp: "2026-03-08 15:30", txHash: "0xabc123...def456", from: "0x9e2...bb07", note: "Deposit from external wallet" },
   { id: "TX-002", userId: "user-001", type: "match_win", amount: 120, token: "USDT", usdValue: 120, status: "completed", timestamp: "2026-03-08 14:22", note: "Match M-2048 vs ShadowKing" },
-  { id: "TX-003", userId: "user-001", type: "fee", amount: -12, token: "USDT", usdValue: 12, status: "completed", timestamp: "2026-03-08 14:22", note: "Platform fee (10%)" },
+  { id: "TX-003", userId: "user-001", type: "fee", amount: -6, token: "USDT", usdValue: 6, status: "completed", timestamp: "2026-03-08 14:22", note: "Platform fee (5%)" },
   { id: "TX-004", userId: "user-001", type: "match_loss", amount: -75, token: "USDT", usdValue: 75, status: "completed", timestamp: "2026-03-08 11:05", note: "Match M-2045 vs CyberWolf" },
   { id: "TX-005", userId: "user-001", type: "withdrawal", amount: -200, token: "USDT", usdValue: 200, status: "completed", timestamp: "2026-03-07 20:15", txHash: "0xfed987...cba654", to: "0x3c4...d5e8" },
   { id: "TX-006", userId: "user-001", type: "deposit", amount: 1.5, token: "SOL", usdValue: 262.50, status: "completed", timestamp: "2026-03-07 18:00", txHash: "5Xk8mN...pQ2rS" },
@@ -70,14 +70,8 @@ export const useWalletStore = create<WalletState>((set, get) => ({
 
   getTotalBalance: () => get().tokens.reduce((sum, t) => sum + t.usdValue, 0),
 
-  getAvailableBalance: () => {
-    const total = get().tokens.reduce((sum, t) => sum + t.usdValue, 0);
-    // Subtract pending escrow from transactions
-    const pendingEscrow = get().transactions
-      .filter((tx) => tx.type === "escrow_lock" && tx.status === "pending")
-      .reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
-    return total - pendingEscrow;
-  },
+  // lockEscrow already deducts from tokens — available balance is just the current token sum
+  getAvailableBalance: () => get().tokens.reduce((sum, t) => sum + t.usdValue, 0),
 
   addTransaction: (txData) => {
     const tx: Transaction = {
