@@ -38,7 +38,6 @@ const Auth = () => {
     }
     const success = login(loginEmail, loginPassword);
     if (success) {
-      toast({ title: "Welcome back!", description: "Logged in successfully." });
       navigate("/dashboard");
     }
   };
@@ -63,14 +62,12 @@ const Auth = () => {
     }
     const success = signup(signupUsername, signupEmail, signupPassword, signupSteamId);
     if (success) {
-      toast({ title: "Account created!", description: "Welcome to Arena." });
       navigate("/dashboard");
     }
   };
 
   const handleGoogle = () => {
     loginWithGoogle();
-    toast({ title: "Welcome!", description: "Signed in with Google." });
     navigate("/dashboard");
   };
 

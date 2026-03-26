@@ -19,6 +19,7 @@ const typeStyles: Record<NotificationType, string> = {
   system: "border-l-arena-cyan",
   dispute: "border-l-arena-orange",
   match_invite: "border-l-arena-purple",
+  escrow: "border-l-arena-gold",
 };
 
 const typeRoutes: Record<NotificationType, string> = {
@@ -27,6 +28,7 @@ const typeRoutes: Record<NotificationType, string> = {
   system: "/dashboard",
   dispute: "/admin",
   match_invite: "/lobby",
+  escrow: "/wallet",
 };
 
 function timeAgo(date: Date): string {

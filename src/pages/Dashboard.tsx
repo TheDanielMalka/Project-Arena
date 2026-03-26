@@ -1,4 +1,5 @@
 import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
 import { StatsCards } from "@/components/dashboard/StatsCards";
 import { WinLossChart } from "@/components/dashboard/WinLossChart";
 import { EarningsChart } from "@/components/dashboard/EarningsChart";
@@ -7,7 +8,7 @@ import { DailyChallenges } from "@/components/dashboard/DailyChallenges";
 import LiveMatchTracker from "@/components/match/LiveMatchTracker";
 import { useUserStore } from "@/stores/userStore";
 import { useMatchStore } from "@/stores/matchStore";
-import { Swords, Wallet, History, TrendingUp, Radio, Gift, Medal, Shield, Trophy, Gem, Sparkles, Crown, type LucideIcon } from "lucide-react";
+import { Swords, Wallet, History, TrendingUp, Radio, Gift, Medal, Shield, Trophy, Gem, Sparkles, Crown, X, type LucideIcon } from "lucide-react";
 import { getXpInfo } from "@/lib/xp";
 import { getBgColor } from "@/lib/avatarBgs";
 
@@ -17,8 +18,23 @@ const XP_ICON_MAP: Record<string, LucideIcon> = {
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const { user } = useUserStore();
+  const { user, showLoginGreeting, greetingType, clearLoginGreeting } = useUserStore();
   const { matches } = useMatchStore();
+
+  // ── Login greeting banner ─────────────────────────────────────────────────
+  const [bannerVisible, setBannerVisible] = useState(false);
+  const [bannerOut, setBannerOut] = useState(false);
+
+  useEffect(() => {
+    if (!showLoginGreeting) return;
+    setBannerVisible(true);
+    setBannerOut(false);
+    const out = setTimeout(() => setBannerOut(true), 3800);
+    const clear = setTimeout(() => { setBannerVisible(false); clearLoginGreeting(); }, 4400);
+    return () => { clearTimeout(out); clearTimeout(clear); };
+  }, [showLoginGreeting]);
+
+  const dismissBanner = () => { setBannerOut(true); setTimeout(() => { setBannerVisible(false); clearLoginGreeting(); }, 500); };
 
   const liveCount = matches.filter(m => m.status === "in_progress").length;
   const initials = (user?.username ?? "??").slice(0, 2).toUpperCase();
@@ -51,6 +67,36 @@ const Dashboard = () => {
 
   return (
     <div className="space-y-6">
+
+      {/* ── Login Greeting Banner ── */}
+      {bannerVisible && (
+        <div
+          className={`fixed top-4 left-1/2 z-50 transition-all duration-500 ease-out
+            ${bannerOut ? "-translate-y-16 opacity-0" : "-translate-x-1/2 translate-y-0 opacity-100"}`}
+          style={bannerOut ? {} : { transform: "translateX(-50%) translateY(0)" }}
+        >
+          <div className="relative flex items-center gap-3 px-5 py-3 rounded-2xl border border-primary/40 bg-background/95 backdrop-blur-md shadow-[0_0_30px_rgba(34,197,94,0.15)] min-w-[280px] max-w-sm">
+            {/* left glow line */}
+            <div className="absolute left-0 inset-y-3 w-0.5 rounded-full bg-gradient-to-b from-primary/0 via-primary to-primary/0" />
+            {/* icon */}
+            <div className="flex-shrink-0 w-8 h-8 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
+              <XpIcon className="w-4 h-4 text-primary" />
+            </div>
+            {/* text */}
+            <div className="flex-1 min-w-0">
+              <p className="font-display text-xs font-bold tracking-widest text-primary uppercase">
+                {greetingType === "signup" ? "Welcome to Arena" : "Welcome back"}
+              </p>
+              <p className="text-sm font-semibold text-foreground truncate">{user?.username}</p>
+              <p className="text-[10px] text-muted-foreground">{xpInfo.label} · {user?.stats.xp ?? 0} XP</p>
+            </div>
+            {/* dismiss */}
+            <button onClick={dismissBanner} className="flex-shrink-0 p-1 rounded-lg hover:bg-muted/50 transition-colors">
+              <X className="w-3.5 h-3.5 text-muted-foreground" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Hero Command Center ── */}
       <div className="relative rounded-2xl border border-border bg-card overflow-hidden">
