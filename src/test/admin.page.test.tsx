@@ -51,9 +51,9 @@ describe("Admin Panel — header & stats", () => {
 
 // ─────────────────────────────────────────────────────────────
 describe("Admin Panel — disputes tab", () => {
-  it("shows disputes table by default", () => {
+  it("shows disputes search by default", () => {
     renderAdmin();
-    expect(screen.getByPlaceholderText(/search disputes/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/search/i)).toBeInTheDocument();
   });
 
   it("shows seed dispute IDs", () => {
@@ -117,8 +117,8 @@ describe("Admin Panel — audit log tab", () => {
   it("shows audit log entries", () => {
     renderAdmin();
     fireEvent.click(screen.getByRole("button", { name: /audit log/i }));
-    expect(screen.getByText("RESOLVE_DISPUTE")).toBeInTheDocument();
-    expect(screen.getByText("BAN_USER")).toBeInTheDocument();
+    expect(screen.getByText(/resolve dispute/i)).toBeInTheDocument();
+    expect(screen.getByText(/ban user/i)).toBeInTheDocument();
   });
 
   it("shows export button", () => {

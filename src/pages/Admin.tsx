@@ -327,16 +327,17 @@ const Admin = () => {
           {/* ══ DISPUTES ══ */}
           {section === "disputes" && (
             <div className="space-y-3">
+              {/* toolbar */}
               <div className="flex items-center gap-2 flex-wrap">
-                <div className="relative flex-1 min-w-[140px] max-w-[220px]">
+                <div className="relative flex-1 min-w-[140px] max-w-[200px]">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                   <Input value={disputeSearch} onChange={(e) => { setDisputeSearch(e.target.value); setDisputePage(1); }}
-                    placeholder="Search disputes..." className="pl-8 h-8 bg-secondary/60 border-border text-xs" />
+                    placeholder="Search…" className="pl-8 h-8 bg-secondary/60 border-border text-xs" />
                 </div>
                 <Select value={disputeStatus} onValueChange={(v) => { setDisputeStatus(v as DisputeStatus | "all"); setDisputePage(1); }}>
-                  <SelectTrigger className="h-8 w-32 bg-secondary/60 border-border text-xs"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-8 w-28 bg-secondary/60 border-border text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All statuses</SelectItem>
+                    <SelectItem value="all">All</SelectItem>
                     <SelectItem value="open">Open</SelectItem>
                     <SelectItem value="reviewing">Reviewing</SelectItem>
                     <SelectItem value="escalated">Escalated</SelectItem>
@@ -350,52 +351,71 @@ const Admin = () => {
                 </Button>
               </div>
 
-              <div className="rounded-lg border border-border/60 overflow-hidden">
-                <table className="w-full text-xs">
-                  <thead className="bg-secondary/40">
-                    <tr>
-                      {(["id","matchId","playerA","playerB","game"] as (keyof Dispute)[]).map((col) => (
-                        <th key={col} className="px-3 py-2 text-left font-display text-[10px] uppercase tracking-wider text-muted-foreground cursor-pointer whitespace-nowrap"
-                          onClick={() => toggleSort(col)}>
-                          {col === "matchId" ? "Match" : col === "playerA" ? "Pl. A" : col === "playerB" ? "Pl. B" : col.charAt(0).toUpperCase() + col.slice(1)}
-                          <SortIcon col={col} />
-                        </th>
-                      ))}
-                      <th className="px-3 py-2 text-left font-display text-[10px] uppercase tracking-wider text-muted-foreground">Stake</th>
-                      <th className="px-3 py-2 text-left font-display text-[10px] uppercase tracking-wider text-muted-foreground">Status</th>
-                      <th className="px-3 py-2 text-left font-display text-[10px] uppercase tracking-wider text-muted-foreground">Created</th>
-                      <th className="px-3 py-2" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pagedDisp.map((d, i) => (
-                      <tr key={d.id} className={cn("border-t border-border/40 hover:bg-secondary/30 transition-colors", i % 2 === 0 ? "bg-background" : "bg-secondary/10")}>
-                        <td className="px-3 py-2 font-mono text-muted-foreground">{d.id}</td>
-                        <td className="px-3 py-2 font-mono">{d.matchId}</td>
-                        <td className="px-3 py-2 font-medium">{d.playerA}</td>
-                        <td className="px-3 py-2 font-medium">{d.playerB}</td>
-                        <td className="px-3 py-2 text-muted-foreground">{d.game}</td>
-                        <td className="px-3 py-2 font-mono text-arena-gold">${d.stake}</td>
-                        <td className="px-3 py-2">
+              {/* dispute cards */}
+              <div className="space-y-2">
+                {pagedDisp.map((d) => {
+                  const borderColor = {
+                    open: "border-l-arena-orange",
+                    reviewing: "border-l-arena-cyan",
+                    escalated: "border-l-destructive",
+                    resolved: "border-l-primary",
+                  }[d.status];
+                  return (
+                    <div key={d.id} className={cn(
+                      "rounded-lg border border-border/60 bg-secondary/20 border-l-2 px-4 py-3 hover:bg-secondary/40 transition-colors",
+                      borderColor
+                    )}>
+                      {/* top row */}
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-[10px] text-muted-foreground">{d.id}</span>
+                          <span className="text-[10px] text-muted-foreground">·</span>
+                          <span className="font-mono text-[10px] text-muted-foreground">{d.matchId}</span>
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 border-border/50 text-muted-foreground">{d.game}</Badge>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-bold text-arena-gold">${d.stake}</span>
                           <Badge className={cn("text-[10px] border px-1.5 py-0", disputeStatusBadge[d.status])}>{d.status}</Badge>
-                        </td>
-                        <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">{d.createdAt}</td>
-                        <td className="px-3 py-2">
                           {d.status !== "resolved" && (
-                            <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px] text-primary hover:bg-primary/10"
+                            <Button size="sm" variant="outline" className="h-6 px-2.5 text-[10px] font-display border-primary/40 text-primary hover:bg-primary/10"
                               onClick={() => { setSelectedDispute(d); setResolutionChoice("pending"); setResolutionNote(""); }}>
-                              Resolve
+                              <Gavel className="mr-1 h-3 w-3" /> Resolve
                             </Button>
                           )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        </div>
+                      </div>
+
+                      {/* players row */}
+                      <div className="flex items-center gap-2 mt-2">
+                        <span className="font-display text-sm font-bold">{d.playerA}</span>
+                        <span className="text-[10px] text-muted-foreground font-display uppercase tracking-widest">vs</span>
+                        <span className="font-display text-sm font-bold">{d.playerB}</span>
+                        <span className="text-[10px] text-muted-foreground ml-auto">{d.createdAt}</span>
+                      </div>
+
+                      {/* reason */}
+                      <p className="text-[11px] text-muted-foreground mt-1.5 leading-relaxed">{d.reason}</p>
+
+                      {/* evidence */}
+                      {d.evidence && (
+                        <div className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-arena-cyan bg-arena-cyan/5 border border-arena-cyan/20 rounded px-2 py-0.5">
+                          📎 {d.evidence}
+                        </div>
+                      )}
+
+                      {/* resolution badge */}
+                      {d.status === "resolved" && d.resolution !== "pending" && (
+                        <div className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-primary bg-primary/5 border border-primary/20 rounded px-2 py-0.5">
+                          <CheckCircle2 className="h-3 w-3" /> {d.resolution.replace(/_/g, " ")}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
 
               {dpPages > 1 && (
-                <div className="flex items-center justify-end gap-1">
+                <div className="flex justify-end gap-1">
                   {Array.from({ length: dpPages }, (_, i) => (
                     <button key={i} onClick={() => setDisputePage(i + 1)}
                       className={cn("w-6 h-6 rounded text-[10px] font-mono transition-colors", disputePage === i + 1 ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary")}>
@@ -410,109 +430,168 @@ const Admin = () => {
           {/* ══ USERS ══ */}
           {section === "users" && (
             <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <Select value={userStatusFilter} onValueChange={(v) => setUserStatusFilter(v as typeof userStatusFilter)}>
-                  <SelectTrigger className="h-8 w-32 bg-secondary/60 border-border text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All</SelectItem>
-                    <SelectItem value="flagged">Flagged</SelectItem>
-                    <SelectItem value="banned">Banned</SelectItem>
-                    <SelectItem value="cleared">Cleared</SelectItem>
-                  </SelectContent>
-                </Select>
+              {/* filter pills */}
+              <div className="flex gap-1.5">
+                {(["all","flagged","banned","cleared"] as const).map((s) => (
+                  <button key={s} onClick={() => setUserStatusFilter(s)}
+                    className={cn(
+                      "px-3 py-1 rounded-full text-[10px] font-display uppercase tracking-wider border transition-colors",
+                      userStatusFilter === s
+                        ? s === "banned"  ? "bg-destructive/20 border-destructive/40 text-destructive"
+                        : s === "flagged" ? "bg-arena-orange/20 border-arena-orange/40 text-arena-orange"
+                        : s === "cleared" ? "bg-primary/20 border-primary/40 text-primary"
+                        : "bg-secondary border-border text-foreground"
+                        : "border-border/40 text-muted-foreground hover:border-border hover:text-foreground"
+                    )}>
+                    {s}
+                  </button>
+                ))}
               </div>
 
-              <div className="rounded-lg border border-border/60 overflow-hidden">
-                <table className="w-full text-xs">
-                  <thead className="bg-secondary/40">
-                    <tr>
-                      {["User","Wallet","Reason","Win%","Matches","Flagged","Status",""].map((h) => (
-                        <th key={h} className="px-3 py-2 text-left font-display text-[10px] uppercase tracking-wider text-muted-foreground">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredUsers.map((u, i) => (
-                      <tr key={u.id} className={cn("border-t border-border/40 hover:bg-secondary/30 transition-colors", i % 2 === 0 ? "bg-background" : "bg-secondary/10")}>
-                        <td className="px-3 py-2 font-medium">{u.username}</td>
-                        <td className="px-3 py-2 font-mono text-muted-foreground">{u.walletAddress.slice(0, 8)}...{u.walletAddress.slice(-4)}</td>
-                        <td className="px-3 py-2 text-muted-foreground max-w-[160px] truncate" title={u.reason}>{u.reason}</td>
-                        <td className={cn("px-3 py-2 font-mono font-bold", u.winRate >= 80 ? "text-destructive" : u.winRate >= 65 ? "text-arena-orange" : "text-primary")}>{u.winRate}%</td>
-                        <td className="px-3 py-2 font-mono text-muted-foreground">{u.matchesPlayed}</td>
-                        <td className="px-3 py-2 text-muted-foreground">{u.flaggedAt}</td>
-                        <td className="px-3 py-2">
-                          <Badge className={cn("text-[10px] border px-1.5 py-0", userStatusBadge[u.status])}>{u.status}</Badge>
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="flex gap-1">
-                            {u.status !== "banned" && (
-                              <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px] text-destructive hover:bg-destructive/10"
-                                onClick={() => setBanTarget(u)}>
-                                Ban
-                              </Button>
-                            )}
-                            {u.status === "flagged" && (
-                              <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px] text-primary hover:bg-primary/10"
-                                onClick={() => handleClear(u)}>
-                                Clear
-                              </Button>
-                            )}
+              {/* user cards */}
+              <div className="space-y-2">
+                {filteredUsers.map((u) => {
+                  const risk = u.winRate >= 85 ? { label: "CRITICAL", color: "text-destructive bg-destructive/10 border-destructive/30" }
+                    : u.winRate >= 75 ? { label: "HIGH",     color: "text-arena-orange bg-arena-orange/10 border-arena-orange/30" }
+                    : u.winRate >= 60 ? { label: "MEDIUM",   color: "text-arena-gold bg-arena-gold/10 border-arena-gold/30" }
+                    :                  { label: "LOW",       color: "text-primary bg-primary/10 border-primary/30" };
+
+                  const avatarBg = u.status === "banned" ? "bg-destructive/20 text-destructive"
+                    : u.status === "flagged" ? "bg-arena-orange/20 text-arena-orange"
+                    : "bg-primary/20 text-primary";
+
+                  return (
+                    <div key={u.id} className={cn(
+                      "rounded-lg border border-border/60 bg-secondary/20 px-4 py-3 flex items-center gap-4 hover:bg-secondary/40 transition-colors",
+                      u.status === "banned" && "border-destructive/20 bg-destructive/5"
+                    )}>
+                      {/* avatar */}
+                      <div className={cn("w-9 h-9 rounded-full flex items-center justify-center font-display text-sm font-bold shrink-0", avatarBg)}>
+                        {u.username.slice(0, 2).toUpperCase()}
+                      </div>
+
+                      {/* info */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-display text-sm font-bold">{u.username}</span>
+                          <Badge className={cn("text-[9px] border px-1.5 py-0", userStatusBadge[u.status])}>{u.status}</Badge>
+                          <Badge variant="outline" className={cn("text-[9px] border px-1.5 py-0 ml-auto", risk.color)}>{risk.label}</Badge>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-0.5 truncate" title={u.reason}>{u.reason}</p>
+                        <div className="flex items-center gap-3 mt-1.5">
+                          {/* win rate bar */}
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] text-muted-foreground">Win rate</span>
+                            <div className="w-20 h-1.5 rounded-full bg-secondary overflow-hidden">
+                              <div className={cn("h-full rounded-full transition-all",
+                                u.winRate >= 80 ? "bg-destructive" : u.winRate >= 65 ? "bg-arena-orange" : "bg-primary"
+                              )} style={{ width: `${u.winRate}%` }} />
+                            </div>
+                            <span className={cn("text-[10px] font-mono font-bold",
+                              u.winRate >= 80 ? "text-destructive" : u.winRate >= 65 ? "text-arena-orange" : "text-primary"
+                            )}>{u.winRate}%</span>
                           </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                          <span className="text-[10px] text-muted-foreground">{u.matchesPlayed} matches</span>
+                          <span className="font-mono text-[10px] text-muted-foreground">{u.walletAddress.slice(0, 6)}…{u.walletAddress.slice(-4)}</span>
+                          <span className="text-[10px] text-muted-foreground ml-auto">{u.flaggedAt}</span>
+                        </div>
+                      </div>
+
+                      {/* actions */}
+                      <div className="flex gap-1 shrink-0">
+                        {u.status !== "banned" && (
+                          <Button size="sm" variant="ghost" className="h-7 px-2.5 text-[10px] text-destructive hover:bg-destructive/10 font-display border border-destructive/20"
+                            onClick={() => setBanTarget(u)}>
+                            <Ban className="mr-1 h-3 w-3" /> Ban
+                          </Button>
+                        )}
+                        {u.status === "flagged" && (
+                          <Button size="sm" variant="ghost" className="h-7 px-2.5 text-[10px] text-primary hover:bg-primary/10 font-display border border-primary/20"
+                            onClick={() => handleClear(u)}>
+                            <CheckCircle2 className="mr-1 h-3 w-3" /> Clear
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
 
           {/* ══ AUDIT ══ */}
-          {section === "audit" && (
-            <div className="space-y-3">
-              <div className="flex justify-end">
-                <Button size="sm" variant="outline" className="h-8 text-xs border-border"
-                  onClick={() => exportCSV("audit_log.csv", ["Timestamp","Action","Target","Detail","Admin"],
-                    auditLog.map((l) => [l.createdAt, l.action, l.target, l.detail, l.adminName]))}>
-                  <Download className="mr-1.5 h-3.5 w-3.5" /> Export
-                </Button>
-              </div>
-
-              <div className="rounded-lg border border-border/60 overflow-hidden">
-                <table className="w-full text-xs">
-                  <thead className="bg-secondary/40">
-                    <tr>
-                      {["Timestamp","Admin","Action","Target","Detail"].map((h) => (
-                        <th key={h} className="px-3 py-2 text-left font-display text-[10px] uppercase tracking-wider text-muted-foreground">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pagedAudit.map((l, i) => (
-                      <tr key={l.id} className={cn("border-t border-border/40", i % 2 === 0 ? "bg-background" : "bg-secondary/10")}>
-                        <td className="px-3 py-2 font-mono text-muted-foreground whitespace-nowrap">{l.createdAt}</td>
-                        <td className="px-3 py-2 text-arena-cyan font-mono">{l.adminName}</td>
-                        <td className="px-3 py-2 font-mono font-medium">{l.action}</td>
-                        <td className="px-3 py-2 font-mono text-muted-foreground">{l.target}</td>
-                        <td className="px-3 py-2 text-muted-foreground max-w-[200px] truncate" title={l.detail}>{l.detail}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {auditPages > 1 && (
-                <div className="flex items-center justify-end gap-1">
-                  {Array.from({ length: auditPages }, (_, i) => (
-                    <button key={i} onClick={() => setAuditPage(i + 1)}
-                      className={cn("w-6 h-6 rounded text-[10px] font-mono transition-colors", auditPage === i + 1 ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary")}>
-                      {i + 1}
-                    </button>
-                  ))}
+          {section === "audit" && (() => {
+            const auditActionStyle: Record<string, string> = {
+              BAN_USER:               "bg-destructive/15 text-destructive border-destructive/30",
+              RESOLVE_DISPUTE:        "bg-arena-cyan/15 text-arena-cyan border-arena-cyan/30",
+              REFUND_MATCH:           "bg-arena-cyan/15 text-arena-cyan border-arena-cyan/30",
+              VOID_MATCH:             "bg-muted/40 text-muted-foreground border-border",
+              CLEAR_FLAG:             "bg-primary/15 text-primary border-primary/30",
+              FREEZE_PAYOUT:          "bg-arena-orange/15 text-arena-orange border-arena-orange/30",
+              UPDATE_PLATFORM_SETTINGS: "bg-arena-purple/15 text-arena-purple border-arena-purple/30",
+              KILL_SWITCH_ON:         "bg-destructive/20 text-destructive border-destructive/40",
+              KILL_SWITCH_OFF:        "bg-primary/15 text-primary border-primary/30",
+            };
+            return (
+              <div className="space-y-3">
+                <div className="flex justify-end">
+                  <Button size="sm" variant="outline" className="h-8 text-xs border-border"
+                    onClick={() => exportCSV("audit_log.csv", ["Timestamp","Action","Target","Detail","Admin"],
+                      auditLog.map((l) => [l.createdAt, l.action, l.target, l.detail, l.adminName]))}>
+                    <Download className="mr-1.5 h-3.5 w-3.5" /> Export
+                  </Button>
                 </div>
-              )}
-            </div>
-          )}
+
+                {/* timeline */}
+                <ScrollArea className="h-[400px] pr-2">
+                  <div className="relative pl-5">
+                    {/* vertical line */}
+                    <div className="absolute left-1.5 top-2 bottom-2 w-px bg-border/60" />
+
+                    <div className="space-y-3">
+                      {pagedAudit.map((l) => {
+                        const style = auditActionStyle[l.action] ?? "bg-secondary text-muted-foreground border-border";
+                        return (
+                          <div key={l.id} className="relative flex gap-3 group">
+                            {/* dot */}
+                            <div className={cn("absolute -left-[13px] top-2 w-2 h-2 rounded-full border-2 border-background shrink-0",
+                              l.action.includes("BAN") || l.action.includes("KILL_SWITCH_ON") ? "bg-destructive"
+                              : l.action.includes("CLEAR") || l.action.includes("RESOLVE") || l.action.includes("KILL_SWITCH_OFF") ? "bg-primary"
+                              : l.action.includes("FREEZE") ? "bg-arena-orange"
+                              : "bg-muted-foreground"
+                            )} />
+
+                            <div className="flex-1 rounded-lg border border-border/40 bg-secondary/20 px-3 py-2.5 hover:bg-secondary/40 transition-colors group-hover:border-border/60">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <Badge variant="outline" className={cn("text-[9px] border px-1.5 py-0 font-mono", style)}>
+                                  {l.action.replace(/_/g, " ")}
+                                </Badge>
+                                <span className="font-mono text-[10px] text-muted-foreground">{l.target}</span>
+                                <span className="text-[10px] text-muted-foreground ml-auto">{l.createdAt}</span>
+                              </div>
+                              <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">{l.detail}</p>
+                              <p className="text-[10px] text-arena-cyan font-mono mt-1">{l.adminName}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </ScrollArea>
+
+                {auditPages > 1 && (
+                  <div className="flex justify-end gap-1">
+                    {Array.from({ length: auditPages }, (_, i) => (
+                      <button key={i} onClick={() => setAuditPage(i + 1)}
+                        className={cn("w-6 h-6 rounded text-[10px] font-mono transition-colors", auditPage === i + 1 ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary")}>
+                        {i + 1}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* ══ LIVE FEED ══ */}
           {section === "live" && (
