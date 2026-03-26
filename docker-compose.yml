@@ -1,7 +1,7 @@
 # ╔══════════════════════════════════════════════════════════════╗
 # ║  ARENA — Full Stack Docker Compose                         ║
 # ║  Services: PostgreSQL · Frontend (Nginx) · Python Engine   ║
-# ║  הפעלה: docker compose up -d --build                       ║
+# ║  Start: docker compose up -d --build                       ║
 # ╚══════════════════════════════════════════════════════════════╝
 
 services:
@@ -74,13 +74,13 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Screenshots — bind mount לגישה מהירה מהמארח
+      # Screenshots — fast host-mount for capture output
       - arena-screenshots:/app/screenshots
-      # Evidence — שמירת הוכחות משחק
+      # Evidence — persisted game proof files
       - arena-evidence:/app/evidence
-      # Logs — לוגים של ה-Engine
+      # Logs — engine runtime logs
       - arena-engine-logs:/app/logs
-      # Templates — תמונות ייחוס ל-matcher (bind mount מהמארח)
+      # Templates — reference images for the matcher (read-only host mount)
       - ./engine/templates:/app/templates:ro
     depends_on:
       arena-db:

@@ -276,7 +276,7 @@ class PlayerDatabase:
 
     # ── Match Log ──────────────────────────────────────────────────────────────
     def log_match(self, wallet_address: str) -> None:
-        """רושם כניסה למשחק עבור שחקן."""
+        """Record a match entry for the given player."""
         _validate_wallet(wallet_address)
         self._conn.execute(
             "INSERT INTO match_log (wallet_address) VALUES (?)",
@@ -286,7 +286,7 @@ class PlayerDatabase:
         log.info("match_log | wallet=%s", wallet_address)
 
     def get_today_match_count(self, wallet_address: str) -> int:
-        """מחזיר כמה משחקים שיחק השחקן היום."""
+        """Return the number of matches the player has played today."""
         _validate_wallet(wallet_address)
         row = self._conn.execute(
             "SELECT COUNT(*) as cnt FROM match_log WHERE wallet_address = ? AND played_at = date('now')",

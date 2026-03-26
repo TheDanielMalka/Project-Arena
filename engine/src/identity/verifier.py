@@ -24,11 +24,11 @@ class MatchVerifier:
 
     def verify(self, wallet_address: str) -> VerificationResult:
         """
-        מריץ את כל הבדיקות בסדר.
-        מחזיר את הסיבה הראשונה שנכשלת — אם הכל תקין מחזיר אושר.
+        Run all verification checks in order.
+        Returns the first failing reason — if all pass, returns approved.
         """
 
-        # ── בדיקה 1: השחקן רשום? ─────────────────────────────────────────────
+        # ── Check 1: is the player registered? ───────────────────────────────
         player = self._db.get(wallet_address)
         if player is None:
             log.info("verify | REJECTED not_registered | wallet=%s", wallet_address)
@@ -37,7 +37,7 @@ class MatchVerifier:
                 reason="Wallet not registered — please sign up first",
             )
 
-        # ── בדיקה 2: השחקן חסום? ─────────────────────────────────────────────
+        # ── Check 2: is the player blacklisted? ──────────────────────────────
         if self._db.is_blacklisted(wallet_address):
             log.info("verify | REJECTED blacklisted | wallet=%s", wallet_address)
             return VerificationResult(
@@ -45,7 +45,7 @@ class MatchVerifier:
                 reason="Account is banned — submit a dispute to appeal",
             )
 
-        # ── בדיקה 3: הגיע למגבלת משחקים יומית? ──────────────────────────────
+        # ── Check 3: daily match limit reached? ──────────────────────────────
         count = self._db.get_today_match_count(wallet_address)
         if count >= self._daily_match_limit:
             log.info("verify | REJECTED daily_match_limit | wallet=%s count=%d", wallet_address, count)
@@ -54,6 +54,6 @@ class MatchVerifier:
                 reason=f"Daily match limit reached ({self._daily_match_limit} matches per day)",
             )
 
-        # ── עבר הכל ──────────────────────────────────────────────────────────
+        # ── All checks passed ─────────────────────────────────────────────────
         log.info("verify | APPROVED | wallet=%s steam=%s matches_today=%d", wallet_address, player.steam_id, count)
         return VerificationResult(approved=True, reason="OK")

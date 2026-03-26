@@ -1,6 +1,6 @@
 """
 ARENA Engine — Database Backup
-מעתיק את players.db לתיקיית engine/data/backups/ עם תאריך.
+Copies players.db to engine/data/backups/ with a daily date stamp.
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ def backup_database(
     backup_dir: Path = _DEFAULT_BACKUP_DIR,
 ) -> Path:
     """
-    מעתיק את קובץ הדאטהבייס לתיקיית הגיבויים עם תאריך היום.
-    מחזיר את הנתיב של קובץ הגיבוי שנוצר.
+    Copy the database file to the backup directory with today's date stamp.
+    Returns the path of the newly created backup file.
     """
     db_path    = Path(db_path)
     backup_dir = Path(backup_dir)
@@ -45,8 +45,8 @@ def cleanup_old_backups(
     keep_days:  int  = 30,
 ) -> int:
     """
-    מוחק גיבויים ישנים מעל keep_days ימים.
-    מחזיר כמה קבצים נמחקו.
+    Delete backups older than keep_days days.
+    Returns the number of files deleted.
     """
     backup_dir = Path(backup_dir)
     if not backup_dir.exists():
@@ -64,6 +64,6 @@ def cleanup_old_backups(
                 deleted += 1
                 log.info("old backup deleted | path=%s", f)
         except ValueError:
-            pass  # שמות קבצים לא תקינים — מדלגים
+            pass  # skip files with unexpected name format
 
     return deleted
