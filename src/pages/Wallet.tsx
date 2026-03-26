@@ -328,6 +328,8 @@ const WalletPage = () => {
                       <SelectItem value="match_loss">Match losses</SelectItem>
                       <SelectItem value="fee">Fees</SelectItem>
                       <SelectItem value="refund">Refunds</SelectItem>
+                      <SelectItem value="escrow_lock">Escrow Lock</SelectItem>
+                      <SelectItem value="escrow_release">Escrow Release</SelectItem>
                     </SelectContent>
                   </Select>
                   <div className="relative flex-1 min-w-[140px] sm:max-w-[200px]">

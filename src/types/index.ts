@@ -189,7 +189,7 @@ export interface DailyChallenge {
 
 // ─── Notifications ───────────────────────────────────────────
 
-export type NotificationType = "match_result" | "payout" | "system" | "dispute" | "match_invite";
+export type NotificationType = "match_result" | "payout" | "system" | "dispute" | "match_invite" | "escrow";
 
 export interface Notification {
   id: string;
