@@ -112,8 +112,8 @@ export interface Token {
 export interface WalletInfo {
   addresses: Record<Network, string>;
   selectedNetwork: Network;
-  dailyLimit: number;
-  dailyUsed: number;
+  dailyBettingLimit: number;
+  dailyBettingUsed: number;
   twoFactorEnabled: boolean;
   withdrawWhitelist: boolean;
 }

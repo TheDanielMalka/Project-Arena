@@ -4,15 +4,15 @@ import type { Transaction, TransactionType, TransactionStatus, Token, Network } 
 interface WalletState {
   tokens: Token[];
   transactions: Transaction[];
-  dailyLimit: number;
-  dailyUsed: number;
+  dailyBettingLimit: number;
+  dailyBettingUsed: number;
   selectedNetwork: Network;
   addresses: Record<Network, string>;
 
   // Actions
   deposit: (amount: number, token: string, network: Network) => Transaction;
   withdraw: (amount: number, token: string, toAddress: string) => Transaction | null;
-  lockEscrow: (amount: number, matchId: string) => Transaction;
+  lockEscrow: (amount: number, matchId: string) => Transaction | null;
   releaseEscrow: (amount: number, matchId: string, won: boolean) => Transaction;
   addTransaction: (tx: Omit<Transaction, "id" | "timestamp">) => Transaction;
   setNetwork: (network: Network) => void;
@@ -52,8 +52,8 @@ const ADDRESSES: Record<Network, string> = {
 export const useWalletStore = create<WalletState>((set, get) => ({
   tokens: SEED_TOKENS,
   transactions: SEED_TRANSACTIONS,
-  dailyLimit: 500,
-  dailyUsed: 200,
+  dailyBettingLimit: 500,
+  dailyBettingUsed: 200,
   selectedNetwork: "bsc",
   addresses: ADDRESSES,
 
@@ -102,8 +102,6 @@ export const useWalletStore = create<WalletState>((set, get) => ({
 
   withdraw: (amount, token, toAddress) => {
     const state = get();
-    if (amount + state.dailyUsed > state.dailyLimit) return null;
-
     const tokenObj = state.tokens.find((t) => t.symbol === token);
     if (!tokenObj || tokenObj.balance < amount) return null;
 
@@ -113,7 +111,6 @@ export const useWalletStore = create<WalletState>((set, get) => ({
           ? { ...t, balance: t.balance - amount, usdValue: t.usdValue - amount }
           : t
       ),
-      dailyUsed: s.dailyUsed + amount,
     }));
 
     return get().addTransaction({
@@ -129,12 +126,20 @@ export const useWalletStore = create<WalletState>((set, get) => ({
   },
 
   lockEscrow: (amount, matchId) => {
-    set((state) => ({
-      tokens: state.tokens.map((t) =>
+    const state = get();
+    // Enforce daily betting limit — funds go directly into smart contract escrow
+    if (amount + state.dailyBettingUsed > state.dailyBettingLimit) return null;
+
+    const tokenObj = state.tokens.find((t) => t.symbol === "USDT" && t.network === "bsc");
+    if (!tokenObj || tokenObj.balance < amount) return null;
+
+    set((s) => ({
+      tokens: s.tokens.map((t) =>
         t.symbol === "USDT" && t.network === "bsc"
           ? { ...t, balance: t.balance - amount, usdValue: t.usdValue - amount }
           : t
       ),
+      dailyBettingUsed: s.dailyBettingUsed + amount,
     }));
     return get().addTransaction({
       userId: "user-001",

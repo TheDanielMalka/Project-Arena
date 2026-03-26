@@ -18,9 +18,9 @@ class VerificationResult:
 
 class MatchVerifier:
 
-    def __init__(self, db: PlayerDatabase, daily_limit: int = DAILY_MATCH_LIMIT):
-        self._db          = db
-        self._daily_limit = daily_limit
+    def __init__(self, db: PlayerDatabase, daily_match_limit: int = DAILY_MATCH_LIMIT):
+        self._db               = db
+        self._daily_match_limit = daily_match_limit
 
     def verify(self, wallet_address: str) -> VerificationResult:
         """
@@ -47,11 +47,11 @@ class MatchVerifier:
 
         # ── בדיקה 3: הגיע למגבלת משחקים יומית? ──────────────────────────────
         count = self._db.get_today_match_count(wallet_address)
-        if count >= self._daily_limit:
-            log.info("verify | REJECTED daily_limit | wallet=%s count=%d", wallet_address, count)
+        if count >= self._daily_match_limit:
+            log.info("verify | REJECTED daily_match_limit | wallet=%s count=%d", wallet_address, count)
             return VerificationResult(
                 approved=False,
-                reason=f"Daily match limit reached ({self._daily_limit} matches per day)",
+                reason=f"Daily match limit reached ({self._daily_match_limit} matches per day)",
             )
 
         # ── עבר הכל ──────────────────────────────────────────────────────────
