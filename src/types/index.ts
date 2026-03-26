@@ -16,6 +16,12 @@ export type Network = "bsc" | "solana" | "ethereum";
 export type UserRole = "user" | "admin" | "moderator";
 export type UserStatus = "active" | "flagged" | "banned" | "suspended";
 
+// ─── Arena ID ─────────────────────────────────────────────────
+// Immutable public identifier — format: ARENA-XXXXXX
+// DB: users.arena_id (VARCHAR(12) UNIQUE NOT NULL)
+// Never changes even if username changes. All public references use this.
+export type ArenaId = string;
+
 // ─── User / Profile ─────────────────────────────────────────
 
 export interface UserProfile {
@@ -33,6 +39,7 @@ export interface UserProfile {
   avatar?: string;    // "initials" | emoji | "upload:{dataURL}" — DB: stored as text
   avatarBg?: string;  // bgId from avatarBgs.ts — DB: stored as text, defaults to "default"
   preferredGame: Game;
+  arenaId: ArenaId;     // DB: users.arena_id — immutable public ID (ARENA-XXXXXX)
   memberSince: string;
   status: UserStatus;
   stats: UserStats;
@@ -239,4 +246,107 @@ export interface Notification {
   timestamp: Date;   // DB: notifications.created_at (TIMESTAMPTZ → converted to Date by API)
   read: boolean;
   metadata?: Record<string, unknown>;  // DB: notifications.metadata (JSONB)
+}
+
+// ─── Player Reports / Tickets ─────────────────────────────────
+// DB: support_tickets table
+
+export type TicketReason =
+  | "cheating"
+  | "harassment"
+  | "fake_screenshot"
+  | "disconnect_abuse"
+  | "other";
+
+export type TicketStatus = "open" | "investigating" | "dismissed" | "resolved";
+
+export interface SupportTicket {
+  id: string;                   // DB: support_tickets.id (UUID)
+  reporterId: string;           // DB: support_tickets.reporter_id (FK → users.id)
+  reporterName: string;         // DB: JOIN users.username
+  reportedId: string;           // DB: support_tickets.reported_id (FK → users.id)
+  reportedUsername: string;     // DB: JOIN users.username
+  reason: TicketReason;         // DB: support_tickets.reason (enum)
+  description: string;          // DB: support_tickets.description
+  status: TicketStatus;         // DB: support_tickets.status (enum)
+  adminNote?: string;           // DB: support_tickets.admin_note
+  createdAt: string;            // DB: support_tickets.created_at (ISO 8601)
+  updatedAt?: string;           // DB: support_tickets.updated_at
+}
+
+// ─── Public Player Profile ────────────────────────────────────
+// Subset of UserProfile — excludes wallet, steamId, email, balance
+// DB: SELECT users.*, user_stats.* WHERE id = :id (public fields only)
+
+export interface PublicPlayerProfile {
+  id: string;                   // DB: users.id (UUID)
+  username: string;             // DB: users.username
+  avatarInitials: string;       // DB: users.avatar_initials
+  avatar?: string;              // DB: users.avatar
+  avatarBg?: string;            // DB: users.avatar_bg
+  rank: string;                 // DB: users.rank
+  tier: string;                 // DB: users.tier
+  preferredGame: Game;          // DB: users.preferred_game
+  arenaId: ArenaId;             // DB: users.arena_id — immutable public ID
+  memberSince: string;          // DB: users.created_at (formatted server-side)
+  status: UserStatus;           // DB: users.status
+  stats: {
+    matches: number;            // DB: user_stats.matches
+    wins: number;               // DB: user_stats.wins
+    losses: number;             // DB: user_stats.losses
+    winRate: number;            // DB: user_stats.win_rate
+    totalEarnings: number;      // DB: user_stats.total_earnings
+  };
+}
+
+// ─── Friendships ──────────────────────────────────────────────
+// DB: friendships table
+
+export type FriendshipStatus = "pending" | "accepted" | "blocked";
+
+export interface Friendship {
+  id: string;                    // DB: friendships.id (UUID)
+  initiatorId: string;           // DB: friendships.initiator_id (FK → users.id) — who sent the request
+  receiverId: string;            // DB: friendships.receiver_id (FK → users.id) — who received it
+  friendId: string;              // client-computed: the OTHER user's id (not the current user)
+  friendUsername: string;        // DB: JOIN users.username
+  friendArenaId: ArenaId;        // DB: JOIN users.arena_id
+  friendAvatarInitials: string;  // DB: JOIN users.avatar_initials
+  friendAvatar?: string;         // DB: JOIN users.avatar
+  friendRank: string;            // DB: JOIN users.rank
+  friendTier: string;            // DB: JOIN users.tier
+  friendPreferredGame: string;   // DB: JOIN users.preferred_game
+  status: FriendshipStatus;      // DB: friendships.status
+  message?: string;              // DB: friendships.message — optional text sent with the request
+  createdAt: string;             // DB: friendships.created_at (ISO 8601)
+  updatedAt?: string;            // DB: friendships.updated_at
+}
+
+// ─── Direct Messages ──────────────────────────────────────────
+// DB: direct_messages table
+
+export interface DirectMessage {
+  id: string;           // DB: direct_messages.id (UUID)
+  senderId: string;     // DB: direct_messages.sender_id (FK → users.id)
+  senderName: string;   // DB: JOIN users.username
+  receiverId: string;   // DB: direct_messages.receiver_id (FK → users.id)
+  content: string;      // DB: direct_messages.content (TEXT)
+  read: boolean;        // DB: direct_messages.read (BOOLEAN DEFAULT FALSE)
+  createdAt: string;    // DB: direct_messages.created_at (ISO 8601)
+}
+
+// ─── Inbox Messages ───────────────────────────────────────────
+// DB: inbox_messages table — formal messages sent by Arena ID (not real-time chat)
+
+export interface InboxMessage {
+  id: string;                  // DB: inbox_messages.id (UUID)
+  senderId: string;            // DB: inbox_messages.sender_id (FK → users.id)
+  senderName: string;          // DB: JOIN users.username
+  senderArenaId: ArenaId;      // DB: JOIN users.arena_id
+  receiverId: string;          // DB: inbox_messages.receiver_id (FK → users.id)
+  subject: string;             // DB: inbox_messages.subject (VARCHAR 200)
+  content: string;             // DB: inbox_messages.content (TEXT)
+  read: boolean;               // DB: inbox_messages.read DEFAULT FALSE
+  deleted: boolean;            // DB: inbox_messages.deleted DEFAULT FALSE (soft delete)
+  createdAt: string;           // DB: inbox_messages.created_at (ISO 8601)
 }

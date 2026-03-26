@@ -31,6 +31,7 @@ CREATE TABLE users (
     avatar          TEXT DEFAULT 'initials',    -- 'initials' | emoji | 'upload:{dataURL}'
     avatar_bg       TEXT DEFAULT 'default',     -- bgId from avatarBgs.ts
     preferred_game  game DEFAULT 'CS2',
+    arena_id        VARCHAR(12) UNIQUE,   -- immutable public ID (ARENA-XXXXXX) — set on registration, never changed
     status          user_status DEFAULT 'active',
     created_at      TIMESTAMPTZ DEFAULT NOW(),
     updated_at      TIMESTAMPTZ DEFAULT NOW()
@@ -238,3 +239,114 @@ AS $$
         WHERE user_id = _user_id AND role = _role
     )
 $$;
+
+-- ── Support Tickets (Player Reports) ─────────────────────────
+CREATE TYPE ticket_reason AS ENUM (
+    'cheating','harassment','fake_screenshot','disconnect_abuse','other'
+);
+CREATE TYPE ticket_status AS ENUM ('open','investigating','dismissed','resolved');
+
+CREATE TABLE support_tickets (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    reporter_id  UUID REFERENCES users(id) NOT NULL,
+    reported_id  UUID REFERENCES users(id) NOT NULL,
+    reason       ticket_reason NOT NULL,
+    description  TEXT NOT NULL,
+    status       ticket_status NOT NULL DEFAULT 'open',
+    admin_note   TEXT,
+    created_at   TIMESTAMPTZ DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT no_self_report CHECK (reporter_id <> reported_id)
+);
+
+CREATE INDEX idx_tickets_reported ON support_tickets(reported_id);
+CREATE INDEX idx_tickets_reporter ON support_tickets(reporter_id);
+CREATE INDEX idx_tickets_status   ON support_tickets(status);
+
+-- ── Arena ID Generator Function ───────────────────────────────
+-- Generates a unique ARENA-XXXXXX identifier on user registration
+CREATE OR REPLACE FUNCTION generate_arena_id()
+RETURNS TEXT LANGUAGE plpgsql AS $$
+DECLARE
+    chars TEXT := 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    result TEXT := 'ARENA-';
+    i INT;
+BEGIN
+    FOR i IN 1..6 LOOP
+        result := result || substr(chars, floor(random() * length(chars) + 1)::INT, 1);
+    END LOOP;
+    RETURN result;
+END;
+$$;
+
+-- Trigger: auto-generate arena_id on INSERT if not provided
+CREATE OR REPLACE FUNCTION set_arena_id()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.arena_id IS NULL THEN
+        LOOP
+            NEW.arena_id := generate_arena_id();
+            EXIT WHEN NOT EXISTS (SELECT 1 FROM users WHERE arena_id = NEW.arena_id);
+        END LOOP;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_set_arena_id
+    BEFORE INSERT ON users
+    FOR EACH ROW EXECUTE FUNCTION set_arena_id();
+
+-- ── Friendships ───────────────────────────────────────────────
+CREATE TYPE friendship_status AS ENUM ('pending','accepted','blocked');
+
+CREATE TABLE friendships (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    initiator_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+    receiver_id  UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+    status       friendship_status NOT NULL DEFAULT 'pending',
+    message      TEXT,                                         -- optional message sent with friend request
+    created_at   TIMESTAMPTZ DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT no_self_friendship CHECK (initiator_id <> receiver_id),
+    CONSTRAINT unique_friendship   UNIQUE (initiator_id, receiver_id)
+);
+
+CREATE INDEX idx_friendships_initiator ON friendships(initiator_id, status);
+CREATE INDEX idx_friendships_receiver  ON friendships(receiver_id,  status);
+
+-- ── Direct Messages ───────────────────────────────────────────
+CREATE TABLE direct_messages (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sender_id   UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+    receiver_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+    content     TEXT NOT NULL CHECK (char_length(content) BETWEEN 1 AND 2000),
+    read        BOOLEAN DEFAULT FALSE,
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT no_self_message CHECK (sender_id <> receiver_id)
+);
+
+CREATE INDEX idx_dm_sender   ON direct_messages(sender_id,   created_at DESC);
+CREATE INDEX idx_dm_receiver ON direct_messages(receiver_id, read);
+-- Composite index for conversation lookup (both directions)
+CREATE INDEX idx_dm_conversation ON direct_messages(
+    LEAST(sender_id::TEXT, receiver_id::TEXT),
+    GREATEST(sender_id::TEXT, receiver_id::TEXT),
+    created_at DESC
+);
+
+-- ── Inbox Messages (formal, non-real-time) ────────────────────
+CREATE TABLE inbox_messages (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sender_id   UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+    receiver_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+    subject     VARCHAR(200) NOT NULL,
+    content     TEXT NOT NULL CHECK (char_length(content) BETWEEN 1 AND 5000),
+    read        BOOLEAN DEFAULT FALSE,
+    deleted     BOOLEAN DEFAULT FALSE,
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT no_self_inbox CHECK (sender_id <> receiver_id)
+);
+
+CREATE INDEX idx_inbox_receiver ON inbox_messages(receiver_id, read, deleted);
+CREATE INDEX idx_inbox_sender   ON inbox_messages(sender_id);

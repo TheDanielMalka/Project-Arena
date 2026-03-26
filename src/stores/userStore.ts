@@ -30,6 +30,7 @@ const MOCK_USER: UserProfile = {
   verified: true,
   avatarInitials: "AP",
   preferredGame: "CS2",
+  arenaId: "ARENA-AP0001",
   memberSince: "March 2026",
   status: "active",
   avatar: "initials",

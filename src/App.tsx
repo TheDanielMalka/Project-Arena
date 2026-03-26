@@ -20,6 +20,9 @@ import TermsOfService from "./pages/TermsOfService";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import ResponsibleGaming from "./pages/ResponsibleGaming";
 import NotFound from "./pages/NotFound";
+import Players from "./pages/Players";
+import PlayerProfile from "./pages/PlayerProfile";
+import Hub from "./pages/Hub";
 
 const queryClient = new QueryClient();
 
@@ -58,6 +61,9 @@ const App = () => (
           <Route path="/legal/terms" element={<PublicLegal><TermsOfService /></PublicLegal>} />
           <Route path="/legal/privacy" element={<PublicLegal><PrivacyPolicy /></PublicLegal>} />
           <Route path="/legal/responsible-gaming" element={<PublicLegal><ResponsibleGaming /></PublicLegal>} />
+          <Route path="/hub" element={<AppLayout><Hub /></AppLayout>} />
+          <Route path="/players" element={<AppLayout><Players /></AppLayout>} />
+          <Route path="/players/:username" element={<AppLayout><PlayerProfile /></AppLayout>} />
           <Route path="/admin" element={<AdminRoute />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
