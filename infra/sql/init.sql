@@ -132,6 +132,21 @@ CREATE TABLE audit_logs (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ── Platform Settings (single-row config) ────────────────────
+CREATE TABLE platform_settings (
+    id                       SERIAL PRIMARY KEY,          -- always 1
+    fee_percent              NUMERIC(4,2) DEFAULT 5.00,   -- ArenaEscrow FEE_PERCENT
+    daily_betting_max        NUMERIC(10,2) DEFAULT 500.00,-- user hard cap
+    maintenance_mode         BOOLEAN DEFAULT FALSE,
+    registration_open        BOOLEAN DEFAULT TRUE,
+    auto_dispute_escalation  BOOLEAN DEFAULT TRUE,
+    kill_switch_active       BOOLEAN DEFAULT FALSE,
+    updated_at               TIMESTAMPTZ DEFAULT NOW(),
+    updated_by               UUID REFERENCES users(id)
+);
+-- Seed the single row
+INSERT INTO platform_settings DEFAULT VALUES;
+
 -- ── Notifications ────────────────────────────────────────────
 CREATE TABLE notifications (
     id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),

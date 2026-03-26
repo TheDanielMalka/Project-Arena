@@ -1,968 +1,766 @@
-import { Fragment, useState, useEffect, useRef } from "react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
-import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-  DialogDescription,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  ShieldAlert,
-  Gavel,
-  Users,
-  Ban,
-  CheckCircle2,
-  XCircle,
-  AlertTriangle,
-  Activity,
-  DollarSign,
-  Eye,
-  Clock,
-  Search,
-  ArrowUpDown,
-  ArrowUp,
-  ArrowDown,
-  Download,
-  Power,
-  Settings,
-  Radio,
-  ChevronDown,
-  ChevronRight,
-  Zap,
-  UserCheck,
-  Swords,
-  CreditCard,
-  Shield,
-  Wrench,
+  ShieldAlert, Gavel, Users, Ban, CheckCircle2, XCircle, AlertTriangle,
+  Activity, DollarSign, Eye, Clock, Search, ArrowUpDown, ArrowUp, ArrowDown,
+  Download, Power, Settings, Radio, ChevronRight, Zap,
 } from "lucide-react";
-import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { useNotificationStore } from "@/stores/notificationStore";
+import { PLATFORM_BETTING_MAX } from "@/stores/walletStore";
+import type {
+  Dispute, DisputeStatus, DisputeResolution,
+  FlaggedUser, AuditLog, AdminActivityEvent, PlatformSettings,
+} from "@/types";
+import { cn } from "@/lib/utils";
 
-// ─── Types ───────────────────────────────────────────────────
+// ─── Seed Data ────────────────────────────────────────────────
+// When DB is connected: replace with API calls to /admin/disputes, /admin/users/flagged, /admin/audit-logs
 
-type DisputeStatus = "open" | "reviewing" | "resolved" | "escalated";
-type DisputeResolution = "pending" | "approved" | "rejected" | "player_a_wins" | "player_b_wins" | "refund" | "void";
-
-interface Dispute {
-  id: string;
-  matchId: string;
-  playerA: string;
-  playerB: string;
-  game: string;
-  stake: string;
-  reason: string;
-  status: DisputeStatus;
-  resolution: DisputeResolution;
-  createdAt: string;
-  evidence?: string;
-}
-
-interface FlaggedUser {
-  id: string;
-  username: string;
-  walletShort: string;
-  reason: string;
-  winRate: number;
-  matchesPlayed: number;
-  flaggedAt: string;
-  status: "flagged" | "banned" | "cleared";
-}
-
-interface AuditLog {
-  id: string;
-  admin: string;
-  action: string;
-  target: string;
-  detail: string;
-  timestamp: string;
-}
-
-interface ActivityEvent {
-  id: string;
-  type: "match_start" | "match_end" | "payout" | "deposit" | "login" | "dispute" | "ban";
-  message: string;
-  timestamp: string;
-  highlight?: boolean;
-}
-
-// ─── Mock Data ───────────────────────────────────────────────
-
-const MOCK_DISPUTES: Dispute[] = [
-  { id: "D-1051", matchId: "M-2048", playerA: "DUNELZ", playerB: "ShadowKing", game: "CS2", stake: "$120", reason: "Player B claims disconnect wasn't counted", status: "open", resolution: "pending", createdAt: "2026-03-08 14:22", evidence: "Screenshot of disconnect error" },
-  { id: "D-1050", matchId: "M-2045", playerA: "DUNELZ", playerB: "CyberWolf", game: "Valorant", stake: "$75", reason: "Suspected aim-bot usage by Player A", status: "reviewing", resolution: "pending", createdAt: "2026-03-08 11:05" },
-  { id: "D-1048", matchId: "M-2039", playerA: "DUNELZ", playerB: "IronClad", game: "CS2", stake: "$200", reason: "Vision engine failed to capture final round", status: "escalated", resolution: "pending", createdAt: "2026-03-07 22:30", evidence: "Game API logs attached" },
-  { id: "D-1045", matchId: "M-2031", playerA: "DUNELZ", playerB: "DarkViper", game: "Valorant", stake: "$50", reason: "Player A rage-quit mid-match", status: "resolved", resolution: "player_b_wins", createdAt: "2026-03-07 09:15" },
-  { id: "D-1042", matchId: "M-2025", playerA: "DUNELZ", playerB: "NightHawk", game: "CS2", stake: "$90", reason: "Both players claim victory", status: "resolved", resolution: "refund", createdAt: "2026-03-06 17:40" },
+const SEED_DISPUTES: Dispute[] = [
+  { id: "D-1051", matchId: "M-2048", playerA: "DUNELZ",  playerB: "ShadowKing", game: "CS2",     stake: 120, reason: "Player B claims disconnect wasn't counted", status: "open",      resolution: "pending",       createdAt: "2026-03-08 14:22", evidence: "Screenshot of disconnect error" },
+  { id: "D-1050", matchId: "M-2045", playerA: "DUNELZ",  playerB: "CyberWolf",  game: "Valorant", stake: 75,  reason: "Suspected aim-bot usage by Player A",       status: "reviewing",  resolution: "pending",       createdAt: "2026-03-08 11:05" },
+  { id: "D-1048", matchId: "M-2039", playerA: "DUNELZ",  playerB: "IronClad",   game: "CS2",      stake: 200, reason: "Vision engine failed to capture final round", status: "escalated", resolution: "pending",       createdAt: "2026-03-07 22:30", evidence: "Game API logs attached" },
+  { id: "D-1045", matchId: "M-2031", playerA: "DUNELZ",  playerB: "DarkViper",  game: "Valorant", stake: 50,  reason: "Player A rage-quit mid-match",              status: "resolved",  resolution: "player_b_wins", createdAt: "2026-03-07 09:15" },
+  { id: "D-1042", matchId: "M-2025", playerA: "DUNELZ",  playerB: "NightHawk",  game: "CS2",      stake: 90,  reason: "Both players claim victory",                status: "resolved",  resolution: "refund",        createdAt: "2026-03-06 17:40" },
 ];
 
-const MOCK_FLAGGED_USERS: FlaggedUser[] = [
-  { id: "U-301", username: "DUNELZ", walletShort: "0x7a3...f9c2", reason: "92% win rate over 50 matches", winRate: 92, matchesPlayed: 54, flaggedAt: "2026-03-08", status: "flagged" },
-  { id: "U-288", username: "DUNELZ", walletShort: "0x1b8...44a1", reason: "Multiple accounts detected (smurf)", winRate: 78, matchesPlayed: 31, flaggedAt: "2026-03-07", status: "banned" },
-  { id: "U-275", username: "DUNELZ", walletShort: "0x9e2...bb07", reason: "Suspicious betting pattern", winRate: 65, matchesPlayed: 120, flaggedAt: "2026-03-06", status: "cleared" },
-  { id: "U-260", username: "DUNELZ", walletShort: "0x3c4...d5e8", reason: "Hardware fingerprint mismatch", winRate: 71, matchesPlayed: 43, flaggedAt: "2026-03-05", status: "flagged" },
+const SEED_FLAGGED: FlaggedUser[] = [
+  { id: "U-301", username: "xDragon99",  walletAddress: "0x7a3F9c2E1b8D4a5C6f7e8d9B0c1A2b3C4d5E6f7A", reason: "92% win rate over 50 matches",             winRate: 92, matchesPlayed: 54,  flaggedAt: "2026-03-08", status: "flagged" },
+  { id: "U-288", username: "BlazeFury",  walletAddress: "0x1b8E44a1C9d2F3e4A5b6C7d8E9f0A1B2C3D4E5F6", reason: "Multiple accounts detected (smurf)",        winRate: 78, matchesPlayed: 31,  flaggedAt: "2026-03-07", status: "banned"  },
+  { id: "U-275", username: "StormRider", walletAddress: "0x9e2D3f4A5b6C7d8E9f0A1B2C3D4E5F6A7b8C9d0E", reason: "Suspicious betting pattern",                winRate: 65, matchesPlayed: 120, flaggedAt: "2026-03-06", status: "cleared" },
+  { id: "U-260", username: "PhantomAce", walletAddress: "0x3c4D5e6F7a8B9c0D1e2F3a4B5c6D7e8F9a0B1c2D", reason: "Hardware fingerprint mismatch",              winRate: 71, matchesPlayed: 43,  flaggedAt: "2026-03-05", status: "flagged" },
 ];
 
-const MOCK_AUDIT_LOG: AuditLog[] = [
-  { id: "A-1", admin: "admin_root", action: "RESOLVE_DISPUTE", target: "D-1045", detail: "Awarded win to Player B (rage-quit confirmed)", timestamp: "2026-03-07 09:20" },
-  { id: "A-2", admin: "admin_root", action: "BAN_USER", target: "U-288", detail: "Permanent ban — multiple smurf accounts", timestamp: "2026-03-07 08:00" },
-  { id: "A-3", admin: "admin_root", action: "REFUND_MATCH", target: "D-1042", detail: "Full refund issued — inconclusive evidence", timestamp: "2026-03-06 18:00" },
-  { id: "A-4", admin: "admin_root", action: "CLEAR_FLAG", target: "U-275", detail: "Betting pattern reviewed — within normal range", timestamp: "2026-03-06 14:30" },
-  { id: "A-5", admin: "admin_root", action: "FREEZE_PAYOUT", target: "M-2048", detail: "Payout frozen pending dispute D-1051", timestamp: "2026-03-08 14:25" },
+const SEED_AUDIT: AuditLog[] = [
+  { id: "A-1", adminId: "admin-001", adminName: "admin_root", action: "RESOLVE_DISPUTE", target: "D-1045", detail: "Awarded win to Player B (rage-quit confirmed)",     createdAt: "2026-03-07 09:20" },
+  { id: "A-2", adminId: "admin-001", adminName: "admin_root", action: "BAN_USER",         target: "U-288",  detail: "Permanent ban — multiple smurf accounts",           createdAt: "2026-03-07 08:00" },
+  { id: "A-3", adminId: "admin-001", adminName: "admin_root", action: "REFUND_MATCH",     target: "D-1042", detail: "Full refund issued — inconclusive evidence",         createdAt: "2026-03-06 18:00" },
+  { id: "A-4", adminId: "admin-001", adminName: "admin_root", action: "CLEAR_FLAG",       target: "U-275",  detail: "Betting pattern reviewed — within normal range",     createdAt: "2026-03-06 14:30" },
+  { id: "A-5", adminId: "admin-001", adminName: "admin_root", action: "FREEZE_PAYOUT",    target: "M-2048", detail: "Payout frozen pending dispute D-1051",               createdAt: "2026-03-08 14:25" },
 ];
 
-const ACTIVITY_TEMPLATES: Omit<ActivityEvent, "id" | "timestamp">[] = [
-  { type: "match_start", message: "🎮 Match M-2055 started: xDragon99 vs CyberWolf (CS2, $80)" },
-  { type: "payout", message: "💰 Payout of $45 sent to NovaBlade (0x1b8...44a1)" },
-  { type: "login", message: "🔑 User StormRider connected wallet 0x9e2...bb07" },
-  { type: "match_end", message: "🏁 Match M-2054 ended: PhantomAce won vs IronClad (Valorant)" },
-  { type: "deposit", message: "📥 Deposit of $200 received from DarkViper" },
-  { type: "dispute", message: "🚩 Dispute D-1052 opened for Match M-2053", highlight: true },
-  { type: "match_start", message: "🎮 Match M-2056 started: BlazeFury vs NightHawk (CS2, $150)" },
-  { type: "payout", message: "💰 Payout of $120 sent to ShadowKing (0x3c4...d5e8)" },
-  { type: "ban", message: "🛑 Auto-flag triggered for user QuickScope (win streak anomaly)", highlight: true },
-  { type: "login", message: "🔑 User GhostSniper attempted login (BANNED — access denied)", highlight: true },
-  { type: "match_end", message: "🏁 Match M-2055 ended: xDragon99 won vs CyberWolf (CS2)" },
-  { type: "deposit", message: "📥 Deposit of $50 received from NovaBlade" },
+const ACTIVITY_TEMPLATES: Omit<AdminActivityEvent, "id" | "timestamp">[] = [
+  { type: "match_start", message: "🎮 M-2055 started: xDragon99 vs CyberWolf (CS2 · $80)" },
+  { type: "payout",      message: "💰 Payout $45 → NovaBlade (0x1b8...44a1)" },
+  { type: "login",       message: "🔑 StormRider connected wallet 0x9e2...bb07" },
+  { type: "match_end",   message: "🏁 M-2054 ended: PhantomAce won vs IronClad (Valorant)" },
+  { type: "deposit",     message: "📥 Deposit $200 from DarkViper" },
+  { type: "dispute",     message: "🚩 Dispute D-1052 opened for M-2053", highlight: true },
+  { type: "match_start", message: "🎮 M-2056 started: BlazeFury vs NightHawk (CS2 · $150)" },
+  { type: "payout",      message: "💰 Payout $120 → ShadowKing (0x3c4...d5e8)" },
+  { type: "ban",         message: "🛑 Auto-flag: QuickScope (win streak anomaly)", highlight: true },
+  { type: "login",       message: "🔑 GhostSniper login attempt — BANNED", highlight: true },
 ];
 
-// ─── Helpers ─────────────────────────────────────────────────
+// ─── Style helpers ────────────────────────────────────────────
 
-const statusColor: Record<DisputeStatus, string> = {
-  open: "bg-arena-orange/20 text-arena-orange border-arena-orange/30",
-  reviewing: "bg-arena-cyan/20 text-arena-cyan border-arena-cyan/30",
-  escalated: "bg-destructive/20 text-destructive border-destructive/30",
-  resolved: "bg-primary/20 text-primary border-primary/30",
+const disputeStatusBadge: Record<DisputeStatus, string> = {
+  open:      "bg-arena-orange/15 text-arena-orange border-arena-orange/30",
+  reviewing: "bg-arena-cyan/15 text-arena-cyan border-arena-cyan/30",
+  escalated: "bg-destructive/15 text-destructive border-destructive/30",
+  resolved:  "bg-primary/15 text-primary border-primary/30",
 };
 
-const userStatusColor: Record<string, string> = {
-  flagged: "bg-arena-orange/20 text-arena-orange border-arena-orange/30",
-  banned: "bg-destructive/20 text-destructive border-destructive/30",
-  cleared: "bg-primary/20 text-primary border-primary/30",
+const userStatusBadge: Record<string, string> = {
+  flagged: "bg-arena-orange/15 text-arena-orange border-arena-orange/30",
+  banned:  "bg-destructive/15 text-destructive border-destructive/30",
+  cleared: "bg-primary/15 text-primary border-primary/30",
 };
 
-function exportToCSV(filename: string, headers: string[], rows: string[][]) {
+function exportCSV(filename: string, headers: string[], rows: string[][]) {
   const csv = [headers.join(","), ...rows.map((r) => r.map((c) => `"${c}"`).join(","))].join("\n");
-  const blob = new Blob([csv], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
+  const a = Object.assign(document.createElement("a"), {
+    href: URL.createObjectURL(new Blob([csv], { type: "text/csv" })),
+    download: filename,
+  });
   a.click();
-  URL.revokeObjectURL(url);
 }
 
-const ITEMS_PER_PAGE = 10;
+const ROWS_PER_PAGE = 8;
 
-// ─── Component ───────────────────────────────────────────────
+// ─── Nav sections ──────────────────────────────────────────────
+const NAV = [
+  { id: "disputes", icon: Gavel,       label: "Disputes"   },
+  { id: "users",    icon: Users,        label: "Users"      },
+  { id: "audit",    icon: Eye,          label: "Audit Log"  },
+  { id: "live",     icon: Radio,        label: "Live Feed"  },
+  { id: "platform", icon: Settings,     label: "Platform"   },
+] as const;
+type NavId = typeof NAV[number]["id"];
+
+// ─── Component ────────────────────────────────────────────────
 
 const Admin = () => {
   const { toast } = useToast();
   const addNotification = useNotificationStore((s) => s.addNotification);
-  const [disputes, setDisputes] = useState(MOCK_DISPUTES);
-  const [flaggedUsers, setFlaggedUsers] = useState(MOCK_FLAGGED_USERS);
-  const [auditLog, setAuditLog] = useState(MOCK_AUDIT_LOG);
-  const [selectedDispute, setSelectedDispute] = useState<Dispute | null>(null);
-  const [resolutionNote, setResolutionNote] = useState("");
+
+  const [section, setSection] = useState<NavId>("disputes");
+
+  // Data
+  const [disputes,     setDisputes]     = useState<Dispute[]>(SEED_DISPUTES);
+  const [flaggedUsers, setFlaggedUsers] = useState<FlaggedUser[]>(SEED_FLAGGED);
+  const [auditLog,     setAuditLog]     = useState<AuditLog[]>(SEED_AUDIT);
+  const [activity,     setActivity]     = useState<AdminActivityEvent[]>([]);
+  const activityCounter = useRef(0);
+  const feedRef         = useRef<HTMLDivElement>(null);
+
+  // Platform settings — DB: platform_settings (single row)
+  const [platform, setPlatform] = useState<PlatformSettings>({
+    feePercent: 5,
+    platformBettingMax: PLATFORM_BETTING_MAX,
+    maintenanceMode: false,
+    registrationOpen: true,
+    autoDisputeEscalation: true,
+    killSwitchActive: false,
+  });
+
+  // Dispute state
+  const [selectedDispute,  setSelectedDispute]  = useState<Dispute | null>(null);
+  const [resolutionNote,   setResolutionNote]   = useState("");
   const [resolutionChoice, setResolutionChoice] = useState<DisputeResolution>("pending");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [sortKey, setSortKey] = useState<keyof Dispute | null>(null);
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [disputeSearch,    setDisputeSearch]    = useState("");
+  const [disputeStatus,    setDisputeStatus]    = useState<DisputeStatus | "all">("all");
+  const [sortKey,          setSortKey]          = useState<keyof Dispute | null>(null);
+  const [sortDir,          setSortDir]          = useState<"asc" | "desc">("asc");
+  const [disputePage,      setDisputePage]      = useState(1);
 
-  // Filters
-  const [statusFilter, setStatusFilter] = useState<DisputeStatus | "all">("all");
-  const [userStatusFilter, setUserStatusFilter] = useState<"all" | "flagged" | "banned" | "cleared">("all");
+  // User state
+  const [userStatusFilter, setUserStatusFilter] = useState<"all" | FlaggedUser["status"]>("all");
+  const [banTarget,        setBanTarget]        = useState<FlaggedUser | null>(null);
 
-  // Kill-Switch
-  const [killSwitchActive, setKillSwitchActive] = useState(false);
-  const [killSwitchConfirm, setKillSwitchConfirm] = useState(false);
-
-  // Ban confirmation
-  const [banTarget, setBanTarget] = useState<FlaggedUser | null>(null);
-  const [clearTarget, setClearTarget] = useState<FlaggedUser | null>(null);
-
-  // Expanded rows
-  const [expandedDisputeIds, setExpandedDisputeIds] = useState<Set<string>>(new Set());
-
-  // Pagination
-  const [disputePage, setDisputePage] = useState(1);
+  // Audit state
   const [auditPage, setAuditPage] = useState(1);
 
-  // Platform Settings
-  const [platformFee, setPlatformFee] = useState(5);
-  const [dailyBetLimit, setDailyBetLimit] = useState(50);
-  const [maintenanceMode, setMaintenanceMode] = useState(false);
-  const [newUserRegistration, setNewUserRegistration] = useState(true);
-  const [autoDisputeEscalation, setAutoDisputeEscalation] = useState(true);
+  // Kill switch
+  const [killConfirm, setKillConfirm] = useState(false);
 
-  // Activity Feed
-  const [activityFeed, setActivityFeed] = useState<ActivityEvent[]>([]);
-  const feedRef = useRef<HTMLDivElement>(null);
-  const activityCounter = useRef(0);
-
+  // ── Activity feed ──
   useEffect(() => {
-    // Seed initial events
-    const initial: ActivityEvent[] = ACTIVITY_TEMPLATES.slice(0, 5).map((t, i) => ({
-      ...t,
-      id: `evt-${i}`,
-      timestamp: new Date(Date.now() - (5 - i) * 8000).toLocaleTimeString(),
+    const seed = ACTIVITY_TEMPLATES.slice(0, 5).map((t, i) => ({
+      ...t, id: `evt-${i}`, timestamp: new Date(Date.now() - (5 - i) * 8000).toLocaleTimeString(),
     }));
-    setActivityFeed(initial);
+    setActivity(seed);
     activityCounter.current = 5;
 
-    const interval = setInterval(() => {
-      const template = ACTIVITY_TEMPLATES[activityCounter.current % ACTIVITY_TEMPLATES.length];
-      const evt: ActivityEvent = {
-        ...template,
-        id: `evt-${activityCounter.current}`,
-        timestamp: new Date().toLocaleTimeString(),
-      };
+    const iv = setInterval(() => {
+      const tpl = ACTIVITY_TEMPLATES[activityCounter.current % ACTIVITY_TEMPLATES.length];
+      setActivity((p) => [...p.slice(-50), { ...tpl, id: `evt-${activityCounter.current}`, timestamp: new Date().toLocaleTimeString() }]);
       activityCounter.current++;
-      setActivityFeed((prev) => [...prev.slice(-50), evt]);
     }, 4000);
-
-    return () => clearInterval(interval);
+    return () => clearInterval(iv);
   }, []);
 
   useEffect(() => {
-    if (feedRef.current) {
-      feedRef.current.scrollTop = feedRef.current.scrollHeight;
-    }
-  }, [activityFeed]);
+    if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
+  }, [activity]);
 
-  const openDisputes = disputes.filter((d) => d.status !== "resolved").length;
-  const bannedUsers = flaggedUsers.filter((u) => u.status === "banned").length;
+  // ── Audit helper ──
+  const pushAudit = (action: string, target: string, detail: string) =>
+    setAuditLog((p) => [{
+      id: `A-${p.length + 1}`, adminId: "admin-001", adminName: "admin_root",
+      action, target, detail, createdAt: new Date().toISOString().slice(0, 16).replace("T", " "),
+    }, ...p]);
 
-  const toggleSort = (key: keyof Dispute) => {
-    if (sortKey === key) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir("asc");
-    }
-  };
-
-  const SortIcon = ({ col }: { col: keyof Dispute }) => {
-    if (sortKey !== col) return <ArrowUpDown className="h-3 w-3 ml-1 opacity-40" />;
-    return sortDir === "asc" ? <ArrowUp className="h-3 w-3 ml-1 text-primary" /> : <ArrowDown className="h-3 w-3 ml-1 text-primary" />;
-  };
-
-  const toggleExpandDispute = (id: string) => {
-    setExpandedDisputeIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const addAuditEntry = (action: string, target: string, detail: string) => {
-    setAuditLog((prev) => [
-      {
-        id: `A-${prev.length + 1}`,
-        admin: "admin_root",
-        action,
-        target,
-        detail,
-        timestamp: new Date().toISOString().slice(0, 16).replace("T", " "),
-      },
-      ...prev,
-    ]);
-  };
-
+  // ── Dispute actions ──
   const handleResolve = () => {
     if (!selectedDispute || resolutionChoice === "pending") return;
-    setDisputes((prev) =>
-      prev.map((d) =>
-        d.id === selectedDispute.id ? { ...d, status: "resolved" as DisputeStatus, resolution: resolutionChoice } : d
-      )
-    );
-    const actionLabel = resolutionChoice === "refund" ? "REFUND_MATCH" : resolutionChoice === "void" ? "VOID_MATCH" : "RESOLVE_DISPUTE";
-    addAuditEntry(actionLabel, selectedDispute.id, resolutionNote || `Resolved as ${resolutionChoice.replace("_", " ")}`);
+    setDisputes((p) => p.map((d) => d.id === selectedDispute.id
+      ? { ...d, status: "resolved" as DisputeStatus, resolution: resolutionChoice, resolvedBy: "admin_root", resolvedAt: new Date().toISOString().slice(0, 16).replace("T", " ") }
+      : d
+    ));
+    const act = resolutionChoice === "refund" ? "REFUND_MATCH" : resolutionChoice === "void" ? "VOID_MATCH" : "RESOLVE_DISPUTE";
+    pushAudit(act, selectedDispute.id, resolutionNote || `Resolved as ${resolutionChoice.replace("_", " ")}`);
     toast({ title: "Dispute Resolved", description: `${selectedDispute.id} — ${resolutionChoice.replace("_", " ")}` });
     addNotification({ type: "dispute", title: "⚖️ Dispute Resolved", message: `${selectedDispute.id}: ${selectedDispute.playerA} vs ${selectedDispute.playerB} — ${resolutionChoice.replace("_", " ")}` });
-    setSelectedDispute(null);
-    setResolutionNote("");
-    setResolutionChoice("pending");
+    setSelectedDispute(null); setResolutionNote(""); setResolutionChoice("pending");
   };
 
-  const handleBanUser = (user: FlaggedUser) => {
-    setFlaggedUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, status: "banned" as const } : u)));
-    addAuditEntry("BAN_USER", user.id, `Banned user ${user.username}`);
-    toast({ title: "User Banned", description: `${user.username} has been permanently banned.`, variant: "destructive" });
-    addNotification({ type: "system", title: "🛑 User Banned", message: `${user.username} (${user.walletShort}) permanently banned from the platform.` });
+  // ── User actions ──
+  const handleBan = (u: FlaggedUser) => {
+    setFlaggedUsers((p) => p.map((x) => x.id === u.id ? { ...x, status: "banned" as const } : x));
+    pushAudit("BAN_USER", u.id, `Banned user ${u.username}`);
+    toast({ title: "User Banned", description: `${u.username} permanently banned.`, variant: "destructive" });
+    addNotification({ type: "system", title: "🛑 User Banned", message: `${u.username} (${u.walletAddress.slice(0, 8)}...) permanently banned.` });
     setBanTarget(null);
   };
 
-  const handleClearUser = (userId: string) => {
-    setFlaggedUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, status: "cleared" as const } : u)));
-    addAuditEntry("CLEAR_FLAG", userId, "Cleared after admin review");
-    toast({ title: "User Cleared", description: "Flag removed after review." });
-    addNotification({ type: "system", title: "✅ User Cleared", message: `Flag removed from user ${userId} after admin review.` });
+  const handleClear = (u: FlaggedUser) => {
+    setFlaggedUsers((p) => p.map((x) => x.id === u.id ? { ...x, status: "cleared" as const } : x));
+    pushAudit("CLEAR_FLAG", u.id, `Flag cleared for ${u.username} after admin review`);
+    toast({ title: "Flag Cleared", description: `${u.username} is no longer flagged.` });
+    addNotification({ type: "system", title: "✅ Flag Cleared", message: `${u.username} cleared after admin review.` });
   };
 
+  // ── Kill switch ──
   const handleKillSwitch = () => {
-    setKillSwitchActive(true);
-    setKillSwitchConfirm(false);
-    addAuditEntry("KILL_SWITCH_ACTIVATED", "PLATFORM", "Emergency payout freeze activated by admin");
-    toast({ title: "🚨 KILL SWITCH ACTIVATED", description: "All payouts are now frozen.", variant: "destructive" });
-    addNotification({ type: "system", title: "🚨 EMERGENCY: Kill Switch", message: "All platform payouts have been frozen by admin. No funds will be released until deactivated." });
+    const next = !platform.killSwitchActive;
+    setPlatform((p) => ({ ...p, killSwitchActive: next }));
+    setKillConfirm(false);
+    pushAudit(next ? "KILL_SWITCH_ON" : "KILL_SWITCH_OFF", "PLATFORM", next ? "Emergency payout freeze activated" : "Payout freeze lifted");
+    toast({ title: next ? "🚨 Payouts Frozen" : "✅ Payouts Resumed", description: next ? "Kill switch active." : "Kill switch deactivated.", variant: next ? "destructive" : "default" });
+    addNotification({ type: "system", title: next ? "🚨 KILL SWITCH" : "✅ Payouts Resumed", message: next ? "All payouts frozen by admin." : "Kill switch deactivated. Payouts processing." });
   };
 
-  const handleDeactivateKillSwitch = () => {
-    setKillSwitchActive(false);
-    addAuditEntry("KILL_SWITCH_DEACTIVATED", "PLATFORM", "Payout freeze lifted by admin");
-    toast({ title: "Kill Switch Deactivated", description: "Payouts are now live again." });
-    addNotification({ type: "payout", title: "✅ Payouts Resumed", message: "Kill switch deactivated. All payouts are now processing normally." });
+  // ── Derived data ──
+  const openDisputes  = disputes.filter((d) => d.status !== "resolved").length;
+  const bannedCount   = flaggedUsers.filter((u) => u.status === "banned").length;
+  const flaggedCount  = flaggedUsers.filter((u) => u.status === "flagged").length;
+  const totalStake    = disputes.reduce((s, d) => s + d.stake, 0);
+
+  const toggleSort = (k: keyof Dispute) => {
+    setSortKey(k); setSortDir((p) => sortKey === k && p === "asc" ? "desc" : "asc");
   };
 
-  const handleExportDisputes = () => {
-    exportToCSV("disputes.csv", ["ID", "Match", "Player A", "Player B", "Game", "Stake", "Status", "Resolution", "Created"],
-      disputes.map((d) => [d.id, d.matchId, d.playerA, d.playerB, d.game, d.stake, d.status, d.resolution, d.createdAt])
-    );
-    toast({ title: "Exported", description: "Disputes CSV downloaded." });
-  };
-
-  const handleExportAudit = () => {
-    exportToCSV("audit_log.csv", ["Timestamp", "Action", "Target", "Detail", "Admin"],
-      auditLog.map((l) => [l.timestamp, l.action, l.target, l.detail, l.admin])
-    );
-    toast({ title: "Exported", description: "Audit log CSV downloaded." });
-  };
-
-  // Filtered + sorted disputes
   const filteredDisputes = disputes
     .filter((d) => {
-      const matchesSearch =
-        d.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        d.playerA.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        d.playerB.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesStatus = statusFilter === "all" || d.status === statusFilter;
-      return matchesSearch && matchesStatus;
+      const q = disputeSearch.toLowerCase();
+      return (disputeStatus === "all" || d.status === disputeStatus) &&
+        (!q || d.id.toLowerCase().includes(q) || d.playerA.toLowerCase().includes(q) || d.playerB.toLowerCase().includes(q));
     })
     .sort((a, b) => {
       if (!sortKey) return 0;
-      const aVal = a[sortKey] ?? "";
-      const bVal = b[sortKey] ?? "";
-      const cmp = String(aVal).localeCompare(String(bVal));
-      return sortDir === "asc" ? cmp : -cmp;
+      return sortDir === "asc"
+        ? String(a[sortKey] ?? "").localeCompare(String(b[sortKey] ?? ""))
+        : String(b[sortKey] ?? "").localeCompare(String(a[sortKey] ?? ""));
     });
+
+  const dpPages   = Math.max(1, Math.ceil(filteredDisputes.length / ROWS_PER_PAGE));
+  const pagedDisp = filteredDisputes.slice((disputePage - 1) * ROWS_PER_PAGE, disputePage * ROWS_PER_PAGE);
 
   const filteredUsers = flaggedUsers.filter((u) => userStatusFilter === "all" || u.status === userStatusFilter);
 
-  // Pagination
-  const disputePages = Math.max(1, Math.ceil(filteredDisputes.length / ITEMS_PER_PAGE));
-  const pagedDisputes = filteredDisputes.slice((disputePage - 1) * ITEMS_PER_PAGE, disputePage * ITEMS_PER_PAGE);
-  const auditPages = Math.max(1, Math.ceil(auditLog.length / ITEMS_PER_PAGE));
-  const pagedAudit = auditLog.slice((auditPage - 1) * ITEMS_PER_PAGE, auditPage * ITEMS_PER_PAGE);
+  const auditPages  = Math.max(1, Math.ceil(auditLog.length / ROWS_PER_PAGE));
+  const pagedAudit  = auditLog.slice((auditPage - 1) * ROWS_PER_PAGE, auditPage * ROWS_PER_PAGE);
 
+  // ── Sort icon ──
+  const SortIcon = ({ col }: { col: keyof Dispute }) =>
+    sortKey !== col ? <ArrowUpDown className="h-3 w-3 ml-1 opacity-30 inline" /> :
+    sortDir === "asc" ? <ArrowUp className="h-3 w-3 ml-1 text-primary inline" /> :
+    <ArrowDown className="h-3 w-3 ml-1 text-primary inline" />;
+
+  // ─────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-6">
-      {/* Header + Kill Switch */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="font-display text-3xl font-bold tracking-wide flex items-center gap-3">
-            <ShieldAlert className="h-8 w-8 text-destructive" />
-            Admin Panel
-          </h1>
-          <p className="text-muted-foreground mt-1">Dispute resolution, user moderation & audit logs</p>
-        </div>
+    <div className="space-y-4">
+
+      {/* ── Header ── */}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
-          <Badge variant="outline" className="border-destructive/40 text-destructive text-xs uppercase tracking-widest px-3 py-1">
-            Restricted Access
-          </Badge>
-          {killSwitchActive ? (
-            <Button
-              size="sm"
-              variant="outline"
-              className="border-primary/40 text-primary hover:bg-primary/10 animate-pulse"
-              onClick={handleDeactivateKillSwitch}
-            >
-              <Power className="mr-2 h-4 w-4" /> Deactivate Kill Switch
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              variant="outline"
-              className="border-destructive/40 text-destructive hover:bg-destructive/10"
-              onClick={() => setKillSwitchConfirm(true)}
-            >
-              <Power className="mr-2 h-4 w-4" /> Kill Switch
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {/* Kill Switch Banner */}
-      {killSwitchActive && (
-        <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 flex items-center gap-3 animate-pulse">
-          <AlertTriangle className="h-6 w-6 text-destructive shrink-0" />
+          <ShieldAlert className="h-6 w-6 text-destructive shrink-0" />
           <div>
-            <p className="font-display font-bold text-destructive">⚠️ EMERGENCY MODE — ALL PAYOUTS FROZEN</p>
-            <p className="text-sm text-destructive/80">No payouts will be processed until the kill switch is deactivated.</p>
+            <h1 className="font-display text-xl font-bold tracking-wide leading-tight">Admin Panel</h1>
+            <p className="text-[11px] text-muted-foreground">Dispute resolution · User moderation · Platform control</p>
           </div>
+          <Badge variant="outline" className="border-destructive/40 text-destructive text-[10px] uppercase tracking-widest ml-1">
+            Restricted
+          </Badge>
         </div>
-      )}
 
-      {/* Quick Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card className="border-arena-orange/20">
-          <CardContent className="p-4 flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-arena-orange/10"><AlertTriangle className="h-5 w-5 text-arena-orange" /></div>
-            <div>
-              <p className="text-2xl font-bold font-display">{openDisputes}</p>
-              <p className="text-xs text-muted-foreground">Open Disputes</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-destructive/20">
-          <CardContent className="p-4 flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-destructive/10"><Ban className="h-5 w-5 text-destructive" /></div>
-            <div>
-              <p className="text-2xl font-bold font-display">{bannedUsers}</p>
-              <p className="text-xs text-muted-foreground">Banned Users</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-primary/20">
-          <CardContent className="p-4 flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-primary/10"><Activity className="h-5 w-5 text-primary" /></div>
-            <div>
-              <p className="text-2xl font-bold font-display">247</p>
-              <p className="text-xs text-muted-foreground">Matches Today</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-arena-gold/20">
-          <CardContent className="p-4 flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-arena-gold/10"><DollarSign className="h-5 w-5 text-arena-gold" /></div>
-            <div>
-              <p className="text-2xl font-bold font-display">$12,450</p>
-              <p className="text-xs text-muted-foreground">Volume Today</p>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Kill switch */}
+        {platform.killSwitchActive ? (
+          <Button size="sm" variant="outline" onClick={() => setKillConfirm(true)}
+            className="border-primary/40 text-primary animate-pulse text-xs font-display">
+            <Power className="mr-1.5 h-3.5 w-3.5" /> Deactivate Freeze
+          </Button>
+        ) : (
+          <Button size="sm" variant="destructive" onClick={() => setKillConfirm(true)}
+            className="text-xs font-display">
+            <Zap className="mr-1.5 h-3.5 w-3.5" /> Kill Switch
+          </Button>
+        )}
       </div>
 
-      {/* Main Tabs */}
-      <Tabs defaultValue="disputes" className="space-y-4">
-        <TabsList className="bg-secondary flex-wrap h-auto gap-1 p-1">
-          <TabsTrigger value="disputes" className="data-[state=active]:bg-background">
-            <Gavel className="mr-2 h-4 w-4" /> Disputes
-          </TabsTrigger>
-          <TabsTrigger value="users" className="data-[state=active]:bg-background">
-            <Users className="mr-2 h-4 w-4" /> Flagged Users
-          </TabsTrigger>
-          <TabsTrigger value="audit" className="data-[state=active]:bg-background">
-            <Eye className="mr-2 h-4 w-4" /> Audit Log
-          </TabsTrigger>
-          <TabsTrigger value="feed" className="data-[state=active]:bg-background">
-            <Radio className="mr-2 h-4 w-4" /> Live Feed
-          </TabsTrigger>
-          <TabsTrigger value="settings" className="data-[state=active]:bg-background">
-            <Settings className="mr-2 h-4 w-4" /> Settings
-          </TabsTrigger>
-        </TabsList>
+      {/* ── Stats strip ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {[
+          { label: "Open Disputes",  value: openDisputes,           color: "text-arena-orange", icon: Gavel       },
+          { label: "Flagged Users",  value: flaggedCount,           color: "text-arena-gold",   icon: AlertTriangle },
+          { label: "Banned",         value: bannedCount,            color: "text-destructive",  icon: Ban         },
+          { label: "Total at Stake", value: `$${totalStake.toLocaleString()}`, color: "text-primary", icon: DollarSign },
+        ].map(({ label, value, color, icon: Icon }) => (
+          <div key={label} className="rounded-xl border border-border/60 bg-secondary/30 px-3 py-2 flex items-center gap-2.5">
+            <Icon className={cn("h-4 w-4 shrink-0", color)} />
+            <div>
+              <p className={cn("font-display text-sm font-bold tabular-nums", color)}>{value}</p>
+              <p className="text-[10px] text-muted-foreground">{label}</p>
+            </div>
+          </div>
+        ))}
+      </div>
 
-        {/* ── Disputes Tab ── */}
-        <TabsContent value="disputes">
-          <Card>
-            <CardHeader>
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <CardTitle className="text-xl">Match Disputes</CardTitle>
-                  <CardDescription>Review and resolve player-reported issues</CardDescription>
-                </div>
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                  <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v as DisputeStatus | "all"); setDisputePage(1); }}>
-                    <SelectTrigger className="w-full sm:w-36 bg-secondary border-border">
-                      <SelectValue placeholder="Status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Status</SelectItem>
-                      <SelectItem value="open">Open</SelectItem>
-                      <SelectItem value="reviewing">Reviewing</SelectItem>
-                      <SelectItem value="escalated">Escalated</SelectItem>
-                      <SelectItem value="resolved">Resolved</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <div className="relative w-full sm:w-56">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Search..." className="pl-9 bg-secondary border-border" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-                  </div>
-                  <Button size="sm" variant="outline" className="border-border" onClick={handleExportDisputes}>
-                    <Download className="h-4 w-4 mr-1" /> CSV
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-8"></TableHead>
-                    <TableHead>ID</TableHead>
-                    <TableHead>Match</TableHead>
-                    <TableHead className="hidden md:table-cell">Players</TableHead>
-                    <TableHead className="hidden lg:table-cell cursor-pointer select-none hover:text-foreground transition-colors" onClick={() => toggleSort("game")}>
-                      <span className="inline-flex items-center">Game <SortIcon col="game" /></span>
-                    </TableHead>
-                    <TableHead className="cursor-pointer select-none hover:text-foreground transition-colors" onClick={() => toggleSort("stake")}>
-                      <span className="inline-flex items-center">Stake <SortIcon col="stake" /></span>
-                    </TableHead>
-                    <TableHead className="cursor-pointer select-none hover:text-foreground transition-colors" onClick={() => toggleSort("status")}>
-                      <span className="inline-flex items-center">Status <SortIcon col="status" /></span>
-                    </TableHead>
-                    <TableHead className="text-right">Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {pagedDisputes.map((d) => (
-                    <Fragment key={d.id}>
-                      <TableRow key={d.id} className="hover:bg-secondary/50 cursor-pointer" onClick={() => toggleExpandDispute(d.id)}>
-                        <TableCell className="w-8 px-2">
-                          {expandedDisputeIds.has(d.id) ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">{d.id}</TableCell>
-                        <TableCell className="font-mono text-xs">{d.matchId}</TableCell>
-                        <TableCell className="hidden md:table-cell text-sm">
-                          {d.playerA} <span className="text-muted-foreground mx-1">vs</span> {d.playerB}
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell">{d.game}</TableCell>
-                        <TableCell className="font-semibold text-primary">{d.stake}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className={statusColor[d.status]}>{d.status}</Badge>
-                        </TableCell>
-                        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                          {d.status !== "resolved" ? (
-                            <Button size="sm" variant="outline" className="border-primary/30 text-primary hover:bg-primary/10" onClick={() => setSelectedDispute(d)}>
-                              Resolve
-                            </Button>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">{d.resolution.replace("_", " ")}</span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                      {expandedDisputeIds.has(d.id) && (
-                        <TableRow key={`${d.id}-detail`} className="bg-secondary/30 hover:bg-secondary/30">
-                          <TableCell colSpan={8} className="p-4">
-                            <div className="grid sm:grid-cols-2 gap-4 text-sm">
-                              <div>
-                                <p className="text-muted-foreground text-xs uppercase tracking-wider mb-1">Reason</p>
-                                <p className="text-foreground">{d.reason}</p>
-                              </div>
-                              <div>
-                                <p className="text-muted-foreground text-xs uppercase tracking-wider mb-1">Evidence</p>
-                                <p className="text-foreground">{d.evidence || "No evidence submitted"}</p>
-                              </div>
-                              <div>
-                                <p className="text-muted-foreground text-xs uppercase tracking-wider mb-1">Created</p>
-                                <p className="font-mono text-xs">{d.createdAt}</p>
-                              </div>
-                              <div>
-                                <p className="text-muted-foreground text-xs uppercase tracking-wider mb-1">Resolution</p>
-                                <p className={d.resolution === "pending" ? "text-arena-orange" : "text-primary"}>{d.resolution.replace("_", " ")}</p>
-                              </div>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </Fragment>
-                  ))}
-                </TableBody>
-              </Table>
-              {disputePages > 1 && (
-                <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
-                  <p className="text-xs text-muted-foreground">Page {disputePage} of {disputePages} ({filteredDisputes.length} results)</p>
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="outline" disabled={disputePage <= 1} onClick={() => setDisputePage((p) => p - 1)}>Prev</Button>
-                    <Button size="sm" variant="outline" disabled={disputePage >= disputePages} onClick={() => setDisputePage((p) => p + 1)}>Next</Button>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
+      {/* ── Body: nav + panel ── */}
+      <div className="flex gap-0 min-h-[520px]">
 
-        {/* ── Flagged Users Tab ── */}
-        <TabsContent value="users">
-          <Card>
-            <CardHeader>
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <CardTitle className="text-xl">Flagged Users</CardTitle>
-                  <CardDescription>Players flagged by anti-cheat or anomaly detection</CardDescription>
+        {/* Left nav */}
+        <nav className="w-[52px] md:w-[160px] shrink-0 border-r border-border/60 flex flex-col gap-0.5 pt-1 pr-0">
+          {NAV.map(({ id, icon: Icon, label }) => (
+            <button key={id} onClick={() => setSection(id)}
+              className={cn(
+                "flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition-all w-full",
+                section === id ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/60",
+              )}>
+              <Icon className={cn("h-4 w-4 shrink-0", section === id && "text-primary")} />
+              <span className="hidden md:block font-display text-xs font-medium">{label}</span>
+              {section === id && <ChevronRight className="hidden md:block h-3 w-3 ml-auto opacity-40" />}
+            </button>
+          ))}
+        </nav>
+
+        {/* Panel */}
+        <div className="flex-1 pl-5 min-w-0">
+
+          {/* ══ DISPUTES ══ */}
+          {section === "disputes" && (
+            <div className="space-y-3">
+              {/* toolbar */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="relative flex-1 min-w-[140px] max-w-[200px]">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                  <Input value={disputeSearch} onChange={(e) => { setDisputeSearch(e.target.value); setDisputePage(1); }}
+                    placeholder="Search…" className="pl-8 h-8 bg-secondary/60 border-border text-xs" />
                 </div>
-                <Select value={userStatusFilter} onValueChange={(v) => setUserStatusFilter(v as typeof userStatusFilter)}>
-                  <SelectTrigger className="w-full sm:w-36 bg-secondary border-border">
-                    <SelectValue placeholder="Status" />
-                  </SelectTrigger>
+                <Select value={disputeStatus} onValueChange={(v) => { setDisputeStatus(v as DisputeStatus | "all"); setDisputePage(1); }}>
+                  <SelectTrigger className="h-8 w-28 bg-secondary/60 border-border text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="flagged">Flagged</SelectItem>
-                    <SelectItem value="banned">Banned</SelectItem>
-                    <SelectItem value="cleared">Cleared</SelectItem>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="open">Open</SelectItem>
+                    <SelectItem value="reviewing">Reviewing</SelectItem>
+                    <SelectItem value="escalated">Escalated</SelectItem>
+                    <SelectItem value="resolved">Resolved</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>User</TableHead>
-                    <TableHead className="hidden md:table-cell">Wallet</TableHead>
-                    <TableHead>Reason</TableHead>
-                    <TableHead className="hidden lg:table-cell">Win Rate</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredUsers.map((u) => (
-                    <TableRow key={u.id} className="hover:bg-secondary/50">
-                      <TableCell className="font-semibold">{u.username}</TableCell>
-                      <TableCell className="hidden md:table-cell font-mono text-xs text-muted-foreground">{u.walletShort}</TableCell>
-                      <TableCell className="text-sm max-w-[200px] truncate">{u.reason}</TableCell>
-                      <TableCell className="hidden lg:table-cell">
-                        <span className={u.winRate > 80 ? "text-destructive font-bold" : ""}>{u.winRate}%</span>
-                        <span className="text-muted-foreground text-xs ml-1">({u.matchesPlayed})</span>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className={userStatusColor[u.status]}>{u.status}</Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {u.status === "flagged" && (
-                          <div className="flex justify-end gap-2">
-                            <Button size="sm" variant="outline" className="border-destructive/30 text-destructive hover:bg-destructive/10" onClick={() => setBanTarget(u)}>
-                              <Ban className="h-3 w-3 mr-1" /> Ban
-                            </Button>
-                            <Button size="sm" variant="outline" className="border-primary/30 text-primary hover:bg-primary/10" onClick={() => setClearTarget(u)}>
-                              <CheckCircle2 className="h-3 w-3 mr-1" /> Clear
-                            </Button>
-                          </div>
-                        )}
-                        {u.status !== "flagged" && (
-                          <span className="text-xs text-muted-foreground capitalize">{u.status}</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* ── Audit Log Tab ── */}
-        <TabsContent value="audit">
-          <Card>
-            <CardHeader>
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <CardTitle className="text-xl">Audit Log</CardTitle>
-                  <CardDescription>Tamper-proof record of all admin actions</CardDescription>
-                </div>
-                <Button size="sm" variant="outline" className="border-border" onClick={handleExportAudit}>
-                  <Download className="h-4 w-4 mr-1" /> Export CSV
+                <Button size="sm" variant="outline" className="h-8 text-xs border-border ml-auto"
+                  onClick={() => exportCSV("disputes.csv", ["ID","Match","Player A","Player B","Game","Stake","Status","Resolution","Created"],
+                    disputes.map((d) => [d.id, d.matchId, d.playerA, d.playerB, d.game, `$${d.stake}`, d.status, d.resolution, d.createdAt]))}>
+                  <Download className="mr-1.5 h-3.5 w-3.5" /> Export
                 </Button>
               </div>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="hidden sm:table-cell"><Clock className="h-4 w-4" /></TableHead>
-                    <TableHead>Action</TableHead>
-                    <TableHead>Target</TableHead>
-                    <TableHead className="hidden md:table-cell">Detail</TableHead>
-                    <TableHead className="hidden sm:table-cell">Admin</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {pagedAudit.map((log) => (
-                    <TableRow key={log.id} className="hover:bg-secondary/50">
-                      <TableCell className="hidden sm:table-cell text-xs text-muted-foreground font-mono whitespace-nowrap">{log.timestamp}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="font-mono text-xs">{log.action}</Badge>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">{log.target}</TableCell>
-                      <TableCell className="hidden md:table-cell text-sm text-muted-foreground max-w-[300px] truncate">{log.detail}</TableCell>
-                      <TableCell className="hidden sm:table-cell text-xs text-muted-foreground">{log.admin}</TableCell>
-                    </TableRow>
+
+              {/* dispute cards */}
+              <div className="space-y-2">
+                {pagedDisp.map((d) => {
+                  const borderColor = {
+                    open: "border-l-arena-orange",
+                    reviewing: "border-l-arena-cyan",
+                    escalated: "border-l-destructive",
+                    resolved: "border-l-primary",
+                  }[d.status];
+                  return (
+                    <div key={d.id} className={cn(
+                      "rounded-lg border border-border/60 bg-secondary/20 border-l-2 px-4 py-3 hover:bg-secondary/40 transition-colors",
+                      borderColor
+                    )}>
+                      {/* top row */}
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-[10px] text-muted-foreground">{d.id}</span>
+                          <span className="text-[10px] text-muted-foreground">·</span>
+                          <span className="font-mono text-[10px] text-muted-foreground">{d.matchId}</span>
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 border-border/50 text-muted-foreground">{d.game}</Badge>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-bold text-arena-gold">${d.stake}</span>
+                          <Badge className={cn("text-[10px] border px-1.5 py-0", disputeStatusBadge[d.status])}>{d.status}</Badge>
+                          {d.status !== "resolved" && (
+                            <Button size="sm" variant="outline" className="h-6 px-2.5 text-[10px] font-display border-primary/40 text-primary hover:bg-primary/10"
+                              onClick={() => { setSelectedDispute(d); setResolutionChoice("pending"); setResolutionNote(""); }}>
+                              <Gavel className="mr-1 h-3 w-3" /> Resolve
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* players row */}
+                      <div className="flex items-center gap-2 mt-2">
+                        <span className="font-display text-sm font-bold">{d.playerA}</span>
+                        <span className="text-[10px] text-muted-foreground font-display uppercase tracking-widest">vs</span>
+                        <span className="font-display text-sm font-bold">{d.playerB}</span>
+                        <span className="text-[10px] text-muted-foreground ml-auto">{d.createdAt}</span>
+                      </div>
+
+                      {/* reason */}
+                      <p className="text-[11px] text-muted-foreground mt-1.5 leading-relaxed">{d.reason}</p>
+
+                      {/* evidence */}
+                      {d.evidence && (
+                        <div className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-arena-cyan bg-arena-cyan/5 border border-arena-cyan/20 rounded px-2 py-0.5">
+                          📎 {d.evidence}
+                        </div>
+                      )}
+
+                      {/* resolution badge */}
+                      {d.status === "resolved" && d.resolution !== "pending" && (
+                        <div className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-primary bg-primary/5 border border-primary/20 rounded px-2 py-0.5">
+                          <CheckCircle2 className="h-3 w-3" /> {d.resolution.replace(/_/g, " ")}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {dpPages > 1 && (
+                <div className="flex justify-end gap-1">
+                  {Array.from({ length: dpPages }, (_, i) => (
+                    <button key={i} onClick={() => setDisputePage(i + 1)}
+                      className={cn("w-6 h-6 rounded text-[10px] font-mono transition-colors", disputePage === i + 1 ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary")}>
+                      {i + 1}
+                    </button>
                   ))}
-                </TableBody>
-              </Table>
-              {auditPages > 1 && (
-                <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
-                  <p className="text-xs text-muted-foreground">Page {auditPage} of {auditPages}</p>
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="outline" disabled={auditPage <= 1} onClick={() => setAuditPage((p) => p - 1)}>Prev</Button>
-                    <Button size="sm" variant="outline" disabled={auditPage >= auditPages} onClick={() => setAuditPage((p) => p + 1)}>Next</Button>
-                  </div>
                 </div>
               )}
-            </CardContent>
-          </Card>
-        </TabsContent>
+            </div>
+          )}
 
-        {/* ── Live Activity Feed Tab ── */}
-        <TabsContent value="feed">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-xl flex items-center gap-2">
-                    <span className="relative flex h-3 w-3">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-3 w-3 bg-primary"></span>
-                    </span>
-                    Live Activity Feed
-                  </CardTitle>
-                  <CardDescription>Real-time platform events (auto-updating)</CardDescription>
-                </div>
-                <Badge variant="outline" className="border-primary/30 text-primary font-mono text-xs">
-                  {activityFeed.length} events
-                </Badge>
+          {/* ══ USERS ══ */}
+          {section === "users" && (
+            <div className="space-y-3">
+              {/* filter pills */}
+              <div className="flex gap-1.5">
+                {(["all","flagged","banned","cleared"] as const).map((s) => (
+                  <button key={s} onClick={() => setUserStatusFilter(s)}
+                    className={cn(
+                      "px-3 py-1 rounded-full text-[10px] font-display uppercase tracking-wider border transition-colors",
+                      userStatusFilter === s
+                        ? s === "banned"  ? "bg-destructive/20 border-destructive/40 text-destructive"
+                        : s === "flagged" ? "bg-arena-orange/20 border-arena-orange/40 text-arena-orange"
+                        : s === "cleared" ? "bg-primary/20 border-primary/40 text-primary"
+                        : "bg-secondary border-border text-foreground"
+                        : "border-border/40 text-muted-foreground hover:border-border hover:text-foreground"
+                    )}>
+                    {s}
+                  </button>
+                ))}
               </div>
-            </CardHeader>
-            <CardContent>
-              <ScrollArea className="h-[400px] rounded-lg border border-border bg-secondary/30 p-1" ref={feedRef}>
-                <div className="space-y-1 p-3">
-                  {activityFeed.map((evt) => (
-                    <div
-                      key={evt.id}
-                      className={`flex items-start gap-3 py-2 px-3 rounded-md text-sm transition-colors ${
-                        evt.highlight ? "bg-destructive/10 border border-destructive/20" : "hover:bg-secondary/50"
-                      }`}
-                    >
-                      <span className="text-xs text-muted-foreground font-mono shrink-0 mt-0.5">{evt.timestamp}</span>
-                      <span className="text-foreground">{evt.message}</span>
+
+              {/* user cards */}
+              <div className="space-y-2">
+                {filteredUsers.map((u) => {
+                  const risk = u.winRate >= 85 ? { label: "CRITICAL", color: "text-destructive bg-destructive/10 border-destructive/30" }
+                    : u.winRate >= 75 ? { label: "HIGH",     color: "text-arena-orange bg-arena-orange/10 border-arena-orange/30" }
+                    : u.winRate >= 60 ? { label: "MEDIUM",   color: "text-arena-gold bg-arena-gold/10 border-arena-gold/30" }
+                    :                  { label: "LOW",       color: "text-primary bg-primary/10 border-primary/30" };
+
+                  const avatarBg = u.status === "banned" ? "bg-destructive/20 text-destructive"
+                    : u.status === "flagged" ? "bg-arena-orange/20 text-arena-orange"
+                    : "bg-primary/20 text-primary";
+
+                  return (
+                    <div key={u.id} className={cn(
+                      "rounded-lg border border-border/60 bg-secondary/20 px-4 py-3 flex items-center gap-4 hover:bg-secondary/40 transition-colors",
+                      u.status === "banned" && "border-destructive/20 bg-destructive/5"
+                    )}>
+                      {/* avatar */}
+                      <div className={cn("w-9 h-9 rounded-full flex items-center justify-center font-display text-sm font-bold shrink-0", avatarBg)}>
+                        {u.username.slice(0, 2).toUpperCase()}
+                      </div>
+
+                      {/* info */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-display text-sm font-bold">{u.username}</span>
+                          <Badge className={cn("text-[9px] border px-1.5 py-0", userStatusBadge[u.status])}>{u.status}</Badge>
+                          <Badge variant="outline" className={cn("text-[9px] border px-1.5 py-0 ml-auto", risk.color)}>{risk.label}</Badge>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-0.5 truncate" title={u.reason}>{u.reason}</p>
+                        <div className="flex items-center gap-3 mt-1.5">
+                          {/* win rate bar */}
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] text-muted-foreground">Win rate</span>
+                            <div className="w-20 h-1.5 rounded-full bg-secondary overflow-hidden">
+                              <div className={cn("h-full rounded-full transition-all",
+                                u.winRate >= 80 ? "bg-destructive" : u.winRate >= 65 ? "bg-arena-orange" : "bg-primary"
+                              )} style={{ width: `${u.winRate}%` }} />
+                            </div>
+                            <span className={cn("text-[10px] font-mono font-bold",
+                              u.winRate >= 80 ? "text-destructive" : u.winRate >= 65 ? "text-arena-orange" : "text-primary"
+                            )}>{u.winRate}%</span>
+                          </div>
+                          <span className="text-[10px] text-muted-foreground">{u.matchesPlayed} matches</span>
+                          <span className="font-mono text-[10px] text-muted-foreground">{u.walletAddress.slice(0, 6)}…{u.walletAddress.slice(-4)}</span>
+                          <span className="text-[10px] text-muted-foreground ml-auto">{u.flaggedAt}</span>
+                        </div>
+                      </div>
+
+                      {/* actions */}
+                      <div className="flex gap-1 shrink-0">
+                        {u.status !== "banned" && (
+                          <Button size="sm" variant="ghost" className="h-7 px-2.5 text-[10px] text-destructive hover:bg-destructive/10 font-display border border-destructive/20"
+                            onClick={() => setBanTarget(u)}>
+                            <Ban className="mr-1 h-3 w-3" /> Ban
+                          </Button>
+                        )}
+                        {u.status === "flagged" && (
+                          <Button size="sm" variant="ghost" className="h-7 px-2.5 text-[10px] text-primary hover:bg-primary/10 font-display border border-primary/20"
+                            onClick={() => handleClear(u)}>
+                            <CheckCircle2 className="mr-1 h-3 w-3" /> Clear
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ══ AUDIT ══ */}
+          {section === "audit" && (() => {
+            const auditActionStyle: Record<string, string> = {
+              BAN_USER:               "bg-destructive/15 text-destructive border-destructive/30",
+              RESOLVE_DISPUTE:        "bg-arena-cyan/15 text-arena-cyan border-arena-cyan/30",
+              REFUND_MATCH:           "bg-arena-cyan/15 text-arena-cyan border-arena-cyan/30",
+              VOID_MATCH:             "bg-muted/40 text-muted-foreground border-border",
+              CLEAR_FLAG:             "bg-primary/15 text-primary border-primary/30",
+              FREEZE_PAYOUT:          "bg-arena-orange/15 text-arena-orange border-arena-orange/30",
+              UPDATE_PLATFORM_SETTINGS: "bg-arena-purple/15 text-arena-purple border-arena-purple/30",
+              KILL_SWITCH_ON:         "bg-destructive/20 text-destructive border-destructive/40",
+              KILL_SWITCH_OFF:        "bg-primary/15 text-primary border-primary/30",
+            };
+            return (
+              <div className="space-y-3">
+                <div className="flex justify-end">
+                  <Button size="sm" variant="outline" className="h-8 text-xs border-border"
+                    onClick={() => exportCSV("audit_log.csv", ["Timestamp","Action","Target","Detail","Admin"],
+                      auditLog.map((l) => [l.createdAt, l.action, l.target, l.detail, l.adminName]))}>
+                    <Download className="mr-1.5 h-3.5 w-3.5" /> Export
+                  </Button>
+                </div>
+
+                {/* timeline */}
+                <ScrollArea className="h-[400px] pr-2">
+                  <div className="relative pl-5">
+                    {/* vertical line */}
+                    <div className="absolute left-1.5 top-2 bottom-2 w-px bg-border/60" />
+
+                    <div className="space-y-3">
+                      {pagedAudit.map((l) => {
+                        const style = auditActionStyle[l.action] ?? "bg-secondary text-muted-foreground border-border";
+                        return (
+                          <div key={l.id} className="relative flex gap-3 group">
+                            {/* dot */}
+                            <div className={cn("absolute -left-[13px] top-2 w-2 h-2 rounded-full border-2 border-background shrink-0",
+                              l.action.includes("BAN") || l.action.includes("KILL_SWITCH_ON") ? "bg-destructive"
+                              : l.action.includes("CLEAR") || l.action.includes("RESOLVE") || l.action.includes("KILL_SWITCH_OFF") ? "bg-primary"
+                              : l.action.includes("FREEZE") ? "bg-arena-orange"
+                              : "bg-muted-foreground"
+                            )} />
+
+                            <div className="flex-1 rounded-lg border border-border/40 bg-secondary/20 px-3 py-2.5 hover:bg-secondary/40 transition-colors group-hover:border-border/60">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <Badge variant="outline" className={cn("text-[9px] border px-1.5 py-0 font-mono", style)}>
+                                  {l.action.replace(/_/g, " ")}
+                                </Badge>
+                                <span className="font-mono text-[10px] text-muted-foreground">{l.target}</span>
+                                <span className="text-[10px] text-muted-foreground ml-auto">{l.createdAt}</span>
+                              </div>
+                              <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">{l.detail}</p>
+                              <p className="text-[10px] text-arena-cyan font-mono mt-1">{l.adminName}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </ScrollArea>
+
+                {auditPages > 1 && (
+                  <div className="flex justify-end gap-1">
+                    {Array.from({ length: auditPages }, (_, i) => (
+                      <button key={i} onClick={() => setAuditPage(i + 1)}
+                        className={cn("w-6 h-6 rounded text-[10px] font-mono transition-colors", auditPage === i + 1 ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary")}>
+                        {i + 1}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* ══ LIVE FEED ══ */}
+          {section === "live" && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Radio className="h-3.5 w-3.5 text-primary animate-pulse" />
+                <span className="text-xs text-muted-foreground font-display uppercase tracking-wider">Live — updates every 4s</span>
+              </div>
+              <ScrollArea className="h-[440px] rounded-lg border border-border/60 bg-secondary/10">
+                <div ref={feedRef} className="p-3 space-y-1.5">
+                  {activity.map((e) => (
+                    <div key={e.id} className={cn(
+                      "flex items-start gap-2.5 rounded-lg px-2.5 py-1.5 text-xs transition-all",
+                      e.highlight ? "bg-destructive/10 border border-destructive/20" : "hover:bg-secondary/40"
+                    )}>
+                      <span className="text-[10px] font-mono text-muted-foreground whitespace-nowrap pt-0.5">{e.timestamp}</span>
+                      <span className={e.highlight ? "text-destructive" : "text-foreground"}>{e.message}</span>
                     </div>
                   ))}
                 </div>
               </ScrollArea>
-            </CardContent>
-          </Card>
-        </TabsContent>
+            </div>
+          )}
 
-        {/* ── Platform Settings Tab ── */}
-        <TabsContent value="settings">
-          <div className="grid md:grid-cols-2 gap-6">
-            {/* Fees & Limits */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-xl flex items-center gap-2"><DollarSign className="h-5 w-5 text-arena-gold" /> Fees & Limits</CardTitle>
-                <CardDescription>Configure platform commission and betting caps</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-medium">Platform Fee</label>
-                    <span className="font-display text-xl font-bold text-primary">{platformFee}%</span>
+          {/* ══ PLATFORM SETTINGS ══ */}
+          {section === "platform" && (
+            <div className="space-y-1 max-w-xl">
+              {[
+                {
+                  label: "Platform Fee",
+                  desc: `ArenaEscrow FEE_PERCENT — currently ${platform.feePercent}%`,
+                  control: (
+                    <div className="flex items-center gap-3 w-48">
+                      <Slider min={1} max={25} step={0.5} value={[platform.feePercent]}
+                        onValueChange={([v]) => setPlatform((p) => ({ ...p, feePercent: v }))} className="flex-1" />
+                      <span className="text-xs font-mono text-primary w-10 text-right">{platform.feePercent}%</span>
+                    </div>
+                  ),
+                },
+                {
+                  label: "Daily Betting Max",
+                  desc: `Platform-wide hard cap — currently $${platform.platformBettingMax}`,
+                  control: (
+                    <div className="flex items-center gap-3 w-48">
+                      <Slider min={50} max={2000} step={50} value={[platform.platformBettingMax]}
+                        onValueChange={([v]) => setPlatform((p) => ({ ...p, platformBettingMax: v }))} className="flex-1" />
+                      <span className="text-xs font-mono text-arena-gold w-14 text-right">${platform.platformBettingMax}</span>
+                    </div>
+                  ),
+                },
+                {
+                  label: "Maintenance Mode",
+                  desc: "Blocks all new matches and deposits",
+                  control: <Switch checked={platform.maintenanceMode} onCheckedChange={(v) => setPlatform((p) => ({ ...p, maintenanceMode: v }))} />,
+                },
+                {
+                  label: "New Registrations",
+                  desc: "Allow new users to sign up",
+                  control: <Switch checked={platform.registrationOpen} onCheckedChange={(v) => setPlatform((p) => ({ ...p, registrationOpen: v }))} />,
+                },
+                {
+                  label: "Auto-Escalate Disputes",
+                  desc: "Escalate unresolved disputes after 24h",
+                  control: <Switch checked={platform.autoDisputeEscalation} onCheckedChange={(v) => setPlatform((p) => ({ ...p, autoDisputeEscalation: v }))} />,
+                },
+              ].map(({ label, desc, control }, i, arr) => (
+                <div key={label} className={cn("flex items-center justify-between py-3 gap-4", i < arr.length - 1 && "border-b border-border/50")}>
+                  <div>
+                    <p className="text-sm font-medium">{label}</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">{desc}</p>
                   </div>
-                  <Slider
-                    value={[platformFee]}
-                    onValueChange={([v]) => setPlatformFee(v)}
-                    min={1}
-                    max={25}
-                    step={1}
-                    className="w-full"
-                  />
-                  <p className="text-xs text-muted-foreground">Deducted from each match pot before payout</p>
+                  <div className="shrink-0">{control}</div>
                 </div>
-                <Separator />
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-medium">Daily Bet Limit</label>
-                    <span className="font-display text-xl font-bold text-arena-gold">${dailyBetLimit}</span>
-                  </div>
-                  <Select value={String(dailyBetLimit)} onValueChange={(v) => setDailyBetLimit(Number(v))}>
-                    <SelectTrigger className="bg-secondary border-border">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="10">$10</SelectItem>
-                      <SelectItem value="25">$25</SelectItem>
-                      <SelectItem value="50">$50</SelectItem>
-                      <SelectItem value="100">$100</SelectItem>
-                      <SelectItem value="250">$250</SelectItem>
-                      <SelectItem value="500">$500</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">Max total bet per user per 24h period</p>
-                </div>
-              </CardContent>
-            </Card>
+              ))}
 
-            {/* System Controls */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-xl flex items-center gap-2"><Wrench className="h-5 w-5 text-arena-cyan" /> System Controls</CardTitle>
-                <CardDescription>Platform-wide toggles and operational settings</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <div className="flex items-center justify-between p-3 rounded-lg bg-secondary">
-                  <div>
-                    <p className="font-medium text-sm">Maintenance Mode</p>
-                    <p className="text-xs text-muted-foreground">Pauses matchmaking and displays a banner</p>
-                  </div>
-                  <Switch checked={maintenanceMode} onCheckedChange={setMaintenanceMode} />
-                </div>
-                <div className="flex items-center justify-between p-3 rounded-lg bg-secondary">
-                  <div>
-                    <p className="font-medium text-sm">New User Registration</p>
-                    <p className="text-xs text-muted-foreground">Allow new wallets to create accounts</p>
-                  </div>
-                  <Switch checked={newUserRegistration} onCheckedChange={setNewUserRegistration} />
-                </div>
-                <div className="flex items-center justify-between p-3 rounded-lg bg-secondary">
-                  <div>
-                    <p className="font-medium text-sm">Auto Dispute Escalation</p>
-                    <p className="text-xs text-muted-foreground">Auto-escalate disputes after 24h with no action</p>
-                  </div>
-                  <Switch checked={autoDisputeEscalation} onCheckedChange={setAutoDisputeEscalation} />
-                </div>
-                <Separator />
-                <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => {
-                  addAuditEntry("SETTINGS_UPDATED", "PLATFORM", `Fee: ${platformFee}%, Limit: $${dailyBetLimit}, Maintenance: ${maintenanceMode}`);
-                  toast({ title: "Settings Saved", description: "Platform configuration updated." });
-                  addNotification({ type: "system", title: "⚙️ Settings Updated", message: `Platform fee: ${platformFee}%, Daily limit: $${dailyBetLimit}, Maintenance: ${maintenanceMode ? "ON" : "OFF"}` });
-                }}>
-                  Save Settings
+              <div className="flex justify-end pt-3">
+                <Button size="sm" className="font-display text-xs glow-green"
+                  onClick={() => { pushAudit("UPDATE_PLATFORM_SETTINGS", "PLATFORM", `Fee=${platform.feePercent}% | BettingMax=$${platform.platformBettingMax} | Maintenance=${platform.maintenanceMode}`); toast({ title: "Settings Saved", description: "Platform configuration updated." }); }}>
+                  Save Platform Settings
                 </Button>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-      </Tabs>
+              </div>
+            </div>
+          )}
 
-      {/* ── Resolve Dialog ── */}
-      <Dialog open={!!selectedDispute} onOpenChange={() => setSelectedDispute(null)}>
-        <DialogContent className="bg-card border-border sm:max-w-lg">
+        </div>
+      </div>
+
+      {/* ── Resolve Dispute Dialog ── */}
+      <Dialog open={!!selectedDispute} onOpenChange={(o) => !o && setSelectedDispute(null)}>
+        <DialogContent className="max-w-md bg-card border-border">
           <DialogHeader>
-            <DialogTitle className="font-display flex items-center gap-2">
-              <Gavel className="h-5 w-5 text-primary" /> Resolve {selectedDispute?.id}
-            </DialogTitle>
-            <DialogDescription>
-              {selectedDispute?.playerA} vs {selectedDispute?.playerB} — {selectedDispute?.game} ({selectedDispute?.stake})
+            <DialogTitle className="font-display text-sm">Resolve {selectedDispute?.id}</DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              {selectedDispute?.playerA} vs {selectedDispute?.playerB} · ${selectedDispute?.stake} · {selectedDispute?.game}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="p-3 rounded-lg bg-secondary text-sm">
-              <p className="font-semibold text-foreground mb-1">Reason:</p>
-              <p className="text-muted-foreground">{selectedDispute?.reason}</p>
-              {selectedDispute?.evidence && <p className="text-xs text-arena-cyan mt-2">📎 {selectedDispute.evidence}</p>}
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Resolution</label>
-              <Select value={resolutionChoice} onValueChange={(v) => setResolutionChoice(v as DisputeResolution)}>
-                <SelectTrigger className="bg-secondary border-border"><SelectValue placeholder="Choose resolution..." /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="player_a_wins"><span className="flex items-center gap-2"><CheckCircle2 className="h-3 w-3 text-primary" /> {selectedDispute?.playerA} Wins</span></SelectItem>
-                  <SelectItem value="player_b_wins"><span className="flex items-center gap-2"><CheckCircle2 className="h-3 w-3 text-primary" /> {selectedDispute?.playerB} Wins</span></SelectItem>
-                  <SelectItem value="refund"><span className="flex items-center gap-2"><DollarSign className="h-3 w-3 text-arena-gold" /> Full Refund</span></SelectItem>
-                  <SelectItem value="void"><span className="flex items-center gap-2"><XCircle className="h-3 w-3 text-destructive" /> Void Match</span></SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Admin Note</label>
-              <Textarea placeholder="Describe the reasoning behind this decision..." className="bg-secondary border-border resize-none" rows={3} value={resolutionNote} onChange={(e) => setResolutionNote(e.target.value)} />
-            </div>
+          <div className="space-y-3 py-1">
+            <p className="text-xs text-muted-foreground italic">"{selectedDispute?.reason}"</p>
+            {selectedDispute?.evidence && (
+              <div className="text-xs bg-secondary/50 rounded px-2.5 py-1.5 text-muted-foreground">
+                📎 Evidence: {selectedDispute.evidence}
+              </div>
+            )}
+            <Select value={resolutionChoice} onValueChange={(v) => setResolutionChoice(v as DisputeResolution)}>
+              <SelectTrigger className="h-8 bg-secondary/60 border-border text-xs"><SelectValue placeholder="Select resolution…" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="player_a_wins">Player A Wins ({selectedDispute?.playerA})</SelectItem>
+                <SelectItem value="player_b_wins">Player B Wins ({selectedDispute?.playerB})</SelectItem>
+                <SelectItem value="refund">Full Refund (Both Players)</SelectItem>
+                <SelectItem value="void">Void Match (No Payout)</SelectItem>
+              </SelectContent>
+            </Select>
+            <Textarea value={resolutionNote} onChange={(e) => setResolutionNote(e.target.value)}
+              placeholder="Admin notes (optional)…" className="bg-secondary/60 border-border text-xs min-h-[60px] resize-none" />
           </div>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setSelectedDispute(null)}>Cancel</Button>
-            <Button onClick={handleResolve} disabled={resolutionChoice === "pending"} className="bg-primary text-primary-foreground hover:bg-primary/90">
-              <Gavel className="mr-2 h-4 w-4" /> Confirm Resolution
+          <DialogFooter>
+            <Button size="sm" variant="ghost" className="text-xs" onClick={() => setSelectedDispute(null)}>Cancel</Button>
+            <Button size="sm" className="font-display text-xs" disabled={resolutionChoice === "pending"} onClick={handleResolve}>
+              <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" /> Confirm Resolution
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* ── Ban Confirmation ── */}
-      <AlertDialog open={!!banTarget} onOpenChange={() => setBanTarget(null)}>
+      {/* ── Ban Confirm Dialog ── */}
+      <AlertDialog open={!!banTarget} onOpenChange={(o) => !o && setBanTarget(null)}>
         <AlertDialogContent className="bg-card border-border">
           <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
-              <Ban className="h-5 w-5" /> Ban {banTarget?.username}?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently ban <strong>{banTarget?.username}</strong> ({banTarget?.walletShort}) from the platform.
-              Reason: {banTarget?.reason}. This action is logged and cannot be easily undone.
+            <AlertDialogTitle className="font-display text-sm">Ban {banTarget?.username}?</AlertDialogTitle>
+            <AlertDialogDescription className="text-xs">
+              This will permanently ban <span className="font-mono font-bold">{banTarget?.walletAddress.slice(0, 12)}...</span>
+              {" "}from the platform. Action is logged.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => banTarget && handleBanUser(banTarget)}>
-              Confirm Ban
+            <AlertDialogCancel className="text-xs h-8">Cancel</AlertDialogCancel>
+            <AlertDialogAction className="text-xs h-8 bg-destructive hover:bg-destructive/90 font-display"
+              onClick={() => banTarget && handleBan(banTarget)}>
+              <Ban className="mr-1.5 h-3.5 w-3.5" /> Confirm Ban
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* ── Clear Confirmation ── */}
-      <AlertDialog open={!!clearTarget} onOpenChange={() => setClearTarget(null)}>
+      {/* ── Kill Switch Confirm ── */}
+      <AlertDialog open={killConfirm} onOpenChange={setKillConfirm}>
         <AlertDialogContent className="bg-card border-border">
           <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 text-primary">
-              <CheckCircle2 className="h-5 w-5" /> Clear {clearTarget?.username}?
+            <AlertDialogTitle className="font-display text-sm text-destructive flex items-center gap-2">
+              <Zap className="h-4 w-4" />
+              {platform.killSwitchActive ? "Deactivate Kill Switch?" : "Activate Kill Switch?"}
             </AlertDialogTitle>
-            <AlertDialogDescription>
-              This will remove the flag from <strong>{clearTarget?.username}</strong> ({clearTarget?.walletShort}) and mark them as cleared.
-              Reason for flag: {clearTarget?.reason}. This action is logged in the audit trail.
+            <AlertDialogDescription className="text-xs">
+              {platform.killSwitchActive
+                ? "This will resume all payouts. Funds will begin processing from the smart contract immediately."
+                : "This will freeze ALL payouts across the platform. No funds will be released from escrow until deactivated."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => { if (clearTarget) { handleClearUser(clearTarget.id); setClearTarget(null); } }}>
-              Confirm Clear
+            <AlertDialogCancel className="text-xs h-8">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className={cn("text-xs h-8 font-display", platform.killSwitchActive ? "bg-primary hover:bg-primary/90" : "bg-destructive hover:bg-destructive/90")}
+              onClick={handleKillSwitch}>
+              {platform.killSwitchActive ? "Deactivate" : "Activate Kill Switch"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* ── Kill Switch Confirmation ── */}
-      <AlertDialog open={killSwitchConfirm} onOpenChange={setKillSwitchConfirm}>
-        <AlertDialogContent className="bg-card border-destructive/30">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
-              <Power className="h-5 w-5" /> Activate Emergency Kill Switch?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              This will <strong>immediately freeze ALL payouts</strong> across the entire platform. Active matches will continue but no funds will be released. Use only in case of a confirmed security breach or hack.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={handleKillSwitch}>
-              🚨 ACTIVATE KILL SWITCH
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 };
