@@ -32,7 +32,7 @@ def verifier(db):
     return MatchVerifier(db=db)
 
 
-# ── בדיקה 1: האם השחקן רשום ──────────────────────────────────────────────────
+# ── Check 1: Is the player registered? ───────────────────────────────────────
 class TestRegistrationCheck:
     def test_registered_player_passes(self, db, verifier):
         db.add(make_player())
@@ -49,7 +49,7 @@ class TestRegistrationCheck:
         assert result.reason != ""
 
 
-# ── בדיקה 2: האם השחקן חסום ──────────────────────────────────────────────────
+# ── Check 2: Is the player blacklisted? ──────────────────────────────────────
 class TestBlacklistCheck:
     def test_blacklisted_player_rejected(self, db, verifier):
         db.add(make_player())
@@ -71,7 +71,7 @@ class TestBlacklistCheck:
         assert result.approved is True
 
 
-# ── בדיקה 3: מגבלת משחקים יומית ─────────────────────────────────────────────
+# ── Check 3: Daily match limit ────────────────────────────────────────────────
 class TestDailyMatchLimit:
     def test_under_limit_passes(self, db):
         verifier = MatchVerifier(db=db, daily_match_limit=3)
@@ -112,17 +112,17 @@ class TestDailyMatchLimit:
         assert "10" in result.reason
 
 
-# ── בדיקה 5: מקרי קצה ────────────────────────────────────────────────────────
+# ── Check 5: Edge cases ───────────────────────────────────────────────────────
 WALLET_B = "0x1111111111111111111111111111111111111111"
 
 class TestEdgeCases:
     def test_invalid_wallet_raises(self, verifier):
-        """ארנק לא תקין זורק שגיאה לפני כל בדיקה."""
+        """An invalid wallet raises an error before any check runs."""
         with pytest.raises(ValueError):
             verifier.verify("not_a_wallet")
 
     def test_two_players_independent(self, db):
-        """מגבלה של שחקן א לא משפיעה על שחקן ב."""
+        """Player A's limit does not affect player B."""
         verifier = MatchVerifier(db=db, daily_match_limit=2)
         db.add(make_player(wallet=WALLET))
         db.add(Player(
@@ -137,7 +137,7 @@ class TestEdgeCases:
         assert result.approved is True
 
     def test_blacklist_checked_before_limit(self, db):
-        """שחקן חסום נדחה בגלל חסימה — לא בגלל מגבלה."""
+        """A blacklisted player is rejected due to the ban, not the match limit."""
         verifier = MatchVerifier(db=db, daily_match_limit=3)
         db.add(make_player())
         db.blacklist(WALLET)
@@ -148,13 +148,13 @@ class TestEdgeCases:
         assert "banned" in result.reason
 
     def test_approved_result_has_ok_reason(self, db, verifier):
-        """שחקן שעובר מקבל reason של OK."""
+        """An approved player receives reason OK."""
         db.add(make_player())
         result = verifier.verify(WALLET)
         assert result.reason == "OK"
 
     def test_all_rejections_have_nonempty_reason(self, db):
-        """כל סיבת דחייה אף פעם לא ריקה."""
+        """Every rejection reason is never empty."""
         verifier = MatchVerifier(db=db, daily_match_limit=1)
         db.add(make_player())
         db.log_match(WALLET)

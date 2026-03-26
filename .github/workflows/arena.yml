@@ -234,7 +234,7 @@ jobs:
             await github.rest.issues.createComment({
               ...repo,
               issue_number: issueNumber,
-              body: `היי @${opener}, תודה על פתיחת ה-Issue! 💪`
+              body: `Hey @${opener}, thanks for opening this issue! 💪`
             });
 
             await github.rest.issues.addLabels({

@@ -69,7 +69,7 @@ class TestReset:
     def test_result_change_resets_counter(self, sm):
         sm.update(make_output(accepted=True, result="victory"))
         sm.update(make_output(accepted=True, result="victory"))
-        sm.update(make_output(accepted=True, result="defeat"))  # שינוי — חוזר ל-DETECTED
+        sm.update(make_output(accepted=True, result="defeat"))  # result changed — resets to DETECTED
         assert sm.state == MatchState.DETECTED
 
     def test_manual_reset_returns_to_waiting(self, sm):
