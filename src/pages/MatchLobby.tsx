@@ -12,6 +12,7 @@ import {
   Swords, Clock, Users, Lock, Gamepad2, CheckCircle,
   Search, Copy, UserPlus, Crown, Shield, Hash, KeyRound, Eye, EyeOff,
   AlertCircle, ChevronDown, Monitor, Smartphone, Zap, TrendingUp,
+  Wallet, Loader2, ScanLine,
 } from "lucide-react";
 import type { MatchStatus, Game, Match, MatchMode } from "@/types";
 import { GAME_MODES, getDefaultMode, getTeamSize, getTotalPlayers } from "@/config/gameModes";
@@ -30,6 +31,21 @@ const MOBILE_GAME_CONFIG: Record<string, { logo: string; color: string }> = {
   "PUBG Mobile": { logo: "https://play-lh.googleusercontent.com/zCSGnBtZk0Lmp1BAbyaZfLktDzHmC6oke67qzz3G1lBegAF2asyt5KzXOJ2PVdHDYkU=s120",                         color: "#F59E0B" },
 };
 const ALL_GAME_CONFIG = { ...PC_GAME_CONFIG, ...MOBILE_GAME_CONFIG };
+
+// Identity provider per game — used in deposit modal to show correct verification field
+const IDENTITY_PROVIDER: Record<string, { name: string; field: string }> = {
+  "CS2":               { name: "Steam",       field: "SteamID"    },
+  "Valorant":          { name: "Riot",        field: "RiotID"     },
+  "Fortnite":          { name: "Epic Games",  field: "EpicID"     },
+  "Apex Legends":      { name: "Steam",       field: "SteamID"    },
+  "PUBG":              { name: "Steam",       field: "SteamID"    },
+  "PUBG Mobile":       { name: "PUBG Corp",   field: "PlayerTag"  },
+  "COD":               { name: "Battle.net",  field: "BattleTag"  },
+  "COD Mobile":        { name: "Activision",  field: "PlayerTag"  },
+  "League of Legends": { name: "Riot",        field: "RiotID"     },
+  "Wild Rift":         { name: "Riot",        field: "RiotID"     },
+  "MLBB":              { name: "Moonton",     field: "PlayerID"   },
+};
 
 const BET_AMOUNTS = [5, 10, 25, 50];
 const CREATE_BET_AMOUNTS = [5, 10, 25, 50, 100];
@@ -205,10 +221,14 @@ const MatchLobby = () => {
   const [newMatchMode, setNewMatchMode] = useState<MatchMode | null>(null);
   const [newMatchPassword, setNewMatchPassword] = useState("");
   const [selectedPublicLobbyId, setSelectedPublicLobbyId] = useState<string | null>(null);
-  const [passwordPrompt, setPasswordPrompt] = useState<{ matchId: string; bet: number } | null>(null);
+  const [passwordPrompt, setPasswordPrompt] = useState<{ matchId: string; bet: number; team?: "A" | "B" } | null>(null);
   const [passwordInput, setPasswordInput] = useState("");
   const [passwordError, setPasswordError] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
+  const [showPassword, setShowPassword]       = useState(false);
+  const [filterGame, setFilterGame]           = useState<string>("");
+  const [filterMode, setFilterMode]           = useState<MatchMode | null>(null);
+  const [depositConfirm, setDepositConfirm]   = useState<{ match: Match; team?: "A" | "B" } | null>(null);
+  const [depositStep, setDepositStep]         = useState<"idle" | "verifying">("idle");
 
   const publicMatches = matches.filter(m => m.type === "public");
   const customMatches = matches.filter(m => m.type === "custom");
@@ -229,16 +249,34 @@ const MatchLobby = () => {
     setEscrowConfirm(true);
   };
   const handleOpenPublicLobby = (matchId: string) => setSelectedPublicLobbyId(matchId);
-  const handleJoinCustom = (matchId: string, bet: number) => {
-    setPasswordPrompt({ matchId, bet }); setPasswordInput(""); setPasswordError(false); setShowPassword(false);
+  const handleJoinCustom = (matchId: string, bet: number, team?: "A" | "B") => {
+    setPasswordPrompt({ matchId, bet, team }); setPasswordInput(""); setPasswordError(false); setShowPassword(false);
   };
   const handlePasswordSubmit = () => {
     if (!passwordPrompt) return;
     const match = customMatches.find(m => m.id === passwordPrompt.matchId);
     if (match && passwordInput === match.password) {
-      setPasswordPrompt(null); setPasswordInput(""); setSelectedBet(passwordPrompt.bet);
-      setJoiningMatch(passwordPrompt.matchId); setEscrowConfirm(true);
+      setPasswordPrompt(null); setPasswordInput("");
+      setDepositConfirm({ match, team: passwordPrompt.team });
+      setDepositStep("idle");
     } else { setPasswordError(true); }
+  };
+  const handleDepositConfirm = () => {
+    if (!depositConfirm || !user) return;
+    setDepositStep("verifying");
+    // DB-ready: replace setTimeout with wagmi writeContract(joinMatch) call in Issue #Frontend-Wallet
+    setTimeout(() => {
+      const { match, team } = depositConfirm;
+      lockEscrow(match.betAmount, match.id);
+      joinMatch(match.id, user.username, team);
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "🔒 Deposit Confirmed",
+        message: `$${match.betAmount} locked in escrow for ${match.game} ${match.mode}. Waiting for all players.`,
+      });
+      setDepositConfirm(null);
+      setDepositStep("idle");
+    }, 2200);
   };
   const handleConfirmEscrow = () => {
     if (!joiningMatch || !selectedBet || !user) return;
@@ -255,7 +293,14 @@ const MatchLobby = () => {
   };
 
   const filteredCustom = customMatches.filter(m => !selectedGame || m.game === selectedGame);
-  const filteredPublicMatches = selectedBet ? publicMatches.filter(m => m.betAmount === selectedBet) : publicMatches;
+  const filteredPublicMatches = publicMatches.filter(m => {
+    if (selectedBet !== null && m.betAmount !== selectedBet) return false;
+    if (filterGame && m.game !== filterGame) return false;
+    if (filterMode && m.mode !== filterMode) return false;
+    return true;
+  });
+  // Unique games that actually have public matches (drives the filter bar)
+  const uniquePublicGames = [...new Set(publicMatches.map(m => m.game))];
 
   // Stats for header strip — DB-ready: computed from real matches when connected
   const liveCount   = publicMatches.filter(m => m.status === "in_progress").length;
@@ -351,6 +396,84 @@ const MatchLobby = () => {
         </div>
       )}
 
+      {/* ── Deposit Confirmation Modal (Custom matches) ── */}
+      {depositConfirm && (() => {
+        const { match, team } = depositConfirm;
+        const cfg = ALL_GAME_CONFIG[match.game];
+        const idp = IDENTITY_PROVIDER[match.game] ?? { name: "Platform", field: "Account ID" };
+        const isVerifying = depositStep === "verifying";
+        const checks: { icon: React.ElementType; label: string; detail: string }[] = [
+          { icon: Wallet,      label: "Wallet connected",          detail: "0x•••••••" },
+          { icon: ScanLine,    label: `${idp.field} verified`,     detail: idp.name    },
+          { icon: CheckCircle, label: "Bet amount confirmed",      detail: `$${match.betAmount}` },
+        ];
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+            <div className="w-full max-w-md rounded-2xl border border-arena-gold/30 bg-card shadow-2xl overflow-hidden">
+              <div className="h-0.5 w-full bg-gradient-to-r from-arena-gold via-primary to-arena-purple" />
+              <div className="p-6 space-y-5">
+                {/* Header */}
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-xl bg-arena-gold/10 flex items-center justify-center shrink-0">
+                    <Lock className="h-5 w-5 text-arena-gold" />
+                  </div>
+                  <div>
+                    <h3 className="font-display text-lg font-bold">Confirm Deposit</h3>
+                    <p className="text-xs text-muted-foreground">Smart contract locks funds until match resolves</p>
+                  </div>
+                </div>
+                {/* Match info */}
+                <div className="rounded-xl border border-border bg-secondary/30 p-3 flex items-center gap-3">
+                  <GameLogo game={match.game} size={36} />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-sm truncate">{match.host}'s {match.mode}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {match.game} · {team ? `Team ${team}` : "Any team"} · {match.code}
+                    </p>
+                  </div>
+                  <span className="font-display text-xl font-bold text-arena-gold shrink-0">${match.betAmount}</span>
+                </div>
+                {/* Verification checklist */}
+                <div className="space-y-2">
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground flex items-center gap-1.5">
+                    <span className="w-1 h-3 rounded-full bg-arena-cyan inline-block" /> Contract Verification
+                  </p>
+                  {checks.map(({ icon: Icon, label, detail }) => (
+                    <div key={label} className="flex items-center gap-3 rounded-lg border border-border/60 bg-secondary/20 px-3 py-2">
+                      {isVerifying
+                        ? <Loader2 className="h-4 w-4 text-arena-cyan animate-spin shrink-0" />
+                        : <Icon className="h-4 w-4 text-arena-cyan shrink-0" />}
+                      <span className="text-sm flex-1">{label}</span>
+                      <span className="text-xs text-muted-foreground font-mono">{detail}</span>
+                      {!isVerifying && <CheckCircle className="h-3.5 w-3.5 text-green-500 shrink-0" />}
+                    </div>
+                  ))}
+                  {isVerifying && (
+                    <p className="text-xs text-arena-cyan flex items-center gap-1.5 pl-1 animate-pulse">
+                      <span className="w-1.5 h-1.5 rounded-full bg-arena-cyan" />
+                      Awaiting contract confirmation…
+                    </p>
+                  )}
+                </div>
+                {/* Actions */}
+                <div className="flex gap-2 pt-1">
+                  <Button onClick={handleDepositConfirm} disabled={isVerifying} className="flex-1 font-display glow-green">
+                    {isVerifying
+                      ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Confirming…</>
+                      : <><Lock className="mr-2 h-4 w-4" /> Deposit ${match.betAmount}</>}
+                  </Button>
+                  {!isVerifying && (
+                    <Button variant="outline" onClick={() => { setDepositConfirm(null); setDepositStep("idle"); }}>
+                      Cancel
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ── Public Lobby Details Overlay ── */}
       {selectedPublicLobby && (() => {
         const { teamA, teamB, maxPerTeam } = getPublicLobbyTeams(selectedPublicLobby);
@@ -428,6 +551,78 @@ const MatchLobby = () => {
 
         {/* ═══════════ PUBLIC ═══════════ */}
         <TabsContent value="public" className="space-y-4 mt-4">
+
+          {/* ── Game + Mode filter bar ── */}
+          <div className="rounded-2xl border border-border bg-card p-4">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-[0.18em] mb-3 flex items-center gap-1.5">
+              <span className="w-1 h-3 rounded-full bg-arena-purple inline-block" /> Filter by Game
+            </p>
+            <div className="flex gap-2 flex-wrap">
+              {/* All games button */}
+              <button
+                onClick={() => { setFilterGame(""); setFilterMode(null); }}
+                className={`px-3 py-1.5 rounded-xl border font-display text-sm transition-all ${
+                  !filterGame
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                }`}>
+                All
+              </button>
+              {/* One button per game that has public matches */}
+              {uniquePublicGames.map((game) => {
+                const cfg = ALL_GAME_CONFIG[game];
+                const active = filterGame === game;
+                return (
+                  <button key={game}
+                    onClick={() => { setFilterGame(active ? "" : game); setFilterMode(null); }}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border font-display text-sm transition-all ${
+                      active
+                        ? "border-primary text-foreground"
+                        : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                    }`}
+                    style={active && cfg ? { borderColor: `${cfg.color}80`, background: `${cfg.color}18`, color: cfg.color } : {}}>
+                    {cfg
+                      ? <img src={cfg.logo} alt={game} className="w-5 h-5 rounded object-cover shrink-0"
+                          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                      : <Gamepad2 className="w-5 h-5 shrink-0" />}
+                    <span className="hidden sm:inline">{game}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Mode sub-filter — only when the selected game has defined modes */}
+            {filterGame && GAME_MODES[filterGame as Game] && (
+              <div className="mt-3 pt-3 border-t border-border/50">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-[0.18em] mb-2 flex items-center gap-1.5">
+                  <span className="w-1 h-3 rounded-full bg-arena-cyan inline-block" /> Format
+                </p>
+                <div className="flex gap-2 flex-wrap">
+                  <button
+                    onClick={() => setFilterMode(null)}
+                    className={`px-3 py-1 rounded-lg border font-display text-xs transition-all ${
+                      !filterMode
+                        ? "border-arena-cyan bg-arena-cyan/10 text-arena-cyan"
+                        : "border-border bg-secondary/40 text-muted-foreground hover:border-arena-cyan/40"
+                    }`}>
+                    All Formats
+                  </button>
+                  {GAME_MODES[filterGame as Game].map((opt) => (
+                    <button key={opt.mode}
+                      onClick={() => setFilterMode(filterMode === opt.mode ? null : opt.mode)}
+                      className={`px-3 py-1 rounded-lg border font-display text-xs font-bold transition-all ${
+                        filterMode === opt.mode
+                          ? "border-arena-cyan bg-arena-cyan/10 text-arena-cyan"
+                          : "border-border bg-secondary/40 text-muted-foreground hover:border-arena-cyan/40"
+                      }`}>
+                      {opt.mode}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Bet selector */}
           <div className="rounded-2xl border border-border bg-card p-4">
             <p className="text-[10px] text-muted-foreground uppercase tracking-[0.18em] mb-3 flex items-center gap-1.5">
@@ -748,7 +943,7 @@ const MatchLobby = () => {
                             ))}
                           </div>
                           {canJoin && !full && (
-                            <button onClick={() => handleJoinCustom(match.id, match.betAmount)}
+                            <button onClick={() => handleJoinCustom(match.id, match.betAmount, isA ? "A" : "B")}
                               className={`mt-2 w-full flex items-center justify-center gap-1 py-1.5 rounded-lg border ${joinBorder} ${joinText} ${joinHover} transition-colors text-xs font-display`}>
                               <UserPlus className="h-3 w-3" /> Join {label}
                             </button>
