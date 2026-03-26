@@ -25,7 +25,7 @@ def db(tmp_path):
 # ── Full happy path ───────────────────────────────────────────────────────────
 class TestFullRegistrationFlow:
     def test_player_registered_and_retrievable(self, db):
-        """שחקן נרשם ואפשר למשוך אותו מה-DB."""
+        """Player registers successfully and can be retrieved from the DB."""
         result = register_player(WALLET_A, STEAM_A, "daniel_cs", "CS2", db)
 
         assert result.success is True
@@ -37,14 +37,14 @@ class TestFullRegistrationFlow:
         assert player.game == "CS2"
 
     def test_display_name_stored_for_ocr(self, db):
-        """השם שנשמר הוא בדיוק השם שה-OCR יחפש."""
+        """The stored display name is exactly what OCR will search for."""
         register_player(WALLET_A, STEAM_A, "daniel_cs", "CS2", db)
 
         player = db.get(WALLET_A)
         assert player.steam_display_name == "daniel_cs"
 
     def test_multiple_different_players_can_register(self, db):
-        """שלושה שחקנים שונים נרשמים בהצלחה."""
+        """Three different players can register successfully."""
         r1 = register_player(WALLET_A, STEAM_A, "player_one", "CS2", db)
         r2 = register_player(WALLET_B, STEAM_B, "player_two", "CS2", db)
         r3 = register_player(WALLET_C, STEAM_C, "player_three", "Valorant", db)
@@ -57,7 +57,7 @@ class TestFullRegistrationFlow:
 # ── Smurf detection in full flow ─────────────────────────────────────────────
 class TestSmurfDetectionFlow:
     def test_same_steam_blocked_on_second_wallet(self, db):
-        """מספר סטים אחד לא יכול להירשם עם שני ארנקים."""
+        """The same Steam ID cannot be registered under two different wallets."""
         register_player(WALLET_A, STEAM_A, "daniel_cs", "CS2", db)
         result = register_player(WALLET_B, STEAM_A, "daniel2", "CS2", db)
 
@@ -65,7 +65,7 @@ class TestSmurfDetectionFlow:
         assert "already registered" in result.message
 
     def test_original_player_unaffected_after_smurf_attempt(self, db):
-        """ניסיון smurf לא פוגע בשחקן המקורי."""
+        """A smurf attempt does not affect the original registered player."""
         register_player(WALLET_A, STEAM_A, "daniel_cs", "CS2", db)
         register_player(WALLET_B, STEAM_A, "imposter", "CS2", db)
 
@@ -74,7 +74,7 @@ class TestSmurfDetectionFlow:
         assert player.steam_display_name == "daniel_cs"
 
     def test_same_wallet_same_steam_blocked(self, db):
-        """אותו ארנק עם אותו סטים לא יכול להירשם פעמיים."""
+        """The same wallet with the same Steam ID cannot register twice."""
         register_player(WALLET_A, STEAM_A, "daniel_cs", "CS2", db)
         result = register_player(WALLET_A, STEAM_A, "daniel_cs", "CS2", db)
 
@@ -84,7 +84,7 @@ class TestSmurfDetectionFlow:
 # ── Blacklist in full flow ────────────────────────────────────────────────────
 class TestBlacklistFlow:
     def test_blacklisted_wallet_cannot_register(self, db):
-        """ארנק חסום לא יכול להירשם."""
+        """A blacklisted wallet cannot register."""
         db.blacklist(WALLET_A)
         result = register_player(WALLET_A, STEAM_A, "daniel_cs", "CS2", db)
 
@@ -92,14 +92,14 @@ class TestBlacklistFlow:
         assert "blacklisted" in result.message
 
     def test_blacklisted_player_not_saved_in_db(self, db):
-        """ארנק חסום לא נשמר ב-DB."""
+        """A blacklisted wallet is not saved in the DB."""
         db.blacklist(WALLET_A)
         register_player(WALLET_A, STEAM_A, "daniel_cs", "CS2", db)
 
         assert db.get(WALLET_A) is None
 
     def test_unblacklisted_wallet_can_register(self, db):
-        """ארנק שהוסר מהרשימה השחורה יכול להירשם."""
+        """A wallet removed from the blacklist can register."""
         db.blacklist(WALLET_A)
         db.unblacklist(WALLET_A)
         result = register_player(WALLET_A, STEAM_A, "daniel_cs", "CS2", db)

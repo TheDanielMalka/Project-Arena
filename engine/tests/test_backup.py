@@ -12,7 +12,7 @@ from src.identity.backup import backup_database, cleanup_old_backups
 # ── Helpers ───────────────────────────────────────────────────────────────────
 @pytest.fixture
 def mock_db(tmp_path):
-    """קובץ players.db מזויף לבדיקות."""
+    """Fake players.db file for tests."""
     db_file = tmp_path / "players.db"
     db_file.write_bytes(b"fake db content")
     return db_file
