@@ -74,7 +74,7 @@ class TestBlacklistCheck:
 # ── בדיקה 3: מגבלת משחקים יומית ─────────────────────────────────────────────
 class TestDailyMatchLimit:
     def test_under_limit_passes(self, db):
-        verifier = MatchVerifier(db=db, daily_limit=3)
+        verifier = MatchVerifier(db=db, daily_match_limit=3)
         db.add(make_player())
         db.log_match(WALLET)
         db.log_match(WALLET)
@@ -82,7 +82,7 @@ class TestDailyMatchLimit:
         assert result.approved is True
 
     def test_exactly_at_limit_rejected(self, db):
-        verifier = MatchVerifier(db=db, daily_limit=3)
+        verifier = MatchVerifier(db=db, daily_match_limit=3)
         db.add(make_player())
         for _ in range(3):
             db.log_match(WALLET)
@@ -91,7 +91,7 @@ class TestDailyMatchLimit:
         assert "limit" in result.reason
 
     def test_over_limit_rejected(self, db):
-        verifier = MatchVerifier(db=db, daily_limit=3)
+        verifier = MatchVerifier(db=db, daily_match_limit=3)
         db.add(make_player())
         for _ in range(5):
             db.log_match(WALLET)
@@ -104,7 +104,7 @@ class TestDailyMatchLimit:
         assert result.approved is True
 
     def test_limit_reason_mentions_number(self, db):
-        verifier = MatchVerifier(db=db, daily_limit=10)
+        verifier = MatchVerifier(db=db, daily_match_limit=10)
         db.add(make_player())
         for _ in range(10):
             db.log_match(WALLET)
@@ -123,7 +123,7 @@ class TestEdgeCases:
 
     def test_two_players_independent(self, db):
         """מגבלה של שחקן א לא משפיעה על שחקן ב."""
-        verifier = MatchVerifier(db=db, daily_limit=2)
+        verifier = MatchVerifier(db=db, daily_match_limit=2)
         db.add(make_player(wallet=WALLET))
         db.add(Player(
             wallet_address=WALLET_B,
@@ -138,7 +138,7 @@ class TestEdgeCases:
 
     def test_blacklist_checked_before_limit(self, db):
         """שחקן חסום נדחה בגלל חסימה — לא בגלל מגבלה."""
-        verifier = MatchVerifier(db=db, daily_limit=3)
+        verifier = MatchVerifier(db=db, daily_match_limit=3)
         db.add(make_player())
         db.blacklist(WALLET)
         for _ in range(5):
@@ -155,7 +155,7 @@ class TestEdgeCases:
 
     def test_all_rejections_have_nonempty_reason(self, db):
         """כל סיבת דחייה אף פעם לא ריקה."""
-        verifier = MatchVerifier(db=db, daily_limit=1)
+        verifier = MatchVerifier(db=db, daily_match_limit=1)
         db.add(make_player())
         db.log_match(WALLET)
         result = verifier.verify(WALLET)
