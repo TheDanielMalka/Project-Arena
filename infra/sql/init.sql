@@ -77,10 +77,11 @@ CREATE TABLE matches (
     code         VARCHAR(20),
     password     VARCHAR(50),
     max_per_team INT,
-    winner_id    UUID REFERENCES users(id),
-    created_at   TIMESTAMPTZ DEFAULT NOW(),
-    started_at   TIMESTAMPTZ,
-    ended_at     TIMESTAMPTZ
+    winner_id         UUID REFERENCES users(id),
+    on_chain_match_id BIGINT,           -- ArenaEscrow.sol matchId (uint256), set on MatchCreated event
+    created_at        TIMESTAMPTZ DEFAULT NOW(),
+    started_at        TIMESTAMPTZ,
+    ended_at          TIMESTAMPTZ
 );
 
 -- ── Match Players (join table) ───────────────────────────────
@@ -210,8 +211,9 @@ CREATE TABLE wallet_addresses (
 );
 
 -- ── Indexes ──────────────────────────────────────────────────
-CREATE INDEX idx_matches_status     ON matches(status);
-CREATE INDEX idx_matches_host       ON matches(host_id);
+CREATE INDEX idx_matches_status        ON matches(status);
+CREATE INDEX idx_matches_host          ON matches(host_id);
+CREATE INDEX idx_matches_on_chain      ON matches(on_chain_match_id);
 CREATE INDEX idx_transactions_user  ON transactions(user_id);
 CREATE INDEX idx_disputes_match     ON disputes(match_id);
 CREATE INDEX idx_notifications_user ON notifications(user_id, read);
