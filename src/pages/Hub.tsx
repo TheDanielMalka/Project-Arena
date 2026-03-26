@@ -593,129 +593,122 @@ export default function Hub() {
 
       {/* ── Community Tab ── */}
       {tab === "community" && (
-        <div className="flex-1 overflow-y-auto px-6 pb-6 space-y-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-            <Input
-              placeholder="Search by username or Arena ID…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="pl-9 bg-secondary/50 border-border/50"
-            />
+        <div className="flex-1 flex flex-col px-6 pb-4 overflow-hidden">
+
+          {/* Search + game filters (fixed, no scroll) */}
+          <div className="space-y-2.5 mb-3 shrink-0">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              <Input
+                placeholder="Search by username or Arena ID…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="pl-9 h-8 text-sm bg-secondary/50 border-border/50"
+              />
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {GAME_FILTERS.map((f) => (
+                <button
+                  key={f.value}
+                  onClick={() => setGameFilter(f.value as Game | "")}
+                  className={cn(
+                    "px-2.5 py-1 rounded-full text-[11px] font-medium border transition-all",
+                    gameFilter === f.value
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-secondary/40 border-border/40 text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                  )}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            {GAME_FILTERS.map((f) => (
-              <button
-                key={f.value}
-                onClick={() => setGameFilter(f.value as Game | "")}
-                className={cn(
-                  "px-3 py-1.5 rounded-full text-xs font-medium border transition-all",
-                  gameFilter === f.value
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-secondary/40 border-border/40 text-muted-foreground hover:border-primary/50 hover:text-foreground"
-                )}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Shuffle button (shown when not searching) */}
+          {/* Grid header — shuffle button when not searching */}
           {!query && !gameFilter && (
-            <div className="flex items-center justify-between">
-              <p className="text-[11px] text-muted-foreground/60">Showing 9 random players</p>
+            <div className="flex items-center justify-end mb-2 shrink-0">
               <button
                 onClick={handleShuffle}
-                className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-primary transition-colors px-2.5 py-1 rounded-lg hover:bg-secondary/50"
+                className="flex items-center gap-1 text-[11px] text-muted-foreground/60 hover:text-primary transition-colors"
               >
                 <Shuffle className="h-3 w-3" /> Shuffle
               </button>
             </div>
           )}
 
+          {/* Player grid — no scroll, compact rows */}
           {displayedPlayers.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <Users2 className="h-10 w-10 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">No players found{query ? ` matching "${query}"` : ""}</p>
+            <div className="flex-1 flex items-center justify-center text-muted-foreground">
+              <div className="text-center">
+                <Users2 className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">No players found{query ? ` matching "${query}"` : ""}</p>
+              </div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className={cn(
+              "grid grid-cols-3 gap-2",
+              (query || gameFilter) && "overflow-y-auto flex-1"
+            )}>
               {displayedPlayers.map((player) => {
                 const tierColor    = TIER_COLOR[player.tier] ?? "#888";
                 const relationship = getRelationship(player.id);
                 return (
-                  <div key={player.id} className="rounded-2xl border border-border/40 bg-secondary/20 p-3 hover:border-border/70 transition-all">
-                    <div className="flex items-center gap-2 mb-2">
-                      <button
-                        onClick={() => navigate(`/players/${player.username}`)}
-                        className="flex items-center gap-2 flex-1 min-w-0 text-left group"
-                      >
-                        <div
-                          className="w-8 h-8 rounded-xl flex items-center justify-center font-display text-xs font-bold shrink-0"
-                          style={{ background: `${tierColor}20`, border: `1.5px solid ${tierColor}50`, color: tierColor }}
-                        >
-                          {player.avatar && player.avatar !== "initials"
-                            ? <span className="text-sm">{player.avatar}</span>
-                            : player.avatarInitials}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-display text-xs font-semibold truncate group-hover:text-primary transition-colors">
-                            {player.username}
-                          </p>
-                          <p className="font-mono text-[10px] text-muted-foreground">{player.arenaId}</p>
-                        </div>
-                      </button>
-                      <ChevronRight
-                        className="h-4 w-4 text-muted-foreground shrink-0 cursor-pointer hover:text-primary transition-colors"
-                        onClick={() => navigate(`/players/${player.username}`)}
-                      />
+                  <div
+                    key={player.id}
+                    className="flex items-center gap-2 p-2 rounded-xl border border-border/40 bg-secondary/20 hover:border-border/60 transition-all min-w-0"
+                  >
+                    {/* Avatar */}
+                    <div
+                      className="w-7 h-7 rounded-lg flex items-center justify-center font-display text-[10px] font-bold shrink-0 cursor-pointer"
+                      style={{ background: `${tierColor}20`, border: `1.5px solid ${tierColor}50`, color: tierColor }}
+                      onClick={() => navigate(`/players/${player.username}`)}
+                    >
+                      {player.avatar && player.avatar !== "initials"
+                        ? <span className="text-xs">{player.avatar}</span>
+                        : player.avatarInitials}
                     </div>
 
-                    <div className="flex items-center justify-between mb-2">
-                      <span
-                        className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                        style={{ color: tierColor, background: `${tierColor}18`, border: `1px solid ${tierColor}35` }}
-                      >
-                        {player.rank}
-                      </span>
-                      <span className="text-[10px] text-primary font-semibold">
-                        {player.stats.winRate.toFixed(1)}% WR
-                      </span>
-                    </div>
-
-                    <div className="flex gap-2">
-                      {relationship === "accepted" ? (
-                        <span className="flex-1 flex items-center justify-center gap-1 text-[11px] text-primary py-1 rounded-lg bg-primary/10 border border-primary/20 font-medium">
-                          <UserCheck className="h-3 w-3" /> Friends
+                    {/* Info */}
+                    <div
+                      className="flex-1 min-w-0 cursor-pointer"
+                      onClick={() => navigate(`/players/${player.username}`)}
+                    >
+                      <p className="font-display text-[11px] font-semibold truncate leading-tight hover:text-primary transition-colors">
+                        {player.username}
+                      </p>
+                      <div className="flex items-center gap-1 mt-px">
+                        <span className="text-[9px] font-semibold" style={{ color: tierColor }}>
+                          {player.rank}
                         </span>
-                      ) : relationship === "pending" ? (
-                        <button
-                          onClick={() => {
-                            const f = friendships.find((fr) => fr.friendId === player.id && fr.status === "pending");
-                            if (f) declineRequest(f.id);
-                          }}
-                          className="flex-1 flex items-center justify-center gap-1 text-[11px] text-muted-foreground py-1 rounded-lg bg-secondary/40 border border-border/40 hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-all"
-                          title="Click to cancel request"
-                        >
-                          <Clock className="h-3 w-3" /> Pending ×
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleAddFriend(player)}
-                          className="flex-1 flex items-center justify-center gap-1 text-[11px] py-1 rounded-lg bg-secondary/50 border border-border/50 text-foreground hover:border-primary/50 hover:bg-primary/10 hover:text-primary transition-all font-medium"
-                        >
-                          <UserPlus className="h-3 w-3" /> Add Friend
-                        </button>
-                      )}
-                      <button
-                        onClick={() => navigate(`/players/${player.username}`)}
-                        title="View profile & report"
-                        className="px-2 py-1 rounded-lg border border-border/40 text-muted-foreground hover:text-destructive hover:border-destructive/40 transition-all"
-                      >
-                        <Flag className="h-3.5 w-3.5" />
-                      </button>
+                        <span className="text-[9px] text-muted-foreground">
+                          {player.stats.winRate.toFixed(0)}%
+                        </span>
+                      </div>
                     </div>
+
+                    {/* Action icon */}
+                    {relationship === "accepted" ? (
+                      <UserCheck className="h-3.5 w-3.5 text-primary shrink-0" title="Friends" />
+                    ) : relationship === "pending" ? (
+                      <button
+                        onClick={() => {
+                          const f = friendships.find((fr) => fr.friendId === player.id && fr.status === "pending");
+                          if (f) declineRequest(f.id);
+                        }}
+                        title="Cancel request"
+                        className="text-muted-foreground hover:text-destructive transition-colors shrink-0"
+                      >
+                        <Clock className="h-3.5 w-3.5" />
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleAddFriend(player)}
+                        title="Add Friend"
+                        className="text-muted-foreground hover:text-primary transition-colors shrink-0"
+                      >
+                        <UserPlus className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
                 );
               })}
