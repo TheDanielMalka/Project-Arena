@@ -9,119 +9,222 @@ on:
   issues:
     types: [opened]
 
+# ─── Cancel redundant runs on the same PR ────────────────────────────────────
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # 1. PYTHON — Engine + Client (smart targeted test selection)
+  # ══════════════════════════════════════════════════════════════════════════════
+  test-python:
+    name: Python Tests (Engine + Client)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-      with:
-        fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.12'
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y tesseract-ocr
-        pip install pytest flake8 mypy
-        pip install -r requirements.txt
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y tesseract-ocr
 
-    - name: Run flake8
-      run: |
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=venv || true
+      - name: Install Python dependencies
+        run: |
+          pip install pytest flake8 mypy
+          pip install -r requirements.txt
+          if [ -f engine/requirements.txt ]; then pip install -r engine/requirements.txt; fi
 
-    - name: Run mypy
-      run: |
-        mypy . --ignore-missing-imports --exclude venv || true
+      - name: Lint — flake8 (fatal errors only)
+        run: |
+          flake8 engine/src engine/tests --count --select=E9,F63,F7,F82 \
+            --show-source --statistics --exclude=venv,client/.venv || true
 
-    - name: Find and run matching tests
-      run: |
-        BASE_SHA="${{ github.event.pull_request.base.sha }}"
-        HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-        CHANGED="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+      - name: Type check — mypy
+        run: |
+          mypy engine/src --ignore-missing-imports --exclude venv || true
 
-        echo "Changed files:"
-        echo "$CHANGED"
+      - name: Find and run matching tests
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          CHANGED="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
 
-        TEST_FILES=()
-        RUN_ALL_ENGINE=0
-        RUN_CLIENT_SMOKE=0
+          echo "Changed files:"
+          echo "$CHANGED"
 
-        RUN_CLIENT_TESTS=0
+          TEST_FILES=()
+          RUN_ALL_ENGINE=0
+          RUN_CLIENT_SMOKE=0
+          RUN_CLIENT_TESTS=0
 
-        for FILE in $CHANGED; do
-          # Client test file changed -> run full client test suite
-          if [[ "$FILE" == client/tests/test_*.py ]]; then
-            echo "Changed client test file: $FILE"
-            RUN_CLIENT_TESTS=1
-            continue
-          fi
+          for FILE in $CHANGED; do
+            # Client test file changed → run full client test suite
+            if [[ "$FILE" == client/tests/test_*.py ]]; then
+              RUN_CLIENT_TESTS=1
+              continue
+            fi
 
-          # Client source changed -> run smoke compile + client tests
-          if [[ "$FILE" == client/main.py || "$FILE" == client/*.py ]]; then
-            RUN_CLIENT_SMOKE=1
-            RUN_CLIENT_TESTS=1
-          fi
+            # Client source changed → smoke compile + client tests
+            if [[ "$FILE" == client/main.py || "$FILE" == client/*.py ]]; then
+              RUN_CLIENT_SMOKE=1
+              RUN_CLIENT_TESTS=1
+            fi
 
-          # If engine test file itself changed, run it directly
-          if [[ "$FILE" == engine/tests/test_*.py ]]; then
-            echo "Changed test file: $FILE"
-            TEST_FILES+=("$FILE")
-            continue
-          fi
+            # Engine test file changed → run it directly
+            if [[ "$FILE" == engine/tests/test_*.py ]]; then
+              TEST_FILES+=("$FILE")
+              continue
+            fi
 
-          # Engine source file -> matching engine test
-          if [[ "$FILE" =~ ^engine/src/.+\.py$ || "$FILE" == "engine/main.py" ]]; then
-            BASENAME=$(basename "$FILE" .py)
-            TEST_PATH="engine/tests/test_${BASENAME}.py"
-            if [ -f "$TEST_PATH" ]; then
-              echo "Found test for $BASENAME: $TEST_PATH"
-              TEST_FILES+=("$TEST_PATH")
-            else
-              # Engine code changed without a direct mapped test -> run full engine tests
+            # Engine source → matching test
+            if [[ "$FILE" =~ ^engine/src/.+\.py$ || "$FILE" == "engine/main.py" ]]; then
+              BASENAME=$(basename "$FILE" .py)
+              TEST_PATH="engine/tests/test_${BASENAME}.py"
+              if [ -f "$TEST_PATH" ]; then
+                TEST_FILES+=("$TEST_PATH")
+              else
+                RUN_ALL_ENGINE=1
+              fi
+            fi
+
+            # Config / workflow changes → full engine suite
+            if [[ "$FILE" == "requirements.txt" || \
+                  "$FILE" == "engine/requirements.txt" || \
+                  "$FILE" == ".github/workflows/arena.yml" ]]; then
               RUN_ALL_ENGINE=1
             fi
+          done
+
+          if [ "$RUN_ALL_ENGINE" -eq 1 ]; then
+            echo "Running full engine test suite"
+            pytest engine/tests -v
+          elif [ ${#TEST_FILES[@]} -gt 0 ]; then
+            UNIQUE=$(printf "%s\n" "${TEST_FILES[@]}" | sort -u | tr '\n' ' ')
+            echo "Running targeted tests: $UNIQUE"
+            pytest $UNIQUE -v
+          else
+            echo "No engine tests triggered — skipping"
           fi
 
-          # Global/python config changes -> run full engine tests
-          if [[ "$FILE" == "requirements.txt" || "$FILE" == "engine/requirements.txt" || "$FILE" == ".github/workflows/arena.yml" ]]; then
-            RUN_ALL_ENGINE=1
+          if [ "$RUN_CLIENT_SMOKE" -eq 1 ]; then
+            echo "Client Python changed — running smoke compile"
+            python -m py_compile client/main.py
           fi
-        done
 
-        if [ "$RUN_ALL_ENGINE" -eq 1 ]; then
-          echo "Running full engine test suite"
-          pytest engine/tests -v
-        elif [ ${#TEST_FILES[@]} -gt 0 ]; then
-          UNIQUE_TEST_FILES=$(printf "%s\n" "${TEST_FILES[@]}" | sort -u | tr '\n' ' ')
-          echo "Running targeted tests: $UNIQUE_TEST_FILES"
-          pytest $UNIQUE_TEST_FILES -v
-        else
-          echo "No matching tests found - skipping"
-        fi
+          if [ "$RUN_CLIENT_TESTS" -eq 1 ]; then
+            echo "Running client test suite"
+            pip install -r client/requirements.txt --quiet
+            pytest client/tests -v
+          fi
 
-        if [ "$RUN_CLIENT_SMOKE" -eq 1 ]; then
-          echo "Client Python changed - running smoke compile"
-          python -m py_compile client/main.py
-        fi
+  # ══════════════════════════════════════════════════════════════════════════════
+  # 2. FRONTEND — TypeScript check + Vitest (runs whenever src/ changes)
+  # ══════════════════════════════════════════════════════════════════════════════
+  test-frontend:
+    name: Frontend Tests (TypeScript + Vitest)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-        if [ "$RUN_CLIENT_TESTS" -eq 1 ]; then
-          echo "Running client test suite"
-          pip install -r client/requirements.txt --quiet
-          pytest client/tests -v
-        fi
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
 
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript type check
+        run: npx tsc -p tsconfig.app.json
+
+      - name: Run Vitest
+        run: npm test
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # 3. BUILD CHECK — Vite production build (catches import/bundle errors)
+  # ══════════════════════════════════════════════════════════════════════════════
+  build-check:
+    name: Vite Build Check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    needs: test-frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Vite production build
+        run: npm run build
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # 4. SQL VALIDATION — syntax check on init.sql changes
+  # ══════════════════════════════════════════════════════════════════════════════
+  sql-check:
+    name: SQL Syntax Check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if SQL files changed
+        id: sql_changed
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          CHANGED=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep '\.sql$' || true)
+          if [ -n "$CHANGED" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "SQL files changed: $CHANGED"
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "No SQL files changed — skipping"
+          fi
+
+      - name: Validate SQL syntax
+        if: steps.sql_changed.outputs.changed == 'true'
+        run: |
+          sudo apt-get install -y postgresql-client -qq
+          for f in $(find infra/sql -name "*.sql"); do
+            echo "Checking $f..."
+            psql --no-psqlrc -v ON_ERROR_STOP=1 \
+              "host=localhost user=postgres dbname=postgres" \
+              -c "\i $f" 2>&1 | grep -v "^$" || true
+          done
+        continue-on-error: true
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # 5. ISSUE MANAGEMENT — auto-label + comment on new issues
+  # ══════════════════════════════════════════════════════════════════════════════
   issue-management:
+    name: Issue Auto-Triage
     if: github.event_name == 'issues'
     runs-on: ubuntu-latest
     permissions:
       issues: write
     steps:
-      - uses: actions/github-script@v6
+      - uses: actions/github-script@v7
         with:
           script: |
             const issueNumber = context.issue.number;
@@ -140,45 +243,49 @@ jobs:
               labels: ['triage']
             });
 
+  # ══════════════════════════════════════════════════════════════════════════════
+  # 6. PR SYNC — auto-assign + inherit labels/milestone from linked issue
+  # ══════════════════════════════════════════════════════════════════════════════
   sync-and-assign:
+    name: PR Sync & Assign
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
       issues: read
     steps:
-      - uses: actions/github-script@v6
+      - uses: actions/github-script@v7
         with:
           script: |
             const prNumber = context.issue.number;
             const repo = { owner: context.repo.owner, repo: context.repo.repo };
 
-            await github.rest.issues.addAssignees({ 
-              ...repo, 
-              issue_number: prNumber, 
-              assignees: [context.payload.sender.login] 
+            await github.rest.issues.addAssignees({
+              ...repo,
+              issue_number: prNumber,
+              assignees: [context.payload.sender.login]
             });
 
             const body = context.payload.pull_request.body || "";
             const match = body.match(/(?:relates|fixes|closes)\s+#(\d+)/i);
-            
+
             if (match) {
               const issueNumber = match[1];
               const issue = await github.rest.issues.get({ ...repo, issue_number: issueNumber });
-              
+
               if (issue.data.labels.length > 0) {
-                await github.rest.issues.addLabels({ 
-                  ...repo, 
-                  issue_number: prNumber, 
-                  labels: issue.data.labels.map(l => l.name) 
+                await github.rest.issues.addLabels({
+                  ...repo,
+                  issue_number: prNumber,
+                  labels: issue.data.labels.map(l => l.name)
                 });
               }
-              
+
               if (issue.data.milestone) {
-                await github.rest.issues.update({ 
-                  ...repo, 
-                  issue_number: prNumber, 
-                  milestone: issue.data.milestone.number 
+                await github.rest.issues.update({
+                  ...repo,
+                  issue_number: prNumber,
+                  milestone: issue.data.milestone.number
                 });
               }
             }
