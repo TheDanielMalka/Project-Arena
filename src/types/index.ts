@@ -2,7 +2,7 @@
 
 export type MatchStatus = "waiting" | "in_progress" | "completed" | "cancelled" | "disputed";
 export type MatchType = "public" | "custom";
-export type MatchMode = "1v1" | "5v5";
+export type MatchMode = "1v1" | "2v2" | "4v4" | "5v5";
 export type Game = "CS2" | "Valorant" | "Fortnite" | "Apex Legends" | "PUBG" | "COD" | "League of Legends";
 
 export type TransactionType = "deposit" | "withdrawal" | "match_win" | "match_loss" | "fee" | "refund" | "escrow_lock" | "escrow_release";
@@ -64,21 +64,37 @@ export interface Match {
   hostId: string;
   game: Game;
   mode: MatchMode;
-  betAmount: number;
+  betAmount: number;         // stake per player — DB: matches.bet_amount
   players: string[];
-  maxPlayers: number;
+  maxPlayers: number;        // teamSize * 2 — DB: matches.max_players
   status: MatchStatus;
   createdAt: string;
   startedAt?: string;
   endedAt?: string;
   winnerId?: string;
   timeLeft?: string;
-  // Custom match fields
+  // Team & escrow fields
+  teamSize?: number;         // players per team — DB: matches.max_per_team
+  depositsReceived?: number; // how many players locked funds — DB: matches.deposits_received
   code?: string;
   password?: string;
   teamA?: string[];
   teamB?: string[];
-  maxPerTeam?: number;
+  maxPerTeam?: number;       // alias for teamSize (kept for UI compat)
+}
+
+// ─── Match Players ───────────────────────────────────────────
+// DB: match_players table — one row per player per match
+
+export interface MatchPlayer {
+  matchId: string;           // DB: match_players.match_id (FK → matches.id)
+  userId: string;            // DB: match_players.user_id (FK → users.id)
+  team: "A" | "B";          // DB: match_players.team
+  walletAddress: string;     // DB: match_players.wallet_address — verified vs users.wallet_address
+  hasDeposited: boolean;     // DB: match_players.has_deposited
+  depositedAt?: string;      // DB: match_players.deposited_at (ISO 8601)
+  depositAmount?: number;    // DB: match_players.deposit_amount — matches matches.bet_amount
+  joinedAt: string;          // DB: match_players.joined_at
 }
 
 // ─── Transactions / Wallet ───────────────────────────────────

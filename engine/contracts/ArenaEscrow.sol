@@ -3,36 +3,49 @@ pragma solidity ^0.8.20;
 
 /**
  * @title  ArenaEscrow
- * @notice Trustless 1v1 match escrow for the ARENA platform.
+ * @notice Trustless multi-player match escrow for the ARENA platform.
+ *         Supports 1v1, 2v2, 4v4, and 5v5 match formats.
  *
  * Flow:
- *   1. Player A calls createMatch()  → deposits stake, state = WAITING
- *   2. Player B calls joinMatch()    → deposits same stake, state = ACTIVE
- *   3. Vision Engine calls declareWinner() → pays winner, state = FINISHED
- *   4. Timeout fallback: either player calls claimRefund() → state = REFUNDED
- *   5. No-show fallback: Player A calls cancelMatch() → state = CANCELLED
+ *   1. Creator calls createMatch(teamSize) → deposits stake, joins teamA, state = WAITING
+ *   2. Players call joinMatch(matchId, team) → each deposits same stake
+ *   3. When all (teamSize × 2) players deposited → state = ACTIVE automatically
+ *   4. Vision Engine calls declareWinner(matchId, winningTeam) → distributes to all winners
+ *   5. Timeout fallback: any player calls claimRefund() → all refunded
+ *   6. No-show fallback: creator calls cancelMatch() → all depositors refunded
  *
  * Trust model:
  *   - No one (including ARENA) can touch funds mid-match
  *   - Only the designated oracle (Vision Engine wallet) can declare a winner
+ *   - Each player deposits individually — verified against their SteamID/wallet link
  *   - Players can always recover funds via refund or cancel
  *   - All logic is public and verifiable on-chain
  *
- * ── DB alignment (matches.status) ──────────────────────────────────────────
+ * ── Supported formats ──────────────────────────────────────────────────────────
+ *   teamSize = 1 → 1v1  (2  players total)
+ *   teamSize = 2 → 2v2  (4  players total)
+ *   teamSize = 4 → 4v4  (8  players total)
+ *   teamSize = 5 → 5v5  (10 players total)
+ *
+ * ── DB alignment (matches.status) ──────────────────────────────────────────────
  *   MatchState.WAITING   → 'waiting'
  *   MatchState.ACTIVE    → 'in_progress'
  *   MatchState.FINISHED  → 'completed'
  *   MatchState.REFUNDED  → 'cancelled'   (timeout — vision engine offline)
- *   MatchState.CANCELLED → 'cancelled'   (player A cancelled before start)
+ *   MatchState.CANCELLED → 'cancelled'   (creator cancelled before start)
  *
- * ── DB alignment (transactions.tx_type) ────────────────────────────────────
- *   MatchCreated   event → 'escrow_lock'    for playerA
- *   MatchActive    event → 'escrow_lock'    for playerB
- *   WinnerDeclared event → 'match_win'      for winner  + 'fee' for platform
- *   MatchRefunded  event → 'refund'         for playerA + playerB
- *   MatchCancelled event → 'refund'         for playerA
+ * ── DB alignment (transactions.tx_type) ────────────────────────────────────────
+ *   MatchCreated    event → 'escrow_lock'  for creator (teamA[0])
+ *   PlayerDeposited event → 'escrow_lock'  for each joining player
+ *   WinnerDeclared  event → 'match_win'    for each winner + 'fee' for platform
+ *   MatchRefunded   event → 'refund'       for all players
+ *   MatchCancelled  event → 'refund'       for all depositors
  *
- * ── Platform settings alignment ────────────────────────────────────────────
+ * ── DB alignment (match_players table) ─────────────────────────────────────────
+ *   PlayerDeposited event → SET has_deposited=TRUE, deposited_at=NOW(), deposit_amount=stakePerPlayer
+ *   MatchActive     event → matches.deposits_received = teamSize * 2
+ *
+ * ── Platform settings alignment ────────────────────────────────────────────────
  *   FEE_PERCENT     ↔  platform_settings.fee_percent        (5)
  *   paused = true   ↔  platform_settings.kill_switch_active (TRUE)
  */
@@ -41,38 +54,46 @@ contract ArenaEscrow {
     // ── Constants ────────────────────────────────────────────────────────────
 
     uint256 public constant TIMEOUT     = 2 hours;
-    uint256 public constant FEE_PERCENT = 5;          // matches platform_settings.fee_percent
+    uint256 public constant FEE_PERCENT = 5;     // matches platform_settings.fee_percent
+    uint8   public constant MAX_TEAM    = 5;     // maximum players per team (5v5)
 
     // ── Match states ─────────────────────────────────────────────────────────
 
     enum MatchState {
-        WAITING,    // playerA deposited, waiting for playerB  → DB: 'waiting'
-        ACTIVE,     // both deposited, match in progress        → DB: 'in_progress'
-        FINISHED,   // winner declared, funds paid out          → DB: 'completed'
-        REFUNDED,   // timeout — stakes returned to both        → DB: 'cancelled'
-        CANCELLED   // playerA cancelled before playerB joined  → DB: 'cancelled'
+        WAITING,    // deposits in progress, not all players joined  → DB: 'waiting'
+        ACTIVE,     // all players deposited, match in progress       → DB: 'in_progress'
+        FINISHED,   // winner declared, funds paid out               → DB: 'completed'
+        REFUNDED,   // timeout — stakes returned to all players      → DB: 'cancelled'
+        CANCELLED   // creator cancelled before all joined           → DB: 'cancelled'
     }
 
     // ── Match data ───────────────────────────────────────────────────────────
 
     struct Match {
-        address playerA;    // wallet — DB: users.wallet_address (team A)
-        address playerB;    // wallet — DB: users.wallet_address (team B)
-        uint256 stake;      // wei per player — DB: matches.bet_amount
-        uint256 startTime;  // block.timestamp when ACTIVE — DB: matches.started_at
-        MatchState state;   // DB: matches.status
-        address winner;     // DB: matches.winner_id (via wallet lookup)
+        address[] teamA;        // ordered deposit list for team A — DB: match_players WHERE team='A'
+        address[] teamB;        // ordered deposit list for team B — DB: match_players WHERE team='B'
+        uint256 stakePerPlayer; // wei per player — DB: matches.bet_amount / matches.stake_per_player
+        uint8   teamSize;       // players per team (1,2,4,5) — DB: matches.max_per_team
+        uint8   depositsTeamA;  // how many teamA players deposited — DB: COUNT(match_players WHERE team='A' AND has_deposited=TRUE)
+        uint8   depositsTeamB;  // how many teamB players deposited
+        uint256 startTime;      // block.timestamp when ACTIVE — DB: matches.started_at
+        MatchState state;       // DB: matches.status
+        uint8   winningTeam;    // 0=teamA, 1=teamB, 255=undecided — DB: matches.winner_id (via wallet lookup)
     }
 
     // ── Storage ───────────────────────────────────────────────────────────────
 
-    address public owner;           // ARENA platform wallet (receives fees)
-    address public oracle;          // Vision Engine wallet (declares winners)
-    bool    public paused;          // DB: platform_settings.kill_switch_active
+    address public owner;    // ARENA platform wallet (receives fees)
+    address public oracle;   // Vision Engine wallet (declares winners)
+    bool    public paused;   // DB: platform_settings.kill_switch_active
 
     uint256 public matchCount;
     mapping(uint256 => Match) public matches;
     // matchCount-1 == on_chain_match_id stored in DB matches.on_chain_match_id
+
+    // Prevents a single address from depositing twice in the same match
+    // DB-ready: enforced on-chain, double-checked by match_players UNIQUE (match_id, user_id)
+    mapping(uint256 => mapping(address => bool)) public hasDeposited;
 
     // ── Reentrancy guard ─────────────────────────────────────────────────────
 
@@ -81,11 +102,12 @@ contract ArenaEscrow {
     uint256 private constant _ENTERED     = 2;
 
     // ── Events ───────────────────────────────────────────────────────────────
-    // The Vision Engine listens to these events to sync Postgres + SQLite ledger
+    // Vision Engine listens to these to sync Postgres + user balances
 
-    event MatchCreated   (uint256 indexed matchId, address indexed playerA, uint256 stake);
-    event MatchActive    (uint256 indexed matchId, address indexed playerB);
-    event WinnerDeclared (uint256 indexed matchId, address indexed winner, uint256 payout, uint256 fee);
+    event MatchCreated   (uint256 indexed matchId, address indexed creator, uint8 teamSize, uint256 stakePerPlayer);
+    event PlayerDeposited(uint256 indexed matchId, address indexed player, uint8 team, uint8 depositsTeamA, uint8 depositsTeamB);
+    event MatchActive    (uint256 indexed matchId);                                             // all players deposited
+    event WinnerDeclared (uint256 indexed matchId, uint8 winningTeam, uint256 payoutPerWinner, uint256 fee);
     event MatchRefunded  (uint256 indexed matchId);
     event MatchCancelled (uint256 indexed matchId, address indexed cancelledBy);
     event Paused         (address indexed by);
@@ -133,48 +155,65 @@ contract ArenaEscrow {
     // ── Player actions ───────────────────────────────────────────────────────
 
     /**
-     * @notice Player A creates a match and deposits their stake.
+     * @notice Creator opens a match and deposits their stake as the first teamA player.
+     *         Match stays WAITING until all (teamSize × 2) players deposit.
      *
      * DB side (Vision Engine handles on MatchCreated event):
-     *   INSERT INTO matches (status='waiting', on_chain_match_id=matchId, ...)
-     *   INSERT INTO transactions (type='escrow_lock', user_id=playerA, ...)
-     *   UPDATE user_balances SET in_escrow = in_escrow + stake WHERE user_id=playerA
+     *   INSERT INTO matches (status='waiting', mode=modeFor(teamSize), max_per_team=teamSize,
+     *                        max_players=teamSize*2, on_chain_match_id=matchId,
+     *                        bet_amount=stakePerPlayer, stake_per_player=stakePerPlayer)
+     *   INSERT INTO match_players (user_id=creator, team='A', wallet_address=creator, has_deposited=TRUE)
+     *   INSERT INTO transactions  (type='escrow_lock', user_id=creator, amount=stakePerPlayer)
+     *   UPDATE user_balances SET in_escrow = in_escrow + stakePerPlayer WHERE user_id=creator
      *
+     * @param teamSize  Players per team: 1 (1v1), 2 (2v2), 4 (4v4), or 5 (5v5).
      * @return matchId  The on-chain ID. Store in matches.on_chain_match_id.
      */
-    function createMatch()
+    function createMatch(uint8 teamSize)
         external
         payable
         whenNotPaused
         nonReentrant
         returns (uint256 matchId)
     {
+        require(teamSize >= 1 && teamSize <= MAX_TEAM, "Invalid team size (1-5)");
         require(msg.value > 0, "Stake must be greater than zero");
 
         matchId = matchCount++;
-        matches[matchId] = Match({
-            playerA:   msg.sender,
-            playerB:   address(0),
-            stake:     msg.value,
-            startTime: 0,
-            state:     MatchState.WAITING,
-            winner:    address(0)
-        });
 
-        emit MatchCreated(matchId, msg.sender, msg.value);
+        Match storage m = matches[matchId];
+        m.stakePerPlayer = msg.value;
+        m.teamSize       = teamSize;
+        m.depositsTeamA  = 1;
+        m.depositsTeamB  = 0;
+        m.startTime      = 0;
+        m.state          = MatchState.WAITING;
+        m.winningTeam    = 255; // 255 = undecided
+        m.teamA.push(msg.sender);
+
+        hasDeposited[matchId][msg.sender] = true;
+
+        emit MatchCreated(matchId, msg.sender, teamSize, msg.value);
     }
 
     /**
-     * @notice Player B joins an existing WAITING match by depositing the same stake.
+     * @notice A player joins an existing WAITING match by depositing the exact stake.
+     *         When the last required player deposits, match transitions to ACTIVE automatically.
+     *
+     * DB side (Vision Engine handles on PlayerDeposited event):
+     *   INSERT INTO match_players (user_id=..., team=team==0?'A':'B', wallet_address=player,
+     *                              has_deposited=TRUE, deposited_at=NOW(), deposit_amount=stakePerPlayer)
+     *   INSERT INTO transactions  (type='escrow_lock', user_id=..., amount=stakePerPlayer)
+     *   UPDATE matches SET deposits_received = deposits_received + 1
+     *   UPDATE user_balances SET in_escrow = in_escrow + stakePerPlayer
      *
      * DB side (Vision Engine handles on MatchActive event):
      *   UPDATE matches SET status='in_progress', started_at=NOW()
-     *   INSERT INTO transactions (type='escrow_lock', user_id=playerB, ...)
-     *   UPDATE user_balances SET in_escrow = in_escrow + stake WHERE user_id=playerB
      *
      * @param matchId  The on_chain_match_id of the match to join.
+     * @param team     0 = join teamA, 1 = join teamB.
      */
-    function joinMatch(uint256 matchId)
+    function joinMatch(uint256 matchId, uint8 team)
         external
         payable
         whenNotPaused
@@ -183,29 +222,44 @@ contract ArenaEscrow {
     {
         Match storage m = matches[matchId];
 
-        require(m.state == MatchState.WAITING,  "Match not open");
-        require(msg.sender != m.playerA,        "Cannot play against yourself");
-        require(msg.value == m.stake,           "Must match player A stake exactly");
+        require(m.state == MatchState.WAITING,       "Match not open");
+        require(team == 0 || team == 1,              "Team must be 0 (A) or 1 (B)");
+        require(!hasDeposited[matchId][msg.sender],  "Already deposited");
+        require(msg.value == m.stakePerPlayer,       "Must match stake exactly");
 
-        m.playerB   = msg.sender;
-        m.startTime = block.timestamp;
-        m.state     = MatchState.ACTIVE;
+        if (team == 0) {
+            require(m.depositsTeamA < m.teamSize, "Team A is full");
+            m.teamA.push(msg.sender);
+            m.depositsTeamA++;
+        } else {
+            require(m.depositsTeamB < m.teamSize, "Team B is full");
+            m.teamB.push(msg.sender);
+            m.depositsTeamB++;
+        }
 
-        emit MatchActive(matchId, msg.sender);
+        hasDeposited[matchId][msg.sender] = true;
+
+        emit PlayerDeposited(matchId, msg.sender, team, m.depositsTeamA, m.depositsTeamB);
+
+        // All players deposited → activate match
+        if (m.depositsTeamA == m.teamSize && m.depositsTeamB == m.teamSize) {
+            m.startTime = block.timestamp;
+            m.state     = MatchState.ACTIVE;
+            emit MatchActive(matchId);
+        }
     }
 
     /**
-     * @notice Player A cancels a match that has not yet started (still WAITING).
-     *         Full stake is returned to playerA. No fee.
+     * @notice Creator cancels a WAITING match (not all players have joined yet).
+     *         Refunds all players who have already deposited. No fee.
      *
-     * Use case: playerB never shows up, playerA wants their stake back
-     *           without waiting for the TIMEOUT (which only applies to ACTIVE).
+     * Use case: waiting room expired — not all players joined in time.
      *
      * DB side (Vision Engine handles on MatchCancelled event):
      *   UPDATE matches SET status='cancelled', ended_at=NOW()
-     *   INSERT INTO transactions (type='refund', user_id=playerA, ...)
-     *   UPDATE user_balances SET in_escrow = in_escrow - stake,
-     *                            available = available + stake
+     *   For each depositor: INSERT INTO transactions (type='refund', ...)
+     *                       UPDATE user_balances SET in_escrow = in_escrow - stakePerPlayer,
+     *                                               available = available + stakePerPlayer
      *
      * @param matchId  The on_chain_match_id to cancel.
      */
@@ -216,13 +270,20 @@ contract ArenaEscrow {
     {
         Match storage m = matches[matchId];
 
-        require(m.state == MatchState.WAITING, "Match already started or resolved");
-        require(msg.sender == m.playerA,       "Only match creator can cancel");
+        require(m.state == MatchState.WAITING,  "Match already started or resolved");
+        require(msg.sender == m.teamA[0],        "Only match creator can cancel");
 
-        // Checks-Effects-Interactions: update state before transfer
+        // Checks-Effects-Interactions: update state before transfers
         m.state = MatchState.CANCELLED;
 
-        payable(m.playerA).transfer(m.stake);
+        // Refund all teamA depositors
+        for (uint8 i = 0; i < m.depositsTeamA; i++) {
+            payable(m.teamA[i]).transfer(m.stakePerPlayer);
+        }
+        // Refund all teamB depositors (if any joined)
+        for (uint8 i = 0; i < m.depositsTeamB; i++) {
+            payable(m.teamB[i]).transfer(m.stakePerPlayer);
+        }
 
         emit MatchCancelled(matchId, msg.sender);
     }
@@ -230,21 +291,22 @@ contract ArenaEscrow {
     // ── Oracle action ────────────────────────────────────────────────────────
 
     /**
-     * @notice Vision Engine declares the winner after the match result is confirmed.
-     *         Pays winner (totalPot - fee) and platform fee to owner.
+     * @notice Vision Engine declares the winning team after match result is confirmed.
+     *         Distributes (totalPot - 5% fee) equally among all winners.
+     *         Integer dust (from division) goes to the first winner.
      *
      * DB side (Vision Engine handles on WinnerDeclared event):
-     *   UPDATE matches SET status='completed', winner_id=..., ended_at=NOW()
-     *   INSERT INTO transactions (type='match_win',  user_id=winner,   amount=payout, ...)
-     *   INSERT INTO transactions (type='fee',        user_id=platform, amount=fee,    ...)
-     *   UPDATE user_stats SET wins=wins+1, total_earnings=total_earnings+payout
-     *   UPDATE user_stats SET losses=losses+1 (for loser)
-     *   UPDATE user_balances: release in_escrow for both, credit winner
+     *   UPDATE matches SET status='completed', winner_id=winnerTeam[0], ended_at=NOW()
+     *   For each winner:   INSERT INTO transactions (type='match_win',  amount=payoutPerWinner)
+     *                      UPDATE user_stats SET wins=wins+1, total_earnings+=payoutPerWinner
+     *   For each loser:    UPDATE user_stats SET losses=losses+1
+     *   INSERT INTO transactions (type='fee', amount=fee)
+     *   UPDATE user_balances: release in_escrow for all 10 players, credit winners
      *
-     * @param matchId  on_chain_match_id of the finished match.
-     * @param winner   Wallet address of the winner (must be playerA or playerB).
+     * @param matchId      on_chain_match_id of the finished match.
+     * @param winningTeam  0 = teamA wins, 1 = teamB wins.
      */
-    function declareWinner(uint256 matchId, address winner)
+    function declareWinner(uint256 matchId, uint8 winningTeam)
         external
         onlyOracle
         nonReentrant
@@ -252,34 +314,41 @@ contract ArenaEscrow {
     {
         Match storage m = matches[matchId];
 
-        require(m.state == MatchState.ACTIVE,               "Match not active");
-        require(winner == m.playerA || winner == m.playerB, "Winner must be a player");
+        require(m.state == MatchState.ACTIVE,        "Match not active");
+        require(winningTeam == 0 || winningTeam == 1, "Winning team must be 0 (A) or 1 (B)");
 
-        uint256 totalPot = m.stake * 2;
-        uint256 fee      = (totalPot * FEE_PERCENT) / 100;
-        uint256 payout   = totalPot - fee;
+        uint256 totalPot      = m.stakePerPlayer * m.teamSize * 2;
+        uint256 fee           = (totalPot * FEE_PERCENT) / 100;
+        uint256 totalPayout   = totalPot - fee;
+        uint256 payoutPerWinner = totalPayout / m.teamSize;
+        // Dust from integer division goes to first winner — avoids locked funds
+        uint256 dust          = totalPayout - (payoutPerWinner * m.teamSize);
 
         // Checks-Effects-Interactions: update state before transfers
-        m.state  = MatchState.FINISHED;
-        m.winner = winner;
+        m.state       = MatchState.FINISHED;
+        m.winningTeam = winningTeam;
 
-        payable(winner).transfer(payout);
+        address[] storage winners = winningTeam == 0 ? m.teamA : m.teamB;
+        for (uint8 i = 0; i < m.teamSize; i++) {
+            uint256 amount = (i == 0) ? payoutPerWinner + dust : payoutPerWinner;
+            payable(winners[i]).transfer(amount);
+        }
         payable(owner).transfer(fee);
 
-        emit WinnerDeclared(matchId, winner, payout, fee);
+        emit WinnerDeclared(matchId, winningTeam, payoutPerWinner, fee);
     }
 
     // ── Timeout refund ───────────────────────────────────────────────────────
 
     /**
-     * @notice Either player can claim a full refund if the match exceeds TIMEOUT.
-     *         Protects players if the Vision Engine goes offline.
+     * @notice Any deposited player can claim a full refund if the match exceeds TIMEOUT.
+     *         Protects all players if the Vision Engine goes offline mid-match.
+     *         All players on both teams receive their full stake back. No fee.
      *
      * DB side (Vision Engine handles on MatchRefunded event):
      *   UPDATE matches SET status='cancelled', ended_at=NOW()
-     *   INSERT INTO transactions (type='refund', user_id=playerA, ...)
-     *   INSERT INTO transactions (type='refund', user_id=playerB, ...)
-     *   UPDATE user_balances: release in_escrow for both players
+     *   For each player: INSERT INTO transactions (type='refund', ...)
+     *                    UPDATE user_balances: release in_escrow for all players
      *
      * @param matchId  on_chain_match_id to refund.
      */
@@ -290,15 +359,17 @@ contract ArenaEscrow {
     {
         Match storage m = matches[matchId];
 
-        require(m.state == MatchState.ACTIVE,                        "Match not active");
-        require(msg.sender == m.playerA || msg.sender == m.playerB, "Not a player in this match");
-        require(block.timestamp >= m.startTime + TIMEOUT,           "Timeout not reached yet");
+        require(m.state == MatchState.ACTIVE,              "Match not active");
+        require(hasDeposited[matchId][msg.sender],         "Not a player in this match");
+        require(block.timestamp >= m.startTime + TIMEOUT,  "Timeout not reached yet");
 
         // Checks-Effects-Interactions: update state before transfers
         m.state = MatchState.REFUNDED;
 
-        payable(m.playerA).transfer(m.stake);
-        payable(m.playerB).transfer(m.stake);
+        for (uint8 i = 0; i < m.teamSize; i++) {
+            payable(m.teamA[i]).transfer(m.stakePerPlayer);
+            payable(m.teamB[i]).transfer(m.stakePerPlayer);
+        }
 
         emit MatchRefunded(matchId);
     }
@@ -330,7 +401,7 @@ contract ArenaEscrow {
 
     /**
      * @notice Replace the oracle (e.g. Vision Engine wallet rotation).
-     *         Maps to: UPDATE env SET WALLET_ADDRESS = newOracle (Vision Engine)
+     *         Maps to: UPDATE env SET ORACLE_WALLET = newOracle (Vision Engine)
      */
     function setOracle(address newOracle) external onlyOwner {
         require(newOracle != address(0), "Oracle cannot be zero address");
@@ -342,7 +413,7 @@ contract ArenaEscrow {
     // ── View helpers ─────────────────────────────────────────────────────────
 
     /**
-     * @notice Returns full match details.
+     * @notice Returns full match details including both team rosters.
      *         Used by the API to verify on-chain state against DB state.
      */
     function getMatch(uint256 matchId)
@@ -350,15 +421,40 @@ contract ArenaEscrow {
         view
         matchExists(matchId)
         returns (
-            address playerA,
-            address playerB,
-            uint256 stake,
+            address[] memory teamA,
+            address[] memory teamB,
+            uint256 stakePerPlayer,
+            uint8   teamSize,
+            uint8   depositsTeamA,
+            uint8   depositsTeamB,
             MatchState state,
-            address winner
+            uint8   winningTeam
         )
     {
         Match storage m = matches[matchId];
-        return (m.playerA, m.playerB, m.stake, m.state, m.winner);
+        return (
+            m.teamA,
+            m.teamB,
+            m.stakePerPlayer,
+            m.teamSize,
+            m.depositsTeamA,
+            m.depositsTeamB,
+            m.state,
+            m.winningTeam
+        );
+    }
+
+    /**
+     * @notice Check if a specific address has deposited in a match.
+     *         Used by the API to validate player deposit status.
+     */
+    function isDeposited(uint256 matchId, address player)
+        external
+        view
+        matchExists(matchId)
+        returns (bool)
+    {
+        return hasDeposited[matchId][player];
     }
 
     /**

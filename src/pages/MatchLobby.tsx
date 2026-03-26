@@ -13,7 +13,8 @@ import {
   Search, Copy, UserPlus, Crown, Shield, Hash, KeyRound, Eye, EyeOff,
   AlertCircle, ChevronDown, Monitor, Smartphone, Zap, TrendingUp,
 } from "lucide-react";
-import type { MatchStatus, Game, Match } from "@/types";
+import type { MatchStatus, Game, Match, MatchMode } from "@/types";
+import { GAME_MODES, getDefaultMode, getTeamSize, getTotalPlayers } from "@/config/gameModes";
 
 // ─── Game configs ─────────────────────────────────────────────────────────────
 const PC_GAME_CONFIG: Record<string, { logo: string; color: string }> = {
@@ -201,6 +202,7 @@ const MatchLobby = () => {
   const [newMatchBet, setNewMatchBet] = useState<number | null>(null);
   const [newMatchGame, setNewMatchGame] = useState<Game | "">("");
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [newMatchMode, setNewMatchMode] = useState<MatchMode | null>(null);
   const [newMatchPassword, setNewMatchPassword] = useState("");
   const [selectedPublicLobbyId, setSelectedPublicLobbyId] = useState<string | null>(null);
   const [passwordPrompt, setPasswordPrompt] = useState<{ matchId: string; bet: number } | null>(null);
@@ -420,7 +422,7 @@ const MatchLobby = () => {
             <Swords className="h-4 w-4" /> Public Matches
           </TabsTrigger>
           <TabsTrigger value="custom" className="font-display data-[state=active]:bg-arena-purple/20 data-[state=active]:text-arena-purple flex-1 sm:flex-none gap-2">
-            <Users className="h-4 w-4" /> Custom 5v5
+            <Users className="h-4 w-4" /> Custom Matches
           </TabsTrigger>
         </TabsList>
 
@@ -589,11 +591,38 @@ const MatchLobby = () => {
                       </div>
                     )}
                     <GameDropdown label="PC Games" icon={Monitor} games={PC_GAME_CONFIG}
-                      activeGame={newMatchGame} onSelect={(g) => setNewMatchGame(g as Game)} />
+                      activeGame={newMatchGame} onSelect={(g) => {
+                        setNewMatchGame(g as Game);
+                        setNewMatchMode(getDefaultMode(g as Game).mode);
+                      }} />
                     <GameDropdown label="Mobile" icon={Smartphone} games={MOBILE_GAME_CONFIG}
                       activeGame={newMatchGame} onSelect={(g) => setNewMatchGame(g as Game)} comingSoon />
                   </div>
                 </div>
+                {/* Mode selection — available modes depend on selected game */}
+                {newMatchGame && (
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-2 block uppercase tracking-wider">Match Format</label>
+                    <div className="flex gap-2 flex-wrap">
+                      {GAME_MODES[newMatchGame as Game].map((opt) => (
+                        <button key={opt.mode} onClick={() => setNewMatchMode(opt.mode)}
+                          className={`px-4 py-1.5 rounded-xl border font-display text-sm font-bold transition-all ${
+                            newMatchMode === opt.mode
+                              ? "border-primary bg-primary/15 text-primary shadow-[0_0_12px_rgba(var(--primary-rgb),0.3)]"
+                              : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                          }`}>
+                          {opt.mode}
+                        </button>
+                      ))}
+                    </div>
+                    {newMatchMode && (
+                      <p className="text-xs text-muted-foreground mt-1.5 flex items-center gap-1">
+                        <Users className="h-3 w-3" />
+                        {getTeamSize(newMatchMode)} players per team · {getTotalPlayers(newMatchMode)} total
+                      </p>
+                    )}
+                  </div>
+                )}
                 {/* Bet */}
                 <div>
                   <label className="text-xs text-muted-foreground mb-2 block uppercase tracking-wider">Bet Amount</label>
@@ -622,23 +651,26 @@ const MatchLobby = () => {
                 </div>
                 <div className="flex gap-2 pt-1">
                   <Button
-                    disabled={!newMatchGame || !newMatchBet || !newMatchPassword}
+                    disabled={!newMatchGame || !newMatchBet || !newMatchPassword || !newMatchMode}
                     onClick={() => {
-                      if (!newMatchGame || !newMatchBet || !user) return;
-                      const created = addMatch({
+                      if (!newMatchGame || !newMatchBet || !newMatchMode || !user) return;
+                      const teamSize  = getTeamSize(newMatchMode);
+                      const created   = addMatch({
                         type: "custom", host: user.username, hostId: user.id, game: newMatchGame as Game,
-                        mode: "5v5", betAmount: newMatchBet, players: [], maxPlayers: 10, status: "waiting",
-                        password: newMatchPassword, teamA: [user.username], teamB: [], maxPerTeam: 5,
+                        mode: newMatchMode, betAmount: newMatchBet, players: [],
+                        maxPlayers: getTotalPlayers(newMatchMode), status: "waiting",
+                        password: newMatchPassword, teamA: [user.username], teamB: [],
+                        maxPerTeam: teamSize, teamSize, depositsReceived: 1,
                       });
                       lockEscrow(newMatchBet, created.id);
                       const { addNotification } = useNotificationStore.getState();
-                      addNotification({ type: "match_invite", title: "⚔️ Match Created", message: `Your ${newMatchGame} 5v5 ($${newMatchBet}) is live! Code: ${created.code}` });
-                      setCreateMode(false); setNewMatchPassword(""); setNewMatchGame(""); setNewMatchBet(null);
+                      addNotification({ type: "match_invite", title: "⚔️ Match Created", message: `Your ${newMatchGame} ${newMatchMode} ($${newMatchBet}) is live! Code: ${created.code}` });
+                      setCreateMode(false); setNewMatchPassword(""); setNewMatchGame(""); setNewMatchBet(null); setNewMatchMode(null);
                     }}
                     className="glow-green font-display">
-                    <Swords className="mr-2 h-4 w-4" /> Create 5v5 Match
+                    <Swords className="mr-2 h-4 w-4" /> Create {newMatchMode ?? ""} Match
                   </Button>
-                  <Button variant="outline" onClick={() => { setCreateMode(false); setNewMatchPassword(""); }}>Cancel</Button>
+                  <Button variant="outline" onClick={() => { setCreateMode(false); setNewMatchPassword(""); setNewMatchMode(null); }}>Cancel</Button>
                 </div>
               </div>
             )}

@@ -27,9 +27,11 @@ const SEED_MATCHES: Match[] = [
   { id: "m5", type: "public", host: "StormRider",   hostId: "u-storm", game: "CS2",           mode: "1v1", betAmount: 50,  players: ["StormRider", "p2", "p3", "p4", "p5", "p6"],                 maxPlayers: 10, status: "waiting",     createdAt: "2026-03-25T08:00:00" },
   { id: "m6", type: "public", host: "CyberWolf",    hostId: "u-cyber", game: "Valorant",      mode: "1v1", betAmount: 10,  players: Array(10).fill("p"),                                          maxPlayers: 10, status: "in_progress", createdAt: "2026-03-25T07:00:00", timeLeft: "05:21" },
   // ── Custom lobby matches ─────────────────────────────────────────────
-  { id: "c1", type: "custom", host: "ProGamer99",   hostId: "u-pro",   game: "CS2",           mode: "5v5", betAmount: 50,  players: [], maxPlayers: 10, status: "waiting",     createdAt: "2026-03-25T12:00:00", code: "ARENA-7X2K", password: "1234",   teamA: ["ProGamer99", "AceShot", "NitroX", "FlashBang", "SmokeY"],        teamB: ["DarkSide", "VenomX", "IceBreaker"],                                maxPerTeam: 5 },
-  { id: "c2", type: "custom", host: "EliteSquad",   hostId: "u-elite", game: "Valorant",      mode: "5v5", betAmount: 25,  players: [], maxPlayers: 10, status: "waiting",     createdAt: "2026-03-25T11:00:00", code: "ARENA-M4QP", password: "gg99",   teamA: ["EliteSquad", "PhoenixRise", "JettMain"],                          teamB: ["SageHealer", "OmenShadow", "RazeBlast", "BrimFire", "KillJoyX"], maxPerTeam: 5 },
-  { id: "c3", type: "custom", host: "CS2Kings",     hostId: "u-kings", game: "CS2",           mode: "5v5", betAmount: 100, players: [], maxPlayers: 10, status: "in_progress", createdAt: "2026-03-25T10:00:00", code: "ARENA-9FHL", password: "elite5", teamA: ["CS2Kings", "HeadClick", "SprayMaster", "ClutchKing", "AWPGod"],  teamB: ["RushB", "SiteHold", "RotateKing", "FlankMaster", "Defuser"],     maxPerTeam: 5 },
+  { id: "c1", type: "custom", host: "ProGamer99",   hostId: "u-pro",   game: "CS2",      mode: "5v5", betAmount: 50,  players: [], maxPlayers: 10, maxPerTeam: 5, teamSize: 5, status: "waiting",     createdAt: "2026-03-25T12:00:00", code: "ARENA-7X2K", password: "1234",   teamA: ["ProGamer99", "AceShot", "NitroX", "FlashBang", "SmokeY"],       teamB: ["DarkSide", "VenomX", "IceBreaker"],                                depositsReceived: 8 },
+  { id: "c2", type: "custom", host: "EliteSquad",   hostId: "u-elite", game: "Valorant", mode: "5v5", betAmount: 25,  players: [], maxPlayers: 10, maxPerTeam: 5, teamSize: 5, status: "waiting",     createdAt: "2026-03-25T11:00:00", code: "ARENA-M4QP", password: "gg99",   teamA: ["EliteSquad", "PhoenixRise", "JettMain"],                         teamB: ["SageHealer", "OmenShadow", "RazeBlast", "BrimFire", "KillJoyX"], depositsReceived: 8 },
+  { id: "c3", type: "custom", host: "CS2Kings",     hostId: "u-kings", game: "CS2",      mode: "5v5", betAmount: 100, players: [], maxPlayers: 10, maxPerTeam: 5, teamSize: 5, status: "in_progress", createdAt: "2026-03-25T10:00:00", code: "ARENA-9FHL", password: "elite5", teamA: ["CS2Kings", "HeadClick", "SprayMaster", "ClutchKing", "AWPGod"], teamB: ["RushB", "SiteHold", "RotateKing", "FlankMaster", "Defuser"],     depositsReceived: 10 },
+  { id: "c4", type: "custom", host: "WingmanPro",   hostId: "u-wing",  game: "CS2",      mode: "2v2", betAmount: 30,  players: [], maxPlayers: 4,  maxPerTeam: 2, teamSize: 2, status: "waiting",     createdAt: "2026-03-25T09:30:00", code: "ARENA-W2V2", password: "wing2", teamA: ["WingmanPro", "SniperX"],                                          teamB: [],                                                                 depositsReceived: 2 },
+  { id: "c5", type: "custom", host: "SquadLeader",  hostId: "u-squad", game: "PUBG",     mode: "4v4", betAmount: 20,  players: [], maxPlayers: 8,  maxPerTeam: 4, teamSize: 4, status: "waiting",     createdAt: "2026-03-25T08:45:00", code: "ARENA-SQ4V", password: "pubg4", teamA: ["SquadLeader", "RifleKing"],                                       teamB: [],                                                                 depositsReceived: 2 },
   // ── user-001 match history ───────────────────────────────────────────
   { id: "h1",  type: "public", host: "ShadowKill3r", hostId: "user-001", game: "CS2",          mode: "1v1", betAmount: 50,  players: ["user-001", "ShadowKill3r"], maxPlayers: 2, status: "completed",   winnerId: "user-001", createdAt: "2026-03-25T09:00:00", endedAt: "2026-03-25T09:45:00", teamA: ["user-001"],    teamB: ["ShadowKill3r"], maxPerTeam: 1 },
   { id: "h2",  type: "public", host: "NightHawk",   hostId: "u-night",  game: "Valorant",     mode: "1v1", betAmount: 25,  players: ["NightHawk", "user-001"],    maxPlayers: 2, status: "completed",   winnerId: "u-night",  createdAt: "2026-03-24T18:00:00", endedAt: "2026-03-24T18:40:00", teamA: ["NightHawk"],   teamB: ["user-001"],    maxPerTeam: 1 },
@@ -62,21 +64,37 @@ export const useMatchStore = create<MatchState>((set, get) => ({
     const match = get().matches.find((m) => m.id === matchId);
     if (!match || match.status !== "waiting") return false;
 
+    // Prevent a player from joining twice
+    const alreadyInA = (match.teamA ?? []).includes(playerId);
+    const alreadyInB = (match.teamB ?? []).includes(playerId);
+    if (alreadyInA || alreadyInB || match.players.includes(playerId)) return false;
+
     if (match.type === "custom" && team) {
-      const teamKey = team === "A" ? "teamA" : "teamB";
+      const teamKey    = team === "A" ? "teamA" : "teamB";
       const currentTeam = match[teamKey] ?? [];
-      if (currentTeam.length >= (match.maxPerTeam ?? 5)) return false;
-      if (currentTeam.includes(playerId)) return false;
+      const maxPerTeam  = match.maxPerTeam ?? match.teamSize ?? 5;
+      if (currentTeam.length >= maxPerTeam) return false;
+
+      const updatedTeam = [...currentTeam, playerId];
+      const newTeamA    = teamKey === "teamA" ? updatedTeam : (match.teamA ?? []);
+      const newTeamB    = teamKey === "teamB" ? updatedTeam : (match.teamB ?? []);
+      const deposited   = (match.depositsReceived ?? 0) + 1;
+      // Auto-activate when all slots filled (teamSize * 2 deposits)
+      const totalNeeded = (match.teamSize ?? maxPerTeam) * 2;
+      const newStatus: MatchStatus = deposited >= totalNeeded ? "in_progress" : "waiting";
+
       set((state) => ({
         matches: state.matches.map((m) =>
-          m.id === matchId ? { ...m, [teamKey]: [...currentTeam, playerId] } : m
+          m.id === matchId
+            ? { ...m, [teamKey]: updatedTeam, teamA: newTeamA, teamB: newTeamB, depositsReceived: deposited, status: newStatus }
+            : m
         ),
       }));
       return true;
     }
 
+    // Public match — simple player list
     if (match.players.length >= match.maxPlayers) return false;
-    if (match.players.includes(playerId)) return false;
     set((state) => ({
       matches: state.matches.map((m) =>
         m.id === matchId ? { ...m, players: [...m.players, playerId] } : m

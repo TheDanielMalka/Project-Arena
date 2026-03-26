@@ -5,7 +5,7 @@
 -- ── Enums ────────────────────────────────────────────────────
 CREATE TYPE match_status   AS ENUM ('waiting','in_progress','completed','cancelled','disputed');
 CREATE TYPE match_type     AS ENUM ('public','custom');
-CREATE TYPE match_mode     AS ENUM ('1v1','5v5');
+CREATE TYPE match_mode     AS ENUM ('1v1','2v2','4v4','5v5');
 CREATE TYPE game           AS ENUM ('CS2','Valorant','Fortnite','Apex Legends','PUBG','COD','League of Legends');
 CREATE TYPE tx_type        AS ENUM ('deposit','withdrawal','match_win','match_loss','fee','refund','escrow_lock','escrow_release');
 CREATE TYPE tx_status      AS ENUM ('completed','pending','failed');
@@ -79,17 +79,25 @@ CREATE TABLE matches (
     max_per_team INT,
     winner_id         UUID REFERENCES users(id),
     on_chain_match_id BIGINT,           -- ArenaEscrow.sol matchId (uint256), set on MatchCreated event
+    deposits_received INT DEFAULT 0,    -- how many players locked funds on-chain (set on PlayerDeposited events)
+    stake_per_player  NUMERIC(12,2),    -- bet_amount per player (redundant but explicit for contract alignment)
     created_at        TIMESTAMPTZ DEFAULT NOW(),
     started_at        TIMESTAMPTZ,
     ended_at          TIMESTAMPTZ
 );
 
 -- ── Match Players (join table) ───────────────────────────────
+-- One row per player per match. Wallet address verified against users.wallet_address.
+-- DB alignment: ArenaEscrow PlayerDeposited event populates has_deposited + deposited_at.
 CREATE TABLE match_players (
-    match_id UUID REFERENCES matches(id) ON DELETE CASCADE,
-    user_id  UUID REFERENCES users(id) ON DELETE CASCADE,
-    team     VARCHAR(1) CHECK (team IN ('A','B')),
-    joined_at TIMESTAMPTZ DEFAULT NOW(),
+    match_id       UUID REFERENCES matches(id) ON DELETE CASCADE,
+    user_id        UUID REFERENCES users(id) ON DELETE CASCADE,
+    team           VARCHAR(1) CHECK (team IN ('A','B')),
+    wallet_address VARCHAR(42),           -- on-chain address used to deposit (verified vs users.wallet_address)
+    has_deposited  BOOLEAN DEFAULT FALSE, -- set TRUE on ArenaEscrow PlayerDeposited event
+    deposited_at   TIMESTAMPTZ,           -- timestamp of on-chain deposit
+    deposit_amount NUMERIC(12,2),         -- matches matches.bet_amount (stored for audit trail)
+    joined_at      TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY (match_id, user_id)
 );
 
