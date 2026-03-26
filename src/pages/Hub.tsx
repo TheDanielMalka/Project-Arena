@@ -76,48 +76,61 @@ function FriendChatPanel({ friend, myId, myUsername, onClose }: FriendChatPanelP
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
 
-  const tierColor = TIER_COLOR[friend.friendTier] ?? "#888";
+  const tc = TIER_COLOR[friend.friendTier] ?? "#888";
 
   return (
-    <div className="flex flex-col h-full border-l border-border/50">
-      <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border/50 bg-secondary/20 shrink-0">
-        <div className="flex items-center gap-2.5">
+    <div className="flex flex-col h-full border-l border-border/30">
+
+      {/* ── Header ── */}
+      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border/30 shrink-0"
+        style={{ background: `${tc}08` }}>
+        <div className="flex items-center gap-2">
           <div
-            className="w-8 h-8 rounded-xl flex items-center justify-center font-display text-xs font-bold shrink-0"
-            style={{ background: `${tierColor}20`, border: `1.5px solid ${tierColor}50`, color: tierColor }}
+            className="w-7 h-7 rounded-lg flex items-center justify-center font-display text-[10px] font-bold shrink-0"
+            style={{ background: `${tc}20`, border: `1px solid ${tc}40`, color: tc }}
           >
             {friend.friendAvatarInitials}
           </div>
-          <div>
-            <p className="font-display text-xs font-semibold">{friend.friendUsername}</p>
-            <p className="text-[10px] text-muted-foreground font-mono">{friend.friendArenaId}</p>
+          <div className="min-w-0">
+            <p className="font-display text-[11px] font-bold leading-tight truncate">{friend.friendUsername}</p>
+            <p className="font-mono text-[9px] leading-tight" style={{ color: tc }}>{friend.friendArenaId}</p>
           </div>
+          <span
+            className="hidden sm:inline-flex items-center px-1.5 py-px rounded-full text-[8px] font-bold shrink-0 ml-1"
+            style={{ background: `${tc}15`, color: tc, border: `1px solid ${tc}30` }}
+          >
+            {friend.friendRank}
+          </span>
         </div>
-        <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
-          <X className="h-4 w-4" />
+        <button onClick={onClose} className="text-muted-foreground/40 hover:text-muted-foreground transition-colors p-0.5">
+          <X className="h-3.5 w-3.5" />
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-2 min-h-0">
+      {/* ── Messages ── */}
+      <div className="flex-1 overflow-y-auto px-3 py-2.5 space-y-1 min-h-0"
+        style={{ background: "hsl(var(--background)/0.4)" }}>
         {messages.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">
-            <MessageCircle className="h-8 w-8 mx-auto mb-2 opacity-30" />
-            <p className="text-xs">Start the conversation!</p>
+          <div className="flex flex-col items-center justify-center h-full text-muted-foreground/40 gap-1.5">
+            <MessageCircle className="h-7 w-7 opacity-40" />
+            <p className="text-[11px]">Say hello to {friend.friendUsername}</p>
           </div>
         ) : (
           messages.map((msg) => {
             const isMine = msg.senderId === myId;
+            const time   = new Date(msg.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
             return (
               <div key={msg.id} className={cn("flex", isMine ? "justify-end" : "justify-start")}>
                 <div className={cn(
-                  "max-w-[75%] rounded-2xl px-3 py-2 text-sm",
-                  isMine ? "bg-primary text-primary-foreground rounded-br-sm"
-                         : "bg-secondary/60 text-foreground rounded-bl-sm"
+                  "max-w-[78%] rounded-xl px-2.5 py-1.5",
+                  isMine
+                    ? "bg-primary text-primary-foreground rounded-br-[3px]"
+                    : "bg-secondary/80 text-foreground rounded-bl-[3px] border border-border/20"
                 )}>
-                  <p className="leading-relaxed">{msg.content}</p>
-                  <p className={cn("text-[9px] mt-0.5 tabular-nums",
-                    isMine ? "text-primary-foreground/60" : "text-muted-foreground")}>
-                    {new Date(msg.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  <p className="text-[11px] leading-relaxed break-words">{msg.content}</p>
+                  <p className={cn("text-[8px] tabular-nums text-right mt-0.5 leading-none",
+                    isMine ? "text-primary-foreground/50" : "text-muted-foreground/60")}>
+                    {time}
                   </p>
                 </div>
               </div>
@@ -127,18 +140,28 @@ function FriendChatPanel({ friend, myId, myUsername, onClose }: FriendChatPanelP
         <div ref={bottomRef} />
       </div>
 
-      <div className="flex items-center gap-2 px-3 py-3 border-t border-border/50 shrink-0">
+      {/* ── Input ── */}
+      <div className="flex items-center gap-1.5 px-2.5 py-2 border-t border-border/30 shrink-0">
         <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKey}
-          placeholder={`Message ${friend.friendUsername}…`}
-          className="flex-1 bg-secondary/50 border-border/50 text-sm h-9"
+          placeholder={`Message…`}
+          className="flex-1 bg-secondary/40 border-border/30 text-[12px] h-7 rounded-lg px-2.5"
           maxLength={2000}
         />
-        <Button size="icon" className="h-9 w-9 shrink-0" onClick={handleSend} disabled={!input.trim()}>
-          <Send className="h-4 w-4" />
-        </Button>
+        <button
+          onClick={handleSend}
+          disabled={!input.trim()}
+          className={cn(
+            "h-7 w-7 rounded-lg flex items-center justify-center shrink-0 transition-all",
+            input.trim()
+              ? "bg-primary text-primary-foreground hover:bg-primary/90"
+              : "bg-secondary/50 text-muted-foreground/30 cursor-not-allowed"
+          )}
+        >
+          <Send className="h-3 w-3" />
+        </button>
       </div>
     </div>
   );
@@ -161,64 +184,91 @@ function MsgChatPanel({ friend, myId, myUsername, onBack }: {
 
   const tc = TIER_COLOR[friend.friendTier] ?? "#888";
 
+  const doSend = () => {
+    if (!input.trim()) return;
+    sendMsg({ myId, myUsername, friendId: friend.friendId, content: input });
+    setInput("");
+  };
+
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border/50 shrink-0">
-        <button onClick={onBack} className="md:hidden text-muted-foreground hover:text-foreground transition-colors mr-1">
-          <ArrowLeft className="h-4 w-4" />
+
+      {/* ── Header ── */}
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border/30 shrink-0"
+        style={{ background: `${tc}08` }}>
+        <button onClick={onBack} className="md:hidden text-muted-foreground/40 hover:text-muted-foreground transition-colors mr-0.5">
+          <ArrowLeft className="h-3.5 w-3.5" />
         </button>
-        <div className="w-8 h-8 rounded-xl flex items-center justify-center font-display text-xs font-bold shrink-0"
-          style={{ background: `${tc}20`, border: `1.5px solid ${tc}50`, color: tc }}>
+        <div className="w-7 h-7 rounded-lg flex items-center justify-center font-display text-[10px] font-bold shrink-0"
+          style={{ background: `${tc}20`, border: `1px solid ${tc}40`, color: tc }}>
           {friend.friendAvatarInitials}
         </div>
-        <div>
-          <p className="font-display text-xs font-semibold">{friend.friendUsername}</p>
-          <p className="font-mono text-[9px] text-muted-foreground">{friend.friendArenaId}</p>
+        <div className="flex-1 min-w-0">
+          <p className="font-display text-[11px] font-bold leading-tight truncate">{friend.friendUsername}</p>
+          <p className="font-mono text-[9px] leading-tight" style={{ color: tc }}>{friend.friendArenaId}</p>
         </div>
+        <span
+          className="hidden sm:inline-flex items-center px-1.5 py-px rounded-full text-[8px] font-bold shrink-0"
+          style={{ background: `${tc}15`, color: tc, border: `1px solid ${tc}30` }}
+        >
+          {friend.friendRank}
+        </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2 min-h-0">
+      {/* ── Messages ── */}
+      <div className="flex-1 overflow-y-auto px-3 py-2.5 space-y-1 min-h-0"
+        style={{ background: "hsl(var(--background)/0.4)" }}>
+        {messages.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full text-muted-foreground/40 gap-1.5">
+            <MessageCircle className="h-7 w-7 opacity-40" />
+            <p className="text-[11px]">Say hello to {friend.friendUsername}</p>
+          </div>
+        )}
         {messages.map((msg) => {
           const mine = msg.senderId === myId;
+          const time = new Date(msg.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
           return (
             <div key={msg.id} className={cn("flex", mine ? "justify-end" : "justify-start")}>
-              <div className={cn("max-w-[72%] rounded-2xl px-3 py-2 text-sm",
-                mine ? "bg-primary text-primary-foreground rounded-br-sm"
-                     : "bg-secondary/60 text-foreground rounded-bl-sm")}>
-                <p className="leading-relaxed break-words">{msg.content}</p>
-                <p className={cn("text-[9px] mt-0.5 tabular-nums", mine ? "text-primary-foreground/60" : "text-muted-foreground")}>
-                  {new Date(msg.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              <div className={cn(
+                "max-w-[78%] rounded-xl px-2.5 py-1.5",
+                mine
+                  ? "bg-primary text-primary-foreground rounded-br-[3px]"
+                  : "bg-secondary/80 text-foreground rounded-bl-[3px] border border-border/20"
+              )}>
+                <p className="text-[11px] leading-relaxed break-words">{msg.content}</p>
+                <p className={cn("text-[8px] tabular-nums text-right mt-0.5 leading-none",
+                  mine ? "text-primary-foreground/50" : "text-muted-foreground/60")}>
+                  {time}
                 </p>
               </div>
             </div>
           );
         })}
-        {messages.length === 0 && (
-          <div className="text-center py-8 text-muted-foreground">
-            <MessageCircle className="h-8 w-8 mx-auto mb-2 opacity-20" />
-            <p className="text-xs">Start the conversation</p>
-          </div>
-        )}
         <div ref={bottomRef} />
       </div>
 
-      <div className="flex items-center gap-2 px-3 py-3 border-t border-border/50 shrink-0">
+      {/* ── Input ── */}
+      <div className="flex items-center gap-1.5 px-2.5 py-2 border-t border-border/30 shrink-0">
         <Input
-          value={input} onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              if (input.trim()) { sendMsg({ myId, myUsername, friendId: friend.friendId, content: input }); setInput(""); }
-            }
-          }}
-          placeholder={`Message ${friend.friendUsername}…`}
-          className="flex-1 bg-secondary/50 border-border/50 text-sm h-8" maxLength={2000}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); } }}
+          placeholder="Message…"
+          className="flex-1 bg-secondary/40 border-border/30 text-[12px] h-7 rounded-lg px-2.5"
+          maxLength={2000}
         />
-        <Button size="icon" className="h-8 w-8 shrink-0"
-          onClick={() => { if (input.trim()) { sendMsg({ myId, myUsername, friendId: friend.friendId, content: input }); setInput(""); } }}
-          disabled={!input.trim()}>
-          <Send className="h-3.5 w-3.5" />
-        </Button>
+        <button
+          onClick={doSend}
+          disabled={!input.trim()}
+          className={cn(
+            "h-7 w-7 rounded-lg flex items-center justify-center shrink-0 transition-all",
+            input.trim()
+              ? "bg-primary text-primary-foreground hover:bg-primary/90"
+              : "bg-secondary/50 text-muted-foreground/30 cursor-not-allowed"
+          )}
+        >
+          <Send className="h-3 w-3" />
+        </button>
       </div>
     </div>
   );
