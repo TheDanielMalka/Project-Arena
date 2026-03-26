@@ -32,9 +32,13 @@ lerna-debug.log*
 .Python
 env/
 venv/
+winvenv/
+**/winvenv/
 ENV/
 .venv/
 **/.venv/
+.wvenv/
+**/.wvenv/
 build/
 downloads/
 develop-eggs/
