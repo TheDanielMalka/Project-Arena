@@ -34,7 +34,7 @@ def register_player(
         )
         db.add(player)
         log.info("registration success | wallet=%s display_name=%s", wallet_address, steam_display_name)
-        return RegistrationResult(success=True, message="השחקן נרשם בהצלחה")
+        return RegistrationResult(success=True, message="Player registered successfully")
 
     except SmurfDetected as e:
         log.warning("registration blocked | %s", e)
