@@ -5,6 +5,8 @@ interface UserState {
   user: UserProfile | null;
   isAuthenticated: boolean;
   walletConnected: boolean;
+  showLoginGreeting: boolean;
+  greetingType: "login" | "signup" | "google" | null;
   login: (email: string, password: string) => boolean;
   signup: (username: string, email: string, password: string, steamId?: string) => boolean;
   loginWithGoogle: () => void;
@@ -12,6 +14,7 @@ interface UserState {
   connectWallet: () => void;
   disconnectWallet: () => void;
   updateProfile: (updates: Partial<UserProfile>) => void;
+  clearLoginGreeting: () => void;
 }
 
 const MOCK_USER: UserProfile = {
@@ -53,16 +56,17 @@ export const useUserStore = create<UserState>((set) => ({
   user: null,
   isAuthenticated: false,
   walletConnected: false,
+  showLoginGreeting: false,
+  greetingType: null,
 
   login: (email: string, _password: string) => {
-    // Mock: any email/password works
     const normalizedEmail = email.trim().toLowerCase();
     const user: UserProfile = {
       ...MOCK_USER,
       email: normalizedEmail,
       role: ADMIN_EMAILS.has(normalizedEmail) ? "admin" : "user",
     };
-    set({ user, isAuthenticated: true, walletConnected: true });
+    set({ user, isAuthenticated: true, walletConnected: true, showLoginGreeting: true, greetingType: "login" });
     return true;
   },
 
@@ -78,15 +82,17 @@ export const useUserStore = create<UserState>((set) => ({
       stats: { matches: 0, wins: 0, losses: 0, winRate: 0, totalEarnings: 0, inEscrow: 0, xp: 0 },
       balance: { total: 0, available: 0, inEscrow: 0 },
     };
-    set({ user, isAuthenticated: true, walletConnected: false });
+    set({ user, isAuthenticated: true, walletConnected: false, showLoginGreeting: true, greetingType: "signup" });
     return true;
   },
 
   loginWithGoogle: () => {
-    set({ user: { ...MOCK_USER, role: "user" }, isAuthenticated: true, walletConnected: true });
+    set({ user: { ...MOCK_USER, role: "user" }, isAuthenticated: true, walletConnected: true, showLoginGreeting: true, greetingType: "google" });
   },
 
-  logout: () => set({ user: null, isAuthenticated: false, walletConnected: false }),
+  logout: () => set({ user: null, isAuthenticated: false, walletConnected: false, showLoginGreeting: false, greetingType: null }),
+
+  clearLoginGreeting: () => set({ showLoginGreeting: false, greetingType: null }),
 
   connectWallet: () => set({ walletConnected: true }),
 
