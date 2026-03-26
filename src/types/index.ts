@@ -139,25 +139,47 @@ export interface Dispute {
 }
 
 // ─── Audit / Admin ───────────────────────────────────────────
+// DB: audit_logs table
 
 export interface AuditLog {
-  id: string;
-  admin: string;
-  action: string;
-  target: string;
-  detail: string;
-  timestamp: string;
+  id: string;            // DB: audit_logs.id (UUID)
+  adminId: string;       // DB: audit_logs.admin_id (UUID → users.id)
+  adminName: string;     // DB: JOIN users.username
+  action: string;        // DB: audit_logs.action (e.g. BAN_USER, RESOLVE_DISPUTE)
+  target: string;        // DB: audit_logs.target (entity id, e.g. U-301, D-1051)
+  detail: string;        // DB: audit_logs.detail
+  createdAt: string;     // DB: audit_logs.created_at (ISO 8601)
 }
 
+// DB: users table (filtered by status IN ('flagged','banned'))
 export interface FlaggedUser {
+  id: string;            // DB: users.id (UUID)
+  username: string;      // DB: users.username
+  walletAddress: string; // DB: users.wallet_address — truncated in UI
+  reason: string;        // DB: flag trigger reason (anti-cheat / anomaly)
+  winRate: number;       // DB: user_stats.win_rate (0–100)
+  matchesPlayed: number; // DB: user_stats.matches_played
+  flaggedAt: string;     // DB: users.updated_at when status changed (ISO 8601)
+  status: "flagged" | "banned" | "cleared"; // DB: users.status
+}
+
+// Live activity feed — real-time events (WebSocket / polling when DB connected)
+export interface AdminActivityEvent {
   id: string;
-  username: string;
-  walletShort: string;
-  reason: string;
-  winRate: number;
-  matchesPlayed: number;
-  flaggedAt: string;
-  status: UserStatus;
+  type: "match_start" | "match_end" | "payout" | "deposit" | "login" | "dispute" | "ban";
+  message: string;
+  timestamp: string;     // ISO 8601 / locale time
+  highlight?: boolean;   // high-severity events (disputes, bans)
+}
+
+// DB: platform_settings table (single-row config)
+export interface PlatformSettings {
+  feePercent: number;               // DB: fee_percent        default 5
+  platformBettingMax: number;       // DB: daily_betting_max  default 500
+  maintenanceMode: boolean;         // DB: maintenance_mode   default false
+  registrationOpen: boolean;        // DB: registration_open  default true
+  autoDisputeEscalation: boolean;   // DB: auto_dispute_escalation default true
+  killSwitchActive: boolean;        // DB: kill_switch_active default false
 }
 
 // ─── Daily Challenges ────────────────────────────────────────
