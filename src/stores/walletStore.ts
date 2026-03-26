@@ -1,11 +1,15 @@
 import { create } from "zustand";
 import type { Transaction, TransactionType, TransactionStatus, Token, Network } from "@/types";
 
+// Platform-enforced hard cap — cannot be exceeded by any user
+export const PLATFORM_BETTING_MAX = 500;
+
 interface WalletState {
   tokens: Token[];
   transactions: Transaction[];
-  dailyBettingLimit: number;
-  dailyBettingUsed: number;
+  platformBettingMax: number;   // read-only — set by platform (500)
+  dailyBettingLimit: number;    // user-chosen limit: 50–500
+  dailyBettingUsed: number;     // resets daily
   selectedNetwork: Network;
   addresses: Record<Network, string>;
 
@@ -16,6 +20,7 @@ interface WalletState {
   releaseEscrow: (amount: number, matchId: string, won: boolean) => Transaction;
   addTransaction: (tx: Omit<Transaction, "id" | "timestamp">) => Transaction;
   setNetwork: (network: Network) => void;
+  setDailyBettingLimit: (limit: number) => void;
   getTotalBalance: () => number;
   getAvailableBalance: () => number;
 }
@@ -52,12 +57,16 @@ const ADDRESSES: Record<Network, string> = {
 export const useWalletStore = create<WalletState>((set, get) => ({
   tokens: SEED_TOKENS,
   transactions: SEED_TRANSACTIONS,
-  dailyBettingLimit: 500,
+  platformBettingMax: PLATFORM_BETTING_MAX,
+  dailyBettingLimit: 500,   // user starts at platform max — can lower it
   dailyBettingUsed: 200,
   selectedNetwork: "bsc",
   addresses: ADDRESSES,
 
   setNetwork: (network) => set({ selectedNetwork: network }),
+
+  setDailyBettingLimit: (limit) =>
+    set({ dailyBettingLimit: Math.min(Math.max(limit, 50), PLATFORM_BETTING_MAX) }),
 
   getTotalBalance: () => get().tokens.reduce((sum, t) => sum + t.usdValue, 0),
 

@@ -112,8 +112,9 @@ export interface Token {
 export interface WalletInfo {
   addresses: Record<Network, string>;
   selectedNetwork: Network;
-  dailyBettingLimit: number;
-  dailyBettingUsed: number;
+  platformBettingMax: number;   // platform hard cap (500) — read-only
+  dailyBettingLimit: number;    // user-chosen: 50–platformBettingMax
+  dailyBettingUsed: number;     // resets daily
   twoFactorEnabled: boolean;
   withdrawWhitelist: boolean;
 }
