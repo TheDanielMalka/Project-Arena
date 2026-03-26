@@ -6,7 +6,7 @@
 CREATE TYPE match_status   AS ENUM ('waiting','in_progress','completed','cancelled','disputed');
 CREATE TYPE match_type     AS ENUM ('public','custom');
 CREATE TYPE match_mode     AS ENUM ('1v1','5v5');
-CREATE TYPE game           AS ENUM ('CS2','Valorant','Fortnite','Apex Legends');
+CREATE TYPE game           AS ENUM ('CS2','Valorant','Fortnite','Apex Legends','PUBG','COD','League of Legends');
 CREATE TYPE tx_type        AS ENUM ('deposit','withdrawal','match_win','match_loss','fee','refund','escrow_lock','escrow_release');
 CREATE TYPE tx_status      AS ENUM ('completed','pending','failed');
 CREATE TYPE dispute_status AS ENUM ('open','reviewing','resolved','escalated');
@@ -28,6 +28,8 @@ CREATE TABLE users (
     tier            VARCHAR(20) DEFAULT 'Bronze',
     verified        BOOLEAN DEFAULT FALSE,
     avatar_initials VARCHAR(4),
+    avatar          TEXT DEFAULT 'initials',    -- 'initials' | emoji | 'upload:{dataURL}'
+    avatar_bg       TEXT DEFAULT 'default',     -- bgId from avatarBgs.ts
     preferred_game  game DEFAULT 'CS2',
     status          user_status DEFAULT 'active',
     created_at      TIMESTAMPTZ DEFAULT NOW(),
@@ -50,7 +52,8 @@ CREATE TABLE user_stats (
     losses          INT DEFAULT 0,
     win_rate        NUMERIC(5,2) DEFAULT 0,
     total_earnings  NUMERIC(12,2) DEFAULT 0,
-    in_escrow       NUMERIC(12,2) DEFAULT 0
+    in_escrow       NUMERIC(12,2) DEFAULT 0,
+    xp              INT DEFAULT 0               -- earned via challenges & wins
 );
 
 -- ── User Balances ────────────────────────────────────────────
@@ -146,6 +149,34 @@ CREATE TABLE platform_settings (
 );
 -- Seed the single row
 INSERT INTO platform_settings DEFAULT VALUES;
+
+-- ── User Settings (per-user configurable limits) ─────────────
+CREATE TABLE user_settings (
+    user_id              UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    daily_betting_limit  NUMERIC(10,2) DEFAULT 500.00 CHECK (daily_betting_limit >= 50),
+    -- daily_betting_used resets at midnight UTC — computed from transactions, not stored
+    two_factor_enabled   BOOLEAN DEFAULT FALSE,
+    withdraw_whitelist   BOOLEAN DEFAULT FALSE,
+    notif_match_results  BOOLEAN DEFAULT TRUE,
+    notif_payouts        BOOLEAN DEFAULT TRUE,
+    notif_system_alerts  BOOLEAN DEFAULT TRUE,
+    notif_promotions     BOOLEAN DEFAULT FALSE,
+    region               VARCHAR(10) DEFAULT 'EU',
+    updated_at           TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── Daily Challenge Progress (per-user, per-day) ──────────────
+CREATE TABLE user_challenge_progress (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id      UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+    challenge_id VARCHAR(50) NOT NULL,    -- matches DailyChallenge.id (server-defined)
+    current      INT DEFAULT 0,           -- current progress toward target
+    status       VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active','completed','claimed')),
+    date         DATE NOT NULL DEFAULT CURRENT_DATE,  -- resets daily
+    claimed_at   TIMESTAMPTZ,
+    UNIQUE (user_id, challenge_id, date)
+);
+CREATE INDEX idx_challenge_progress_user ON user_challenge_progress(user_id, date);
 
 -- ── Notifications ────────────────────────────────────────────
 CREATE TABLE notifications (

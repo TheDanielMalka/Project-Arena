@@ -3,7 +3,7 @@
 export type MatchStatus = "waiting" | "in_progress" | "completed" | "cancelled" | "disputed";
 export type MatchType = "public" | "custom";
 export type MatchMode = "1v1" | "5v5";
-export type Game = "CS2" | "Valorant" | "Fortnite" | "Apex Legends";
+export type Game = "CS2" | "Valorant" | "Fortnite" | "Apex Legends" | "PUBG" | "COD" | "League of Legends";
 
 export type TransactionType = "deposit" | "withdrawal" | "match_win" | "match_loss" | "fee" | "refund" | "escrow_lock" | "escrow_release";
 export type TransactionStatus = "completed" | "pending" | "failed";
@@ -102,21 +102,21 @@ export interface Transaction {
 export interface Token {
   symbol: string;
   name: string;
-  balance: number;
-  usdValue: number;
-  change24h: number;
-  icon: string;
+  balance: number;   // DB: wallet_tokens.balance (NUMERIC 18,8)
+  usdValue: number;  // DB: wallet_tokens.usd_value
+  change24h: number; // DB: wallet_tokens.change_24h
+  icon: string;      // derived client-side from symbol (emoji map) — not stored in DB
   network: Network;
 }
 
 export interface WalletInfo {
-  addresses: Record<Network, string>;
-  selectedNetwork: Network;
-  platformBettingMax: number;   // platform hard cap (500) — read-only
-  dailyBettingLimit: number;    // user-chosen: 50–platformBettingMax
-  dailyBettingUsed: number;     // resets daily
-  twoFactorEnabled: boolean;
-  withdrawWhitelist: boolean;
+  addresses: Record<Network, string>;      // DB: wallet_addresses table
+  selectedNetwork: Network;                // client-side preference only
+  platformBettingMax: number;              // DB: platform_settings.daily_betting_max (read-only)
+  dailyBettingLimit: number;              // DB: user_settings.daily_betting_limit (user-chosen: 50–max)
+  dailyBettingUsed: number;               // computed from transactions WHERE type='escrow_lock' AND date=today
+  twoFactorEnabled: boolean;              // DB: user_settings.two_factor_enabled
+  withdrawWhitelist: boolean;             // DB: user_settings.withdraw_whitelist
 }
 
 // ─── Disputes ────────────────────────────────────────────────
@@ -124,16 +124,16 @@ export interface WalletInfo {
 export interface Dispute {
   id: string;
   matchId: string;
-  playerA: string;
-  playerB: string;
-  game: Game;
-  stake: number;
+  playerA: string;   // DB: disputes.player_a (UUID → users.username via JOIN)
+  playerB: string;   // DB: disputes.player_b (UUID → users.username via JOIN)
+  game: Game;        // DB: derived via JOIN matches.game
+  stake: number;     // DB: derived via JOIN matches.bet_amount
   reason: string;
   status: DisputeStatus;
   resolution: DisputeResolution;
   createdAt: string;
   resolvedAt?: string;
-  resolvedBy?: string;
+  resolvedBy?: string;  // DB: disputes.resolved_by (UUID → users.username via JOIN)
   evidence?: string;
   adminNotes?: string;
 }
@@ -216,10 +216,11 @@ export type NotificationType = "match_result" | "payout" | "system" | "dispute" 
 
 export interface Notification {
   id: string;
+  userId?: string;   // DB: notifications.user_id — optional on client (known from session)
   type: NotificationType;
   title: string;
   message: string;
-  timestamp: Date;
+  timestamp: Date;   // DB: notifications.created_at (TIMESTAMPTZ → converted to Date by API)
   read: boolean;
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;  // DB: notifications.metadata (JSONB)
 }
