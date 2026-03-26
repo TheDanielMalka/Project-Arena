@@ -210,8 +210,6 @@ const MatchLobby = () => {
   useMatchPolling({ interval: 5000 });
 
   const [selectedBet, setSelectedBet] = useState<number | null>(null);
-  const [joiningMatch, setJoiningMatch] = useState<string | null>(null);
-  const [escrowConfirm, setEscrowConfirm] = useState(false);
   const [customCode, setCustomCode] = useState("");
   const [selectedGame, setSelectedGame] = useState<string>("");
   const [createMode, setCreateMode] = useState(false);
@@ -245,8 +243,11 @@ const MatchLobby = () => {
     const bet = betAmount ?? selectedBet;
     if (!bet) return;
     setSelectedBet(bet);
-    setJoiningMatch(matchId);
-    setEscrowConfirm(true);
+    const match = publicMatches.find(m => m.id === matchId);
+    if (!match) return;
+    // No team for public matches — deposit modal handles both public and custom
+    setDepositConfirm({ match });
+    setDepositStep("idle");
   };
   const handleOpenPublicLobby = (matchId: string) => setSelectedPublicLobbyId(matchId);
   const handleJoinCustom = (matchId: string, bet: number, team?: "A" | "B") => {
@@ -281,13 +282,6 @@ const MatchLobby = () => {
     });
     setDepositConfirm(null);
     setDepositStep("idle");
-  };
-  const handleConfirmEscrow = () => {
-    if (!joiningMatch || !selectedBet || !user) return;
-    lockEscrow(selectedBet, joiningMatch); joinMatch(joiningMatch, user.username);
-    const { addNotification } = useNotificationStore.getState();
-    addNotification({ type: "system", title: "🔒 Funds Locked", message: `$${selectedBet} locked in escrow for match ${joiningMatch}. Good luck!` });
-    setEscrowConfirm(false); setJoiningMatch(null); setSelectedBet(null);
   };
   const handleCopyCode = (code: string) => {
     navigator.clipboard.writeText(code); setCopiedCode(code);
@@ -379,28 +373,7 @@ const MatchLobby = () => {
         </div>
       )}
 
-      {/* ── Escrow Confirmation ── */}
-      {escrowConfirm && joiningMatch && (
-        <div className="rounded-2xl border border-primary/30 bg-primary/5 p-5">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
-              <Lock className="h-4 w-4 text-primary" />
-            </div>
-            <div>
-              <h3 className="font-display font-bold">Confirm Escrow</h3>
-              <p className="text-xs text-muted-foreground">${selectedBet} locked until match resolves</p>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Button onClick={handleConfirmEscrow} className="glow-green font-display">
-              <Lock className="mr-2 h-4 w-4" /> Lock ${selectedBet}
-            </Button>
-            <Button variant="outline" onClick={() => { setEscrowConfirm(false); setJoiningMatch(null); }}>Cancel</Button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Deposit Confirmation Modal (Custom matches) ── */}
+      {/* ── Deposit Confirmation Modal (Public & Custom matches) ── */}
       {depositConfirm && (() => {
         const { match, team } = depositConfirm;
         const cfg = ALL_GAME_CONFIG[match.game];
@@ -433,7 +406,9 @@ const MatchLobby = () => {
                   <div className="min-w-0 flex-1">
                     <p className="font-medium text-sm truncate">{match.host}'s {match.mode}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {match.game} · {team ? `Team ${team}` : "Any team"} · {match.code}
+                      {match.game}
+                      {team ? ` · Team ${team}` : match.type === "custom" ? " · Any team" : " · Public Match"}
+                      {match.code ? ` · ${match.code}` : ` · #${match.id}`}
                     </p>
                   </div>
                   <span className="font-display text-xl font-bold text-arena-gold shrink-0">${match.betAmount}</span>
@@ -662,7 +637,7 @@ const MatchLobby = () => {
               {BET_AMOUNTS.map((amount) => {
                 const matchCount = publicMatches.filter(m => m.status === "waiting" && m.betAmount === amount).length;
                 return (
-                  <button key={amount} disabled={escrowConfirm}
+                  <button key={amount} disabled={depositConfirm !== null}
                     onClick={() => setSelectedBet(selectedBet === amount ? null : amount)}
                     className={`relative px-5 py-2 rounded-xl border font-display text-base font-bold transition-all ${
                       selectedBet === amount
@@ -745,7 +720,7 @@ const MatchLobby = () => {
                       </Badge>
                       <span className="font-display text-base font-bold text-arena-gold">${match.betAmount}</span>
                       {canJoin ? (
-                        <Button size="sm" disabled={escrowConfirm}
+                        <Button size="sm" disabled={depositConfirm !== null}
                           onClick={(e) => { e.stopPropagation(); handleJoinPublic(match.id, match.betAmount); }}
                           className="font-display text-xs"
                           style={glowing && cfg ? { boxShadow: `0 0 12px ${cfg.color}60` } : {}}>
