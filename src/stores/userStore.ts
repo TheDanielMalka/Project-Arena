@@ -7,12 +7,19 @@ interface UserState {
   walletConnected: boolean;
   showLoginGreeting: boolean;
   greetingType: "login" | "signup" | "google" | null;
+  // DB-ready: replace with POST /api/auth/login
   login: (email: string, password: string) => boolean;
+  // DB-ready: replace with POST /api/auth/signup
   signup: (username: string, email: string, password: string, steamId?: string) => boolean;
+  // DB-ready: replace with POST /api/auth/google (OAuth)
   loginWithGoogle: () => void;
+  // DB-ready: replace with POST /api/auth/logout
   logout: () => void;
+  // DB-ready: replace with POST /api/wallet/connect
   connectWallet: () => void;
+  // DB-ready: replace with POST /api/wallet/disconnect
   disconnectWallet: () => void;
+  // DB-ready: replace with PATCH /api/users/me
   updateProfile: (updates: Partial<UserProfile>) => void;
   clearLoginGreeting: () => void;
 }
