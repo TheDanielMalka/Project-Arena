@@ -738,7 +738,7 @@ export default function Hub() {
 
                     {/* Action icon */}
                     {relationship === "accepted" ? (
-                      <UserCheck className="h-3.5 w-3.5 text-primary shrink-0" title="Friends" />
+                      <span title="Friends"><UserCheck className="h-3.5 w-3.5 text-primary shrink-0" /></span>
                     ) : relationship === "pending" ? (
                       <button
                         onClick={() => {
