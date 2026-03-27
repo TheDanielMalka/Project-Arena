@@ -18,7 +18,7 @@ import {
 import {
   ShieldAlert, Gavel, Users, Ban, CheckCircle2, XCircle, AlertTriangle,
   Activity, DollarSign, Eye, Clock, Search, ArrowUpDown, ArrowUp, ArrowDown,
-  Download, Power, Settings, Radio, ChevronRight, Zap,
+  Download, Power, Settings, Radio, ChevronRight, Zap, Flag,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useNotificationStore } from "@/stores/notificationStore";
@@ -28,6 +28,8 @@ import type {
   FlaggedUser, AuditLog, AdminActivityEvent, PlatformSettings,
 } from "@/types";
 import { cn } from "@/lib/utils";
+import { useReportStore } from "@/stores/reportStore";
+import type { SupportTicket, TicketStatus } from "@/types";
 
 // ─── Seed Data ────────────────────────────────────────────────
 // When DB is connected: replace with API calls to /admin/disputes, /admin/users/flagged, /admin/audit-logs
@@ -98,6 +100,7 @@ const ROWS_PER_PAGE = 8;
 const NAV = [
   { id: "disputes", icon: Gavel,       label: "Disputes"   },
   { id: "users",    icon: Users,        label: "Users"      },
+  { id: "reports",  icon: Flag,         label: "Reports"    },
   { id: "audit",    icon: Eye,          label: "Audit Log"  },
   { id: "live",     icon: Radio,        label: "Live Feed"  },
   { id: "platform", icon: Settings,     label: "Platform"   },
@@ -146,6 +149,11 @@ const Admin = () => {
 
   // Audit state
   const [auditPage, setAuditPage] = useState(1);
+
+  // Reports
+  const tickets             = useReportStore((s) => s.tickets);
+  const updateTicketStatus  = useReportStore((s) => s.updateTicketStatus);
+  const [reportStatusFilter, setReportStatusFilter] = useState<TicketStatus | "all">("all");
 
   // Kill switch
   const [killConfirm, setKillConfirm] = useState(false);
@@ -516,6 +524,156 @@ const Admin = () => {
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {/* ══ REPORTS ══ */}
+          {section === "reports" && (
+            <div className="space-y-3">
+              {/* Toolbar */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className="text-xs text-muted-foreground flex-1">
+                  Player reports submitted by users — review and take action
+                </p>
+                <select
+                  value={reportStatusFilter}
+                  onChange={(e) => setReportStatusFilter(e.target.value as TicketStatus | "all")}
+                  className="h-8 px-2 text-xs bg-secondary/60 border border-border rounded-md text-foreground"
+                >
+                  <option value="all">All</option>
+                  <option value="open">Open</option>
+                  <option value="investigating">Investigating</option>
+                  <option value="dismissed">Dismissed</option>
+                  <option value="resolved">Resolved</option>
+                </select>
+              </div>
+
+              {/* Ticket list */}
+              {(() => {
+                const filtered = tickets.filter(
+                  (t) => reportStatusFilter === "all" || t.status === reportStatusFilter
+                );
+                if (filtered.length === 0) {
+                  return (
+                    <div className="text-center py-12 text-muted-foreground">
+                      <Flag className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                      <p className="text-sm">No reports found</p>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="space-y-2">
+                    {filtered.map((t: SupportTicket) => {
+                      const statusStyle: Record<TicketStatus, string> = {
+                        open:          "border-l-arena-orange",
+                        investigating: "border-l-arena-cyan",
+                        dismissed:     "border-l-muted-foreground",
+                        resolved:      "border-l-primary",
+                      };
+                      const statusBadge: Record<TicketStatus, string> = {
+                        open:          "bg-arena-orange/15 text-arena-orange border-arena-orange/30",
+                        investigating: "bg-arena-cyan/15 text-arena-cyan border-arena-cyan/30",
+                        dismissed:     "bg-muted/30 text-muted-foreground border-border/50",
+                        resolved:      "bg-primary/15 text-primary border-primary/30",
+                      };
+                      const reasonLabel: Record<string, string> = {
+                        cheating:         "Cheating",
+                        harassment:       "Harassment",
+                        fake_screenshot:  "Fake Screenshot",
+                        disconnect_abuse: "Disconnect Abuse",
+                        other:            "Other",
+                      };
+                      return (
+                        <div
+                          key={t.id}
+                          className={cn(
+                            "rounded-lg border border-border/60 bg-secondary/20 border-l-2 px-4 py-3",
+                            statusStyle[t.status]
+                          )}
+                        >
+                          {/* Top row */}
+                          <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-[10px] text-muted-foreground">{t.id}</span>
+                              <Badge variant="outline" className={cn("text-[9px] px-1.5 py-0 border", statusBadge[t.status])}>
+                                {t.status}
+                              </Badge>
+                              <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-border/40 text-muted-foreground">
+                                {reasonLabel[t.reason] ?? t.reason}
+                              </Badge>
+                            </div>
+                            <span className="font-mono text-[10px] text-muted-foreground">
+                              {new Date(t.createdAt).toLocaleDateString()}
+                            </span>
+                          </div>
+
+                          {/* Players */}
+                          <div className="flex items-center gap-1.5 text-xs mb-2">
+                            <span className="text-muted-foreground">by</span>
+                            <span className="font-medium">{t.reporterName}</span>
+                            <span className="text-muted-foreground">→ reported</span>
+                            <span className="font-display font-semibold text-destructive">{t.reportedUsername}</span>
+                          </div>
+
+                          {/* Description */}
+                          <p className="text-xs text-muted-foreground line-clamp-2 mb-3">{t.description}</p>
+
+                          {/* Admin note */}
+                          {t.adminNote && (
+                            <p className="text-[10px] text-arena-cyan bg-arena-cyan/10 border border-arena-cyan/20 rounded-md px-2 py-1 mb-3">
+                              Admin: {t.adminNote}
+                            </p>
+                          )}
+
+                          {/* Actions */}
+                          {t.status !== "dismissed" && t.status !== "resolved" && (
+                            <div className="flex gap-2 flex-wrap">
+                              {t.status === "open" && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-xs border-arena-cyan/40 text-arena-cyan hover:bg-arena-cyan/10"
+                                  onClick={() => {
+                                    updateTicketStatus(t.id, "investigating");
+                                    pushAudit("INVESTIGATE_REPORT", t.id, `Started investigation on ${t.reportedUsername}`);
+                                    toast({ title: "Under Investigation", description: `Report ${t.id} is now being reviewed.` });
+                                  }}
+                                >
+                                  Investigate
+                                </Button>
+                              )}
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs border-primary/40 text-primary hover:bg-primary/10"
+                                onClick={() => {
+                                  updateTicketStatus(t.id, "resolved", "Reviewed and resolved by admin");
+                                  pushAudit("RESOLVE_REPORT", t.id, `Report on ${t.reportedUsername} resolved`);
+                                  toast({ title: "Report Resolved", description: `${t.id} marked as resolved.` });
+                                }}
+                              >
+                                Resolve
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs border-border/50 text-muted-foreground hover:text-foreground"
+                                onClick={() => {
+                                  updateTicketStatus(t.id, "dismissed", "No violation found");
+                                  pushAudit("DISMISS_REPORT", t.id, `Report on ${t.reportedUsername} dismissed`);
+                                  toast({ title: "Report Dismissed", description: `${t.id} dismissed.` });
+                                }}
+                              >
+                                Dismiss
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </div>
           )}
 

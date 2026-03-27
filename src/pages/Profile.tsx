@@ -314,18 +314,25 @@ const Profile = () => {
         <div className="h-1 w-full bg-gradient-to-r from-primary via-primary/60 to-transparent" />
         <CardContent className="p-6">
           <div className="flex items-center gap-5">
-            {/* Avatar */}
+            {/* Avatar — only interactive in edit mode */}
             <div className="relative shrink-0">
-              <button
-                onClick={() => setShowAvatarPicker(true)}
-                className={`group w-16 h-16 rounded-full bg-secondary border-2 ${getBg(selectedBg).border} ${getBg(selectedBg).shadow} ${getBg(selectedBg).pulse ? "animate-pulse" : ""} flex items-center justify-center overflow-hidden relative transition-all`}
-              >
-                {renderAvatarContent(selectedAvatar)}
-                {/* Camera overlay on hover */}
-                <div className="absolute inset-0 rounded-full bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                  <Camera className="h-5 w-5 text-white" />
+              {editMode ? (
+                <button
+                  onClick={() => { setPickerMode("avatar"); setShowAvatarPicker(true); }}
+                  className={`group w-16 h-16 rounded-full bg-secondary border-2 ${getBg(selectedBg).border} ${getBg(selectedBg).shadow} ${getBg(selectedBg).pulse ? "animate-pulse" : ""} flex items-center justify-center overflow-hidden relative transition-all`}
+                >
+                  {renderAvatarContent(selectedAvatar)}
+                  <div className="absolute inset-0 rounded-full bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                    <Camera className="h-5 w-5 text-white" />
+                  </div>
+                </button>
+              ) : (
+                <div
+                  className={`w-16 h-16 rounded-full bg-secondary border-2 ${getBg(selectedBg).border} ${getBg(selectedBg).shadow} ${getBg(selectedBg).pulse ? "animate-pulse" : ""} flex items-center justify-center overflow-hidden relative`}
+                >
+                  {renderAvatarContent(selectedAvatar)}
                 </div>
-              </button>
+              )}
               <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-primary border-2 border-background flex items-center justify-center">
                 <Shield className="h-2.5 w-2.5 text-white" />
               </div>
@@ -342,6 +349,10 @@ const Profile = () => {
               ) : (
                 <h2 className="font-display text-xl font-bold tracking-wide truncate">{username}</h2>
               )}
+              {/* Arena ID — immutable public identifier */}
+              <p className="font-mono text-[10px] text-primary/70 mt-0.5 tracking-wider">
+                {user?.arenaId ?? "ARENA-??????"}
+              </p>
               {/* XP level badge + game badge */}
               <div className="flex items-center gap-2 mt-1 flex-wrap">
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-display text-xs font-bold"
