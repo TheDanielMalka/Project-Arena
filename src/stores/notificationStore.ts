@@ -1,24 +1,21 @@
 import { create } from "zustand";
+import type { NotificationType, Notification } from "@/types";
 
-export type NotificationType = "match_result" | "payout" | "system" | "dispute" | "match_invite" | "escrow";
-
-export interface Notification {
-  id: string;
-  type: NotificationType;
-  title: string;
-  message: string;
-  timestamp: Date;
-  read: boolean;
-  metadata?: Record<string, unknown>;
-}
+// Re-export so consumers can import from either path
+export type { NotificationType, Notification };
 
 interface NotificationState {
   notifications: Notification[];
   unreadCount: number;
+  // DB-ready: replace with POST /api/notifications
   addNotification: (notification: Omit<Notification, "id" | "timestamp" | "read">) => void;
+  // DB-ready: replace with PATCH /api/notifications/:id/read
   markAsRead: (id: string) => void;
+  // DB-ready: replace with PATCH /api/notifications/read-all
   markAllAsRead: () => void;
+  // DB-ready: replace with DELETE /api/notifications/:id
   removeNotification: (id: string) => void;
+  // DB-ready: replace with DELETE /api/notifications
   clearAll: () => void;
 }
 

@@ -13,14 +13,21 @@ interface WalletState {
   selectedNetwork: Network;
   addresses: Record<Network, string>;
 
-  // Actions
+  // DB-ready: replace with POST /api/wallet/deposit
   deposit: (amount: number, token: string, network: Network) => Transaction;
+  // DB-ready: replace with POST /api/wallet/withdraw
   withdraw: (amount: number, token: string, toAddress: string) => Transaction | null;
+  // DB-ready: replace with POST /api/escrow/lock
   lockEscrow: (amount: number, matchId: string) => Transaction | null;
+  // DB-ready: replace with POST /api/escrow/release
   releaseEscrow: (amount: number, matchId: string, won: boolean) => Transaction;
+  // DB-ready: replace with POST /api/wallet/transactions
   addTransaction: (tx: Omit<Transaction, "id" | "timestamp">) => Transaction;
+  // DB-ready: replace with PATCH /api/wallet/network
   setNetwork: (network: Network) => void;
+  // DB-ready: replace with PATCH /api/wallet/daily-limit
   setDailyBettingLimit: (limit: number) => void;
+  // DB-ready: replace with GET /api/wallet/balance
   getTotalBalance: () => number;
   getAvailableBalance: () => number;
 }

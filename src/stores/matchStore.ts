@@ -3,9 +3,13 @@ import type { Match, Game, MatchStatus } from "@/types";
 
 interface MatchState {
   matches: Match[];
+  // DB-ready: replace with POST /api/matches
   addMatch: (match: Omit<Match, "id" | "createdAt">) => Match;
+  // DB-ready: replace with POST /api/matches/:id/join
   joinMatch: (matchId: string, playerId: string, team?: "A" | "B") => boolean;
+  // DB-ready: replace with PATCH /api/matches/:id/status
   updateMatchStatus: (matchId: string, status: MatchStatus, winnerId?: string) => void;
+  // DB-ready: replace with GET /api/matches/by-code/:code
   getMatchByCode: (code: string) => Match | undefined;
 }
 
