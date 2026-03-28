@@ -23,6 +23,7 @@ import NotFound from "./pages/NotFound";
 import Players from "./pages/Players";
 import PlayerProfile from "./pages/PlayerProfile";
 import Hub from "./pages/Hub";
+import Forge from "./pages/Forge";
 
 const queryClient = new QueryClient();
 
@@ -62,6 +63,7 @@ const App = () => (
           <Route path="/legal/privacy" element={<PublicLegal><PrivacyPolicy /></PublicLegal>} />
           <Route path="/legal/responsible-gaming" element={<PublicLegal><ResponsibleGaming /></PublicLegal>} />
           <Route path="/hub" element={<AppLayout><Hub /></AppLayout>} />
+          <Route path="/forge" element={<AppLayout><Forge /></AppLayout>} />
           <Route path="/players" element={<AppLayout><Players /></AppLayout>} />
           <Route path="/players/:username" element={<AppLayout><PlayerProfile /></AppLayout>} />
           <Route path="/admin" element={<AdminRoute />} />

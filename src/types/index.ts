@@ -350,3 +350,87 @@ export interface InboxMessage {
   deleted: boolean;            // DB: inbox_messages.deleted DEFAULT FALSE (soft delete)
   createdAt: string;           // DB: inbox_messages.created_at (ISO 8601)
 }
+
+// ─── Forge / Store ─────────────────────────────────────────────
+// DB: forge_items, forge_challenges, forge_events, forge_drops, forge_purchases, arena_tokens
+
+export type ForgeCategory = "avatar" | "badge" | "boost" | "vip" | "bundle";
+export type ForgeRarity   = "common" | "rare" | "epic" | "legendary";
+export type ForgeChallengeType   = "daily" | "weekly";
+export type ForgeChallengeStatus = "active" | "claimable" | "claimed";
+export type ForgeEventType   = "tournament" | "seasonal" | "special";
+export type ForgeEventStatus = "upcoming" | "active" | "ended";
+export type ForgeDropType    = "season_pass" | "bundle" | "flash";
+
+export interface ForgeItem {
+  id: string;
+  name: string;
+  description: string;
+  category: ForgeCategory;
+  rarity: ForgeRarity;
+  icon: string;          // emoji
+  priceAT?: number;      // DB: forge_items.price_at
+  priceUSDT?: number;    // DB: forge_items.price_usdt
+  featured?: boolean;    // DB: forge_items.featured
+  limited?: boolean;     // DB: forge_items.limited
+  stock?: number;        // DB: forge_items.stock (NULL = unlimited)
+  expiresAt?: string;    // DB: forge_items.expires_at (TIMESTAMPTZ)
+  ownedBy?: number;      // DB: COUNT(forge_purchases) WHERE item_id = id
+}
+
+export interface ForgeChallenge {
+  id: string;
+  title: string;
+  description: string;
+  icon: string;
+  type: ForgeChallengeType;
+  rewardAT: number;      // DB: forge_challenges.reward_at
+  rewardXP: number;      // DB: forge_challenges.reward_xp
+  progress: number;      // DB: forge_challenge_progress.progress
+  target: number;        // DB: forge_challenges.target
+  status: ForgeChallengeStatus;
+  expiresAt: string;
+}
+
+export interface ForgeEvent {
+  id: string;
+  name: string;
+  description: string;
+  game: string;
+  type: ForgeEventType;
+  icon: string;
+  prizePool?: number;        // DB: forge_events.prize_pool
+  rewardAT?: number;         // DB: forge_events.reward_at
+  entryFee?: number;         // DB: forge_events.entry_fee_usdt (NULL = free)
+  participants: number;      // DB: COUNT(forge_event_participants)
+  maxParticipants?: number;
+  startAt: string;
+  endAt: string;
+  status: ForgeEventStatus;
+  joined?: boolean;          // DB: EXISTS(SELECT 1 FROM forge_event_participants WHERE user_id = me)
+}
+
+export interface ForgeDrop {
+  id: string;
+  name: string;
+  description: string;
+  type: ForgeDropType;
+  icon: string;
+  originalPriceUSDT?: number;
+  salePriceUSDT?: number;    // DB: forge_drops.sale_price_usdt
+  priceAT?: number;
+  discountPercent?: number;
+  stock?: number;
+  expiresAt?: string;
+  highlights: string[];      // DB: forge_drops.highlights (JSONB array)
+  tag?: string;              // e.g. "BEST VALUE", "40% OFF", "LAST CHANCE"
+}
+
+export interface ForgePurchase {
+  id: string;
+  itemId: string;
+  itemName: string;
+  currency: "AT" | "USDT";
+  amount: number;
+  purchasedAt: string;       // DB: forge_purchases.purchased_at (TIMESTAMPTZ)
+}

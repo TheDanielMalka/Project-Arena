@@ -350,3 +350,141 @@ CREATE TABLE inbox_messages (
 
 CREATE INDEX idx_inbox_receiver ON inbox_messages(receiver_id, read, deleted);
 CREATE INDEX idx_inbox_sender   ON inbox_messages(sender_id);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- FORGE — Store, Challenges, Events, Drops
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Arena Tokens balance per user (earned via challenges/events, spent in Forge)
+CREATE TABLE arena_tokens (
+    user_id        UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    balance        INTEGER NOT NULL DEFAULT 0 CHECK (balance >= 0),
+    lifetime_earned INTEGER NOT NULL DEFAULT 0,
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- AT transaction ledger  (matches → earn | forge_purchase → spend)
+CREATE TABLE at_transactions (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type        TEXT NOT NULL CHECK (type IN ('earn_challenge','earn_event','spend_purchase','spend_drop','refund')),
+    amount      INTEGER NOT NULL,          -- positive = earn, negative = spend
+    ref_id      TEXT,                      -- challenge_id / event_id / purchase_id
+    note        TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_at_tx_user ON at_transactions(user_id, created_at DESC);
+
+-- Forge item catalogue
+CREATE TABLE forge_items (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    slug        TEXT UNIQUE NOT NULL,
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL,
+    category    TEXT NOT NULL CHECK (category IN ('avatar','badge','boost','vip','bundle')),
+    rarity      TEXT NOT NULL CHECK (rarity IN ('common','rare','epic','legendary')),
+    icon        TEXT NOT NULL,
+    price_at    INTEGER,                   -- NULL = not available for AT
+    price_usdt  NUMERIC(10,2),             -- NULL = not available for USDT
+    featured    BOOLEAN NOT NULL DEFAULT FALSE,
+    limited     BOOLEAN NOT NULL DEFAULT FALSE,
+    stock       INTEGER,                   -- NULL = unlimited
+    expires_at  TIMESTAMPTZ,
+    owned_by    INTEGER NOT NULL DEFAULT 0,-- denormalized popularity counter
+    active      BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_forge_items_category ON forge_items(category, rarity);
+
+-- User-owned forge items
+CREATE TABLE forge_purchases (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    item_id     UUID NOT NULL REFERENCES forge_items(id),
+    currency    TEXT NOT NULL CHECK (currency IN ('AT','USDT')),
+    amount      NUMERIC(12,2) NOT NULL,
+    purchased_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_forge_purchases_user ON forge_purchases(user_id, purchased_at DESC);
+
+-- Forge challenges (daily + weekly)
+CREATE TABLE forge_challenges (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title       TEXT NOT NULL,
+    description TEXT NOT NULL,
+    icon        TEXT NOT NULL,
+    type        TEXT NOT NULL CHECK (type IN ('daily','weekly')),
+    reward_at   INTEGER NOT NULL CHECK (reward_at > 0),
+    reward_xp   INTEGER NOT NULL CHECK (reward_xp > 0),
+    target      INTEGER NOT NULL CHECK (target > 0),
+    active      BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Per-user progress on each challenge (resets with the cycle)
+CREATE TABLE forge_challenge_progress (
+    user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    challenge_id UUID NOT NULL REFERENCES forge_challenges(id) ON DELETE CASCADE,
+    progress     INTEGER NOT NULL DEFAULT 0,
+    status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','claimable','claimed')),
+    cycle_start  DATE NOT NULL,           -- the day (daily) or week-start (weekly) this row belongs to
+    PRIMARY KEY (user_id, challenge_id, cycle_start)
+);
+CREATE INDEX idx_forge_ch_progress_user ON forge_challenge_progress(user_id, cycle_start);
+
+-- Forge events (tournaments, seasonal, special)
+CREATE TABLE forge_events (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name              TEXT NOT NULL,
+    description       TEXT NOT NULL,
+    game              TEXT NOT NULL,
+    type              TEXT NOT NULL CHECK (type IN ('tournament','seasonal','special')),
+    icon              TEXT NOT NULL,
+    prize_pool        NUMERIC(12,2),
+    reward_at         INTEGER,
+    entry_fee_usdt    NUMERIC(10,2),      -- NULL = free
+    max_participants  INTEGER,
+    start_at          TIMESTAMPTZ NOT NULL,
+    end_at            TIMESTAMPTZ NOT NULL,
+    status            TEXT NOT NULL DEFAULT 'upcoming' CHECK (status IN ('upcoming','active','ended')),
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_forge_events_status ON forge_events(status, start_at);
+
+-- Event participant registrations
+CREATE TABLE forge_event_participants (
+    event_id   UUID NOT NULL REFERENCES forge_events(id) ON DELETE CASCADE,
+    user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    joined_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (event_id, user_id)
+);
+CREATE INDEX idx_forge_ep_user ON forge_event_participants(user_id);
+
+-- Forge drops (season passes, bundles, flash deals)
+CREATE TABLE forge_drops (
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name                 TEXT NOT NULL,
+    description          TEXT NOT NULL,
+    type                 TEXT NOT NULL CHECK (type IN ('season_pass','bundle','flash')),
+    icon                 TEXT NOT NULL,
+    original_price_usdt  NUMERIC(10,2),
+    sale_price_usdt      NUMERIC(10,2),
+    price_at             INTEGER,
+    discount_percent     SMALLINT CHECK (discount_percent BETWEEN 0 AND 100),
+    stock                INTEGER,          -- NULL = unlimited
+    expires_at           TIMESTAMPTZ,
+    highlights           JSONB NOT NULL DEFAULT '[]',
+    tag                  TEXT,
+    active               BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- User purchases of drops
+CREATE TABLE forge_drop_purchases (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    drop_id     UUID NOT NULL REFERENCES forge_drops(id),
+    amount_usdt NUMERIC(10,2) NOT NULL,
+    purchased_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_forge_dp_user ON forge_drop_purchases(user_id, purchased_at DESC);

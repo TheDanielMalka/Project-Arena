@@ -2,7 +2,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
   Swords, Shield, Wallet, Trophy, Zap, Download, Monitor,
-  CheckCircle, ArrowRight, Lock, Eye, Cpu, ChevronRight,
+  CheckCircle, ArrowRight, Lock, Eye, Cpu, ChevronRight, Flame,
 } from "lucide-react";
 
 // ── Game logos (same CDN as rest of app) ──────────────────────────────────────
@@ -326,6 +326,57 @@ const Index = () => {
           </p>
         </div>
       </section>
+
+      {/* ── SITE MAP ─────────────────────────────────────────────────────── */}
+      <div className="border-t border-border/40 bg-card/20 py-10 px-6">
+        <div className="max-w-5xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-8">
+          {/* Brand */}
+          <div className="col-span-2 md:col-span-1 flex flex-col gap-3">
+            <div className="flex items-center gap-2">
+              <Swords className="h-5 w-5 text-primary" />
+              <span className="font-display text-base font-bold text-primary tracking-widest">ARENA</span>
+            </div>
+            <p className="text-xs text-muted-foreground/60 leading-relaxed max-w-[200px]">
+              Compete. Earn. Rise. The premier skill-based wagering platform for competitive gamers.
+            </p>
+          </div>
+
+          {/* PLATFORM */}
+          <div className="flex flex-col gap-3">
+            <h4 className="text-xs font-bold text-muted-foreground/50 uppercase tracking-widest">Platform</h4>
+            <nav className="flex flex-col gap-2">
+              <Link to="/dashboard" className="text-sm text-muted-foreground/70 hover:text-foreground transition-colors">Dashboard</Link>
+              <Link to="/lobby"     className="text-sm text-muted-foreground/70 hover:text-foreground transition-colors">Match Lobby</Link>
+              <Link to="/history"   className="text-sm text-muted-foreground/70 hover:text-foreground transition-colors">Match History</Link>
+              <Link to="/leaderboard" className="text-sm text-muted-foreground/70 hover:text-foreground transition-colors">Leaderboard</Link>
+              <Link to="/hub"       className="text-sm text-muted-foreground/70 hover:text-foreground transition-colors">Community Hub</Link>
+            </nav>
+          </div>
+
+          {/* ACCOUNT */}
+          <div className="flex flex-col gap-3">
+            <h4 className="text-xs font-bold text-muted-foreground/50 uppercase tracking-widest">Account</h4>
+            <nav className="flex flex-col gap-2">
+              <Link to="/profile"  className="text-sm text-muted-foreground/70 hover:text-foreground transition-colors">Profile</Link>
+              <Link to="/wallet"   className="text-sm text-muted-foreground/70 hover:text-foreground transition-colors">Wallet</Link>
+              <Link to="/forge"    className="flex items-center gap-1.5 text-sm text-amber-500/80 hover:text-amber-400 transition-colors font-medium">
+                <Flame className="w-3.5 h-3.5" />Forge
+              </Link>
+              <Link to="/settings" className="text-sm text-muted-foreground/70 hover:text-foreground transition-colors">Settings</Link>
+            </nav>
+          </div>
+
+          {/* LEGAL */}
+          <div className="flex flex-col gap-3">
+            <h4 className="text-xs font-bold text-muted-foreground/50 uppercase tracking-widest">Legal</h4>
+            <nav className="flex flex-col gap-2">
+              <Link to="/legal/terms"              className="text-sm text-muted-foreground/70 hover:text-foreground transition-colors">Terms of Service</Link>
+              <Link to="/legal/privacy"            className="text-sm text-muted-foreground/70 hover:text-foreground transition-colors">Privacy Policy</Link>
+              <Link to="/legal/responsible-gaming" className="text-sm text-muted-foreground/70 hover:text-foreground transition-colors">Responsible Gaming</Link>
+            </nav>
+          </div>
+        </div>
+      </div>
 
       {/* ── FOOTER ───────────────────────────────────────────────────────── */}
       <footer className="border-t border-border py-5 px-6">
