@@ -1,18 +1,183 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, createContext, useContext } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from "@/components/ui/dialog";
 import {
   Flame, Zap, Trophy, Package, Crown, Shield, Target, Gift,
   Clock, CheckCircle2, Lock, Ticket, Sparkles, ShoppingBag,
   ChevronRight, Users2, Timer, Award, Star, Tag, Percent,
-  CalendarDays, TrendingUp,
+  CalendarDays, TrendingUp, Eye, EyeOff, AlertTriangle,
 } from "lucide-react";
 import { useForgeStore } from "@/stores/forgeStore";
 import { useUserStore } from "@/stores/userStore";
 import { useWalletStore } from "@/stores/walletStore";
 import { cn } from "@/lib/utils";
 import type { ForgeCategory } from "@/types";
+
+// ─── Purchase Confirm Context ─────────────────────────────────────────────────
+// Centralises the confirm dialog so every tab (Shop, Drops, Events) can open it
+// without prop drilling. Challenges (claim reward) don't require a confirm.
+
+interface PendingPurchase {
+  icon:     string;
+  name:     string;
+  price:    number;
+  currency: "AT" | "USDT";
+  label?:   string;         // e.g. "Event Entry", "Hot Drop", "Item"
+  onConfirm: () => { success: boolean; error?: string };
+  onSuccess?: () => void;
+}
+
+interface ForgeConfirmCtx {
+  openConfirm: (purchase: PendingPurchase) => void;
+}
+
+const ForgeConfirmContext = createContext<ForgeConfirmCtx>({ openConfirm: () => {} });
+const useForgeConfirm = () => useContext(ForgeConfirmContext);
+
+// ─── Purchase Confirm Dialog ──────────────────────────────────────────────────
+function PurchaseConfirmDialog({
+  pending, onClose,
+}: {
+  pending: PendingPurchase | null;
+  onClose: () => void;
+}) {
+  const [pw, setPw]           = useState("");
+  const [showPw, setShowPw]   = useState(false);
+  const [error, setError]     = useState("");
+  const [loading, setLoading] = useState(false);
+
+  // Reset when dialog opens/closes
+  useEffect(() => { if (!pending) { setPw(""); setError(""); setLoading(false); } }, [pending]);
+
+  const handleConfirm = () => {
+    if (!pw) { setError("Please enter your password to confirm."); return; }
+    // DB-ready: POST /api/auth/verify-password { password: pw }
+    //           server verifies bcrypt hash before allowing purchase
+    setLoading(true);
+    setError("");
+    // Simulate async verify (replace with real API call)
+    setTimeout(() => {
+      const result = pending!.onConfirm();
+      setLoading(false);
+      if (result.success) {
+        pending!.onSuccess?.();
+        onClose();
+      } else {
+        setError(result.error ?? "Purchase failed. Please try again.");
+      }
+    }, 400);
+  };
+
+  const isUSDT   = pending?.currency === "USDT";
+  const accentCl = isUSDT ? "text-arena-green" : "text-arena-purple";
+  const borderCl = isUSDT ? "border-arena-green/30" : "border-arena-purple/30";
+  const bgCl     = isUSDT ? "bg-arena-green/5"  : "bg-arena-purple/5";
+
+  return (
+    <Dialog open={!!pending} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className={cn("max-w-sm p-0 overflow-hidden border bg-card", borderCl)}>
+        <DialogDescription className="sr-only">Confirm purchase</DialogDescription>
+
+        {/* Header */}
+        <div className={cn("flex items-center gap-3 px-5 py-4 border-b border-border/60", bgCl)}>
+          <div className={cn("flex h-9 w-9 items-center justify-center rounded-xl border text-xl shrink-0", borderCl, bgCl)}>
+            {pending?.icon}
+          </div>
+          <div className="min-w-0">
+            <DialogHeader>
+              <DialogTitle className="font-display text-sm font-bold tracking-wide truncate">
+                {pending?.name}
+              </DialogTitle>
+            </DialogHeader>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              {pending?.label ?? "Forge Purchase"}
+            </p>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="px-5 py-4 space-y-4">
+          {/* Price summary */}
+          <div className="rounded-lg border border-border/60 bg-secondary/40 px-4 py-3 flex items-center justify-between">
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-display">Total Cost</p>
+              <p className={cn("font-display text-2xl font-bold mt-0.5", accentCl)}>
+                {pending?.price} <span className="text-sm font-semibold">{pending?.currency}</span>
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-display">Method</p>
+              <p className="text-xs font-medium mt-0.5">
+                {isUSDT ? "🔒 Smart Contract" : "⚡ Arena Tokens"}
+              </p>
+            </div>
+          </div>
+
+          {/* USDT warning */}
+          {isUSDT && (
+            <div className="flex items-start gap-2 rounded-lg border border-arena-gold/20 bg-arena-gold/5 px-3 py-2">
+              <AlertTriangle className="h-3.5 w-3.5 text-arena-gold shrink-0 mt-0.5" />
+              <p className="text-[11px] text-arena-gold/80 leading-relaxed">
+                This will deduct <strong>{pending?.price} USDT</strong> from your connected wallet via smart contract. This action cannot be undone.
+              </p>
+            </div>
+          )}
+
+          {/* Password field */}
+          <div>
+            <p className="text-[11px] text-muted-foreground mb-1.5">
+              Enter your password to confirm
+              {/* DB-ready: POST /api/auth/verify-password before executing purchase */}
+            </p>
+            <div className="relative">
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                type={showPw ? "text" : "password"}
+                placeholder="Your account password"
+                value={pw}
+                onChange={(e) => { setPw(e.target.value); setError(""); }}
+                onKeyDown={(e) => { if (e.key === "Enter") handleConfirm(); }}
+                className="pl-9 pr-9 h-9 text-sm bg-secondary/60 border-border"
+                autoFocus
+              />
+              <button type="button" onClick={() => setShowPw((v) => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                {showPw ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+            {error && <p className="text-[11px] text-destructive mt-1">{error}</p>}
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-2 px-5 pb-5">
+          <Button variant="ghost" size="sm" className="flex-1 text-xs font-display border border-border/60"
+            onClick={onClose} disabled={loading}>
+            Cancel
+          </Button>
+          <Button size="sm" disabled={!pw || loading}
+            onClick={handleConfirm}
+            className={cn(
+              "flex-1 text-xs font-display font-bold",
+              isUSDT
+                ? "bg-arena-green hover:bg-arena-green/80 text-black"
+                : "bg-arena-purple hover:bg-arena-purple/80 text-white"
+            )}>
+            {loading
+              ? <><span className="animate-spin mr-1.5">⟳</span> Verifying…</>
+              : <><ShoppingBag className="mr-1.5 h-3.5 w-3.5" /> Confirm Purchase</>
+            }
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 // ─── Rarity config ────────────────────────────────────────────
 
@@ -203,6 +368,7 @@ function ItemCard({ item, onBuy, success, error, arenaTokens }: ItemCardProps) {
 
 function ShopTab() {
   const { items, arenaTokens, purchaseItem, getFeaturedItem, getItemsByCategory } = useForgeStore();
+  const { openConfirm } = useForgeConfirm();
   const featured = getFeaturedItem();
   const [category, setCategory] = useState<ForgeCategory | "all">("all");
   const [successItems, setSuccessItems] = useState<Set<string>>(new Set());
@@ -215,21 +381,24 @@ function ShopTab() {
   );
 
   function handleBuy(itemId: string, currency: "AT" | "USDT") {
-    setErrorItem(null);
-    const result = purchaseItem(itemId, currency);
-    if (result.success) {
-      setSuccessItems((prev) => new Set(prev).add(itemId));
-      setTimeout(() => {
-        setSuccessItems((prev) => {
-          const next = new Set(prev);
-          next.delete(itemId);
-          return next;
-        });
-      }, 2000);
-    } else {
-      setErrorItem({ id: itemId, msg: result.error ?? "Purchase failed" });
-      setTimeout(() => setErrorItem(null), 2000);
-    }
+    const item = items.find((i) => i.id === itemId);
+    if (!item) return;
+    const price = currency === "AT" ? item.priceAT! : item.priceUSDT!;
+    openConfirm({
+      icon: item.icon ?? "🛒",
+      name: item.name,
+      price,
+      currency,
+      label: `Forge Shop · ${item.rarity.charAt(0).toUpperCase() + item.rarity.slice(1)}`,
+      onConfirm: () => {
+        setErrorItem(null);
+        return purchaseItem(itemId, currency);
+      },
+      onSuccess: () => {
+        setSuccessItems((prev) => new Set(prev).add(itemId));
+        setTimeout(() => setSuccessItems((prev) => { const n = new Set(prev); n.delete(itemId); return n; }), 2000);
+      },
+    });
   }
 
   const featuredRc = featured ? RARITY_CONFIG[featured.rarity] : RARITY_CONFIG.legendary;
@@ -573,20 +742,35 @@ function ChallengesTab() {
 
 function EventsTab() {
   const { getActiveEvents, getUpcomingEvents, joinEvent } = useForgeStore();
+  const { openConfirm } = useForgeConfirm();
   const activeEvents   = getActiveEvents();
   const upcomingEvents = getUpcomingEvents();
   const [joinedNow, setJoinedNow]   = useState<Set<string>>(new Set());
   const [joinError, setJoinError]   = useState<{ id: string; msg: string } | null>(null);
 
   function handleJoin(eventId: string) {
-    setJoinError(null);
-    const result = joinEvent(eventId);
-    if (result.success) {
-      setJoinedNow((prev) => new Set(prev).add(eventId));
-    } else {
-      setJoinError({ id: eventId, msg: result.error ?? "Could not join" });
-      setTimeout(() => setJoinError(null), 3000);
+    const allEvents = [...getActiveEvents(), ...getUpcomingEvents()];
+    const event = allEvents.find((e) => e.id === eventId);
+    if (!event) return;
+    // Free events — join directly, no confirm
+    if (!event.entryFee) {
+      const result = joinEvent(eventId);
+      if (result.success) setJoinedNow((prev) => new Set(prev).add(eventId));
+      else { setJoinError({ id: eventId, msg: result.error ?? "Could not join" }); setTimeout(() => setJoinError(null), 3000); }
+      return;
     }
+    openConfirm({
+      icon: "🏆",
+      name: event.name,
+      price: event.entryFee,
+      currency: "USDT",
+      label: "Event Entry Fee",
+      onConfirm: () => {
+        setJoinError(null);
+        return joinEvent(eventId);
+      },
+      onSuccess: () => setJoinedNow((prev) => new Set(prev).add(eventId)),
+    });
   }
 
   function EventCard({ event }: { event: ReturnType<typeof getActiveEvents>[number] }) {
@@ -762,25 +946,35 @@ function EventsTab() {
 
 function DropsTab() {
   const { drops, purchaseDrop } = useForgeStore();
+  const { openConfirm } = useForgeConfirm();
   const [successDrops, setSuccessDrops] = useState<Set<string>>(new Set());
   const [dropError, setDropError]       = useState<{ id: string; msg: string } | null>(null);
 
   function handleBuy(dropId: string) {
-    setDropError(null);
-    const result = purchaseDrop(dropId);
-    if (result.success) {
+    const drop = drops.find((d) => d.id === dropId);
+    if (!drop) return;
+    // Flash drops are free — no confirm needed
+    if (drop.type === "flash") {
+      purchaseDrop(dropId);
       setSuccessDrops((prev) => new Set(prev).add(dropId));
-      setTimeout(() => {
-        setSuccessDrops((prev) => {
-          const next = new Set(prev);
-          next.delete(dropId);
-          return next;
-        });
-      }, 2500);
-    } else {
-      setDropError({ id: dropId, msg: result.error ?? "Purchase failed" });
-      setTimeout(() => setDropError(null), 2500);
+      return;
     }
+    const price = drop.salePriceUSDT ?? drop.originalPriceUSDT ?? 0;
+    openConfirm({
+      icon: drop.icon ?? "📦",
+      name: drop.name,
+      price,
+      currency: "USDT",
+      label: `Hot Drop · ${drop.type === "season_pass" ? "Season Pass" : drop.type === "bundle" ? "Bundle" : "Limited"}`,
+      onConfirm: () => {
+        setDropError(null);
+        return purchaseDrop(dropId);
+      },
+      onSuccess: () => {
+        setSuccessDrops((prev) => new Set(prev).add(dropId));
+        setTimeout(() => setSuccessDrops((prev) => { const n = new Set(prev); n.delete(dropId); return n; }), 2500);
+      },
+    });
   }
 
   const seasonPass  = drops.find((d) => d.type === "season_pass");
@@ -976,12 +1170,14 @@ function DropsTab() {
 export default function Forge() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = (searchParams.get("tab") ?? "shop") as "shop" | "challenges" | "events" | "drops";
+  const [pending, setPending] = useState<PendingPurchase | null>(null);
 
-  function setTab(value: string) {
-    setSearchParams({ tab: value });
-  }
+  function setTab(value: string) { setSearchParams({ tab: value }); }
+  const openConfirm = (p: PendingPurchase) => setPending(p);
 
   return (
+    <ForgeConfirmContext.Provider value={{ openConfirm }}>
+    <PurchaseConfirmDialog pending={pending} onClose={() => setPending(null)} />
     <div className="min-h-screen bg-background">
       <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
         {/* Page header */}
@@ -1023,5 +1219,6 @@ export default function Forge() {
         </div>
       </div>
     </div>
+    </ForgeConfirmContext.Provider>
   );
 }
