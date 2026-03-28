@@ -10,10 +10,12 @@ import {
   Bell, Shield, Globe, Trash2, Save, Lock, Volume2,
   AlertCircle, ChevronRight, Wallet, Gamepad2, User,
   Eye, EyeOff, CheckCircle2, SlidersHorizontal, ShieldAlert, Check, X,
+  Smartphone, Copy, RefreshCw, KeyRound, ShieldCheck, ShieldOff,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useUserStore } from "@/stores/userStore";
 import { useWalletStore } from "@/stores/walletStore";
@@ -69,6 +71,72 @@ const SettingsPage = () => {
   const [newPw, setNewPw] = useState("");
   const [pwConfirmOpen, setPwConfirmOpen] = useState(false);
   const [pwUpdated, setPwUpdated] = useState(false);
+
+  // ── 2FA state machine ──────────────────────────────────────────
+  // DB-ready: POST /api/auth/2fa/setup   → returns { secret, otpauthUrl, backupCodes }
+  // DB-ready: POST /api/auth/2fa/verify  → { code } → activates 2FA on user record
+  // DB-ready: DELETE /api/auth/2fa       → { password } → disables 2FA
+  // DB-ready: server uses 'speakeasy' or 'otplib' to generate/verify TOTP secrets
+  // DB-ready: otpauthUrl = `otpauth://totp/Arena:${username}?secret=${secret}&issuer=Arena`
+  //           → render as QR via 'qrcode' npm package or Google Charts API
+  type TwoFAStep = "idle" | "setup-qr" | "setup-verify" | "setup-backup" | "disable-confirm";
+  const [twoFAStep, setTwoFAStep]       = useState<TwoFAStep>("idle");
+  const [twoFAEnabled, setTwoFAEnabled] = useState(false);
+  // Simulated secret — DB-ready: returned by POST /api/auth/2fa/setup
+  const SIMULATED_SECRET = "JBSWY3DPEHPK3PXP";
+  const SIMULATED_BACKUP = ["A1B2-C3D4", "E5F6-G7H8", "I9J0-K1L2", "M3N4-O5P6", "Q7R8-S9T0", "U1V2-W3X4"];
+  const [twoFACode, setTwoFACode]           = useState("");
+  const [twoFACodeError, setTwoFACodeError] = useState(false);
+  const [disablePw, setDisablePw]           = useState("");
+  const [copiedSecret, setCopiedSecret]     = useState(false);
+  const [copiedBackup, setCopiedBackup]     = useState(false);
+
+  const handleCopySecret = () => {
+    navigator.clipboard.writeText(SIMULATED_SECRET);
+    setCopiedSecret(true); setTimeout(() => setCopiedSecret(false), 2000);
+  };
+  const handleCopyBackup = () => {
+    navigator.clipboard.writeText(SIMULATED_BACKUP.join("\n"));
+    setCopiedBackup(true); setTimeout(() => setCopiedBackup(false), 2000);
+  };
+
+  const handleTwoFAToggle = (v: boolean) => {
+    if (v) {
+      // DB-ready: call POST /api/auth/2fa/setup first — get secret + QR URL
+      setTwoFACode(""); setTwoFACodeError(false);
+      setTwoFAStep("setup-qr");
+    } else {
+      setDisablePw(""); setTwoFAStep("disable-confirm");
+    }
+  };
+
+  const handleTwoFAVerify = () => {
+    // DB-ready: POST /api/auth/2fa/verify { code: twoFACode }
+    //           server validates TOTP code against stored secret (30s window ±1)
+    //           on success: UPDATE users SET totp_enabled=true
+    if (twoFACode.length !== 6 || !/^\d{6}$/.test(twoFACode)) {
+      setTwoFACodeError(true); return;
+    }
+    setTwoFACodeError(false);
+    setTwoFAStep("setup-backup");
+  };
+
+  const handleTwoFAFinish = () => {
+    setTwoFAEnabled(true);
+    setSecurity((p) => ({ ...p, twoFactor: true }));
+    setTwoFAStep("idle"); setTwoFACode("");
+    toast({ title: "🔐 2FA Enabled", description: "Your account is now protected with two-factor authentication." });
+  };
+
+  const handleTwoFADisable = () => {
+    // DB-ready: DELETE /api/auth/2fa { password: disablePw }
+    //           server verifies password then: UPDATE users SET totp_enabled=false, totp_secret=null
+    if (!disablePw) return;
+    setTwoFAEnabled(false);
+    setSecurity((p) => ({ ...p, twoFactor: false }));
+    setTwoFAStep("idle"); setDisablePw("");
+    toast({ title: "2FA Disabled", description: "Two-factor authentication has been turned off.", variant: "destructive" });
+  };
 
   const [notifications, setNotifications] = useState({
     matchResults: true, payouts: true, systemAlerts: true, promotions: false, sounds: true,
@@ -199,8 +267,24 @@ const SettingsPage = () => {
             <div>
               <SectionTitle icon={Shield} label="Security" color="text-arena-orange" />
               <div className="space-y-1">
+                {/* Two-Factor Auth — custom row with setup flow */}
+                <SettingRow
+                  label="Two-Factor Auth"
+                  desc={twoFAEnabled ? "TOTP authentication active" : "Protect with Google Authenticator"}
+                >
+                  <div className="flex items-center gap-2">
+                    {twoFAEnabled && (
+                      <Badge className="text-[10px] px-1.5 py-0 bg-arena-green/15 text-arena-green border border-arena-green/30 font-display">
+                        ON
+                      </Badge>
+                    )}
+                    <Switch
+                      checked={twoFAEnabled}
+                      onCheckedChange={handleTwoFAToggle}
+                    />
+                  </div>
+                </SettingRow>
                 {([
-                  { key: "twoFactor",        label: "Two-Factor Auth",       desc: "Extra layer of protection"             },
                   { key: "loginAlerts",       label: "Login Alerts",          desc: "Notify on new logins"                  },
                   { key: "withdrawWhitelist", label: "Withdrawal Whitelist",  desc: "Only allow saved addresses"            },
                 ] as const).map((item) => (
@@ -463,6 +547,193 @@ const SettingsPage = () => {
         )}
       </div>
     </div>
+
+    {/* ── 2FA Setup: Step 1 — QR Code & Secret ── */}
+    <Dialog open={twoFAStep === "setup-qr"} onOpenChange={(o) => { if (!o) setTwoFAStep("idle"); }}>
+      <DialogContent className="max-w-sm p-0 overflow-hidden border border-arena-cyan/30 bg-card">
+        <DialogDescription className="sr-only">Set up two-factor authentication</DialogDescription>
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-border/60 bg-arena-cyan/5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-arena-cyan/15 shrink-0">
+            <Smartphone className="h-4 w-4 text-arena-cyan" />
+          </div>
+          <div>
+            <DialogHeader>
+              <DialogTitle className="font-display text-sm font-bold tracking-wide">Set Up Authenticator</DialogTitle>
+            </DialogHeader>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Step 1 of 2 — Scan or enter the key</p>
+          </div>
+        </div>
+        <div className="px-5 py-4 space-y-4">
+          {/* QR placeholder — DB-ready: render <img src={otpauthUrl as QR}> via qrcode library */}
+          <div className="flex flex-col items-center gap-2">
+            <div className="w-36 h-36 rounded-xl border-2 border-dashed border-border/60 bg-secondary/40 flex flex-col items-center justify-center gap-2">
+              {/* DB-ready: <QRCodeSVG value={otpauthUrl} size={128} /> via 'qrcode.react' package */}
+              <div className="grid grid-cols-5 gap-0.5 opacity-40">
+                {Array.from({ length: 25 }).map((_, i) => (
+                  <div key={i} className={cn("w-2.5 h-2.5 rounded-[1px]", Math.random() > 0.4 ? "bg-foreground" : "bg-transparent")} />
+                ))}
+              </div>
+              <p className="text-[9px] text-muted-foreground font-mono">QR code here</p>
+            </div>
+            <p className="text-[11px] text-muted-foreground text-center leading-relaxed">
+              Open <span className="text-foreground font-medium">Google Authenticator</span> or any TOTP app and scan this QR code
+            </p>
+          </div>
+          {/* Manual entry key */}
+          <div>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1.5 font-display">Or enter key manually</p>
+            <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-secondary/40 px-3 py-2">
+              <code className="flex-1 font-mono text-xs text-arena-cyan tracking-widest">{SIMULATED_SECRET}</code>
+              <button onClick={handleCopySecret} className="text-muted-foreground hover:text-foreground transition-colors">
+                {copiedSecret ? <Check className="h-3.5 w-3.5 text-arena-green" /> : <Copy className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1">Time-based (TOTP) · 30 second window</p>
+          </div>
+        </div>
+        <div className="flex gap-2 px-5 pb-5">
+          <Button variant="ghost" size="sm" className="flex-1 text-xs font-display border border-border/60"
+            onClick={() => setTwoFAStep("idle")}>Cancel</Button>
+          <Button size="sm" className="flex-1 text-xs font-display bg-arena-cyan hover:bg-arena-cyan/80 text-black font-bold"
+            onClick={() => { setTwoFACode(""); setTwoFACodeError(false); setTwoFAStep("setup-verify"); }}>
+            Next — Enter Code
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+
+    {/* ── 2FA Setup: Step 2 — Verify Code ── */}
+    <Dialog open={twoFAStep === "setup-verify"} onOpenChange={(o) => { if (!o) setTwoFAStep("idle"); }}>
+      <DialogContent className="max-w-sm p-0 overflow-hidden border border-arena-cyan/30 bg-card">
+        <DialogDescription className="sr-only">Verify your authenticator code</DialogDescription>
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-border/60 bg-arena-cyan/5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-arena-cyan/15 shrink-0">
+            <KeyRound className="h-4 w-4 text-arena-cyan" />
+          </div>
+          <div>
+            <DialogHeader>
+              <DialogTitle className="font-display text-sm font-bold tracking-wide">Verify Your Code</DialogTitle>
+            </DialogHeader>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Step 2 of 2 — Enter the 6-digit code</p>
+          </div>
+        </div>
+        <div className="px-5 py-5 space-y-3">
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Open your authenticator app and enter the 6-digit code shown for <span className="text-foreground font-medium">Arena</span>.
+          </p>
+          <div>
+            <Input
+              placeholder="000000"
+              value={twoFACode}
+              onChange={(e) => { setTwoFACode(e.target.value.replace(/\D/g, "").slice(0, 6)); setTwoFACodeError(false); }}
+              maxLength={6}
+              className={cn(
+                "text-center font-mono text-xl tracking-[0.4em] h-12 bg-secondary/60 border-border",
+                twoFACodeError && "border-destructive"
+              )}
+            />
+            {twoFACodeError && (
+              <p className="text-[11px] text-destructive mt-1">Invalid code — must be exactly 6 digits</p>
+            )}
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            {/* DB-ready: server validates TOTP with ±1 window (30s tolerance) via speakeasy.totp.verify() */}
+            Code rotates every 30 seconds. Make sure your device clock is synced.
+          </p>
+        </div>
+        <div className="flex gap-2 px-5 pb-5">
+          <Button variant="ghost" size="sm" className="flex-1 text-xs font-display border border-border/60"
+            onClick={() => setTwoFAStep("setup-qr")}>Back</Button>
+          <Button size="sm" className="flex-1 text-xs font-display bg-arena-cyan hover:bg-arena-cyan/80 text-black font-bold"
+            disabled={twoFACode.length !== 6}
+            onClick={handleTwoFAVerify}>
+            <ShieldCheck className="mr-1.5 h-3.5 w-3.5" /> Verify & Enable
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+
+    {/* ── 2FA Setup: Step 3 — Backup Codes ── */}
+    <Dialog open={twoFAStep === "setup-backup"} onOpenChange={(o) => { if (!o) handleTwoFAFinish(); }}>
+      <DialogContent className="max-w-sm p-0 overflow-hidden border border-arena-green/30 bg-card">
+        <DialogDescription className="sr-only">Save your backup codes</DialogDescription>
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-border/60 bg-arena-green/5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-arena-green/15 shrink-0">
+            <ShieldCheck className="h-4 w-4 text-arena-green" />
+          </div>
+          <div>
+            <DialogHeader>
+              <DialogTitle className="font-display text-sm font-bold tracking-wide text-arena-green">2FA Enabled!</DialogTitle>
+            </DialogHeader>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Save your backup codes before closing</p>
+          </div>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            If you lose access to your authenticator app, use one of these codes to sign in.
+            <span className="text-destructive font-medium"> Each code can only be used once.</span>
+          </p>
+          {/* DB-ready: backup codes generated server-side, bcrypt-hashed before storage */}
+          <div className="rounded-lg border border-border/60 bg-secondary/40 p-3">
+            <div className="grid grid-cols-2 gap-1.5">
+              {SIMULATED_BACKUP.map((code) => (
+                <code key={code} className="font-mono text-xs text-foreground tracking-widest text-center py-0.5">{code}</code>
+              ))}
+            </div>
+          </div>
+          <button onClick={handleCopyBackup}
+            className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+            {copiedBackup ? <Check className="h-3 w-3 text-arena-green" /> : <Copy className="h-3 w-3" />}
+            {copiedBackup ? "Copied!" : "Copy all backup codes"}
+          </button>
+        </div>
+        <div className="px-5 pb-5">
+          <Button size="sm" className="w-full text-xs font-display glow-green" onClick={handleTwoFAFinish}>
+            <Check className="mr-1.5 h-3.5 w-3.5" /> I've saved my backup codes
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+
+    {/* ── 2FA Disable Confirmation ── */}
+    <Dialog open={twoFAStep === "disable-confirm"} onOpenChange={(o) => { if (!o) setTwoFAStep("idle"); }}>
+      <DialogContent className="max-w-sm p-0 overflow-hidden border border-destructive/30 bg-card">
+        <DialogDescription className="sr-only">Disable two-factor authentication</DialogDescription>
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-border/60 bg-destructive/5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-destructive/15 shrink-0">
+            <ShieldOff className="h-4 w-4 text-destructive" />
+          </div>
+          <div>
+            <DialogHeader>
+              <DialogTitle className="font-display text-sm font-bold tracking-wide text-destructive">Disable 2FA</DialogTitle>
+            </DialogHeader>
+            <p className="text-[11px] text-muted-foreground mt-0.5">This will reduce your account security</p>
+          </div>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Enter your current password to confirm you want to disable two-factor authentication.
+          </p>
+          <Input
+            type="password"
+            placeholder="Current password"
+            value={disablePw}
+            onChange={(e) => setDisablePw(e.target.value)}
+            className="h-9 bg-secondary/60 border-border text-sm"
+          />
+          {/* DB-ready: DELETE /api/auth/2fa { password } → verify bcrypt → set totp_enabled=false */}
+        </div>
+        <div className="flex gap-2 px-5 pb-5">
+          <Button variant="ghost" size="sm" className="flex-1 text-xs font-display border border-border/60"
+            onClick={() => setTwoFAStep("idle")}>Cancel</Button>
+          <Button size="sm" variant="destructive" className="flex-1 text-xs font-display font-bold"
+            disabled={!disablePw}
+            onClick={handleTwoFADisable}>
+            <ShieldOff className="mr-1.5 h-3.5 w-3.5" /> Disable 2FA
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
 
     {/* ── Update Password Confirmation Dialog ── */}
     <Dialog open={pwConfirmOpen} onOpenChange={setPwConfirmOpen}>
