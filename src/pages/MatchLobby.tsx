@@ -1307,9 +1307,10 @@ const MatchLobby = () => {
                 <Input placeholder="Enter match code (e.g. ARENA-7X2K)" value={customCode}
                   onChange={(e) => setCustomCode(e.target.value.toUpperCase())}
                   className="font-mono bg-secondary border-border placeholder:text-muted-foreground/40" />
-                <Button disabled={!customCode}
+                <Button disabled={!customCode || !canPlay}
                   onClick={() => { const found = customMatches.find(m => m.code === customCode); if (found) handleJoinCustom(found.id, found.betAmount); }}
-                  className="font-display shrink-0">
+                  className="font-display shrink-0"
+                  title={!canPlay ? "Arena Client not connected" : undefined}>
                   <Search className="mr-2 h-4 w-4" /> Find
                 </Button>
               </div>
@@ -1320,8 +1321,15 @@ const MatchLobby = () => {
               <div className="h-px flex-1 bg-border" />
             </div>
             {!createMode ? (
-              <button onClick={() => setCreateMode(true)}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-arena-purple/30 text-arena-purple hover:bg-arena-purple/10 transition-colors font-display text-sm font-semibold">
+              <button
+                onClick={() => canPlay && setCreateMode(true)}
+                disabled={!canPlay}
+                title={!canPlay ? "Arena Client not connected" : undefined}
+                className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border font-display text-sm font-semibold transition-colors ${
+                  canPlay
+                    ? "border-arena-purple/30 text-arena-purple hover:bg-arena-purple/10"
+                    : "border-border/30 text-muted-foreground/40 cursor-not-allowed"
+                }`}>
                 <Crown className="h-4 w-4" /> Create Custom Match
               </button>
             ) : (
@@ -1401,7 +1409,7 @@ const MatchLobby = () => {
                 </div>
                 <div className="flex gap-2 pt-1">
                   <Button
-                    disabled={!newMatchGame || !newMatchBet || !newMatchPassword || !newMatchMode}
+                    disabled={!newMatchGame || !newMatchBet || !newMatchPassword || !newMatchMode || !canPlay}
                     onClick={() => {
                       if (!newMatchGame || !newMatchBet || !newMatchMode || !user) return;
                       const teamSize  = getTeamSize(newMatchMode);
