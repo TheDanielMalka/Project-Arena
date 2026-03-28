@@ -109,13 +109,35 @@ const AvatarStack = ({ players, max = 5 }: { players: string[]; max?: number }) 
 };
 
 // ─── PlayerRow ────────────────────────────────────────────────────────────────
-const PlayerRow = ({ name, isHost, index }: { name: string; isHost?: boolean; index: number }) => (
-  <div className="flex items-center gap-2 py-0.5">
-    {isHost && index === 0 ? <Crown className="h-3 w-3 text-arena-gold shrink-0" /> : <div className="w-3 h-3 shrink-0" />}
-    <MiniAvatar name={name} size={18} />
-    <span className="text-sm truncate">{name}</span>
-  </div>
-);
+// onPlayerClick: optional — when provided the row becomes a button that opens the player popover
+const PlayerRow = ({
+  name, isHost, index,
+  onPlayerClick,
+}: {
+  name: string;
+  isHost?: boolean;
+  index: number;
+  onPlayerClick?: (name: string, rect: DOMRect) => void;
+}) => {
+  const inner = (
+    <>
+      {isHost && index === 0 ? <Crown className="h-3 w-3 text-arena-gold shrink-0" /> : <div className="w-3 h-3 shrink-0" />}
+      <MiniAvatar name={name} size={18} />
+      <span className="text-sm truncate">{name}</span>
+    </>
+  );
+  if (onPlayerClick) {
+    return (
+      <button
+        className="flex items-center gap-2 py-0.5 w-full text-left hover:text-primary transition-colors rounded"
+        onClick={(e) => onPlayerClick(name, e.currentTarget.getBoundingClientRect())}
+      >
+        {inner}
+      </button>
+    );
+  }
+  return <div className="flex items-center gap-2 py-0.5">{inner}</div>;
+};
 
 // ─── GameLogo ─────────────────────────────────────────────────────────────────
 const GameLogo = ({ game, size = 28 }: { game: string; size?: number }) => {
@@ -821,7 +843,7 @@ const MatchLobby = () => {
                         <Shield className="h-3 w-3" /> {label} ({players.length}/{maxPerTeam})
                       </p>
                       <div className="space-y-0.5">
-                        {players.map((p, i) => <PlayerRow key={`${p}-${i}`} name={p} isHost={label === "Team A"} index={i} />)}
+                        {players.map((p, i) => <PlayerRow key={`${p}-${i}`} name={p} isHost={label === "Team A"} index={i} onPlayerClick={(name, rect) => setPlayerPopover({ username: name, rect })} />)}
                         {Array.from({ length: maxPerTeam - players.length }).map((_, i) => (
                           <p key={i} className="text-sm text-muted-foreground/30 italic pl-5">Empty slot</p>
                         ))}
@@ -1335,6 +1357,8 @@ const MatchLobby = () => {
                         maxPerTeam: teamSize, teamSize, depositsReceived: 1,
                       });
                       lockEscrow(newMatchBet, created.id);
+                      setMyRoomMatchId(created.id);   // ← host appears in "My Active Room" panel with Leave/Delete buttons
+                      setRoomLocked(false);
                       const { addNotification } = useNotificationStore.getState();
                       addNotification({ type: "match_invite", title: "⚔️ Match Created", message: `Your ${newMatchGame} ${newMatchMode} ($${newMatchBet}) is live! Code: ${created.code}` });
                       setCreateMode(false); setNewMatchPassword(""); setNewMatchGame(""); setNewMatchBet(null); setNewMatchMode(null);
@@ -1414,7 +1438,7 @@ const MatchLobby = () => {
                             <Shield className="h-3 w-3" /> {label} ({players.length}/{match.maxPerTeam})
                           </p>
                           <div className="space-y-0.5">
-                            {players.map((p, i) => <PlayerRow key={i} name={p} isHost={isA} index={i} />)}
+                            {players.map((p, i) => <PlayerRow key={i} name={p} isHost={isA} index={i} onPlayerClick={(name, rect) => setPlayerPopover({ username: name, rect })} />)}
                             {Array.from({ length: match.maxPerTeam - players.length }).map((_, i) => (
                               <p key={i} className="text-sm text-muted-foreground/30 italic pl-5">Empty slot</p>
                             ))}
