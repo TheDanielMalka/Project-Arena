@@ -257,11 +257,19 @@ const PlayerCardPopover = ({
   // DB-ready: GET /api/players/:username
   const profile = players.find((p) => p.username === username);
 
-  const existingFr = profile
-    ? friendships.find((f) => f.friendId === profile.id)
-    : undefined;
-  const isFriend  = existingFr?.status === "accepted";
-  const isPending = existingFr?.status === "pending";
+  // Fallback profile fields for players not yet in playerStore
+  // DB-ready: GET /api/players/:username will always resolve the full profile
+  const targetId       = profile?.id             ?? `u-${username.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+  const targetArenaId  = profile?.arenaId        ?? `ARENA-${username.slice(0, 2).toUpperCase()}`;
+  const targetInitials = profile?.avatarInitials ?? username.slice(0, 2).toUpperCase();
+  const targetRank     = profile?.rank           ?? "—";
+  const targetTier     = profile?.tier           ?? "—";
+  const targetGame     = profile?.preferredGame  ?? "—";
+
+  // Uses targetId (fallback-safe) so relationship lookup works for all players
+  const existingFr = friendships.find((f) => f.friendId === targetId);
+  const isFriend   = existingFr?.status === "accepted";
+  const isPending  = existingFr?.status === "pending";
 
   const REASON_LABELS: Record<TicketReason, string> = {
     cheating:             "Cheating / Hacking",
@@ -272,7 +280,7 @@ const PlayerCardPopover = ({
   };
 
   const handleAddFriend = () => {
-    if (!profile || !user) return;
+    if (!user) return;
     // DB-ready: POST /api/friends
     sendFriendRequest({
       myId:                 user.id,
@@ -282,27 +290,39 @@ const PlayerCardPopover = ({
       myRank:               user.rank,
       myTier:               user.tier,
       myPreferredGame:      user.preferredGame,
-      targetId:             profile.id,
-      targetUsername:       profile.username,
-      targetArenaId:        profile.arenaId,
-      targetAvatarInitials: profile.avatarInitials,
-      targetRank:           profile.rank,
-      targetTier:           profile.tier,
-      targetPreferredGame:  profile.preferredGame,
+      targetId,
+      targetUsername:       username,
+      targetArenaId,
+      targetAvatarInitials: targetInitials,
+      targetRank,
+      targetTier,
+      targetPreferredGame:  targetGame,
+    });
+    // Notify HUB inbox so user sees confirmation
+    useNotificationStore.getState().addNotification({
+      type:    "friend_request",
+      title:   "Friend Request Sent",
+      message: `Your friend request to ${username} was sent. You'll be notified when they accept.`,
     });
     onClose();
   };
 
   const handleReport = () => {
-    if (!profile || !user) return;
-    // DB-ready: POST /api/reports
+    if (!user) return;
+    // DB-ready: POST /api/reports — ticket lands in Admin Panel → Support Tickets tab
     submitReport({
       reporterId:       user.id,
       reporterName:     user.username,
-      reportedId:       profile.id,
-      reportedUsername: profile.username,
+      reportedId:       targetId,
+      reportedUsername: username,
       reason:           reportReason,
       description:      reportDesc,
+    });
+    // Notify HUB inbox — admin will see ticket in Admin Panel
+    useNotificationStore.getState().addNotification({
+      type:    "system",
+      title:   "Report Submitted",
+      message: `Your report on ${username} has been sent to the moderation team. We'll review it shortly.`,
     });
     setReportStep("done");
     setTimeout(onClose, 1200);
