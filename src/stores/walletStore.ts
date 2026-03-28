@@ -1,86 +1,154 @@
 import { create } from "zustand";
-import type { Transaction, TransactionType, TransactionStatus, Token, Network } from "@/types";
+import type { Transaction, TransactionType, TransactionStatus, Network } from "@/types";
 
-// Platform-enforced hard cap — cannot be exceeded by any user
+// ─── Architecture note ──────────────────────────────────────────────────────
+// Arena is NON-CUSTODIAL. The platform never holds user funds.
+// Flow: User wallet → ArenaEscrow (smart contract) → Winner's wallet
+//
+// "Balance" shown in UI is read directly from the blockchain via wagmi:
+//   DB-ready: const { data } = useBalance({ address: walletAddress, token: USDT_CONTRACT })
+//
+// Arena Tokens (AT) are the only platform-managed balance (for Forge store).
+//   DB-ready: GET /api/users/me/at-balance
+// ────────────────────────────────────────────────────────────────────────────
+
 export const PLATFORM_BETTING_MAX = 500;
 
 interface WalletState {
-  tokens: Token[];
-  transactions: Transaction[];
-  platformBettingMax: number;   // read-only — set by platform (500)
-  dailyBettingLimit: number;    // user-chosen limit: 50–500
-  dailyBettingUsed: number;     // resets daily
+  // On-chain wallet (connected external wallet — MetaMask / WalletConnect)
+  // DB-ready: address + network come from wagmi useAccount()
+  connectedAddress: string | null;
   selectedNetwork: Network;
-  addresses: Record<Network, string>;
 
-  // DB-ready: replace with POST /api/wallet/deposit
-  deposit: (amount: number, token: string, network: Network) => Transaction;
-  // DB-ready: replace with POST /api/wallet/withdraw
-  withdraw: (amount: number, token: string, toAddress: string) => Transaction | null;
-  // DB-ready: replace with POST /api/escrow/lock
+  // On-chain balance — read-only from blockchain
+  // DB-ready: wagmi useBalance({ address, token: USDT_ADDRESS }) per network
+  // Stored locally only for UI preview / daily-limit enforcement before tx signing
+  usdtBalance: number;
+
+  // Arena Tokens — platform currency for Forge store (NOT on-chain)
+  // DB-ready: GET /api/users/me/at-balance  |  POST /api/forge/purchase deducts AT
+  atBalance: number;
+
+  // Daily betting safety limit (user-chosen, enforced client + server)
+  platformBettingMax: number;
+  dailyBettingLimit: number;
+  dailyBettingUsed: number;
+
+  // Transaction history — on-chain events + AT activity
+  // DB-ready: GET /api/wallet/transactions?userId=:id
+  transactions: Transaction[];
+
+  // Actions
+  // DB-ready: POST /api/escrow/lock  → wagmi writeContract(ArenaEscrow.deposit, { value: amount })
   lockEscrow: (amount: number, matchId: string) => Transaction | null;
-  // DB-ready: replace with POST /api/escrow/release
+  // DB-ready: POST /api/escrow/release → emitted by ArenaEscrow.declareWinner() event
   releaseEscrow: (amount: number, matchId: string, won: boolean) => Transaction;
-  // DB-ready: replace with POST /api/escrow/cancel (calls contract.cancelDeposit — only valid before lock)
+  // DB-ready: POST /api/escrow/cancel → wagmi writeContract(ArenaEscrow.cancelDeposit)
   cancelEscrow: (matchId: string) => boolean;
-  // DB-ready: replace with POST /api/wallet/transactions
+  // DB-ready: POST /api/wallet/transactions (internal log entry)
   addTransaction: (tx: Omit<Transaction, "id" | "timestamp">) => Transaction;
-  // DB-ready: replace with PATCH /api/wallet/network
-  setNetwork: (network: Network) => void;
-  // DB-ready: replace with PATCH /api/wallet/daily-limit
+  // DB-ready: PATCH /api/wallet/daily-limit
   setDailyBettingLimit: (limit: number) => void;
-  // DB-ready: replace with GET /api/wallet/balance
-  getTotalBalance: () => number;
+  // DB-ready: wagmi useBalance() — returns live chain value; this is the local preview
   getAvailableBalance: () => number;
+  // DB-ready: wagmi useAccount() / useConnect()
+  connectWallet: (address: string, network: Network) => void;
+  disconnectWallet: () => void;
 }
 
 let txCounter = 100;
 
-const SEED_TOKENS: Token[] = [
-  { symbol: "USDT", name: "Tether USD", balance: 1247.50, usdValue: 1247.50, change24h: 0.01, icon: "💵", network: "bsc" },
-  { symbol: "BNB", name: "BNB", balance: 2.847, usdValue: 1708.20, change24h: 3.42, icon: "🟡", network: "bsc" },
-  { symbol: "SOL", name: "Solana", balance: 12.5, usdValue: 2187.50, change24h: -1.8, icon: "🟣", network: "solana" },
-  { symbol: "USDC", name: "USD Coin", balance: 530.00, usdValue: 530.00, change24h: 0.00, icon: "🔵", network: "ethereum" },
-  { symbol: "ETH", name: "Ethereum", balance: 0.45, usdValue: 1575.00, change24h: 2.15, icon: "💎", network: "ethereum" },
-];
-
+// Seed transactions — realistic non-custodial history
+// No deposits/withdrawals: only escrow events, match results, AT activity, refunds
 const SEED_TRANSACTIONS: Transaction[] = [
-  { id: "TX-001", userId: "user-001", type: "deposit", amount: 500, token: "USDT", usdValue: 500, status: "completed", timestamp: "2026-03-08 15:30", txHash: "0xabc123...def456", from: "0x9e2...bb07", note: "Deposit from external wallet" },
-  { id: "TX-002", userId: "user-001", type: "match_win", amount: 120, token: "USDT", usdValue: 120, status: "completed", timestamp: "2026-03-08 14:22", note: "Match M-2048 vs ShadowKing" },
-  { id: "TX-003", userId: "user-001", type: "fee", amount: -6, token: "USDT", usdValue: 6, status: "completed", timestamp: "2026-03-08 14:22", note: "Platform fee (5%)" },
-  { id: "TX-004", userId: "user-001", type: "match_loss", amount: -75, token: "USDT", usdValue: 75, status: "completed", timestamp: "2026-03-08 11:05", note: "Match M-2045 vs CyberWolf" },
-  { id: "TX-005", userId: "user-001", type: "withdrawal", amount: -200, token: "USDT", usdValue: 200, status: "completed", timestamp: "2026-03-07 20:15", txHash: "0xfed987...cba654", to: "0x3c4...d5e8" },
-  { id: "TX-006", userId: "user-001", type: "deposit", amount: 1.5, token: "SOL", usdValue: 262.50, status: "completed", timestamp: "2026-03-07 18:00", txHash: "5Xk8mN...pQ2rS" },
-  { id: "TX-007", userId: "user-001", type: "refund", amount: 90, token: "USDT", usdValue: 90, status: "completed", timestamp: "2026-03-06 18:00", note: "Refund — Match M-2025 voided" },
-  { id: "TX-008", userId: "user-001", type: "withdrawal", amount: -0.3, token: "ETH", usdValue: 1050, status: "pending", timestamp: "2026-03-08 16:00", txHash: "0x111aaa...222bbb", to: "0x7a3...f9c2" },
-  { id: "TX-009", userId: "user-001", type: "match_win", amount: 50, token: "USDT", usdValue: 50, status: "completed", timestamp: "2026-03-06 12:30", note: "Match M-2020 vs StormRider" },
-  { id: "TX-010", userId: "user-001", type: "deposit", amount: 0.5, token: "BNB", usdValue: 300, status: "failed", timestamp: "2026-03-05 09:45", txHash: "0xfail...123", note: "Insufficient gas" },
+  {
+    id: "TX-001", userId: "user-001", type: "escrow_lock",
+    amount: -50, token: "USDT", usdValue: 50, status: "completed",
+    timestamp: "2026-03-08 15:30", txHash: "0xabc123...def456",
+    matchId: "M-2048", note: "Escrow locked — CS2 5v5 ($50)",
+  },
+  {
+    id: "TX-002", userId: "user-001", type: "match_win",
+    amount: 95, token: "USDT", usdValue: 95, status: "completed",
+    timestamp: "2026-03-08 16:10", txHash: "0xwin001...abc",
+    matchId: "M-2048", note: "Victory — CS2 5v5 vs ShadowKing (×2 − 5% fee)",
+  },
+  {
+    id: "TX-003", userId: "user-001", type: "fee",
+    amount: -5, token: "USDT", usdValue: 5, status: "completed",
+    timestamp: "2026-03-08 16:10", matchId: "M-2048", note: "Platform fee 5% — Match M-2048",
+  },
+  {
+    id: "TX-004", userId: "user-001", type: "escrow_lock",
+    amount: -75, token: "USDT", usdValue: 75, status: "completed",
+    timestamp: "2026-03-08 11:00", txHash: "0xesc002...fed",
+    matchId: "M-2045", note: "Escrow locked — Valorant 5v5 ($75)",
+  },
+  {
+    id: "TX-005", userId: "user-001", type: "match_loss",
+    amount: -75, token: "USDT", usdValue: 75, status: "completed",
+    timestamp: "2026-03-08 11:50", matchId: "M-2045", note: "Defeat — Valorant 5v5 vs CyberWolf",
+  },
+  {
+    id: "TX-006", userId: "user-001", type: "refund",
+    amount: 90, token: "USDT", usdValue: 90, status: "completed",
+    timestamp: "2026-03-07 18:00", txHash: "0xref001...777",
+    matchId: "M-2025", note: "Refund — Match M-2025 cancelled (room expired)",
+  },
+  {
+    id: "TX-007", userId: "user-001", type: "escrow_lock",
+    amount: -50, token: "USDT", usdValue: 50, status: "completed",
+    timestamp: "2026-03-06 12:00", txHash: "0xesc003...abc",
+    matchId: "M-2020", note: "Escrow locked — CS2 1v1 ($50)",
+  },
+  {
+    id: "TX-008", userId: "user-001", type: "match_win",
+    amount: 95, token: "USDT", usdValue: 95, status: "completed",
+    timestamp: "2026-03-06 12:30", txHash: "0xwin002...def",
+    matchId: "M-2020", note: "Victory — CS2 1v1 vs StormRider (×2 − 5% fee)",
+  },
+  {
+    id: "TX-009", userId: "user-001", type: "at_purchase",
+    amount: -20, token: "USDT", usdValue: 20, status: "completed",
+    timestamp: "2026-03-05 14:00", note: "Purchased 200 AT — Forge store",
+  },
+  {
+    id: "TX-010", userId: "user-001", type: "at_spend",
+    amount: -150, token: "AT", usdValue: 0, status: "completed",
+    timestamp: "2026-03-05 14:05", note: "Purchased Dragon Blade skin — Forge",
+  },
 ];
-
-const ADDRESSES: Record<Network, string> = {
-  bsc: "0x7a3F9c2E1b8D4a5C6f7e8d9B0c1A2b3C4d5E6f7A",
-  solana: "7Xf9Qk2LmN3pR4sT5uV6wX8yZ1aB2cD3eF4gH5iJ6kL",
-  ethereum: "0x1b8E44a1C9d2F3e4A5b6C7d8E9f0A1B2C3D4E5F6",
-};
 
 export const useWalletStore = create<WalletState>((set, get) => ({
-  tokens: SEED_TOKENS,
-  transactions: SEED_TRANSACTIONS,
-  platformBettingMax: PLATFORM_BETTING_MAX,
-  dailyBettingLimit: 500,   // user starts at platform max — can lower it
-  dailyBettingUsed: 200,
+  // DB-ready: from wagmi useAccount()
+  connectedAddress: "0x7a3F9c2E1b8D4a5C6f7e8d9B0c1A2b3C4d5E6f7A",
   selectedNetwork: "bsc",
-  addresses: ADDRESSES,
 
-  setNetwork: (network) => set({ selectedNetwork: network }),
+  // DB-ready: from wagmi useBalance() — USDT on BSC
+  usdtBalance: 1247.50,
+
+  // DB-ready: GET /api/users/me/at-balance
+  atBalance: 350,
+
+  platformBettingMax: PLATFORM_BETTING_MAX,
+  dailyBettingLimit: 500,
+  dailyBettingUsed: 200,
+  transactions: SEED_TRANSACTIONS,
+
+  connectWallet: (address, network) => {
+    // DB-ready: wagmi useConnect() + POST /api/auth/wallet-connect { address, network }
+    set({ connectedAddress: address, selectedNetwork: network });
+  },
+
+  disconnectWallet: () => {
+    // DB-ready: wagmi useDisconnect() + POST /api/auth/wallet-disconnect
+    set({ connectedAddress: null });
+  },
 
   setDailyBettingLimit: (limit) =>
     set({ dailyBettingLimit: Math.min(Math.max(limit, 50), PLATFORM_BETTING_MAX) }),
 
-  getTotalBalance: () => get().tokens.reduce((sum, t) => sum + t.usdValue, 0),
-
-  // lockEscrow already deducts from tokens — available balance is just the current token sum
-  getAvailableBalance: () => get().tokens.reduce((sum, t) => sum + t.usdValue, 0),
+  getAvailableBalance: () => get().usdtBalance,
 
   addTransaction: (txData) => {
     const tx: Transaction = {
@@ -92,67 +160,19 @@ export const useWalletStore = create<WalletState>((set, get) => ({
     return tx;
   },
 
-  deposit: (amount, token, network) => {
-    // Update token balance
-    set((state) => ({
-      tokens: state.tokens.map((t) =>
-        t.symbol === token && t.network === network
-          ? { ...t, balance: t.balance + amount, usdValue: t.usdValue + amount }
-          : t
-      ),
-    }));
-    return get().addTransaction({
-      userId: "user-001",
-      type: "deposit",
-      amount,
-      token,
-      usdValue: amount,
-      status: "completed",
-      note: `Deposit to ${network}`,
-    });
-  },
-
-  withdraw: (amount, token, toAddress) => {
-    const state = get();
-    const tokenObj = state.tokens.find((t) => t.symbol === token);
-    if (!tokenObj || tokenObj.balance < amount) return null;
-
-    set((s) => ({
-      tokens: s.tokens.map((t) =>
-        t.symbol === token && t.network === s.selectedNetwork
-          ? { ...t, balance: t.balance - amount, usdValue: t.usdValue - amount }
-          : t
-      ),
-    }));
-
-    return get().addTransaction({
-      userId: "user-001",
-      type: "withdrawal",
-      amount: -amount,
-      token,
-      usdValue: amount,
-      status: "pending",
-      to: toAddress,
-      note: `Withdrawal to ${toAddress.slice(0, 12)}...`,
-    });
-  },
-
   lockEscrow: (amount, matchId) => {
     const state = get();
-    // Enforce daily betting limit — funds go directly into smart contract escrow
+    // Enforce daily betting limit
     if (amount + state.dailyBettingUsed > state.dailyBettingLimit) return null;
+    if (state.usdtBalance < amount) return null;
 
-    const tokenObj = state.tokens.find((t) => t.symbol === "USDT" && t.network === "bsc");
-    if (!tokenObj || tokenObj.balance < amount) return null;
-
+    // DB-ready: wagmi writeContract(ArenaEscrow.deposit, { matchId, value: amount })
+    //           → on TransactionConfirmed event: deduct from local usdtBalance
     set((s) => ({
-      tokens: s.tokens.map((t) =>
-        t.symbol === "USDT" && t.network === "bsc"
-          ? { ...t, balance: t.balance - amount, usdValue: t.usdValue - amount }
-          : t
-      ),
+      usdtBalance: s.usdtBalance - amount,
       dailyBettingUsed: s.dailyBettingUsed + amount,
     }));
+
     return get().addTransaction({
       userId: "user-001",
       type: "escrow_lock",
@@ -166,23 +186,18 @@ export const useWalletStore = create<WalletState>((set, get) => ({
   },
 
   cancelEscrow: (matchId) => {
-    // Find the pending escrow_lock transaction for this match
     const escrowTx = get().transactions.find(
       (tx) => tx.matchId === matchId && tx.type === "escrow_lock" && tx.status === "pending"
     );
     if (!escrowTx) return false;
 
-    const amount = Math.abs(escrowTx.amount); // escrow_lock amount is negative
+    const amount = Math.abs(escrowTx.amount);
 
-    // Refund the USDT balance (BSC)
+    // DB-ready: wagmi writeContract(ArenaEscrow.cancelDeposit, { matchId })
+    //           → on MatchCancelled event: refund usdtBalance
     set((state) => ({
-      tokens: state.tokens.map((t) =>
-        t.symbol === "USDT" && t.network === "bsc"
-          ? { ...t, balance: t.balance + amount, usdValue: t.usdValue + amount }
-          : t
-      ),
+      usdtBalance: state.usdtBalance + amount,
       dailyBettingUsed: Math.max(0, state.dailyBettingUsed - amount),
-      // Mark the escrow_lock as cancelled
       transactions: state.transactions.map((tx) =>
         tx.matchId === matchId && tx.type === "escrow_lock" && tx.status === "pending"
           ? { ...tx, status: "cancelled" as const }
@@ -190,7 +205,6 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       ),
     }));
 
-    // Record the refund transaction
     get().addTransaction({
       userId: "user-001",
       type: "refund",
@@ -206,19 +220,16 @@ export const useWalletStore = create<WalletState>((set, get) => ({
   },
 
   releaseEscrow: (amount, matchId, won) => {
+    // DB-ready: triggered by ArenaEscrow.declareWinner() event via server webhook
+    //           → wagmi watches for WinnerDeclared(matchId, winner, amount) event
     if (won) {
-      set((state) => ({
-        tokens: state.tokens.map((t) =>
-          t.symbol === "USDT" && t.network === "bsc"
-            ? { ...t, balance: t.balance + amount, usdValue: t.usdValue + amount }
-            : t
-        ),
-      }));
+      set((state) => ({ usdtBalance: state.usdtBalance + amount }));
     }
-    // Mark the escrow_lock as completed
     set((state) => ({
       transactions: state.transactions.map((tx) =>
-        tx.matchId === matchId && tx.type === "escrow_lock" ? { ...tx, status: "completed" as TransactionStatus } : tx
+        tx.matchId === matchId && tx.type === "escrow_lock"
+          ? { ...tx, status: "completed" as TransactionStatus }
+          : tx
       ),
     }));
     return get().addTransaction({
@@ -229,7 +240,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       usdValue: amount,
       status: "completed",
       matchId,
-      note: `Match ${matchId} — ${won ? "Victory!" : "Defeat"}`,
+      note: `Match ${matchId} — ${won ? "Victory! (×2 − 5% fee)" : "Defeat"}`,
     });
   },
 }));

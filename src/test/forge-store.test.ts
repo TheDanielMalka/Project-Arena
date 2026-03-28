@@ -17,18 +17,15 @@ function resetForge() {
 }
 
 function resetWallet() {
+  // Non-custodial model: single usdtBalance (read from chain via wagmi in production)
   useWalletStore.setState({
-    tokens: [
-      { symbol: "USDT", name: "Tether USD", balance: 1247.50, usdValue: 1247.50, change24h: 0.01, icon: "💵", network: "bsc" },
-      { symbol: "BNB",  name: "BNB",        balance: 2.847,   usdValue: 1708.20, change24h: 3.42, icon: "🟡", network: "bsc" },
-      { symbol: "SOL",  name: "Solana",     balance: 12.5,    usdValue: 2187.50, change24h: -1.8, icon: "🟣", network: "solana" },
-      { symbol: "USDC", name: "USD Coin",   balance: 530.00,  usdValue: 530.00,  change24h: 0.00, icon: "🔵", network: "ethereum" },
-      { symbol: "ETH",  name: "Ethereum",   balance: 0.45,    usdValue: 1575.00, change24h: 2.15, icon: "💎", network: "ethereum" },
-    ],
+    usdtBalance: 1247.50,
+    atBalance: 500,
     transactions: [],
     dailyBettingLimit: 500,
     dailyBettingUsed: 0,
     selectedNetwork: "bsc",
+    connectedAddress: "0x7a3F9c2E1b8D4a5C6f7e8d9B0c1A2b3C4d5E6f7A",
   });
 }
 
@@ -338,11 +335,11 @@ describe("forgeStore — purchaseItem with USDT", () => {
     expect(purchases[0].amount).toBe(9.99);
   });
 
-  it("deducts USDT from wallet on successful purchase", () => {
-    const balanceBefore = useWalletStore.getState().getTotalBalance();
+  it("records at_purchase transaction in wallet on successful USDT purchase", () => {
     useForgeStore.getState().purchaseItem("item-005", "USDT");
-    const balanceAfter = useWalletStore.getState().getTotalBalance();
-    expect(balanceAfter).toBeLessThan(balanceBefore);
+    const atTx = useWalletStore.getState().transactions.find((tx) => tx.type === "at_purchase");
+    expect(atTx).toBeDefined();
+    expect(atTx?.token).toBe("USDT");
   });
 
   it("fails for items that have no USDT price (Iron Knight is AT-only)", () => {
@@ -445,11 +442,11 @@ describe("forgeStore — joinEvent", () => {
     expect(result.success).toBe(true);
   });
 
-  it("deducts entry fee via escrow when joining paid event", () => {
-    const before = useWalletStore.getState().getTotalBalance();
+  it("locks escrow when joining paid event", () => {
     useForgeStore.getState().joinEvent("ev-001"); // $50 entry
-    const after = useWalletStore.getState().getTotalBalance();
-    expect(after).toBeLessThan(before);
+    const escrowTx = useWalletStore.getState().transactions.find((tx) => tx.type === "escrow_lock");
+    expect(escrowTx).toBeDefined();
+    expect(Math.abs(escrowTx!.amount)).toBe(50);
   });
 });
 
@@ -472,17 +469,19 @@ describe("forgeStore — purchaseDrop", () => {
     expect(purchases[0].amount).toBe(9.99);
   });
 
-  it("deducts USDT from wallet", () => {
-    const before = useWalletStore.getState().getTotalBalance();
+  it("records at_purchase transaction when purchasing a drop", () => {
     useForgeStore.getState().purchaseDrop("dr-001");
-    expect(useWalletStore.getState().getTotalBalance()).toBeLessThan(before);
+    const atTx = useWalletStore.getState().transactions.find((tx) => tx.type === "at_purchase");
+    expect(atTx).toBeDefined();
+    expect(Math.abs(atTx!.amount)).toBeCloseTo(9.99, 1);
   });
 
-  it("flash-type drop (dr-004) returns success without charging wallet", () => {
-    const before = useWalletStore.getState().getTotalBalance();
+  it("flash-type drop (dr-004) returns success without recording a transaction", () => {
     const result = useForgeStore.getState().purchaseDrop("dr-004");
     expect(result.success).toBe(true);
-    expect(useWalletStore.getState().getTotalBalance()).toBe(before); // no charge
+    // Flash drops are auto-applied — no USDT charge
+    const atTx = useWalletStore.getState().transactions.find((tx) => tx.type === "at_purchase");
+    expect(atTx).toBeUndefined();
   });
 
   it("fails for nonexistent drop id", () => {

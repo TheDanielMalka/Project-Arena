@@ -1,52 +1,80 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import Wallet from "@/pages/Wallet";
 import { useUserStore } from "@/stores/userStore";
 import { useWalletStore } from "@/stores/walletStore";
 
-describe("Wallet page", () => {
+// Non-custodial wallet — no deposit/withdraw dialogs, only on-chain balance + activity
+
+describe("Wallet page — non-custodial", () => {
   beforeEach(() => {
     useUserStore.getState().login("player@arena.gg", "test");
+    useWalletStore.setState({
+      usdtBalance: 1247.50,
+      atBalance: 350,
+      transactions: [],
+      dailyBettingLimit: 500,
+      dailyBettingUsed: 200,
+      connectedAddress: "0x7a3F9c2E1b8D4a5C6f7e8d9B0c1A2b3C4d5E6f7A",
+      selectedNetwork: "bsc",
+    });
   });
 
-  it("renders Portfolio section", () => {
+  it("renders Wallet heading", () => {
     render(<MemoryRouter><Wallet /></MemoryRouter>);
-    expect(screen.getByText(/portfolio/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^wallet$/i })).toBeInTheDocument();
   });
 
-  it("shows token balances (USDT, BNB, SOL)", () => {
+  it("shows connected wallet address (truncated)", () => {
     render(<MemoryRouter><Wallet /></MemoryRouter>);
-    expect(screen.getAllByText(/USDT/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/BNB/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/0x7a3F9c/i)).toBeInTheDocument();
   });
 
-  it("shows Security section", () => {
+  it("shows USDT on-chain balance", () => {
     render(<MemoryRouter><Wallet /></MemoryRouter>);
-    expect(screen.getAllByText(/security/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/1,247\.50/)).toBeInTheDocument();
   });
 
-  it("shows daily betting usage vs limit", () => {
+  it("shows Arena Tokens (AT) section", () => {
     render(<MemoryRouter><Wallet /></MemoryRouter>);
-    const store = useWalletStore.getState();
-    expect(screen.getByText(`$${store.dailyBettingUsed}`)).toBeInTheDocument();
+    expect(screen.getAllByText(/arena tokens/i).length).toBeGreaterThan(0);
   });
 
-  it("opens deposit dialog on Deposit button click", () => {
+  it("shows Daily Betting Limit section", () => {
     render(<MemoryRouter><Wallet /></MemoryRouter>);
-    fireEvent.click(screen.getByRole("button", { name: /deposit/i }));
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getAllByText(/daily betting limit/i).length).toBeGreaterThan(0);
   });
 
-  it("opens withdraw dialog on Withdraw button click", () => {
+  it("shows daily betting used vs limit", () => {
     render(<MemoryRouter><Wallet /></MemoryRouter>);
-    fireEvent.click(screen.getByRole("button", { name: /withdraw/i }));
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText(/\$200 \/ \$500/)).toBeInTheDocument();
   });
 
-  it("shows transaction type filter (Deposits option)", () => {
+  it("shows On-Chain Activity section", () => {
     render(<MemoryRouter><Wallet /></MemoryRouter>);
-    // The tx filter SelectItems include "Deposits"
-    expect(screen.getAllByText((_, el) => !!el?.textContent?.toLowerCase().includes("deposit")).length).toBeGreaterThan(0);
+    expect(screen.getByText(/on-chain activity/i)).toBeInTheDocument();
+  });
+
+  it("does NOT show a Deposit button — non-custodial model", () => {
+    render(<MemoryRouter><Wallet /></MemoryRouter>);
+    const depositBtn = screen.queryByRole("button", { name: /^deposit$/i });
+    expect(depositBtn).toBeNull();
+  });
+
+  it("does NOT show a Withdraw button — funds go contract → wallet directly", () => {
+    render(<MemoryRouter><Wallet /></MemoryRouter>);
+    const withdrawBtn = screen.queryByRole("button", { name: /^withdraw$/i });
+    expect(withdrawBtn).toBeNull();
+  });
+
+  it("shows 'no transactions found' when activity is empty", () => {
+    render(<MemoryRouter><Wallet /></MemoryRouter>);
+    expect(screen.getByText(/no transactions found/i)).toBeInTheDocument();
+  });
+
+  it("shows ArenaEscrow explanation text", () => {
+    render(<MemoryRouter><Wallet /></MemoryRouter>);
+    expect(screen.getByText(/ArenaEscrow/)).toBeInTheDocument();
   });
 });

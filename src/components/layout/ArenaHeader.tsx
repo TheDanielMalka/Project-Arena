@@ -32,7 +32,8 @@ const CLIENT_STATUS_CONFIG = {
 
 export function ArenaHeader() {
   const { user, isAuthenticated, walletConnected, connectWallet, logout } = useUserStore();
-  const totalBalance = useWalletStore((s) => s.getTotalBalance());
+  // DB-ready: wagmi useBalance() — live on-chain USDT balance
+  const totalBalance = useWalletStore((s) => s.usdtBalance);
   const clientStatus = useClientStore((s) => s.status);
   const clientVersion = useClientStore((s) => s.version);
   const navigate = useNavigate();
