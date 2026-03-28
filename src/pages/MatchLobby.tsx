@@ -425,7 +425,8 @@ const PlayerCardPopover = ({
         )}
 
         {/* View Profile link */}
-        {!isOwnSlot && profile && (
+        {/* DB-ready: GET /api/players/:username — always resolves in production */}
+        {!isOwnSlot && (
           <a
             href={`/players/${username}`}
             className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/40 rounded-lg transition-colors"
