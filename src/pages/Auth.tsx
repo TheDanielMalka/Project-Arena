@@ -4,9 +4,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Swords, Mail, Lock, Eye, EyeOff, User, Gamepad2, KeyRound, Chrome, Check } from "lucide-react";
+import { Swords, Mail, Lock, Eye, EyeOff, User, Gamepad2, KeyRound, Chrome, Check, X } from "lucide-react";
 import { useUserStore } from "@/stores/userStore";
 import { useToast } from "@/hooks/use-toast";
+import { PASSWORD_RULES, isPasswordValid } from "@/lib/passwordValidation";
 
 const Auth = () => {
   const navigate = useNavigate();
@@ -48,8 +49,8 @@ const Auth = () => {
       toast({ title: "Missing fields", description: "Please fill all required fields.", variant: "destructive" });
       return;
     }
-    if (signupPassword.length < 8) {
-      toast({ title: "Weak password", description: "Password must be at least 8 characters.", variant: "destructive" });
+    if (!isPasswordValid(signupPassword)) {
+      toast({ title: "Password too weak", description: "Please meet all password requirements below.", variant: "destructive" });
       return;
     }
     if (!confirmedAge) {
@@ -219,7 +220,7 @@ const Auth = () => {
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
                       type={showPassword ? "text" : "password"}
-                      placeholder="Min 8 characters"
+                      placeholder="Create a strong password"
                       value={signupPassword}
                       onChange={(e) => setSignupPassword(e.target.value)}
                       className="pl-10 pr-10 bg-secondary border-border"
@@ -232,6 +233,24 @@ const Auth = () => {
                       {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
                   </div>
+                  {/* Password strength indicators */}
+                  {signupPassword.length > 0 && (
+                    <div className="mt-2 grid grid-cols-1 gap-0.5">
+                      {PASSWORD_RULES.map((rule) => {
+                        const ok = rule.test(signupPassword);
+                        return (
+                          <div key={rule.key} className="flex items-center gap-1.5">
+                            {ok
+                              ? <Check className="h-3 w-3 text-arena-green shrink-0" />
+                              : <X className="h-3 w-3 text-destructive/70 shrink-0" />}
+                            <span className={`text-[11px] ${ok ? "text-arena-green" : "text-muted-foreground"}`}>
+                              {rule.label}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="text-sm text-muted-foreground mb-1 flex items-center gap-1">

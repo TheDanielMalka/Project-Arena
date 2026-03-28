@@ -9,7 +9,7 @@ import { Slider } from "@/components/ui/slider";
 import {
   Bell, Shield, Globe, Trash2, Save, Lock, Volume2,
   AlertCircle, ChevronRight, Wallet, Gamepad2, User,
-  Eye, EyeOff, CheckCircle2, SlidersHorizontal, ShieldAlert,
+  Eye, EyeOff, CheckCircle2, SlidersHorizontal, ShieldAlert, Check, X,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -18,6 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useUserStore } from "@/stores/userStore";
 import { useWalletStore } from "@/stores/walletStore";
 import { cn } from "@/lib/utils";
+import { PASSWORD_RULES, isPasswordValid } from "@/lib/passwordValidation";
 
 // ─── Nav sections ──────────────────────────────────────────────
 const SECTIONS = [
@@ -245,10 +246,28 @@ const SettingsPage = () => {
                       </button>
                     </div>
                   </div>
+                  {/* Password strength indicators */}
+                  {newPw.length > 0 && (
+                    <div className="mt-1.5 grid grid-cols-1 gap-0.5 px-0.5">
+                      {PASSWORD_RULES.map((rule) => {
+                        const ok = rule.test(newPw);
+                        return (
+                          <div key={rule.key} className="flex items-center gap-1.5">
+                            {ok
+                              ? <Check className="h-2.5 w-2.5 text-arena-green shrink-0" />
+                              : <X className="h-2.5 w-2.5 text-destructive/60 shrink-0" />}
+                            <span className={`text-[10px] ${ok ? "text-arena-green" : "text-muted-foreground/70"}`}>
+                              {rule.label}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={!currentPw || !newPw || newPw.length < 6}
+                    disabled={!currentPw || !isPasswordValid(newPw)}
                     onClick={() => setPwConfirmOpen(true)}
                     className={cn(
                       "mt-2 h-7 text-xs font-display border-border transition-all",
