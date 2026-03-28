@@ -1,10 +1,11 @@
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { Wallet, LogOut, User, ChevronDown, Wifi, WifiOff } from "lucide-react";
+import { Wallet, LogOut, User, ChevronDown, Wifi, WifiOff, Loader2, MonitorPlay, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NotificationCenter } from "@/components/notifications/NotificationCenter";
 import { useUserStore } from "@/stores/userStore";
 import { useWalletStore } from "@/stores/walletStore";
 import { useEngineStatus } from "@/hooks/useEngineStatus";
+import { useClientStore } from "@/stores/clientStore";
 import { useNavigate } from "react-router-dom";
 import {
   DropdownMenu,
@@ -20,20 +21,30 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
+// Status config — drives the indicator colours and tooltip text
+const CLIENT_STATUS_CONFIG = {
+  checking:     { icon: Loader2,     color: "text-muted-foreground", dot: "bg-muted-foreground",  label: "Checking…",        tip: "Checking Arena Client connection…" },
+  disconnected: { icon: WifiOff,     color: "text-muted-foreground", dot: "bg-muted-foreground",  label: "Client Offline",   tip: "Arena Client not detected. Download and run the client to play matches." },
+  connected:    { icon: Loader2,     color: "text-arena-gold",       dot: "bg-arena-gold",        label: "Starting…",        tip: "Arena Client is starting. Capture subsystem initialising…" },
+  ready:        { icon: Wifi,        color: "text-primary",          dot: "bg-primary",           label: "Client Ready",     tip: "Arena Client connected and ready. You can join competitive matches." },
+  in_match:     { icon: MonitorPlay, color: "text-arena-cyan",       dot: "bg-arena-cyan",        label: "In Match",         tip: "Arena Client is actively recording your match." },
+} as const;
+
 export function ArenaHeader() {
   const { user, isAuthenticated, walletConnected, connectWallet, logout } = useUserStore();
   const totalBalance = useWalletStore((s) => s.getTotalBalance());
-  const { online } = useEngineStatus();
+  const clientStatus = useClientStore((s) => s.status);
+  const clientVersion = useClientStore((s) => s.version);
   const navigate = useNavigate();
 
-  const handleSignOut = () => {
-    logout();
-    navigate("/");
-  };
+  // Keep the poller alive — syncs into clientStore automatically
+  useEngineStatus();
 
-  const handleConnectWallet = () => {
-    connectWallet();
-  };
+  const handleSignOut = () => { logout(); navigate("/"); };
+
+  const cfg = CLIENT_STATUS_CONFIG[clientStatus];
+  const Icon = cfg.icon;
+  const isAnimated = clientStatus === "checking" || clientStatus === "connected";
 
   return (
     <header className="h-14 flex items-center justify-between border-b border-border px-4">
@@ -46,34 +57,48 @@ export function ArenaHeader() {
           Play for Stakes
         </button>
       </div>
+
       <div className="flex items-center gap-2">
-        {/* Engine Status Indicator */}
+        {/* ── Arena Client Status Indicator ── */}
         {isAuthenticated && (
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <div className="flex items-center gap-1.5 px-2 py-1 rounded-md cursor-default">
-                  {online === null ? (
-                    <div className="h-2 w-2 rounded-full bg-muted-foreground animate-pulse" />
-                  ) : online ? (
-                    <Wifi className="h-3.5 w-3.5 text-primary" />
-                  ) : (
-                    <WifiOff className="h-3.5 w-3.5 text-muted-foreground" />
-                  )}
-                  <span className={`text-xs font-mono hidden sm:inline ${
-                    online ? "text-primary" : "text-muted-foreground"
-                  }`}>
-                    {online === null ? "..." : online ? "LIVE" : "OFFLINE"}
+                {/* Clicking "disconnected" opens download page — others do nothing */}
+                <button
+                  onClick={clientStatus === "disconnected" ? () => window.open("https://arena.gg/download-client", "_blank") : undefined}
+                  className={`flex items-center gap-1.5 px-2 py-1 rounded-md transition-colors ${
+                    clientStatus === "disconnected"
+                      ? "cursor-pointer hover:bg-secondary/60"
+                      : "cursor-default"
+                  }`}
+                >
+                  {/* Animated dot */}
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot} ${
+                    clientStatus === "ready" ? "animate-pulse" : ""
+                  }`} />
+                  <Icon className={`h-3.5 w-3.5 ${cfg.color} ${isAnimated ? "animate-spin" : ""}`} />
+                  <span className={`text-xs font-mono hidden sm:inline ${cfg.color}`}>
+                    {cfg.label}
                   </span>
-                </div>
+                  {/* Download hint when offline */}
+                  {clientStatus === "disconnected" && (
+                    <Download className="h-3 w-3 text-muted-foreground hidden sm:inline ml-0.5" />
+                  )}
+                </button>
               </TooltipTrigger>
-              <TooltipContent>
-                <p>{online ? "Engine connected — Desktop client can send results" : "Engine offline — Running in demo mode"}</p>
+              <TooltipContent side="bottom" className="max-w-64">
+                <p className="text-xs">{cfg.tip}</p>
+                {clientVersion && <p className="text-[10px] text-muted-foreground mt-0.5">v{clientVersion}</p>}
+                {clientStatus === "disconnected" && (
+                  <p className="text-[10px] text-primary mt-1 flex items-center gap-1">
+                    <Download className="h-2.5 w-2.5" /> Click to download client
+                  </p>
+                )}
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
-        )
-        }
+        )}
 
         {/* Balance Quick View */}
         {isAuthenticated && walletConnected && (
@@ -97,15 +122,9 @@ export function ArenaHeader() {
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="border-primary/30 text-primary hover:bg-primary/10 gap-2">
                 {walletConnected ? (
-                  <>
-                    <Wallet className="h-4 w-4" />
-                    <span className="hidden sm:inline font-mono text-xs">{user.walletShort}</span>
-                  </>
+                  <><Wallet className="h-4 w-4" /><span className="hidden sm:inline font-mono text-xs">{user.walletShort}</span></>
                 ) : (
-                  <>
-                    <Wallet className="h-4 w-4" />
-                    <span className="hidden sm:inline">Connect Wallet</span>
-                  </>
+                  <><Wallet className="h-4 w-4" /><span className="hidden sm:inline">Connect Wallet</span></>
                 )}
                 <ChevronDown className="h-3 w-3 opacity-50" />
               </Button>
@@ -117,7 +136,7 @@ export function ArenaHeader() {
               </div>
               <DropdownMenuSeparator />
               {!walletConnected && (
-                <DropdownMenuItem onClick={handleConnectWallet} className="cursor-pointer">
+                <DropdownMenuItem onClick={() => connectWallet()} className="cursor-pointer">
                   <Wallet className="mr-2 h-4 w-4" /> Connect Wallet
                 </DropdownMenuItem>
               )}
@@ -128,23 +147,14 @@ export function ArenaHeader() {
                 <User className="mr-2 h-4 w-4" /> Profile
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={handleSignOut}
-                className="cursor-pointer text-destructive focus:text-destructive"
-              >
+              <DropdownMenuItem onClick={handleSignOut} className="cursor-pointer text-destructive focus:text-destructive">
                 <LogOut className="mr-2 h-4 w-4" /> Sign Out
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         ) : (
-          <Button
-            variant="outline"
-            size="sm"
-            className="border-primary/30 text-primary hover:bg-primary/10"
-            onClick={() => navigate("/auth")}
-          >
-            <Wallet className="mr-2 h-4 w-4" />
-            Connect Wallet
+          <Button variant="outline" size="sm" className="border-primary/30 text-primary hover:bg-primary/10" onClick={() => navigate("/auth")}>
+            <Wallet className="mr-2 h-4 w-4" /> Connect Wallet
           </Button>
         )}
       </div>

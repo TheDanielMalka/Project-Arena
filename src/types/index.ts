@@ -247,6 +247,26 @@ export type NotificationType =
   | "escrow"          // deposit confirmed / refunded           — DB: notifications.type = 'escrow'
   | "friend_request"; // friend request sent or accepted        — DB: notifications.type = 'friend_request'
 
+// ─── Arena Client Status ──────────────────────────────────
+// Tracks whether the desktop capture client is running and ready to record.
+// DB-ready: synced via POST /api/client/heartbeat (desktop client → server)
+// WS-ready: client emits "client:status" event on WebSocket connection
+
+export type ClientStatus =
+  | "checking"      // initial state — first health poll not yet complete
+  | "disconnected"  // Engine API unreachable — client not running        → DB: client_sessions.status = 'disconnected'
+  | "connected"     // Engine API up but capture subsystem not ready yet  → DB: client_sessions.status = 'connected'
+  | "ready"         // client running, capture ready, match play allowed   → DB: client_sessions.status = 'ready'
+  | "in_match";     // client actively recording a match session           → DB: client_sessions.status = 'in_match'
+
+export interface ClientSession {
+  status: ClientStatus;
+  version?: string;           // DB: client_sessions.client_version
+  uptime?: number;            // seconds — DB: client_sessions.uptime
+  lastCheckedAt?: string;     // ISO — DB: client_sessions.last_heartbeat_at
+  matchId?: string;           // set when status = 'in_match' — DB: client_sessions.active_match_id
+}
+
 export interface Notification {
   id: string;
   userId?: string;   // DB: notifications.user_id — optional on client (known from session)

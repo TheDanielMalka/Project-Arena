@@ -13,13 +13,14 @@ import {
   Search, Copy, UserPlus, Crown, Shield, Hash, KeyRound, Eye, EyeOff,
   AlertCircle, ChevronDown, Monitor, Smartphone, Zap, TrendingUp,
   Wallet, Loader2, ScanLine, LogOut, AlertTriangle, Timer,
-  UserCheck, Flag, UserCircle2, Trash2,
+  UserCheck, Flag, UserCircle2, Trash2, WifiOff, Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { MatchStatus, Game, Match, MatchMode, TicketReason } from "@/types";
 import { useFriendStore }  from "@/stores/friendStore";
 import { useReportStore }  from "@/stores/reportStore";
 import { usePlayerStore }  from "@/stores/playerStore";
+import { useClientStore }  from "@/stores/clientStore";
 import { GAME_MODES, getDefaultMode, getTeamSize, getTotalPlayers } from "@/config/gameModes";
 
 // ─── Game configs ─────────────────────────────────────────────────────────────
@@ -446,6 +447,10 @@ const MatchLobby = () => {
   const { matches, addMatch, joinMatch, leaveMatch, updateMatchStatus, getMatchByCode, deleteMatch, expireOldMatches } = useMatchStore();
   const { lockEscrow, cancelEscrow } = useWalletStore();
   const { friendships, sendFriendRequest } = useFriendStore();
+  const canPlay      = useClientStore((s) => s.canPlay());
+  const clientStatus = useClientStore((s) => s.status);
+  const markInMatch  = useClientStore((s) => s.markInMatch);
+  const markIdle     = useClientStore((s) => s.markIdle);
   useMatchPolling({ interval: 5000 });
 
   const [selectedBet, setSelectedBet] = useState<number | null>(null);
@@ -568,6 +573,7 @@ const MatchLobby = () => {
       if (remaining === 0) {
         // Time's up — contract locks, match goes in_progress
         updateMatchStatus(myActiveRoom.id, "in_progress");
+        markInMatch(myActiveRoom.id);
         setMyRoomMatchId(null);
         setRoomLocked(true);
         useNotificationStore.getState().addNotification({
@@ -589,9 +595,11 @@ const MatchLobby = () => {
       setRoomLocked(true);
     } else if (myActiveRoom.status === "completed") {
       // DB-ready: Vision Engine called declareWinner → funds released by contract
+      markIdle();
       setMyRoomMatchId(null);
       setRoomLocked(false);
     } else if (myActiveRoom.status === "cancelled") {
+      markIdle();
       cancelEscrow(myActiveRoom.id);
       setMyRoomMatchId(null);
       setRoomLocked(false);
@@ -674,6 +682,33 @@ const MatchLobby = () => {
           </span>
         </div>
       </div>
+
+      {/* ── Client Status Banner ── */}
+      {!canPlay && clientStatus !== "checking" && (
+        <div className="rounded-xl border border-arena-gold/30 bg-arena-gold/5 px-4 py-3 flex items-center gap-3">
+          <WifiOff className="h-4 w-4 text-arena-gold shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-display font-semibold text-arena-gold">
+              {clientStatus === "disconnected" ? "Arena Client Required" : "Client Starting…"}
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {clientStatus === "disconnected"
+                ? "Download and run the Arena desktop client to join matches. You can browse lobbies and view stats without it."
+                : "Arena Client is starting up. Match joining will be available shortly."}
+            </p>
+          </div>
+          {clientStatus === "disconnected" && (
+            <a
+              href="https://arena.gg/download-client"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-arena-gold/15 border border-arena-gold/30 text-arena-gold text-xs font-display hover:bg-arena-gold/25 transition-colors"
+            >
+              <Download className="h-3 w-3" /> Download
+            </a>
+          )}
+        </div>
+      )}
 
       {/* ── Live Activity Ticker ── */}
       <LiveTicker matches={matches} />
@@ -875,7 +910,7 @@ const MatchLobby = () => {
                 <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-border">
                   <p className="text-xs text-muted-foreground">{selectedPublicLobby.players.length}/{selectedPublicLobby.maxPlayers} players in lobby</p>
                   <Button
-                    disabled={selectedPublicLobby.status !== "waiting" || selectedPublicLobby.players.length >= selectedPublicLobby.maxPlayers}
+                    disabled={selectedPublicLobby.status !== "waiting" || selectedPublicLobby.players.length >= selectedPublicLobby.maxPlayers || !canPlay}
                     onClick={() => { setSelectedPublicLobbyId(null); handleJoinPublic(selectedPublicLobby.id, selectedPublicLobby.betAmount); }}
                     className="font-display"
                     style={cfg ? { boxShadow: `0 0 16px ${cfg.color}40` } : {}}>
@@ -1235,7 +1270,7 @@ const MatchLobby = () => {
                       </Badge>
                       <span className="font-display text-base font-bold text-arena-gold">${match.betAmount}</span>
                       {canJoin ? (
-                        <Button size="sm" disabled={depositConfirm !== null}
+                        <Button size="sm" disabled={depositConfirm !== null || !canPlay}
                           onClick={(e) => { e.stopPropagation(); handleJoinPublic(match.id, match.betAmount); }}
                           className="font-display text-xs"
                           style={glowing && cfg ? { boxShadow: `0 0 12px ${cfg.color}60` } : {}}>
@@ -1464,7 +1499,7 @@ const MatchLobby = () => {
                               <p key={i} className="text-sm text-muted-foreground/30 italic pl-5">Empty slot</p>
                             ))}
                           </div>
-                          {canJoin && !full && (
+                          {canJoin && !full && canPlay && (
                             <button onClick={() => handleJoinCustom(match.id, match.betAmount, isA ? "A" : "B")}
                               className={`mt-2 w-full flex items-center justify-center gap-1 py-1.5 rounded-lg border ${joinBorder} ${joinText} ${joinHover} transition-colors text-xs font-display`}>
                               <UserPlus className="h-3 w-3" /> Join {label}
