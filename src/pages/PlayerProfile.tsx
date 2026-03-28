@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -101,6 +101,9 @@ function ReportModal({ open, onClose, reportedId, reportedUsername }: ReportModa
             <Flag className="h-4 w-4 text-destructive" />
             {step === "success" ? "Report Submitted" : "Report Player"}
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            Submit a report against this player for rule violations such as cheating, harassment, or unsportsmanlike behaviour. Reports are reviewed by Arena admins within 24 hours.
+          </DialogDescription>
         </DialogHeader>
 
         {step === "form" ? (
@@ -221,6 +224,9 @@ function FriendRequestModal({ open, targetUsername, targetArenaId, onClose, onCo
             <UserPlus className="h-4 w-4 text-primary" />
             Send Friend Request
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            Send a friend request to connect with this player on Arena. You can include an optional personal message.
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="rounded-xl border border-border/40 bg-secondary/30 px-4 py-3">

@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
   Users2, Search, UserPlus, UserCheck, Clock, MessageCircle,
@@ -322,6 +322,9 @@ function ComposeDialog({ open, onClose, prefillArenaId }: ComposeProps) {
           <DialogTitle className="flex items-center gap-2 text-sm font-display">
             <Pencil className="h-4 w-4 text-primary" /> New Message
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            Compose and send a direct message to another Arena player. Enter their Arena ID to look them up.
+          </DialogDescription>
         </DialogHeader>
         {sent ? (
           <div className="text-center py-6 space-y-3">
@@ -399,6 +402,9 @@ function FriendRequestModal({ open, targetUsername, targetArenaId, onClose, onCo
           <DialogTitle className="flex items-center gap-1.5 text-xs font-display font-semibold">
             <UserPlus className="h-3.5 w-3.5 text-primary" /> Add Friend
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            Send a friend request to connect with this player on Arena. You can include an optional message.
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-secondary/30 border border-border/40">
