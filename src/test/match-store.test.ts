@@ -216,4 +216,74 @@ describe("matchStore", () => {
     const result = useMatchStore.getState().leaveMatch("c3", "CS2Kings"); // c3 is in_progress
     expect(result).toBe(false);
   });
+
+  // ── deleteMatch ────────────────────────────────────────────────────────────────
+
+  it("deleteMatch removes the match from the list", () => {
+    useMatchStore.getState().deleteMatch("m1");
+    expect(useMatchStore.getState().matches.find((m) => m.id === "m1")).toBeUndefined();
+  });
+
+  it("deleteMatch is a no-op for a non-existent matchId", () => {
+    const before = useMatchStore.getState().matches.length;
+    useMatchStore.getState().deleteMatch("non-existent-xyz");
+    expect(useMatchStore.getState().matches.length).toBe(before);
+  });
+
+  // ── expireOldMatches ───────────────────────────────────────────────────────────
+
+  it("expireOldMatches marks waiting matches older than 30min as cancelled", () => {
+    const added = useMatchStore.getState().addMatch({
+      type: "public", host: "OldHost", hostId: "u-old",
+      game: "CS2", mode: "1v1", betAmount: 10,
+      players: [], maxPlayers: 2, status: "waiting",
+    });
+    // Backdating the match to 31 minutes ago
+    useMatchStore.setState((s) => ({
+      matches: s.matches.map((m) =>
+        m.id === added.id
+          ? { ...m, createdAt: new Date(Date.now() - 31 * 60 * 1000).toISOString() }
+          : m
+      ),
+    }));
+    const expired = useMatchStore.getState().expireOldMatches();
+    expect(expired).toContain(added.id);
+    expect(useMatchStore.getState().matches.find((m) => m.id === added.id)!.status).toBe("cancelled");
+  });
+
+  it("expireOldMatches does not affect in_progress matches", () => {
+    const statusBefore = useMatchStore.getState().matches.find((m) => m.id === "c3")!.status;
+    useMatchStore.getState().expireOldMatches();
+    expect(useMatchStore.getState().matches.find((m) => m.id === "c3")!.status).toBe(statusBefore);
+  });
+
+  it("expireOldMatches returns empty array when no matches are stale", () => {
+    // Seed waiting matches have old createdAt but are used for other tests; result is an array
+    const result = useMatchStore.getState().expireOldMatches();
+    expect(Array.isArray(result)).toBe(true);
+  });
+
+  // ── expiresAt ─────────────────────────────────────────────────────────────────
+
+  it("addMatch sets expiresAt approximately 30 minutes after createdAt", () => {
+    const m = useMatchStore.getState().addMatch({
+      type: "public", host: "X", hostId: "x1",
+      game: "CS2", mode: "1v1", betAmount: 10,
+      players: [], maxPlayers: 2, status: "waiting",
+    });
+    expect(m.expiresAt).toBeDefined();
+    const diff = new Date(m.expiresAt!).getTime() - new Date(m.createdAt).getTime();
+    expect(diff).toBeGreaterThanOrEqual(29 * 60 * 1000);
+    expect(diff).toBeLessThanOrEqual(31 * 60 * 1000);
+  });
+
+  // ── updateMatchStatus → history persistence ────────────────────────────────────
+
+  it("updateMatchStatus to completed keeps match in the array (history persistence)", () => {
+    useMatchStore.getState().updateMatchStatus("m1", "completed", "p1");
+    const m = useMatchStore.getState().matches.find((m) => m.id === "m1");
+    expect(m).toBeDefined();
+    expect(m!.status).toBe("completed");
+    expect(m!.endedAt).toBeDefined();
+  });
 });

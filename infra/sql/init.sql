@@ -492,3 +492,31 @@ CREATE INDEX idx_forge_dp_user ON forge_drop_purchases(user_id, purchased_at DES
 -- Add lock_countdown_start to matches (10-second leave window before escrow locks on-chain)
 ALTER TABLE matches ADD COLUMN IF NOT EXISTS lock_countdown_start TIMESTAMPTZ;
 COMMENT ON COLUMN matches.lock_countdown_start IS 'Set when all players have deposited. Clients have 10s to leave before contract locks.';
+
+-- ── Match Lobby Enhancements ──────────────────────────────────────────────────
+
+-- Auto-expire: computed column so clients and server always agree on expiry time
+ALTER TABLE matches
+  ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ
+    GENERATED ALWAYS AS (created_at + INTERVAL '30 minutes') STORED;
+
+-- Index for the expiry polling query and CRON cleanup
+CREATE INDEX IF NOT EXISTS idx_matches_expires_at
+  ON matches(expires_at) WHERE status = 'waiting';
+
+-- DELETE /api/matches/:id endpoint spec (host-only, waiting-only):
+--   1. Verify: caller_id = matches.host_id AND status = 'waiting'
+--   2. Call:   ArenaEscrow.cancelMatch(on_chain_match_id)
+--              → emits MatchCancelled(matchId, cancelledBy)
+--              → emits MatchRefunded(matchId) for each depositor
+--   3. On MatchCancelled event:  UPDATE matches SET status='cancelled', ended_at=NOW()
+--   4. On MatchRefunded event:   For each match_players row with has_deposited=TRUE:
+--                                  INSERT INTO transactions (type='refund', amount=deposit_amount, ...)
+--                                  UPDATE user_balances SET available=available+deposit_amount,
+--                                                           in_escrow=in_escrow-deposit_amount
+--   5. Response: 204 No Content
+
+-- Server CRON (runs every 60s) — replaces client-side expireOldMatches():
+--   UPDATE matches SET status='cancelled', ended_at=NOW()
+--   WHERE status='waiting' AND expires_at < NOW();
+--   -- Then for each cancelled match: trigger MatchRefunded logic above

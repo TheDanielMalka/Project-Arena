@@ -13,9 +13,13 @@ import {
   Search, Copy, UserPlus, Crown, Shield, Hash, KeyRound, Eye, EyeOff,
   AlertCircle, ChevronDown, Monitor, Smartphone, Zap, TrendingUp,
   Wallet, Loader2, ScanLine, LogOut, AlertTriangle, Timer,
+  UserCheck, Flag, UserCircle2, Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { MatchStatus, Game, Match, MatchMode } from "@/types";
+import type { MatchStatus, Game, Match, MatchMode, TicketReason } from "@/types";
+import { useFriendStore }  from "@/stores/friendStore";
+import { useReportStore }  from "@/stores/reportStore";
+import { usePlayerStore }  from "@/stores/playerStore";
 import { GAME_MODES, getDefaultMode, getTeamSize, getTotalPlayers } from "@/config/gameModes";
 
 // ─── Game configs ─────────────────────────────────────────────────────────────
@@ -203,11 +207,202 @@ const LiveTicker = ({ matches }: { matches: Match[] }) => {
   );
 };
 
+// ── PlayerCardPopover ─────────────────────────────────────────────────────────
+// Mini-profile card shown when clicking a player's name in team slots
+// DB-ready: GET /api/players/:username for profile data
+//           POST /api/friends for Add Friend action
+//           POST /api/reports for Report action
+const PlayerCardPopover = ({
+  username,
+  onClose,
+  onLeaveRoom,
+  isOwnSlot,
+}: {
+  username: string;
+  onClose: () => void;
+  onLeaveRoom: () => void;
+  isOwnSlot: boolean;
+}) => {
+  const { players } = usePlayerStore();
+  const { friendships, sendFriendRequest } = useFriendStore();
+  const { submitReport } = useReportStore();
+  const { user } = useUserStore();
+
+  const [reportStep, setReportStep] = useState<"idle" | "form" | "done">("idle");
+  const [reportReason, setReportReason] = useState<TicketReason>("cheating");
+  const [reportDesc, setReportDesc] = useState("");
+
+  // DB-ready: GET /api/players/:username
+  const profile = players.find((p) => p.username === username);
+
+  const existingFr = profile
+    ? friendships.find((f) => f.friendId === profile.id)
+    : undefined;
+  const isFriend  = existingFr?.status === "accepted";
+  const isPending = existingFr?.status === "pending";
+
+  const REASON_LABELS: Record<TicketReason, string> = {
+    cheating:             "Cheating / Hacking",
+    harassment:           "Harassment",
+    fake_screenshot:      "Fake Screenshot",
+    disconnect_abuse:     "Disconnect Abuse",
+    other:                "Other",
+  };
+
+  const handleAddFriend = () => {
+    if (!profile || !user) return;
+    // DB-ready: POST /api/friends
+    sendFriendRequest({
+      myId:                 user.id,
+      myUsername:           user.username,
+      myArenaId:            user.arenaId,
+      myAvatarInitials:     user.avatarInitials,
+      myRank:               user.rank,
+      myTier:               user.tier,
+      myPreferredGame:      user.preferredGame,
+      targetId:             profile.id,
+      targetUsername:       profile.username,
+      targetArenaId:        profile.arenaId,
+      targetAvatarInitials: profile.avatarInitials,
+      targetRank:           profile.rank,
+      targetTier:           profile.tier,
+      targetPreferredGame:  profile.preferredGame,
+    });
+    onClose();
+  };
+
+  const handleReport = () => {
+    if (!profile || !user) return;
+    // DB-ready: POST /api/reports
+    submitReport({
+      reporterId:       user.id,
+      reporterName:     user.username,
+      reportedId:       profile.id,
+      reportedUsername: profile.username,
+      reason:           reportReason,
+      description:      reportDesc,
+    });
+    setReportStep("done");
+    setTimeout(onClose, 1200);
+  };
+
+  return (
+    <div className="w-56 rounded-xl border border-border/60 bg-card shadow-2xl overflow-hidden">
+      {/* Header */}
+      <div className="px-3 py-2.5 bg-secondary/40 border-b border-border/40 flex items-center gap-2">
+        <div className="w-7 h-7 rounded-lg bg-primary/20 border border-primary/30 flex items-center justify-center font-display text-[10px] font-bold text-primary shrink-0">
+          {username.slice(0, 2).toUpperCase()}
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs font-bold font-display truncate">{username}</p>
+          <p className="text-[10px] text-muted-foreground truncate">
+            {profile?.rank ?? "—"} · {profile?.preferredGame ?? "—"}
+          </p>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="p-2 space-y-1">
+        {isOwnSlot ? (
+          <button
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
+            onClick={() => { onClose(); onLeaveRoom(); }}
+          >
+            <LogOut className="h-3 w-3" /> Leave Room
+          </button>
+        ) : (
+          <>
+            {/* Add Friend */}
+            {isFriend ? (
+              <div className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground">
+                <UserCheck className="h-3 w-3" /> Friends
+              </div>
+            ) : isPending ? (
+              <div className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground">
+                <Clock className="h-3 w-3" /> Request Sent
+              </div>
+            ) : (
+              <button
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-secondary/60 rounded-lg transition-colors"
+                onClick={handleAddFriend}
+              >
+                <UserPlus className="h-3 w-3 text-primary" /> Add Friend
+              </button>
+            )}
+
+            {/* Report */}
+            {reportStep === "idle" && (
+              <button
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-destructive/70 hover:bg-destructive/10 hover:text-destructive rounded-lg transition-colors"
+                onClick={() => setReportStep("form")}
+              >
+                <Flag className="h-3 w-3" /> Report
+              </button>
+            )}
+
+            {reportStep === "form" && (
+              <div className="space-y-1.5 pt-1">
+                <select
+                  value={reportReason}
+                  onChange={(e) => setReportReason(e.target.value as TicketReason)}
+                  className="w-full text-[10px] rounded-md border border-border/50 bg-secondary/50 px-2 py-1"
+                >
+                  {(Object.entries(REASON_LABELS) as [TicketReason, string][]).map(([k, v]) => (
+                    <option key={k} value={k}>{v}</option>
+                  ))}
+                </select>
+                <textarea
+                  value={reportDesc}
+                  onChange={(e) => setReportDesc(e.target.value)}
+                  placeholder="Brief description…"
+                  rows={2}
+                  className="w-full text-[10px] rounded-md border border-border/50 bg-secondary/50 px-2 py-1 resize-none"
+                />
+                <div className="flex gap-1">
+                  <button
+                    disabled={!reportDesc.trim()}
+                    onClick={handleReport}
+                    className="flex-1 text-[10px] bg-destructive text-destructive-foreground rounded-md py-1 disabled:opacity-40"
+                  >
+                    Submit
+                  </button>
+                  <button
+                    onClick={() => setReportStep("idle")}
+                    className="text-[10px] px-2 rounded-md border border-border/40 hover:bg-secondary/60"
+                  >
+                    Back
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {reportStep === "done" && (
+              <p className="text-[10px] text-primary px-2.5 py-1.5">✓ Report submitted</p>
+            )}
+          </>
+        )}
+
+        {/* View Profile link */}
+        {!isOwnSlot && profile && (
+          <a
+            href={`/players/${username}`}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/40 rounded-lg transition-colors"
+            onClick={onClose}
+          >
+            <UserCircle2 className="h-3 w-3" /> View Profile
+          </a>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 const MatchLobby = () => {
   const { user } = useUserStore();
-  const { matches, addMatch, joinMatch, leaveMatch, updateMatchStatus, getMatchByCode } = useMatchStore();
+  const { matches, addMatch, joinMatch, leaveMatch, updateMatchStatus, getMatchByCode, deleteMatch, expireOldMatches } = useMatchStore();
   const { lockEscrow, cancelEscrow } = useWalletStore();
+  const { friendships, sendFriendRequest } = useFriendStore();
   useMatchPolling({ interval: 5000 });
 
   const [selectedBet, setSelectedBet] = useState<number | null>(null);
@@ -231,6 +426,9 @@ const MatchLobby = () => {
   const [myRoomMatchId, setMyRoomMatchId] = useState<string | null>(null);
   const [roomLocked, setRoomLocked]       = useState(false);
   const [countdown, setCountdown]         = useState<number | null>(null);
+  const [leaveConfirmOpen,      setLeaveConfirmOpen]      = useState(false);
+  const [deleteRoomConfirmOpen, setDeleteRoomConfirmOpen] = useState(false);
+  const [playerPopover,         setPlayerPopover]         = useState<{ username: string; rect: DOMRect } | null>(null);
 
   const publicMatches = matches.filter(m => m.type === "public");
   const customMatches = matches.filter(m => m.type === "custom");
@@ -342,11 +540,41 @@ const MatchLobby = () => {
   }, [myActiveRoom?.lockCountdownStart, myActiveRoom?.id]);
 
   useEffect(() => {
-    if (myActiveRoom?.status === "in_progress" && myRoomMatchId) {
+    if (!myActiveRoom || !myRoomMatchId) return;
+    if (myActiveRoom.status === "in_progress") {
       setMyRoomMatchId(null);
       setRoomLocked(true);
+    } else if (myActiveRoom.status === "completed") {
+      // DB-ready: Vision Engine called declareWinner → funds released by contract
+      setMyRoomMatchId(null);
+      setRoomLocked(false);
+    } else if (myActiveRoom.status === "cancelled") {
+      cancelEscrow(myActiveRoom.id);
+      setMyRoomMatchId(null);
+      setRoomLocked(false);
     }
   }, [myActiveRoom?.status]);
+
+  // DB-ready: server CRON replaces this — client polls as fallback
+  // Contract: ArenaEscrow.claimRefund() available after 2h on-chain timeout
+  useEffect(() => {
+    const poll = () => {
+      const expiredIds = expireOldMatches();
+      if (myRoomMatchId && expiredIds.includes(myRoomMatchId)) {
+        cancelEscrow(myRoomMatchId);
+        setMyRoomMatchId(null);
+        setCountdown(null);
+        useNotificationStore.getState().addNotification({
+          type: "system",
+          title: "⏰ Room Expired",
+          message: "Your match room expired after 30 minutes. Deposit refunded.",
+        });
+      }
+    };
+    poll();
+    const id = setInterval(poll, 30_000);
+    return () => clearInterval(id);
+  }, [myRoomMatchId]);
 
   const handleLeaveRoom = useCallback(() => {
     if (!myActiveRoom || !user) return;
@@ -362,6 +590,22 @@ const MatchLobby = () => {
       });
     }
   }, [myActiveRoom, user, leaveMatch, cancelEscrow]);
+
+  const handleDeleteRoom = useCallback(() => {
+    if (!myActiveRoom || !user) return;
+    // DB-ready: DELETE /api/matches/:id — server calls ArenaEscrow.cancelMatch()
+    // Contract: MatchState must be WAITING. Emits MatchCancelled + MatchRefunded events.
+    cancelEscrow(myActiveRoom.id);
+    deleteMatch(myActiveRoom.id);
+    setMyRoomMatchId(null);
+    setDeleteRoomConfirmOpen(false);
+    setCountdown(null);
+    useNotificationStore.getState().addNotification({
+      type: "system",
+      title: "🗑️ Room Deleted",
+      message: `Match room closed. Your $${myActiveRoom.betAmount} deposit has been refunded.`,
+    });
+  }, [myActiveRoom, user, cancelEscrow, deleteMatch]);
 
   return (
     <div className="space-y-5">
@@ -671,7 +915,17 @@ const MatchLobby = () => {
                           "h-6 rounded flex items-center px-2 text-[10px]",
                           player ? "bg-primary/15 border border-primary/30 text-foreground" : "bg-secondary/30 border border-border/30 text-muted-foreground/40"
                         )}>
-                          {player ?? `Slot ${i + 1}`}
+                          {player ? (
+                            <button
+                              className="truncate text-left hover:text-primary transition-colors w-full"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPlayerPopover({ username: player, rect: e.currentTarget.getBoundingClientRect() });
+                              }}
+                            >
+                              {player}
+                            </button>
+                          ) : <span className="text-muted-foreground/40">{`Slot ${i + 1}`}</span>}
                         </div>
                       );
                     })}
@@ -688,7 +942,17 @@ const MatchLobby = () => {
                           "h-6 rounded flex items-center px-2 text-[10px]",
                           player ? "bg-arena-purple/15 border border-arena-purple/30 text-foreground" : "bg-secondary/30 border border-border/30 text-muted-foreground/40"
                         )}>
-                          {player ?? `Slot ${i + 1}`}
+                          {player ? (
+                            <button
+                              className="truncate text-left hover:text-primary transition-colors w-full"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPlayerPopover({ username: player, rect: e.currentTarget.getBoundingClientRect() });
+                              }}
+                            >
+                              {player}
+                            </button>
+                          ) : <span className="text-muted-foreground/40">{`Slot ${i + 1}`}</span>}
                         </div>
                       );
                     })}
@@ -721,7 +985,7 @@ const MatchLobby = () => {
                 "text-xs border-destructive/40 text-destructive hover:bg-destructive/10 hover:border-destructive/70",
                 countdown !== null && countdown <= 3 && "animate-pulse"
               )}
-              onClick={handleLeaveRoom}
+              onClick={() => setLeaveConfirmOpen(true)}
             >
               <LogOut className="mr-1.5 h-3 w-3" />
               Leave Room
@@ -734,6 +998,18 @@ const MatchLobby = () => {
                   ? `${countdown}s left to leave — funds lock when timer hits 0`
                   : "Locking funds…"}
               </p>
+            )}
+
+            {myActiveRoom.hostId === user?.id && myActiveRoom.status === "waiting" && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-xs border-destructive/50 text-destructive hover:bg-destructive/10 ml-auto"
+                onClick={() => setDeleteRoomConfirmOpen(true)}
+              >
+                <Trash2 className="mr-1.5 h-3 w-3" />
+                Delete Room
+              </Button>
             )}
           </div>
         </div>
@@ -1164,6 +1440,104 @@ const MatchLobby = () => {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* ── Leave Room Confirmation ────────────────────────────────── */}
+      {leaveConfirmOpen && myActiveRoom && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm rounded-2xl border border-destructive/40 bg-card shadow-2xl p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0">
+                <LogOut className="h-5 w-5 text-destructive" />
+              </div>
+              <div>
+                <h3 className="font-display text-base font-bold">Leave Room?</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Your <span className="text-arena-gold font-semibold">${myActiveRoom.betAmount}</span> deposit will be fully refunded.
+                </p>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground/70 bg-secondary/40 rounded-xl px-3 py-2">
+              You can rejoin another room at any time. Funds are only locked after the 10-second countdown when the room fills.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="destructive"
+                className="flex-1 font-display text-sm"
+                onClick={() => { setLeaveConfirmOpen(false); handleLeaveRoom(); }}
+              >
+                <LogOut className="mr-2 h-4 w-4" /> Confirm Leave
+              </Button>
+              <Button variant="outline" className="border-border/50" onClick={() => setLeaveConfirmOpen(false)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete Room Confirmation ───────────────────────────────── */}
+      {deleteRoomConfirmOpen && myActiveRoom && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm rounded-2xl border border-destructive/40 bg-card shadow-2xl p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0">
+                <Trash2 className="h-5 w-5 text-destructive" />
+              </div>
+              <div>
+                <h3 className="font-display text-base font-bold">Delete Room?</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {myActiveRoom.depositsReceived
+                    ? `All ${myActiveRoom.depositsReceived} deposited players will be refunded.`
+                    : "The room will be closed immediately."}
+                </p>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground/70 bg-secondary/40 rounded-xl px-3 py-2">
+              This calls <span className="font-mono text-primary">ArenaEscrow.cancelMatch()</span> on-chain. Only available while the room is still waiting for players.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="destructive"
+                className="flex-1 font-display text-sm"
+                onClick={handleDeleteRoom}
+              >
+                <Trash2 className="mr-2 h-4 w-4" /> Delete Room
+              </Button>
+              <Button variant="outline" className="border-border/50" onClick={() => setDeleteRoomConfirmOpen(false)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Player Card Popover ───────────────────────────────────────── */}
+      {playerPopover && user && (() => {
+        const rect = playerPopover.rect;
+        const top  = Math.min(rect.bottom + 8, window.innerHeight - 320);
+        const left = Math.min(rect.left, window.innerWidth - 232);
+        return (
+          <>
+            {/* Click-away backdrop */}
+            <div
+              className="fixed inset-0 z-[70]"
+              onClick={() => setPlayerPopover(null)}
+            />
+            {/* Popover card */}
+            <div
+              className="fixed z-[71]"
+              style={{ top, left }}
+            >
+              <PlayerCardPopover
+                username={playerPopover.username}
+                onClose={() => setPlayerPopover(null)}
+                onLeaveRoom={() => { setPlayerPopover(null); setLeaveConfirmOpen(true); }}
+                isOwnSlot={playerPopover.username === user.username}
+              />
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 };

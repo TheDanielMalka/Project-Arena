@@ -13,6 +13,15 @@ interface MatchState {
   getMatchByCode: (code: string) => Match | undefined;
   // DB-ready: replace with DELETE /api/matches/:id/players/:userId (refunds escrow client-side)
   leaveMatch: (matchId: string, playerId: string) => boolean;
+
+  // DB-ready: replace with DELETE /api/matches/:id
+  // Contract: ArenaEscrow.cancelMatch(onChainMatchId) — MatchState.WAITING only.
+  // Emits MatchCancelled → server creates 'refund' tx for all deposited players.
+  deleteMatch: (matchId: string) => void;
+
+  // DB-ready: server-side CRON runs every 30s: UPDATE matches SET status='cancelled' WHERE status='waiting' AND expires_at < NOW()
+  // Contract: timeout fallback — any player calls ArenaEscrow.claimRefund() after 2h on-chain timeout
+  expireOldMatches: () => string[];  // returns array of expired matchIds
 }
 
 let matchCounter = 100;
@@ -60,6 +69,7 @@ export const useMatchStore = create<MatchState>((set, get) => ({
       ...matchData,
       id: `m-${++matchCounter}`,
       createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
       code: matchData.type === "custom" ? generateCode() : undefined,
     };
     set((state) => ({ matches: [newMatch, ...state.matches] }));
@@ -174,5 +184,28 @@ export const useMatchStore = create<MatchState>((set, get) => ({
       ),
     }));
     return true;
+  },
+
+  deleteMatch: (matchId) => {
+    // DB-ready: DELETE /api/matches/:id — server first calls ArenaEscrow.cancelMatch() to refund all depositors
+    set((state) => ({
+      matches: state.matches.filter((m) => m.id !== matchId),
+    }));
+  },
+
+  expireOldMatches: () => {
+    // DB-ready: server CRON: UPDATE matches SET status='cancelled' WHERE status='waiting' AND expires_at < NOW()
+    const now = Date.now();
+    const expiredIds: string[] = [];
+    set((state) => ({
+      matches: state.matches.map((m) => {
+        if (m.status !== "waiting") return m;
+        const age = now - new Date(m.createdAt).getTime();
+        if (age < 30 * 60 * 1000) return m;
+        expiredIds.push(m.id);
+        return { ...m, status: "cancelled" as MatchStatus };
+      }),
+    }));
+    return expiredIds;
   },
 }));

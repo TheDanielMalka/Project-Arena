@@ -85,6 +85,7 @@ export interface Match {
   depositsReceived?: number; // how many players locked funds — DB: matches.deposits_received
   lockCountdownStart?: string;   // ISO timestamp set when room fills — starts 10s leave window
                                  // DB: matches.lock_countdown_start (TIMESTAMPTZ)
+  expiresAt?: string;            // ISO timestamp (createdAt + 30min) — DB: matches.expires_at (TIMESTAMPTZ GENERATED)
   code?: string;
   password?: string;
   teamA?: string[];
