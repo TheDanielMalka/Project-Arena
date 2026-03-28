@@ -114,9 +114,10 @@ export const useForgeStore = create<ForgeState>((set, get) => ({
 
     if (currency === "USDT") {
       if (!item.priceUSDT) return { success: false, error: "Not available for USDT" };
-      // DB-ready: replace with POST /api/forge/purchase → server charges wallet
-      const result = useWalletStore.getState().withdraw(item.priceUSDT, "USDT", "forge_store_purchase");
-      if (!result) return { success: false, error: "Insufficient USDT balance" };
+      // DB-ready: POST /api/forge/purchase → wagmi writeContract(deductUSDT) → server credits AT
+      const wallet = useWalletStore.getState();
+      if (wallet.usdtBalance < item.priceUSDT) return { success: false, error: "Insufficient USDT balance" };
+      wallet.addTransaction({ userId: "user-001", type: "at_purchase", amount: -item.priceUSDT, token: "USDT", usdValue: item.priceUSDT, status: "completed", note: `Purchased ${item.name} — Forge` });
       const purchase: ForgePurchase = { id: `pur-${Date.now()}`, itemId, itemName: item.name, currency: "USDT", amount: item.priceUSDT, purchasedAt: new Date().toISOString() };
       set((s) => ({ purchases: [purchase, ...s.purchases] }));
       return { success: true };
@@ -131,9 +132,10 @@ export const useForgeStore = create<ForgeState>((set, get) => ({
     if (drop.type === "flash") return { success: true }; // flash = auto-applied, no purchase needed
     const price = drop.salePriceUSDT ?? drop.originalPriceUSDT;
     if (!price) return { success: false, error: "No price set" };
-    // DB-ready: replace with POST /api/forge/drops/:id/purchase
-    const result = useWalletStore.getState().withdraw(price, "USDT", "forge_drop_purchase");
-    if (!result) return { success: false, error: "Insufficient USDT balance" };
+    // DB-ready: POST /api/forge/drops/:id/purchase → wagmi writeContract(deductUSDT)
+    const wallet = useWalletStore.getState();
+    if (wallet.usdtBalance < price) return { success: false, error: "Insufficient USDT balance" };
+    wallet.addTransaction({ userId: "user-001", type: "at_purchase", amount: -price, token: "USDT", usdValue: price, status: "completed", note: `Purchased drop: ${drop.name}` });
     const purchase: ForgePurchase = { id: `pur-drop-${Date.now()}`, itemId: dropId, itemName: drop.name, currency: "USDT", amount: price, purchasedAt: new Date().toISOString() };
     set((s) => ({ purchases: [purchase, ...s.purchases] }));
     return { success: true };
