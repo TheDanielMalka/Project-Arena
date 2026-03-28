@@ -14,9 +14,10 @@ import { usePlayerStore } from "@/stores/playerStore";
 // DB-ready: all queries map to GET /api/players and GET /api/players/:username
 
 describe("playerStore — seed data integrity", () => {
-  it("contains exactly 11 seed players", () => {
+  it("contains exactly 20 seed players", () => {
+    // 9 leaderboard top-10 entries (lb-001..lb-010, minus BlazeFury which is shared) + 11 original = 20
     const { players } = usePlayerStore.getState();
-    expect(players).toHaveLength(11);
+    expect(players).toHaveLength(20);
   });
 
   it("every player has a unique id", () => {

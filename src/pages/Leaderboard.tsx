@@ -1,43 +1,87 @@
-import { useState } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import { useState, useRef } from "react";
+import { useNavigate } from "react-router-dom";
+import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Trophy, Flame, Crown, ChevronUp, ChevronDown, Minus, Zap, TrendingUp } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Trophy, Flame, Crown, ChevronUp, ChevronDown, Minus, Zap, TrendingUp,
+  Star, Gem, Shield, UserPlus, UserCheck, Clock, MessageSquare, Flag,
+  ExternalLink, Send, CheckCircle2,
+} from "lucide-react";
+import { useUserStore }         from "@/stores/userStore";
+import { useFriendStore }       from "@/stores/friendStore";
+import { useMessageStore }      from "@/stores/messageStore";
+import { useReportStore }       from "@/stores/reportStore";
+import { useNotificationStore } from "@/stores/notificationStore";
+import { getRankTier, RANK_TIERS } from "@/lib/rankTiers";
+import type { TicketReason }    from "@/types";
+
+// ─── Types ────────────────────────────────────────────────────
 
 interface LeaderboardEntry {
-  rank: number;
+  id:       string;   // DB: users.id
+  arenaId:  string;   // DB: users.arena_id
+  rank:     number;
   username: string;
-  wins: number;
-  losses: number;
-  winRate: number;
+  wins:     number;
+  losses:   number;
+  winRate:  number;
   earnings: number;
-  streak: number;
-  change: "up" | "down" | "same";
-  game: string;
-  avatar?: string; // "initials" | emoji | "upload:{dataURL}" | CDN URL
+  streak:   number;
+  change:   "up" | "down" | "same";
+  game:     string;
+  avatar?:  string;
 }
 
+// ─── Mock Data ────────────────────────────────────────────────
+// DB-ready: replace with GET /api/leaderboard?range=weekly&game=all
+
 const mockLeaderboard: LeaderboardEntry[] = [
-  { rank: 1, username: "ShadowKing",  wins: 142, losses: 28, winRate: 83.5, earnings: 4250, streak: 12, change: "same", game: "CS2" },
-  { rank: 2, username: "NeonViper",   wins: 128, losses: 35, winRate: 78.5, earnings: 3800, streak: 7,  change: "up",   game: "CS2" },
-  { rank: 3, username: "PixelStorm",  wins: 115, losses: 40, winRate: 74.2, earnings: 3200, streak: 4,  change: "up",   game: "Valorant" },
-  { rank: 4, username: "BlazeFury",   wins: 110, losses: 42, winRate: 72.4, earnings: 2900, streak: 2,  change: "down", game: "CS2" },
-  { rank: 5, username: "AceHunter",   wins: 105, losses: 45, winRate: 70.0, earnings: 2750, streak: 5,  change: "up",   game: "Valorant" },
-  { rank: 6, username: "GhostRider",  wins: 98,  losses: 50, winRate: 66.2, earnings: 2400, streak: 1,  change: "down", game: "CS2" },
-  { rank: 7, username: "IronWolf",    wins: 95,  losses: 48, winRate: 66.4, earnings: 2200, streak: 3,  change: "same", game: "Fortnite" },
-  { rank: 8, username: "CyberNinja",  wins: 90,  losses: 55, winRate: 62.1, earnings: 1900, streak: 0,  change: "down", game: "Apex Legends" },
-  { rank: 9, username: "VoltEdge",    wins: 88,  losses: 52, winRate: 62.9, earnings: 1800, streak: 2,  change: "up",   game: "CS2" },
-  { rank: 10, username: "ThunderBolt",wins: 85,  losses: 58, winRate: 59.4, earnings: 1650, streak: 1,  change: "same", game: "Valorant" },
+  { id: "lb-001", arenaId: "ARENA-SK0001", rank: 1,  username: "ShadowKing",  wins: 142, losses: 28, winRate: 83.5, earnings: 4250, streak: 12, change: "same", game: "CS2" },
+  { id: "lb-002", arenaId: "ARENA-NV0002", rank: 2,  username: "NeonViper",   wins: 128, losses: 35, winRate: 78.5, earnings: 3800, streak: 7,  change: "up",   game: "CS2" },
+  { id: "lb-003", arenaId: "ARENA-PS0003", rank: 3,  username: "PixelStorm",  wins: 115, losses: 40, winRate: 74.2, earnings: 3200, streak: 4,  change: "up",   game: "Valorant" },
+  { id: "U-288",  arenaId: "ARENA-BF0005", rank: 4,  username: "BlazeFury",   wins: 110, losses: 42, winRate: 72.4, earnings: 2900, streak: 2,  change: "down", game: "CS2" },
+  { id: "lb-005", arenaId: "ARENA-AH0005", rank: 5,  username: "AceHunter",   wins: 105, losses: 45, winRate: 70.0, earnings: 2750, streak: 5,  change: "up",   game: "Valorant" },
+  { id: "lb-006", arenaId: "ARENA-GR0006", rank: 6,  username: "GhostRider",  wins: 98,  losses: 50, winRate: 66.2, earnings: 2400, streak: 1,  change: "down", game: "CS2" },
+  { id: "lb-007", arenaId: "ARENA-IW0007", rank: 7,  username: "IronWolf",    wins: 95,  losses: 48, winRate: 66.4, earnings: 2200, streak: 3,  change: "same", game: "Fortnite" },
+  { id: "lb-008", arenaId: "ARENA-CN0008", rank: 8,  username: "CyberNinja",  wins: 90,  losses: 55, winRate: 62.1, earnings: 1900, streak: 0,  change: "down", game: "Apex Legends" },
+  { id: "lb-009", arenaId: "ARENA-VE0009", rank: 9,  username: "VoltEdge",    wins: 88,  losses: 52, winRate: 62.9, earnings: 1800, streak: 2,  change: "up",   game: "CS2" },
+  { id: "lb-010", arenaId: "ARENA-TB0010", rank: 10, username: "ThunderBolt", wins: 85,  losses: 58, winRate: 59.4, earnings: 1650, streak: 1,  change: "same", game: "Valorant" },
 ];
 
 const maxEarnings = Math.max(...mockLeaderboard.map(p => p.earnings));
 
+// ─── Config ───────────────────────────────────────────────────
+
 const podiumConfig = {
-  1: { glow: "shadow-[0_0_28px_hsl(43_96%_56%/0.35)]", border: "border-arena-gold/60",        bg: "bg-arena-gold/5",    label: "text-arena-gold",        mt: "mt-0" },
-  2: { glow: "shadow-[0_0_16px_hsl(220_9%_70%/0.2)]",  border: "border-muted-foreground/40",  bg: "bg-secondary/40",    label: "text-muted-foreground",  mt: "mt-5" },
-  3: { glow: "shadow-[0_0_16px_hsl(25_95%_53%/0.2)]",  border: "border-arena-orange/40",      bg: "bg-arena-orange/5",  label: "text-arena-orange",      mt: "mt-9" },
+  1: { glow: "shadow-[0_0_28px_hsl(43_96%_56%/0.35)]", border: "border-arena-gold/60",       bg: "bg-arena-gold/5",   label: "text-arena-gold",       mt: "mt-0" },
+  2: { glow: "shadow-[0_0_16px_hsl(220_9%_70%/0.2)]",  border: "border-muted-foreground/40", bg: "bg-secondary/40",   label: "text-muted-foreground", mt: "mt-5" },
+  3: { glow: "shadow-[0_0_16px_hsl(25_95%_53%/0.2)]",  border: "border-arena-orange/40",     bg: "bg-arena-orange/5", label: "text-arena-orange",     mt: "mt-9" },
 } as const;
+
+const REASON_LABELS: Record<TicketReason, string> = {
+  cheating:         "Cheating / Hacking",
+  harassment:       "Harassment / Threats",
+  fake_screenshot:  "Fake Screenshot / Result",
+  disconnect_abuse: "Disconnect Abuse / Rage-Quit",
+  other:            "Other",
+};
+
+const gameColor: Record<string, string> = {
+  "CS2": "#F97316", "Valorant": "#EF4444", "Fortnite": "#38BDF8",
+  "Apex Legends": "#6366F1", "PUBG": "#F59E0B",
+};
+
+// ─── Helpers ─────────────────────────────────────────────────
 
 const avatarRing = (wr: number) => {
   if (wr >= 80) return "ring-2 ring-arena-gold/70";
@@ -58,11 +102,6 @@ const rankBorder = (rank: number) => {
   return "border-l-[3px] border-l-transparent";
 };
 
-const gameColor: Record<string, string> = {
-  "CS2": "#F97316", "Valorant": "#EF4444", "Fortnite": "#38BDF8",
-  "Apex Legends": "#6366F1", "PUBG": "#F59E0B",
-};
-
 const StreakDots = ({ streak }: { streak: number }) => (
   <span className="flex items-center gap-0.5">
     {streak === 0
@@ -75,12 +114,340 @@ const StreakDots = ({ streak }: { streak: number }) => (
   </span>
 );
 
+// ─── Player Action Popover ────────────────────────────────────
+
+type PopoverTab = "actions" | "message" | "report";
+
+interface PlayerActionPopoverProps {
+  player: LeaderboardEntry;
+  children: React.ReactNode;
+}
+
+function PlayerActionPopover({ player, children }: PlayerActionPopoverProps) {
+  const navigate     = useNavigate();
+  const currentUser  = useUserStore((s) => s.user);
+  const getRelationship  = useFriendStore((s) => s.getRelationship);
+  const sendFriendRequest = useFriendStore((s) => s.sendFriendRequest);
+  const friendships  = useFriendStore((s) => s.friendships);
+  const declineRequest = useFriendStore((s) => s.declineRequest);
+  const sendMessage  = useMessageStore((s) => s.sendMessage);
+  const submitReport = useReportStore((s) => s.submitReport);
+  const addNotif     = useNotificationStore((s) => s.addNotification);
+
+  const [open, setOpen]   = useState(false);
+  const [tab, setTab]     = useState<PopoverTab>("actions");
+  const [msgText, setMsgText] = useState("");
+  const [msgSent, setMsgSent] = useState(false);
+  const [reason, setReason]   = useState<TicketReason | "">("");
+  const [reportDesc, setReportDesc] = useState("");
+  const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [reportDone, setReportDone] = useState(false);
+  const msgRef = useRef<HTMLTextAreaElement>(null);
+
+  const isSelf = currentUser?.username === player.username;
+  const rel    = getRelationship(player.id);
+  const tier   = getRankTier(player.rank);
+
+  const resetPopover = () => {
+    setTab("actions");
+    setMsgText(""); setMsgSent(false);
+    setReason(""); setReportDesc(""); setReportSubmitting(false); setReportDone(false);
+  };
+
+  const handleOpenChange = (o: boolean) => {
+    setOpen(o);
+    if (!o) setTimeout(resetPopover, 200);
+  };
+
+  // ── Friend ──────────────────────────────────────────────────
+  const handleAddFriend = () => {
+    if (!currentUser) return;
+    sendFriendRequest({
+      myId: currentUser.id, myUsername: currentUser.username,
+      myArenaId: currentUser.arenaId, myAvatarInitials: currentUser.avatarInitials,
+      myRank: currentUser.rank, myTier: currentUser.tier, myPreferredGame: currentUser.preferredGame,
+      targetId: player.id, targetUsername: player.username,
+      targetArenaId: player.arenaId, targetAvatarInitials: player.username.slice(0, 2).toUpperCase(),
+      targetRank: "—", targetTier: "—", targetPreferredGame: player.game,
+    });
+    addNotif({ type: "system", title: "Friend Request Sent", message: `Request sent to ${player.username}` });
+  };
+
+  const handleCancelRequest = () => {
+    const f = friendships.find((fr) => fr.friendId === player.id && fr.status === "pending");
+    if (f) declineRequest(f.id);
+  };
+
+  // ── Message ─────────────────────────────────────────────────
+  const handleSendMessage = () => {
+    if (!currentUser || !msgText.trim()) return;
+    sendMessage({ myId: currentUser.id, myUsername: currentUser.username, friendId: player.id, content: msgText.trim() });
+    setMsgSent(true);
+    addNotif({ type: "system", title: "Message Sent", message: `Your message was delivered to ${player.username}` });
+  };
+
+  // ── Report ──────────────────────────────────────────────────
+  const handleReport = () => {
+    if (!currentUser || !reason || reportDesc.trim().length < 10) return;
+    setReportSubmitting(true);
+    setTimeout(() => {
+      submitReport({
+        reporterId: currentUser.id, reporterName: currentUser.username,
+        reportedId: player.id, reportedUsername: player.username,
+        reason: reason as TicketReason, description: reportDesc.trim(),
+      });
+      addNotif({ type: "system", title: "🚩 Report Submitted", message: `Report against ${player.username} sent to moderation.` });
+      setReportSubmitting(false);
+      setReportDone(true);
+    }, 700);
+  };
+
+  // ─────────────────────────────────────────────────────────────
+
+  const tierColorHex: Record<string, string> = {
+    "text-arena-gold": "#FFD700", "text-slate-300": "#CBD5E1",
+    "text-arena-orange": "#F97316", "text-arena-cyan": "#22D3EE",
+    "text-arena-purple": "#A855F7", "text-arena-gold/60": "#FFD700",
+  };
+
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger asChild>{children}</PopoverTrigger>
+
+      <PopoverContent
+        className="w-64 p-0 bg-card border-border/60 shadow-2xl overflow-hidden"
+        align="start"
+        side="right"
+        sideOffset={8}
+      >
+        {/* ── Header ── */}
+        <div
+          className="relative px-4 pt-4 pb-3 border-b border-border/40"
+          style={{
+            background: tier
+              ? `linear-gradient(135deg, ${tierColorHex[tier.color] ?? "#888"}08 0%, transparent 70%)`
+              : undefined,
+          }}
+        >
+          {/* Tier badge top-right */}
+          {tier && (
+            <div className={`absolute top-3 right-3 flex items-center gap-1 ${tier.color}`}>
+              <tier.Icon className={tier.iconSize} />
+              <span className="font-display text-[9px] font-bold uppercase tracking-widest opacity-80">{tier.label}</span>
+            </div>
+          )}
+
+          {/* Avatar + identity */}
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-display text-sm font-bold shrink-0 ${avatarBg(player.username)} ${avatarRing(player.winRate)}`}>
+              {player.avatar && player.avatar !== "initials"
+                ? <span className="text-lg">{player.avatar}</span>
+                : player.username.slice(0, 2)}
+            </div>
+            <div className="min-w-0">
+              <p className="font-display font-bold text-sm leading-tight truncate">{player.username}</p>
+              <p className="font-mono text-[10px] text-primary/60 leading-tight">{player.arenaId}</p>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="font-mono text-[10px] text-muted-foreground">{player.winRate}% WR</span>
+                <span className="text-muted-foreground/40 text-[10px]">·</span>
+                <span className="font-mono text-[10px]" style={{ color: gameColor[player.game] ?? "#888" }}>{player.game}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick stats row */}
+          <div className="flex items-center gap-3 mt-2.5 text-center">
+            {[
+              { label: "Rank", value: `#${player.rank}` },
+              { label: "Wins", value: player.wins },
+              { label: "Losses", value: player.losses },
+            ].map(({ label, value }) => (
+              <div key={label} className="flex-1">
+                <p className="font-display text-xs font-bold">{value}</p>
+                <p className="text-[9px] text-muted-foreground uppercase tracking-wider">{label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Body ── */}
+        <div className="px-3 py-3">
+
+          {/* ── Tab: actions ── */}
+          {tab === "actions" && (
+            <div className="space-y-1.5">
+              {/* View Profile */}
+              <button
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-left hover:bg-secondary/60 transition-colors"
+                onClick={() => { navigate(`/players/${player.username}`); setOpen(false); }}
+              >
+                <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
+                View Profile
+              </button>
+
+              {!isSelf && (
+                <>
+                  {/* Message */}
+                  <button
+                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-left hover:bg-primary/10 text-primary transition-colors"
+                    onClick={() => { setTab("message"); setTimeout(() => msgRef.current?.focus(), 50); }}
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    Send Message
+                  </button>
+
+                  {/* Friend */}
+                  {rel === "accepted" ? (
+                    <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-muted-foreground cursor-default">
+                      <UserCheck className="h-3.5 w-3.5 text-primary" />
+                      <span className="text-primary">Already Friends</span>
+                    </div>
+                  ) : rel === "pending" ? (
+                    <button
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-left hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                      onClick={handleCancelRequest}
+                    >
+                      <Clock className="h-3.5 w-3.5" />
+                      Pending — Cancel Request
+                    </button>
+                  ) : (
+                    <button
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-left hover:bg-primary/10 text-primary transition-colors"
+                      onClick={() => { handleAddFriend(); setOpen(false); }}
+                    >
+                      <UserPlus className="h-3.5 w-3.5" />
+                      Add Friend
+                    </button>
+                  )}
+
+                  {/* Report */}
+                  <button
+                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-left hover:bg-destructive/10 text-destructive/70 hover:text-destructive transition-colors"
+                    onClick={() => setTab("report")}
+                  >
+                    <Flag className="h-3.5 w-3.5" />
+                    Report Player
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── Tab: message ── */}
+          {tab === "message" && (
+            <div className="space-y-2">
+              {!msgSent ? (
+                <>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-display">
+                    Message to {player.username}
+                  </p>
+                  <Textarea
+                    ref={msgRef}
+                    placeholder="Type your message…"
+                    value={msgText}
+                    onChange={(e) => setMsgText(e.target.value)}
+                    rows={3}
+                    maxLength={500}
+                    className="bg-secondary/50 border-border/50 resize-none text-sm text-xs"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && msgText.trim()) {
+                        e.preventDefault();
+                        handleSendMessage();
+                      }
+                    }}
+                  />
+                  <p className="text-[9px] text-muted-foreground text-right">{msgText.length}/500 · Ctrl+Enter to send</p>
+                  <div className="flex gap-1.5">
+                    <button
+                      className="flex-1 text-xs text-muted-foreground hover:text-foreground transition-colors py-1.5"
+                      onClick={() => setTab("actions")}
+                    >← Back</button>
+                    <Button
+                      size="sm"
+                      className="flex-1 h-7 text-xs gap-1.5"
+                      disabled={!msgText.trim()}
+                      onClick={handleSendMessage}
+                    >
+                      <Send className="h-3 w-3" /> Send
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="text-center py-4 space-y-2">
+                  <CheckCircle2 className="h-8 w-8 text-primary mx-auto" />
+                  <p className="font-display text-sm font-semibold">Message Sent!</p>
+                  <p className="text-[10px] text-muted-foreground">Check Hub → Messages to see your conversation.</p>
+                  <Button size="sm" variant="outline" className="w-full h-7 text-xs mt-1" onClick={() => setOpen(false)}>
+                    Close
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Tab: report ── */}
+          {tab === "report" && (
+            <div className="space-y-2">
+              {!reportDone ? (
+                <>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-display">
+                    Report {player.username}
+                  </p>
+                  <Select value={reason} onValueChange={(v) => setReason(v as TicketReason)}>
+                    <SelectTrigger className="h-7 text-xs bg-secondary/50 border-border/50">
+                      <SelectValue placeholder="Select reason…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(Object.entries(REASON_LABELS) as [TicketReason, string][]).map(([k, l]) => (
+                        <SelectItem key={k} value={k} className="text-xs">{l}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Textarea
+                    placeholder="Describe what happened… (min 10 chars)"
+                    value={reportDesc}
+                    onChange={(e) => setReportDesc(e.target.value)}
+                    rows={3}
+                    className="bg-secondary/50 border-border/50 resize-none text-xs"
+                  />
+                  <div className="flex gap-1.5">
+                    <button className="flex-1 text-xs text-muted-foreground hover:text-foreground py-1.5 transition-colors" onClick={() => setTab("actions")}>← Back</button>
+                    <Button
+                      size="sm"
+                      className="flex-1 h-7 text-xs bg-destructive hover:bg-destructive/90"
+                      disabled={!reason || reportDesc.trim().length < 10 || reportSubmitting}
+                      onClick={handleReport}
+                    >
+                      {reportSubmitting ? "Sending…" : "Submit"}
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="text-center py-4 space-y-2">
+                  <CheckCircle2 className="h-8 w-8 text-primary mx-auto" />
+                  <p className="font-display text-sm font-semibold">Report Submitted</p>
+                  <p className="text-[10px] text-muted-foreground">Our moderation team will review within 24–48h.</p>
+                  <Button size="sm" variant="outline" className="w-full h-7 text-xs mt-1" onClick={() => setOpen(false)}>
+                    Close
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────
+
 const Leaderboard = () => {
-  const [timeRange, setTimeRange] = useState<"weekly" | "monthly" | "alltime">("weekly");
+  const [timeRange,         setTimeRange]         = useState<"weekly" | "monthly" | "alltime">("weekly");
   const [selectedTopPlayer, setSelectedTopPlayer] = useState<LeaderboardEntry>(mockLeaderboard[0]);
   const [expandedRowPlayer, setExpandedRowPlayer] = useState<string | null>(null);
 
-  const matchesPlayed = selectedTopPlayer.wins + selectedTopPlayer.losses;
+  const matchesPlayed      = selectedTopPlayer.wins + selectedTopPlayer.losses;
   const avgEarningsPerMatch = matchesPlayed > 0 ? selectedTopPlayer.earnings / matchesPlayed : 0;
 
   return (
@@ -109,9 +476,11 @@ const Leaderboard = () => {
           const podiumRank = [2, 1, 3][idx] as 1 | 2 | 3;
           const cfg = podiumConfig[podiumRank];
           const isSelected = selectedTopPlayer.username === player.username;
+          const tier = getRankTier(podiumRank);
           return (
             <div
               key={player.username}
+              data-testid={`podium-card-${player.username}`}
               onClick={() => setSelectedTopPlayer(player)}
               className={`relative cursor-pointer rounded-xl border ${cfg.border} ${cfg.bg} ${cfg.glow} ${cfg.mt} transition-all duration-200 ${
                 isSelected ? "ring-1 ring-primary/40 scale-[1.01]" : "hover:scale-[1.005]"
@@ -123,20 +492,41 @@ const Leaderboard = () => {
               </span>
 
               <div className="flex flex-col items-center gap-1.5 px-3 py-3">
-                {/* Crown above avatar for #1 */}
-                {podiumRank === 1 && <Crown className="h-4 w-4 text-arena-gold" />}
+                {/* Tier icon above avatar */}
+                {tier && <tier.Icon className={`${tier.iconSize} ${tier.color}`} />}
 
                 {/* Avatar */}
-                <div className={`w-9 h-9 rounded-full flex items-center justify-center font-display text-sm font-bold overflow-hidden ${avatarBg(player.username)} ${avatarRing(player.winRate)}`}>
-                  {player.avatar && player.avatar !== "initials"
-                    ? player.avatar.startsWith("upload:")
-                      ? <img src={player.avatar.slice(7)} className="w-full h-full object-cover" alt={player.username} />
-                      : <span className="text-lg">{player.avatar}</span>
-                    : player.username.slice(0, 2)
-                  }
-                </div>
+                <PlayerActionPopover player={player}>
+                  <div
+                    className={`w-9 h-9 rounded-full flex items-center justify-center font-display text-sm font-bold overflow-hidden cursor-pointer hover:scale-110 transition-transform ${avatarBg(player.username)} ${avatarRing(player.winRate)}`}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {player.avatar && player.avatar !== "initials"
+                      ? player.avatar.startsWith("upload:")
+                        ? <img src={player.avatar.slice(7)} className="w-full h-full object-cover" alt={player.username} />
+                        : <span className="text-lg">{player.avatar}</span>
+                      : player.username.slice(0, 2)
+                    }
+                  </div>
+                </PlayerActionPopover>
 
-                <p className="font-display font-bold text-sm leading-tight">{player.username}</p>
+                {/* Username — clickable for popover */}
+                <PlayerActionPopover player={player}>
+                  <button
+                    className={`font-display font-bold text-sm leading-tight hover:text-primary transition-colors`}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {player.username}
+                  </button>
+                </PlayerActionPopover>
+
+                {/* Tier label */}
+                {tier && (
+                  <span className={`font-display text-[9px] font-bold uppercase tracking-widest ${tier.color} opacity-80`}>
+                    {tier.label}
+                  </span>
+                )}
+
                 <p className={`font-display text-base font-black ${cfg.label}`}>${player.earnings.toLocaleString()}</p>
 
                 {/* WR bar */}
@@ -227,16 +617,18 @@ const Leaderboard = () => {
                   .map((player) => {
                     const isExpanded = expandedRowPlayer === player.username;
                     const col = gameColor[player.game] ?? "#888";
+                    const tier = getRankTier(player.rank);
                     return (
                       <div key={player.rank}>
                         {/* ── Row ── */}
                         <div
+                          data-testid={`table-row-${player.username}`}
                           className={`relative grid grid-cols-[3rem_1fr_4.5rem_4.5rem_6rem_6rem_3rem] gap-2 px-4 py-2.5 items-center cursor-pointer transition-all duration-150 ${rankBorder(player.rank)} ${
                             isExpanded ? "bg-primary/8" : "hover:bg-secondary/20"
                           }`}
                           onClick={() => setExpandedRowPlayer(isExpanded ? null : player.username)}
                         >
-                          {/* WR heatmap fill behind the row */}
+                          {/* WR heatmap fill */}
                           <div
                             className="absolute inset-0 pointer-events-none"
                             style={{
@@ -250,25 +642,51 @@ const Leaderboard = () => {
                           />
 
                           {/* Rank */}
-                          <div className="relative flex items-center">
-                            {player.rank === 1 ? <Crown className="h-4 w-4 text-arena-gold" /> :
-                             player.rank === 2 ? <span className="font-mono text-xs font-bold text-muted-foreground/70">02</span> :
-                             player.rank === 3 ? <span className="font-mono text-xs font-bold text-arena-orange/70">03</span> :
-                             <span className="font-mono text-xs text-muted-foreground/50">{String(player.rank).padStart(2,"0")}</span>}
+                          <div className="relative flex flex-col items-center justify-center gap-0.5">
+                            {(() => {
+                              if (!tier) return (
+                                <span className="font-mono text-xs text-muted-foreground/30">
+                                  {String(player.rank).padStart(2, "0")}
+                                </span>
+                              );
+                              const { Icon, color, iconSize } = tier;
+                              return (
+                                <>
+                                  <Icon className={`${iconSize} ${color} shrink-0`} />
+                                  {player.rank > 1 && (
+                                    <span className={`font-mono text-[9px] leading-none ${color} opacity-50`}>
+                                      {String(player.rank).padStart(2, "0")}
+                                    </span>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </div>
 
-                          {/* Player */}
+                          {/* Player — username is clickable for popover; rest of row toggles expand */}
                           <div className="relative flex items-center gap-2.5 min-w-0">
-                            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-display font-bold shrink-0 overflow-hidden ${avatarBg(player.username)} ${avatarRing(player.winRate)}`}>
-                              {player.avatar && player.avatar !== "initials"
-                                ? player.avatar.startsWith("upload:")
-                                  ? <img src={player.avatar.slice(7)} className="w-full h-full object-cover" alt={player.username} />
-                                  : <span className="text-sm">{player.avatar}</span>
-                                : player.username.slice(0, 2)
-                              }
-                            </div>
+                            <PlayerActionPopover player={player}>
+                              <div
+                                className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-display font-bold shrink-0 overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all ${avatarBg(player.username)} ${avatarRing(player.winRate)}`}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {player.avatar && player.avatar !== "initials"
+                                  ? player.avatar.startsWith("upload:")
+                                    ? <img src={player.avatar.slice(7)} className="w-full h-full object-cover" alt={player.username} />
+                                    : <span className="text-sm">{player.avatar}</span>
+                                  : player.username.slice(0, 2)
+                                }
+                              </div>
+                            </PlayerActionPopover>
                             <div className="min-w-0">
-                              <p className="font-display text-sm font-semibold truncate leading-tight">{player.username}</p>
+                              <PlayerActionPopover player={player}>
+                                <button
+                                  className="font-display text-sm font-semibold truncate leading-tight hover:text-primary transition-colors block text-left w-full"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {player.username}
+                                </button>
+                              </PlayerActionPopover>
                               <span className="text-[10px] font-mono" style={{ color: col }}>
                                 {player.game}
                               </span>
@@ -307,6 +725,14 @@ const Leaderboard = () => {
                         {/* ── Expanded row ── */}
                         {isExpanded && (
                           <div className="px-4 py-3 bg-secondary/10 border-l-[3px] border-l-primary/40">
+                            {/* Tier header */}
+                            {tier && (
+                              <div className={`flex items-center gap-1.5 mb-2.5 ${tier.color}`}>
+                                <tier.Icon className="h-3.5 w-3.5" />
+                                <span className="font-display text-[10px] font-bold uppercase tracking-widest">{tier.label}</span>
+                                <span className="text-muted-foreground/40 text-[10px] font-mono">· Rank #{player.rank}</span>
+                              </div>
+                            )}
                             <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                               {[
                                 { label: "Matches", value: player.wins + player.losses, color: "" },

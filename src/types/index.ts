@@ -144,7 +144,6 @@ export interface WalletInfo {
   dailyBettingLimit: number;              // DB: user_settings.daily_betting_limit (user-chosen: 50–max)
   dailyBettingUsed: number;               // computed from transactions WHERE type='escrow_lock' AND date=today
   twoFactorEnabled: boolean;              // DB: user_settings.two_factor_enabled
-  withdrawWhitelist: boolean;             // DB: user_settings.withdraw_whitelist
 }
 
 // ─── Disputes ────────────────────────────────────────────────
@@ -322,6 +321,7 @@ export interface PublicPlayerProfile {
   arenaId: ArenaId;             // DB: users.arena_id — immutable public ID
   memberSince: string;          // DB: users.created_at (formatted server-side)
   status: UserStatus;           // DB: users.status
+  leaderboardRank?: number;     // DB: computed from leaderboard table — present only if player is top 50
   stats: {
     matches: number;            // DB: user_stats.matches
     wins: number;               // DB: user_stats.wins
