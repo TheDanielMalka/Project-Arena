@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { useUserStore } from "@/stores/userStore";
 import { useMatchStore } from "@/stores/matchStore";
@@ -12,8 +12,9 @@ import {
   Swords, Clock, Users, Lock, Gamepad2, CheckCircle,
   Search, Copy, UserPlus, Crown, Shield, Hash, KeyRound, Eye, EyeOff,
   AlertCircle, ChevronDown, Monitor, Smartphone, Zap, TrendingUp,
-  Wallet, Loader2, ScanLine,
+  Wallet, Loader2, ScanLine, LogOut, AlertTriangle, Timer,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import type { MatchStatus, Game, Match, MatchMode } from "@/types";
 import { GAME_MODES, getDefaultMode, getTeamSize, getTotalPlayers } from "@/config/gameModes";
 
@@ -205,8 +206,8 @@ const LiveTicker = ({ matches }: { matches: Match[] }) => {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 const MatchLobby = () => {
   const { user } = useUserStore();
-  const { matches, addMatch, joinMatch, getMatchByCode } = useMatchStore();
-  const { lockEscrow } = useWalletStore();
+  const { matches, addMatch, joinMatch, leaveMatch, updateMatchStatus, getMatchByCode } = useMatchStore();
+  const { lockEscrow, cancelEscrow } = useWalletStore();
   useMatchPolling({ interval: 5000 });
 
   const [selectedBet, setSelectedBet] = useState<number | null>(null);
@@ -227,6 +228,9 @@ const MatchLobby = () => {
   const [filterMode, setFilterMode]           = useState<MatchMode | null>(null);
   const [depositConfirm, setDepositConfirm]   = useState<{ match: Match; team?: "A" | "B" } | null>(null);
   const [depositStep, setDepositStep]         = useState<"idle" | "verifying" | "confirmed">("idle");
+  const [myRoomMatchId, setMyRoomMatchId] = useState<string | null>(null);
+  const [roomLocked, setRoomLocked]       = useState(false);
+  const [countdown, setCountdown]         = useState<number | null>(null);
 
   const publicMatches = matches.filter(m => m.type === "public");
   const customMatches = matches.filter(m => m.type === "custom");
@@ -275,6 +279,8 @@ const MatchLobby = () => {
     // DB-ready: replace with wagmi writeContract(joinMatch, { value: stakePerPlayer }) in Issue #Frontend-Wallet
     lockEscrow(match.betAmount, match.id);
     joinMatch(match.id, user.username, team);
+    setMyRoomMatchId(match.id);
+    setRoomLocked(false);
     useNotificationStore.getState().addNotification({
       type: "system",
       title: "🔒 Deposit Confirmed",
@@ -304,6 +310,58 @@ const MatchLobby = () => {
   const liveCount   = publicMatches.filter(m => m.status === "in_progress").length;
   const openCount   = publicMatches.filter(m => m.status === "waiting").length;
   const totalPool   = publicMatches.reduce((s, m) => s + m.betAmount * m.players.length, 0);
+
+  const myActiveRoom = myRoomMatchId
+    ? matches.find((m) => m.id === myRoomMatchId) ?? null
+    : null;
+
+  useEffect(() => {
+    if (!myActiveRoom?.lockCountdownStart) {
+      setCountdown(null);
+      return;
+    }
+    const tick = () => {
+      const elapsed   = (Date.now() - new Date(myActiveRoom.lockCountdownStart!).getTime()) / 1000;
+      const remaining = Math.max(0, 10 - Math.floor(elapsed));
+      setCountdown(remaining);
+      if (remaining === 0) {
+        // Time's up — contract locks, match goes in_progress
+        updateMatchStatus(myActiveRoom.id, "in_progress");
+        setMyRoomMatchId(null);
+        setRoomLocked(true);
+        useNotificationStore.getState().addNotification({
+          type: "system",
+          title: "🔒 Match Locked",
+          message: `Your match is locked and in progress. Good luck!`,
+        });
+      }
+    };
+    tick();
+    const id = setInterval(tick, 250);
+    return () => clearInterval(id);
+  }, [myActiveRoom?.lockCountdownStart, myActiveRoom?.id]);
+
+  useEffect(() => {
+    if (myActiveRoom?.status === "in_progress" && myRoomMatchId) {
+      setMyRoomMatchId(null);
+      setRoomLocked(true);
+    }
+  }, [myActiveRoom?.status]);
+
+  const handleLeaveRoom = useCallback(() => {
+    if (!myActiveRoom || !user) return;
+    const left = leaveMatch(myActiveRoom.id, user.username);
+    if (left) {
+      cancelEscrow(myActiveRoom.id);
+      setMyRoomMatchId(null);
+      setCountdown(null);
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "↩️ Left Room",
+        message: `You left the match room. Your $${myActiveRoom.betAmount} has been refunded.`,
+      });
+    }
+  }, [myActiveRoom, user, leaveMatch, cancelEscrow]);
 
   return (
     <div className="space-y-5">
@@ -542,6 +600,144 @@ const MatchLobby = () => {
           </div>
         );
       })()}
+
+      {/* ── IN-ROOM PANEL ───────────────────────────────────────────── */}
+      {myActiveRoom && (
+        <div className={cn(
+          "rounded-2xl border p-4 mb-4 transition-all",
+          countdown !== null && countdown <= 3
+            ? "border-destructive/60 bg-destructive/10 animate-pulse"
+            : countdown !== null
+              ? "border-arena-gold/60 bg-arena-gold/10"
+              : "border-primary/40 bg-primary/5"
+        )}>
+          {/* Header row */}
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className={cn(
+                "w-2 h-2 rounded-full animate-pulse",
+                countdown !== null ? "bg-arena-gold" : "bg-primary"
+              )} />
+              <span className="text-xs font-display font-bold uppercase tracking-widest text-foreground">
+                {countdown !== null ? "Room Filling — Leave Window" : "You're In The Room"}
+              </span>
+            </div>
+
+            {/* Countdown or status badge */}
+            {countdown !== null ? (
+              <div className={cn(
+                "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold font-mono",
+                countdown <= 3
+                  ? "bg-destructive/20 text-destructive border border-destructive/40"
+                  : "bg-arena-gold/20 text-arena-gold border border-arena-gold/40"
+              )}>
+                <Timer className="w-3 h-3" />
+                {countdown}s to lock
+              </div>
+            ) : (
+              <span className="text-[10px] text-muted-foreground px-2 py-0.5 rounded-full border border-border/40 bg-secondary/40">
+                Waiting for players
+              </span>
+            )}
+          </div>
+
+          {/* Match info */}
+          <div className="flex items-center gap-3 mb-3 text-xs text-muted-foreground">
+            <span className="font-mono text-foreground font-semibold">{myActiveRoom.game}</span>
+            <span>·</span>
+            <span>{myActiveRoom.mode}</span>
+            <span>·</span>
+            <span className="text-arena-gold font-bold">${myActiveRoom.betAmount} stake</span>
+            {myActiveRoom.code && (
+              <>
+                <span>·</span>
+                <span className="font-mono text-primary">{myActiveRoom.code}</span>
+              </>
+            )}
+          </div>
+
+          {/* Player slots progress */}
+          <div className="mb-3">
+            {myActiveRoom.type === "custom" ? (
+              <div className="grid grid-cols-2 gap-2">
+                {/* Team A */}
+                <div>
+                  <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">Team A</p>
+                  <div className="space-y-1">
+                    {Array.from({ length: myActiveRoom.maxPerTeam ?? myActiveRoom.teamSize ?? 5 }).map((_, i) => {
+                      const player = (myActiveRoom.teamA ?? [])[i];
+                      return (
+                        <div key={i} className={cn(
+                          "h-6 rounded flex items-center px-2 text-[10px]",
+                          player ? "bg-primary/15 border border-primary/30 text-foreground" : "bg-secondary/30 border border-border/30 text-muted-foreground/40"
+                        )}>
+                          {player ?? `Slot ${i + 1}`}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                {/* Team B */}
+                <div>
+                  <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">Team B</p>
+                  <div className="space-y-1">
+                    {Array.from({ length: myActiveRoom.maxPerTeam ?? myActiveRoom.teamSize ?? 5 }).map((_, i) => {
+                      const player = (myActiveRoom.teamB ?? [])[i];
+                      return (
+                        <div key={i} className={cn(
+                          "h-6 rounded flex items-center px-2 text-[10px]",
+                          player ? "bg-arena-purple/15 border border-arena-purple/30 text-foreground" : "bg-secondary/30 border border-border/30 text-muted-foreground/40"
+                        )}>
+                          {player ?? `Slot ${i + 1}`}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* Public match — simple progress bar */
+              <div>
+                <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
+                  <span>Players</span>
+                  <span className="font-mono">{myActiveRoom.players.length} / {myActiveRoom.maxPlayers}</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-secondary/50 overflow-hidden">
+                  <div
+                    className="h-full bg-primary rounded-full transition-all"
+                    style={{ width: `${(myActiveRoom.players.length / myActiveRoom.maxPlayers) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Action row */}
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className={cn(
+                "text-xs border-destructive/40 text-destructive hover:bg-destructive/10 hover:border-destructive/70",
+                countdown !== null && countdown <= 3 && "animate-pulse"
+              )}
+              onClick={handleLeaveRoom}
+            >
+              <LogOut className="mr-1.5 h-3 w-3" />
+              Leave Room
+            </Button>
+
+            {countdown !== null && (
+              <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3 text-arena-gold" />
+                {countdown > 0
+                  ? `${countdown}s left to leave — funds lock when timer hits 0`
+                  : "Locking funds…"}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── Tabs ── */}
       <Tabs defaultValue="public" className="w-full">
