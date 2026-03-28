@@ -9,8 +9,11 @@ import { Slider } from "@/components/ui/slider";
 import {
   Bell, Shield, Globe, Trash2, Save, Lock, Volume2,
   AlertCircle, ChevronRight, Wallet, Gamepad2, User,
-  Eye, EyeOff, CheckCircle2, SlidersHorizontal,
+  Eye, EyeOff, CheckCircle2, SlidersHorizontal, ShieldAlert,
 } from "lucide-react";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useUserStore } from "@/stores/userStore";
 import { useWalletStore } from "@/stores/walletStore";
@@ -61,6 +64,10 @@ const SettingsPage = () => {
   const [showCurrentPw, setShowCurrentPw] = useState(false);
   const [showNewPw, setShowNewPw] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [pwConfirmOpen, setPwConfirmOpen] = useState(false);
+  const [pwUpdated, setPwUpdated] = useState(false);
 
   const [notifications, setNotifications] = useState({
     matchResults: true, payouts: true, systemAlerts: true, promotions: false, sounds: true,
@@ -82,6 +89,15 @@ const SettingsPage = () => {
     autoReady: false,
   });
 
+  const handlePasswordUpdate = () => {
+    // DB-ready: PATCH /api/auth/password { currentPassword: currentPw, newPassword: newPw }
+    setPwConfirmOpen(false);
+    setPwUpdated(true);
+    setCurrentPw(""); setNewPw("");
+    toast({ title: "✅ Password updated", description: "Your password has been changed successfully." });
+    setTimeout(() => setPwUpdated(false), 3000);
+  };
+
   const handleSave = () => {
     setDailyBettingLimit(bettingLimit);
     setSaved(true);
@@ -90,6 +106,7 @@ const SettingsPage = () => {
   };
 
   return (
+    <>
     <div className="flex gap-0 max-w-4xl min-h-[600px]">
 
       {/* ── Left nav ── */}
@@ -201,6 +218,8 @@ const SettingsPage = () => {
                       <Input
                         type={showCurrentPw ? "text" : "password"}
                         placeholder="Current"
+                        value={currentPw}
+                        onChange={(e) => setCurrentPw(e.target.value)}
                         className="h-8 bg-secondary/60 border-border text-xs pr-8"
                       />
                       <button
@@ -214,6 +233,8 @@ const SettingsPage = () => {
                       <Input
                         type={showNewPw ? "text" : "password"}
                         placeholder="New password"
+                        value={newPw}
+                        onChange={(e) => setNewPw(e.target.value)}
                         className="h-8 bg-secondary/60 border-border text-xs pr-8"
                       />
                       <button
@@ -224,8 +245,20 @@ const SettingsPage = () => {
                       </button>
                     </div>
                   </div>
-                  <Button size="sm" variant="outline" className="mt-2 h-7 text-xs font-display border-border">
-                    <Lock className="mr-1.5 h-3 w-3" /> Update Password
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!currentPw || !newPw || newPw.length < 6}
+                    onClick={() => setPwConfirmOpen(true)}
+                    className={cn(
+                      "mt-2 h-7 text-xs font-display border-border transition-all",
+                      pwUpdated && "border-green-500/50 text-green-400",
+                    )}
+                  >
+                    {pwUpdated
+                      ? <><CheckCircle2 className="mr-1.5 h-3 w-3 text-green-400" /> Updated!</>
+                      : <><Lock className="mr-1.5 h-3 w-3" /> Update Password</>
+                    }
                   </Button>
                 </div>
               </div>
@@ -411,6 +444,65 @@ const SettingsPage = () => {
         )}
       </div>
     </div>
+
+    {/* ── Update Password Confirmation Dialog ── */}
+    <Dialog open={pwConfirmOpen} onOpenChange={setPwConfirmOpen}>
+      <DialogContent className="max-w-sm p-0 overflow-hidden border border-arena-orange/30 bg-card">
+        <DialogDescription className="sr-only">Confirm password update</DialogDescription>
+
+        {/* Header strip */}
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-border/60 bg-arena-orange/5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-arena-orange/15 shrink-0">
+            <ShieldAlert className="h-4 w-4 text-arena-orange" />
+          </div>
+          <div>
+            <DialogHeader>
+              <DialogTitle className="font-display text-sm font-bold tracking-wide text-foreground">
+                Confirm Password Change
+              </DialogTitle>
+            </DialogHeader>
+            <p className="text-[11px] text-muted-foreground mt-0.5">This action will update your login credentials</p>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="px-5 py-4 space-y-3">
+          <div className="rounded-lg border border-border/60 bg-secondary/40 px-3 py-2.5 space-y-1.5">
+            <div className="flex justify-between text-xs">
+              <span className="text-muted-foreground">Account</span>
+              <span className="font-medium text-foreground font-mono">{user?.username ?? "—"}</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-muted-foreground">New password length</span>
+              <span className="font-medium text-foreground font-mono">{newPw.length} chars</span>
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground leading-relaxed">
+            You'll need to use the new password next time you sign in. Make sure you remember it or store it safely.
+          </p>
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-2 px-5 pb-5">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="flex-1 text-xs font-display border border-border/60"
+            onClick={() => setPwConfirmOpen(false)}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            className="flex-1 text-xs font-display bg-arena-orange hover:bg-arena-orange/80 text-black font-bold"
+            onClick={handlePasswordUpdate}
+          >
+            <Lock className="mr-1.5 h-3.5 w-3.5" /> Yes, Update Password
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 };
 
