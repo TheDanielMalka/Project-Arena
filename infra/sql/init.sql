@@ -488,3 +488,7 @@ CREATE TABLE forge_drop_purchases (
     purchased_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_forge_dp_user ON forge_drop_purchases(user_id, purchased_at DESC);
+
+-- Add lock_countdown_start to matches (10-second leave window before escrow locks on-chain)
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS lock_countdown_start TIMESTAMPTZ;
+COMMENT ON COLUMN matches.lock_countdown_start IS 'Set when all players have deposited. Clients have 10s to leave before contract locks.';

@@ -21,6 +21,8 @@ interface WalletState {
   lockEscrow: (amount: number, matchId: string) => Transaction | null;
   // DB-ready: replace with POST /api/escrow/release
   releaseEscrow: (amount: number, matchId: string, won: boolean) => Transaction;
+  // DB-ready: replace with POST /api/escrow/cancel (calls contract.cancelDeposit — only valid before lock)
+  cancelEscrow: (matchId: string) => boolean;
   // DB-ready: replace with POST /api/wallet/transactions
   addTransaction: (tx: Omit<Transaction, "id" | "timestamp">) => Transaction;
   // DB-ready: replace with PATCH /api/wallet/network
@@ -161,6 +163,46 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       matchId,
       note: `Escrow locked for match ${matchId}`,
     });
+  },
+
+  cancelEscrow: (matchId) => {
+    // Find the pending escrow_lock transaction for this match
+    const escrowTx = get().transactions.find(
+      (tx) => tx.matchId === matchId && tx.type === "escrow_lock" && tx.status === "pending"
+    );
+    if (!escrowTx) return false;
+
+    const amount = Math.abs(escrowTx.amount); // escrow_lock amount is negative
+
+    // Refund the USDT balance (BSC)
+    set((state) => ({
+      tokens: state.tokens.map((t) =>
+        t.symbol === "USDT" && t.network === "bsc"
+          ? { ...t, balance: t.balance + amount, usdValue: t.usdValue + amount }
+          : t
+      ),
+      dailyBettingUsed: Math.max(0, state.dailyBettingUsed - amount),
+      // Mark the escrow_lock as cancelled
+      transactions: state.transactions.map((tx) =>
+        tx.matchId === matchId && tx.type === "escrow_lock" && tx.status === "pending"
+          ? { ...tx, status: "cancelled" as const }
+          : tx
+      ),
+    }));
+
+    // Record the refund transaction
+    get().addTransaction({
+      userId: "user-001",
+      type: "refund",
+      amount,
+      token: "USDT",
+      usdValue: amount,
+      status: "completed",
+      matchId,
+      note: `Escrow cancelled — left match ${matchId} before lock`,
+    });
+
+    return true;
   },
 
   releaseEscrow: (amount, matchId, won) => {

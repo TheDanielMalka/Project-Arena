@@ -79,6 +79,7 @@ const txStatusConfig: Record<TransactionStatus, { color: string }> = {
   completed: { color: "bg-primary/20 text-primary border-primary/30" },
   pending: { color: "bg-arena-orange/20 text-arena-orange border-arena-orange/30" },
   failed: { color: "bg-destructive/20 text-destructive border-destructive/30" },
+  cancelled: { color: "bg-muted/40 text-muted-foreground border-border/40" },
 };
 
 // ─── Component ───────────────────────────────────────────────

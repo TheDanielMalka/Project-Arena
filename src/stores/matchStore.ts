@@ -11,6 +11,8 @@ interface MatchState {
   updateMatchStatus: (matchId: string, status: MatchStatus, winnerId?: string) => void;
   // DB-ready: replace with GET /api/matches/by-code/:code
   getMatchByCode: (code: string) => Match | undefined;
+  // DB-ready: replace with DELETE /api/matches/:id/players/:userId (refunds escrow client-side)
+  leaveMatch: (matchId: string, playerId: string) => boolean;
 }
 
 let matchCounter = 100;
@@ -82,15 +84,24 @@ export const useMatchStore = create<MatchState>((set, get) => ({
       const updatedTeam = [...currentTeam, playerId];
       const newTeamA    = teamKey === "teamA" ? updatedTeam : (match.teamA ?? []);
       const newTeamB    = teamKey === "teamB" ? updatedTeam : (match.teamB ?? []);
-      const deposited   = (match.depositsReceived ?? 0) + 1;
-      // Auto-activate when all slots filled (teamSize * 2 deposits)
-      const totalNeeded = (match.teamSize ?? maxPerTeam) * 2;
-      const newStatus: MatchStatus = deposited >= totalNeeded ? "in_progress" : "waiting";
+      const deposited      = (match.depositsReceived ?? 0) + 1;
+      const totalNeeded    = (match.teamSize ?? maxPerTeam) * 2;
+      const roomNowFull    = deposited >= totalNeeded;
+      // Room full → start 10s countdown (UI calls updateMatchStatus after 10s)
+      const lockCountdownStart = roomNowFull ? new Date().toISOString() : undefined;
 
       set((state) => ({
         matches: state.matches.map((m) =>
           m.id === matchId
-            ? { ...m, [teamKey]: updatedTeam, teamA: newTeamA, teamB: newTeamB, depositsReceived: deposited, status: newStatus }
+            ? {
+                ...m,
+                [teamKey]: updatedTeam,
+                teamA: newTeamA,
+                teamB: newTeamB,
+                depositsReceived: deposited,
+                status: "waiting",  // stays waiting — UI triggers in_progress after countdown
+                ...(lockCountdownStart ? { lockCountdownStart } : {}),
+              }
             : m
         ),
       }));
@@ -118,4 +129,50 @@ export const useMatchStore = create<MatchState>((set, get) => ({
   },
 
   getMatchByCode: (code) => get().matches.find((m) => m.code === code),
+
+  leaveMatch: (matchId, playerId) => {
+    const match = get().matches.find((m) => m.id === matchId);
+    // Can only leave a waiting room (not yet locked)
+    if (!match || match.status !== "waiting") return false;
+
+    if (match.type === "custom") {
+      const inA = (match.teamA ?? []).includes(playerId);
+      const inB = (match.teamB ?? []).includes(playerId);
+      if (!inA && !inB) return false;
+
+      const newTeamA = inA ? (match.teamA ?? []).filter((p) => p !== playerId) : (match.teamA ?? []);
+      const newTeamB = inB ? (match.teamB ?? []).filter((p) => p !== playerId) : (match.teamB ?? []);
+      const newDeposits = Math.max(0, (match.depositsReceived ?? 0) - 1);
+
+      set((state) => ({
+        matches: state.matches.map((m) =>
+          m.id === matchId
+            ? {
+                ...m,
+                teamA: newTeamA,
+                teamB: newTeamB,
+                depositsReceived: newDeposits,
+                lockCountdownStart: undefined,  // room no longer full
+              }
+            : m
+        ),
+      }));
+      return true;
+    }
+
+    // Public match
+    if (!match.players.includes(playerId)) return false;
+    set((state) => ({
+      matches: state.matches.map((m) =>
+        m.id === matchId
+          ? {
+              ...m,
+              players: m.players.filter((p) => p !== playerId),
+              lockCountdownStart: undefined,
+            }
+          : m
+      ),
+    }));
+    return true;
+  },
 }));

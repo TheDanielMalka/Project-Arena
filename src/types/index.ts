@@ -6,7 +6,7 @@ export type MatchMode = "1v1" | "2v2" | "4v4" | "5v5";
 export type Game = "CS2" | "Valorant" | "Fortnite" | "Apex Legends" | "PUBG" | "COD" | "League of Legends";
 
 export type TransactionType = "deposit" | "withdrawal" | "match_win" | "match_loss" | "fee" | "refund" | "escrow_lock" | "escrow_release";
-export type TransactionStatus = "completed" | "pending" | "failed";
+export type TransactionStatus = "completed" | "pending" | "failed" | "cancelled";
 
 export type DisputeStatus = "open" | "reviewing" | "resolved" | "escalated";
 export type DisputeResolution = "pending" | "approved" | "rejected" | "player_a_wins" | "player_b_wins" | "refund" | "void";
@@ -83,6 +83,8 @@ export interface Match {
   // Team & escrow fields
   teamSize?: number;         // players per team — DB: matches.max_per_team
   depositsReceived?: number; // how many players locked funds — DB: matches.deposits_received
+  lockCountdownStart?: string;   // ISO timestamp set when room fills — starts 10s leave window
+                                 // DB: matches.lock_countdown_start (TIMESTAMPTZ)
   code?: string;
   password?: string;
   teamA?: string[];
