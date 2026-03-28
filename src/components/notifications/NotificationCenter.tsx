@@ -14,21 +14,23 @@ import {
 import { cn } from "@/lib/utils";
 
 const typeStyles: Record<NotificationType, string> = {
-  match_result: "border-l-arena-neon",
-  payout: "border-l-arena-gold",
-  system: "border-l-arena-cyan",
-  dispute: "border-l-arena-orange",
-  match_invite: "border-l-arena-purple",
-  escrow: "border-l-arena-gold",
+  match_result:   "border-l-arena-neon",
+  payout:         "border-l-arena-gold",
+  system:         "border-l-arena-cyan",
+  dispute:        "border-l-arena-orange",
+  match_invite:   "border-l-arena-purple",
+  escrow:         "border-l-arena-gold",
+  friend_request: "border-l-primary",
 };
 
 const typeRoutes: Record<NotificationType, string> = {
-  match_result: "/history",
-  payout: "/wallet",
-  system: "/dashboard",
-  dispute: "/admin",
-  match_invite: "/lobby",
-  escrow: "/wallet",
+  match_result:   "/history",
+  payout:         "/wallet",
+  system:         "/dashboard",
+  dispute:        "/admin",
+  match_invite:   "/lobby",
+  escrow:         "/wallet",
+  friend_request: "/hub",   // DB-ready: routes to Hub → Friends tab
 };
 
 function timeAgo(date: Date): string {

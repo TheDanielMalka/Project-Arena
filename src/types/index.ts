@@ -85,6 +85,7 @@ export interface Match {
   depositsReceived?: number; // how many players locked funds — DB: matches.deposits_received
   lockCountdownStart?: string;   // ISO timestamp set when room fills — starts 10s leave window
                                  // DB: matches.lock_countdown_start (TIMESTAMPTZ)
+  expiresAt?: string;            // ISO timestamp (createdAt + 30min) — DB: matches.expires_at (TIMESTAMPTZ GENERATED)
   code?: string;
   password?: string;
   teamA?: string[];
@@ -237,7 +238,14 @@ export interface DailyChallenge {
 
 // ─── Notifications ───────────────────────────────────────────
 
-export type NotificationType = "match_result" | "payout" | "system" | "dispute" | "match_invite" | "escrow";
+export type NotificationType =
+  | "match_result"    // match completed / won / lost           — DB: notifications.type = 'match_result'
+  | "payout"          // funds released after win               — DB: notifications.type = 'payout'
+  | "system"          // platform / maintenance messages        — DB: notifications.type = 'system'
+  | "dispute"         // dispute opened or resolved             — DB: notifications.type = 'dispute'
+  | "match_invite"    // room created / code shared             — DB: notifications.type = 'match_invite'
+  | "escrow"          // deposit confirmed / refunded           — DB: notifications.type = 'escrow'
+  | "friend_request"; // friend request sent or accepted        — DB: notifications.type = 'friend_request'
 
 export interface Notification {
   id: string;

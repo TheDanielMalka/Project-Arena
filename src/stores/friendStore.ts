@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Friendship, FriendshipStatus } from "@/types";
+import { useNotificationStore } from "@/stores/notificationStore";
 
 // ─── Seed Data ────────────────────────────────────────────────
 // From the perspective of user-001 (ArenaPlayer_01 / ARENA-AP0001)
@@ -162,14 +163,26 @@ export const useFriendStore = create<FriendState>((set, get) => ({
     return friendship;
   },
 
-  acceptRequest: (friendshipId) =>
+  acceptRequest: (friendshipId) => {
+    // DB-ready: PATCH /api/friends/:id/accept
+    // Real DB: emits WebSocket event to initiator → they see "Your request was accepted" in their Hub inbox
+    const friendship = get().friendships.find((f) => f.id === friendshipId);
     set((s) => ({
       friendships: s.friendships.map((f) =>
         f.id === friendshipId
           ? { ...f, status: "accepted" as FriendshipStatus, updatedAt: new Date().toISOString() }
           : f
       ),
-    })),
+    }));
+    // Simulate the push notification the initiator would receive in a real multi-user system
+    if (friendship) {
+      useNotificationStore.getState().addNotification({
+        type:    "friend_request",
+        title:   "Friend Request Accepted 🎮",
+        message: `${friendship.friendUsername} accepted your friend request. You are now friends!`,
+      });
+    }
+  },
 
   declineRequest: (friendshipId) =>
     set((s) => ({
