@@ -10,7 +10,7 @@ import {
   Bell, Shield, Globe, Trash2, Save, Lock, Volume2,
   AlertCircle, ChevronRight, Wallet, Gamepad2, User,
   Eye, EyeOff, CheckCircle2, SlidersHorizontal, ShieldAlert, Check, X,
-  Smartphone, Copy, RefreshCw, KeyRound, ShieldCheck, ShieldOff,
+  Smartphone, Copy, RefreshCw, KeyRound, ShieldCheck, ShieldOff, Mail,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -29,7 +29,6 @@ const SECTIONS = [
   { id: "security",      icon: Shield,           label: "Security",      color: "text-arena-orange" },
   { id: "betting",       icon: Wallet,           label: "Betting",       color: "text-arena-gold"   },
   { id: "game",          icon: Gamepad2,         label: "Game",          color: "text-primary"      },
-  { id: "display",       icon: Globe,            label: "Display",       color: "text-arena-purple" },
   { id: "danger",        icon: Trash2,           label: "Danger Zone",   color: "text-destructive"  },
 ] as const;
 
@@ -58,7 +57,9 @@ const SectionTitle = ({ icon: Icon, label, color }: { icon: React.ElementType; l
 // ─── Main component ────────────────────────────────────────────
 const SettingsPage = () => {
   const { toast } = useToast();
-  const { user } = useUserStore();
+  const { user, greetingType } = useUserStore();
+  // Google users cannot change email — managed by Google OAuth
+  const isGoogleAccount = greetingType === "google";
   const { platformBettingMax, dailyBettingLimit, dailyBettingUsed, setDailyBettingLimit } = useWalletStore();
 
   const [active, setActive] = useState<SectionId>("account");
@@ -71,6 +72,41 @@ const SettingsPage = () => {
   const [newPw, setNewPw] = useState("");
   const [pwConfirmOpen, setPwConfirmOpen] = useState(false);
   const [pwUpdated, setPwUpdated] = useState(false);
+
+  // ── Email change flow ──────────────────────────────────────────
+  // Step 1 "verify"  → user enters password to prove identity
+  // Step 2 "change"  → user enters new email + confirms
+  // DB-ready: POST /api/auth/verify-password { password }
+  //           PATCH /api/users/me { email: newEmail } — re-sends verification link
+  type EmailStep = "idle" | "verify" | "change";
+  const [emailStep, setEmailStep]       = useState<EmailStep>("idle");
+  const [emailPw, setEmailPw]           = useState("");
+  const [emailPwError, setEmailPwError] = useState("");
+  const [newEmail, setNewEmail]         = useState("");
+  const [emailUpdated, setEmailUpdated] = useState(false);
+  const [showEmailPw, setShowEmailPw]   = useState(false);
+
+  const handleEmailVerify = () => {
+    if (!emailPw) { setEmailPwError("Please enter your password."); return; }
+    // DB-ready: POST /api/auth/verify-password { password: emailPw }
+    setEmailPwError("");
+    setNewEmail(user?.email ?? "");
+    setEmailStep("change");
+  };
+
+  const handleEmailUpdate = () => {
+    if (!newEmail || !newEmail.includes("@")) {
+      toast({ title: "Invalid email", description: "Please enter a valid email address.", variant: "destructive" });
+      return;
+    }
+    // DB-ready: PATCH /api/users/me { email: newEmail }
+    //           server sends verification link to newEmail before updating
+    setEmailStep("idle");
+    setEmailPw(""); setNewEmail(""); setEmailPwError("");
+    setEmailUpdated(true);
+    toast({ title: "✅ Email updated", description: `A verification link has been sent to ${newEmail}.` });
+    setTimeout(() => setEmailUpdated(false), 3000);
+  };
 
   // ── 2FA state machine ──────────────────────────────────────────
   // DB-ready: POST /api/auth/2fa/setup   → returns { secret, otpauthUrl, backupCodes }
@@ -142,7 +178,7 @@ const SettingsPage = () => {
     matchResults: true, payouts: true, systemAlerts: true, promotions: false, sounds: true,
   });
   const [security, setSecurity] = useState({
-    twoFactor: false, loginAlerts: true, withdrawWhitelist: false,
+    twoFactor: false, loginAlerts: true,
   });
   const [preferences, setPreferences] = useState({
     language: "en", theme: "dark",
@@ -214,12 +250,33 @@ const SettingsPage = () => {
                     Go to Profile →
                   </Link>
                 </SettingRow>
-                <SettingRow label="Email" desc="Used for login & alerts">
-                  <Input
-                    defaultValue={user?.email ?? ""}
-                    className="h-8 w-44 bg-secondary/60 border-border text-xs font-mono"
-                    type="email"
-                  />
+                {/* Email — Google accounts: read-only | Password accounts: guarded change flow */}
+                <SettingRow
+                  label="Email"
+                  desc={isGoogleAccount ? "Managed by Google — cannot be changed here" : "Used for login & alerts"}
+                >
+                  {isGoogleAccount ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono text-muted-foreground truncate max-w-[140px]">{user?.email}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-arena-cyan/10 text-arena-cyan border border-arena-cyan/20 font-display">Google</span>
+                    </div>
+                  ) : emailUpdated ? (
+                    <span className="flex items-center gap-1 text-xs text-arena-green font-display">
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Verification sent
+                    </span>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono text-muted-foreground truncate max-w-[120px]">{user?.email}</span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs font-display border-border/60 px-2"
+                        onClick={() => { setEmailStep("verify"); setEmailPw(""); setEmailPwError(""); setShowEmailPw(false); }}
+                      >
+                        <Lock className="h-3 w-3 mr-1" /> Change
+                      </Button>
+                    </div>
+                  )}
                 </SettingRow>
                 <SettingRow label="Region" desc="Affects matchmaking pool" last>
                   <Select defaultValue="eu-west">
@@ -285,8 +342,7 @@ const SettingsPage = () => {
                   </div>
                 </SettingRow>
                 {([
-                  { key: "loginAlerts",       label: "Login Alerts",          desc: "Notify on new logins"                  },
-                  { key: "withdrawWhitelist", label: "Withdrawal Whitelist",  desc: "Only allow saved addresses"            },
+                  { key: "loginAlerts", label: "Login Alerts", desc: "Notify on new logins" },
                 ] as const).map((item) => (
                   <SettingRow key={item.key} label={item.label} desc={item.desc}>
                     <Switch
@@ -439,40 +495,6 @@ const SettingsPage = () => {
             </div>
           )}
 
-          {/* ── DISPLAY ── */}
-          {active === "display" && (
-            <div>
-              <SectionTitle icon={Globe} label="Display" color="text-arena-purple" />
-              <div className="space-y-1">
-                <SettingRow label="Language" desc="Interface language">
-                  <Select value={preferences.language} onValueChange={(v) => setPreferences((p) => ({ ...p, language: v }))}>
-                    <SelectTrigger className="h-8 w-36 bg-secondary/60 border-border text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="en">English</SelectItem>
-                      <SelectItem value="he">עברית</SelectItem>
-                      <SelectItem value="es">Español</SelectItem>
-                      <SelectItem value="ru">Русский</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </SettingRow>
-                <SettingRow label="Theme" desc="Color scheme" last>
-                  <Select value={preferences.theme} onValueChange={(v) => setPreferences((p) => ({ ...p, theme: v }))}>
-                    <SelectTrigger className="h-8 w-36 bg-secondary/60 border-border text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="dark">Dark</SelectItem>
-                      <SelectItem value="light">Light</SelectItem>
-                      <SelectItem value="system">System</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </SettingRow>
-              </div>
-            </div>
-          )}
-
           {/* ── DANGER ── */}
           {active === "danger" && (
             <div>
@@ -547,6 +569,106 @@ const SettingsPage = () => {
         )}
       </div>
     </div>
+
+    {/* ── Email Change: Step 1 — Verify Password ── */}
+    <Dialog open={emailStep === "verify"} onOpenChange={(o) => { if (!o) setEmailStep("idle"); }}>
+      <DialogContent className="max-w-sm p-0 overflow-hidden border border-arena-cyan/30 bg-card">
+        <DialogDescription className="sr-only">Verify identity to change email</DialogDescription>
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-border/60 bg-arena-cyan/5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-arena-cyan/15 shrink-0">
+            <Lock className="h-4 w-4 text-arena-cyan" />
+          </div>
+          <div>
+            <DialogHeader>
+              <DialogTitle className="font-display text-sm font-bold tracking-wide">Confirm Your Identity</DialogTitle>
+            </DialogHeader>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Step 1 of 2 — Enter your current password</p>
+          </div>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            For security, we need to verify it's you before changing your email address.
+          </p>
+          <div className="relative">
+            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              type={showEmailPw ? "text" : "password"}
+              placeholder="Current password"
+              value={emailPw}
+              onChange={(e) => { setEmailPw(e.target.value); setEmailPwError(""); }}
+              onKeyDown={(e) => { if (e.key === "Enter") handleEmailVerify(); }}
+              className="pl-9 pr-9 h-9 text-sm bg-secondary/60 border-border"
+              autoFocus
+            />
+            <button type="button" onClick={() => setShowEmailPw((v) => !v)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+              {showEmailPw ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+            </button>
+          </div>
+          {emailPwError && <p className="text-[11px] text-destructive">{emailPwError}</p>}
+          {/* DB-ready: POST /api/auth/verify-password { password: emailPw } */}
+        </div>
+        <div className="flex gap-2 px-5 pb-5">
+          <Button variant="ghost" size="sm" className="flex-1 text-xs font-display border border-border/60"
+            onClick={() => setEmailStep("idle")}>Cancel</Button>
+          <Button size="sm" disabled={!emailPw}
+            className="flex-1 text-xs font-display bg-arena-cyan hover:bg-arena-cyan/80 text-black font-bold"
+            onClick={handleEmailVerify}>
+            Verify Identity
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+
+    {/* ── Email Change: Step 2 — Enter New Email ── */}
+    <Dialog open={emailStep === "change"} onOpenChange={(o) => { if (!o) setEmailStep("idle"); }}>
+      <DialogContent className="max-w-sm p-0 overflow-hidden border border-arena-cyan/30 bg-card">
+        <DialogDescription className="sr-only">Enter new email address</DialogDescription>
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-border/60 bg-arena-cyan/5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-arena-cyan/15 shrink-0">
+            <Mail className="h-4 w-4 text-arena-cyan" />
+          </div>
+          <div>
+            <DialogHeader>
+              <DialogTitle className="font-display text-sm font-bold tracking-wide">Change Email Address</DialogTitle>
+            </DialogHeader>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Step 2 of 2 — Enter your new email</p>
+          </div>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          <div className="rounded-lg border border-border/60 bg-secondary/40 px-3 py-2">
+            <p className="text-[10px] text-muted-foreground font-display uppercase tracking-wider mb-0.5">Current email</p>
+            <p className="text-xs font-mono text-muted-foreground">{user?.email}</p>
+          </div>
+          <div>
+            <p className="text-[11px] text-muted-foreground mb-1.5">New email address</p>
+            <Input
+              type="email"
+              placeholder="new@email.com"
+              value={newEmail}
+              onChange={(e) => setNewEmail(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleEmailUpdate(); }}
+              className="h-9 text-sm bg-secondary/60 border-border"
+              autoFocus
+            />
+          </div>
+          <p className="text-[10px] text-muted-foreground leading-relaxed">
+            {/* DB-ready: PATCH /api/users/me { email } → server sends verification to newEmail */}
+            A verification link will be sent to your new address. Your email won't change until you click it.
+          </p>
+        </div>
+        <div className="flex gap-2 px-5 pb-5">
+          <Button variant="ghost" size="sm" className="flex-1 text-xs font-display border border-border/60"
+            onClick={() => setEmailStep("idle")}>Cancel</Button>
+          <Button size="sm"
+            disabled={!newEmail || !newEmail.includes("@") || newEmail === user?.email}
+            className="flex-1 text-xs font-display bg-arena-cyan hover:bg-arena-cyan/80 text-black font-bold"
+            onClick={handleEmailUpdate}>
+            <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" /> Confirm & Send Link
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
 
     {/* ── 2FA Setup: Step 1 — QR Code & Secret ── */}
     <Dialog open={twoFAStep === "setup-qr"} onOpenChange={(o) => { if (!o) setTwoFAStep("idle"); }}>

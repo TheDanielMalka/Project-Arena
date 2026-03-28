@@ -5,6 +5,72 @@ import type { PublicPlayerProfile } from "@/types";
 // DB-ready: replace with GET /api/players?q=query&game=game
 
 const SEED_PLAYERS: PublicPlayerProfile[] = [
+  // ── Global Leaderboard — Top 10 ──────────────────────────────────────────────
+  // DB-ready: leaderboardRank is a computed field from GET /api/leaderboard merged with GET /api/players/:username
+  {
+    id: "lb-001", arenaId: "ARENA-SK0001",
+    username: "ShadowKing", avatarInitials: "SK",
+    rank: "Master", tier: "Master", preferredGame: "CS2",
+    memberSince: "October 2025", status: "active", leaderboardRank: 1,
+    stats: { matches: 170, wins: 142, losses: 28, winRate: 83.5, totalEarnings: 4250 },
+  },
+  {
+    id: "lb-002", arenaId: "ARENA-NV0002",
+    username: "NeonViper", avatarInitials: "NV",
+    rank: "Diamond I", tier: "Diamond", preferredGame: "CS2",
+    memberSince: "November 2025", status: "active", leaderboardRank: 2,
+    stats: { matches: 163, wins: 128, losses: 35, winRate: 78.5, totalEarnings: 3800 },
+  },
+  {
+    id: "lb-003", arenaId: "ARENA-PS0003",
+    username: "PixelStorm", avatarInitials: "PS",
+    rank: "Diamond II", tier: "Diamond", preferredGame: "Valorant",
+    memberSince: "November 2025", status: "active", leaderboardRank: 3,
+    stats: { matches: 155, wins: 115, losses: 40, winRate: 74.2, totalEarnings: 3200 },
+  },
+  {
+    id: "lb-005", arenaId: "ARENA-AH0005",
+    username: "AceHunter", avatarInitials: "AH",
+    rank: "Platinum I", tier: "Platinum", preferredGame: "Valorant",
+    memberSince: "December 2025", status: "active", leaderboardRank: 5,
+    stats: { matches: 150, wins: 105, losses: 45, winRate: 70.0, totalEarnings: 2750 },
+  },
+  {
+    id: "lb-006", arenaId: "ARENA-GR0006",
+    username: "GhostRider", avatarInitials: "GR",
+    rank: "Platinum II", tier: "Platinum", preferredGame: "CS2",
+    memberSince: "January 2026", status: "active", leaderboardRank: 6,
+    stats: { matches: 148, wins: 98, losses: 50, winRate: 66.2, totalEarnings: 2400 },
+  },
+  {
+    id: "lb-007", arenaId: "ARENA-IW0007",
+    username: "IronWolf", avatarInitials: "IW",
+    rank: "Platinum II", tier: "Platinum", preferredGame: "Fortnite",
+    memberSince: "December 2025", status: "active", leaderboardRank: 7,
+    stats: { matches: 143, wins: 95, losses: 48, winRate: 66.4, totalEarnings: 2200 },
+  },
+  {
+    id: "lb-008", arenaId: "ARENA-CN0008",
+    username: "CyberNinja", avatarInitials: "CN",
+    rank: "Platinum III", tier: "Platinum", preferredGame: "Apex Legends",
+    memberSince: "January 2026", status: "active", leaderboardRank: 8,
+    stats: { matches: 145, wins: 90, losses: 55, winRate: 62.1, totalEarnings: 1900 },
+  },
+  {
+    id: "lb-009", arenaId: "ARENA-VE0009",
+    username: "VoltEdge", avatarInitials: "VE",
+    rank: "Gold I", tier: "Gold", preferredGame: "CS2",
+    memberSince: "January 2026", status: "active", leaderboardRank: 9,
+    stats: { matches: 140, wins: 88, losses: 52, winRate: 62.9, totalEarnings: 1800 },
+  },
+  {
+    id: "lb-010", arenaId: "ARENA-TB0010",
+    username: "ThunderBolt", avatarInitials: "TB",
+    rank: "Gold I", tier: "Gold", preferredGame: "Valorant",
+    memberSince: "February 2026", status: "active", leaderboardRank: 10,
+    stats: { matches: 143, wins: 85, losses: 58, winRate: 59.4, totalEarnings: 1650 },
+  },
+  // ── Other players ─────────────────────────────────────────────────────────
   {
     id: "user-002", arenaId: "ARENA-WP0002",
     username: "WingmanPro", avatarInitials: "WP",
@@ -30,7 +96,7 @@ const SEED_PLAYERS: PublicPlayerProfile[] = [
     id: "U-288", arenaId: "ARENA-BF0005",
     username: "BlazeFury", avatarInitials: "BF",
     rank: "Gold III", tier: "Gold", preferredGame: "Valorant",
-    memberSince: "January 2026", status: "banned",
+    memberSince: "January 2026", status: "banned", leaderboardRank: 4,
     stats: { matches: 31, wins: 14, losses: 17, winRate: 45.2, totalEarnings: 180 },
   },
   {

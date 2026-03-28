@@ -14,6 +14,7 @@ import {
   CheckCircle2, AlertTriangle, Ban, ChevronRight,
   UserPlus, UserCheck, Clock,
 } from "lucide-react";
+import { getRankTier } from "@/lib/rankTiers";
 import { usePlayerStore } from "@/stores/playerStore";
 import { useReportStore } from "@/stores/reportStore";
 import { useUserStore } from "@/stores/userStore";
@@ -338,23 +339,54 @@ export default function PlayerProfile() {
 
           {/* Avatar + info */}
           <div className="flex items-center gap-4">
-            <div
-              className="w-16 h-16 rounded-2xl flex items-center justify-center font-display text-xl font-bold shrink-0"
-              style={{
-                background: `${tierColor}20`,
-                border: `2px solid ${tierColor}60`,
-                color: tierColor,
-                boxShadow: `0 0 20px ${tierColor}20`,
-              }}
-            >
-              {player.avatar && player.avatar !== "initials"
-                ? <span className="text-2xl">{player.avatar}</span>
-                : player.avatarInitials}
+            <div className="relative shrink-0">
+              <div
+                className="w-16 h-16 rounded-2xl flex items-center justify-center font-display text-xl font-bold"
+                style={{
+                  background: `${tierColor}20`,
+                  border: `2px solid ${tierColor}60`,
+                  color: tierColor,
+                  boxShadow: `0 0 20px ${tierColor}20`,
+                }}
+              >
+                {player.avatar && player.avatar !== "initials"
+                  ? <span className="text-2xl">{player.avatar}</span>
+                  : player.avatarInitials}
+              </div>
+              {/* Leaderboard tier icon badge on avatar */}
+              {player.leaderboardRank && (() => {
+                const tier = getRankTier(player.leaderboardRank);
+                if (!tier) return null;
+                return (
+                  <div
+                    className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center ${tier.color}`}
+                    style={{ background: "hsl(var(--card))", border: "1.5px solid currentColor" }}
+                    title={`Rank #${player.leaderboardRank}`}
+                  >
+                    <tier.Icon className="h-2.5 w-2.5" />
+                  </div>
+                );
+              })()}
             </div>
 
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="font-display text-xl font-bold">{player.username}</h1>
+                {/* Leaderboard rank tier icon — only shown if player is top 50 */}
+                {player.leaderboardRank && (() => {
+                  const tier = getRankTier(player.leaderboardRank);
+                  if (!tier) return null;
+                  return (
+                    <span
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-display font-bold uppercase tracking-widest ${tier.color}`}
+                      style={{ background: "rgba(255,255,255,0.05)", border: "1px solid currentColor", opacity: 0.9 }}
+                      title={`Global Rank #${player.leaderboardRank} — ${tier.label}`}
+                    >
+                      <tier.Icon className={tier.iconSize} />
+                      #{player.leaderboardRank} {tier.label}
+                    </span>
+                  );
+                })()}
                 {isInactive && (
                   <Badge
                     variant="outline"
