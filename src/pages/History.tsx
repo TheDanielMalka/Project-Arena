@@ -14,6 +14,24 @@ import type { Game, MatchStatus } from "@/types";
 
 const ITEMS_PER_PAGE = 8;
 
+type TimeRange = "weekly" | "monthly" | "alltime";
+
+// DB-ready: maps to ?range= query param on GET /api/matches/history
+// Server filters by: weekly = last 7 days, monthly = last 30 days, alltime = no date filter
+const TIME_RANGES: { value: TimeRange; label: string }[] = [
+  { value: "weekly",  label: "Weekly"   },
+  { value: "monthly", label: "Monthly"  },
+  { value: "alltime", label: "All Time" },
+];
+
+const filterByTimeRange = (isoDate: string, range: TimeRange): boolean => {
+  if (range === "alltime") return true;
+  const date = new Date(isoDate).getTime();
+  const now  = Date.now();
+  const days = range === "weekly" ? 7 : 30;
+  return now - date <= days * 24 * 60 * 60 * 1000;
+};
+
 // ── Timestamp formatter — DB-ready: accepts ISO 8601 string (endedAt / createdAt) ──
 // Returns: "Today · 09:45" | "Yesterday · 18:40" | "Mar 24 · 14:30"
 const fmtDate = (iso: string): string => {
@@ -207,10 +225,11 @@ const History = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { matches } = useMatchStore();
-  const [search, setSearch] = useState("");
-  const [gameFilter, setGameFilter] = useState<Game | "all">((searchParams.get("game") as Game) ?? "all");
+  const [timeRange,    setTimeRange]    = useState<TimeRange>("alltime");
+  const [search,       setSearch]       = useState("");
+  const [gameFilter,   setGameFilter]   = useState<Game | "all">((searchParams.get("game") as Game) ?? "all");
   const [statusFilter, setStatusFilter] = useState<MatchStatus | "all">("all");
-  const [page, setPage] = useState(1);
+  const [page,         setPage]         = useState(1);
   const [expandedMatchId, setExpandedMatchId] = useState<string | null>(null);
 
   const MY_ID = "user-001";
@@ -226,8 +245,15 @@ const History = () => {
     );
   });
 
-  // ── Quick stats ────────────────────────────────────────────────────────
-  const completedMatches = userMatches.filter((m) => m.status === "completed");
+  // ── Time-range scoped matches (used for stats + further filtering) ─────
+  // DB-ready: when connected, the server filters by date range server-side
+  // and returns only the relevant matches via GET /api/matches/history?range={timeRange}
+  const rangedMatches = userMatches.filter((m) =>
+    filterByTimeRange(m.endedAt ?? m.createdAt, timeRange)
+  );
+
+  // ── Quick stats (scoped to selected time range) ────────────────────────
+  const completedMatches = rangedMatches.filter((m) => m.status === "completed");
   const wins = completedMatches.filter((m) => m.winnerId === MY_ID).length;
   const losses = completedMatches.filter((m) => m.winnerId && m.winnerId !== MY_ID).length;
   const totalEarned = completedMatches
@@ -236,13 +262,13 @@ const History = () => {
   const winRate = completedMatches.length > 0 ? Math.round((wins / completedMatches.length) * 100) : 0;
   const last10 = completedMatches.slice(-10).map((m) => m.winnerId === MY_ID);
 
-  // ── Filter ─────────────────────────────────────────────────────────────
-  const filtered = userMatches.filter((m) => {
+  // ── Search / game / status filters applied on top of time range ────────
+  const filtered = rangedMatches.filter((m) => {
     const matchSearch =
       m.host.toLowerCase().includes(search.toLowerCase()) ||
       m.game.toLowerCase().includes(search.toLowerCase()) ||
       m.id.toLowerCase().includes(search.toLowerCase());
-    const matchGame = gameFilter === "all" || m.game === gameFilter;
+    const matchGame   = gameFilter   === "all" || m.game   === gameFilter;
     const matchStatus = statusFilter === "all" || m.status === statusFilter;
     return matchSearch && matchGame && matchStatus;
   });
@@ -251,7 +277,7 @@ const History = () => {
   const paged = filtered.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
 
   const countForStatus = (s: MatchStatus | "all") =>
-    s === "all" ? userMatches.length : userMatches.filter((m) => m.status === s).length;
+    s === "all" ? rangedMatches.length : rangedMatches.filter((m) => m.status === s).length;
 
   // No "waiting" in history status filters
   const STATUSES: (MatchStatus | "all")[] = ["all", "in_progress", "completed", "cancelled", "disputed"];
@@ -259,8 +285,22 @@ const History = () => {
   return (
     <div className="space-y-6">
       {/* ── Header ── */}
-      <div>
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <h1 className="font-display text-3xl font-bold tracking-wide">Match History</h1>
+        {/* Time range — DB-ready: triggers GET /api/matches/history?range={timeRange} */}
+        <div className="flex gap-1.5">
+          {TIME_RANGES.map(({ value, label }) => (
+            <Button
+              key={value}
+              size="sm"
+              variant={timeRange === value ? "default" : "outline"}
+              onClick={() => { setTimeRange(value); setPage(1); }}
+              className="font-display text-xs h-7 px-3"
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
       </div>
 
       {/* ── Quick Stats Strip ── */}
