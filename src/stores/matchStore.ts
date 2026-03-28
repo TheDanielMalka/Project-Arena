@@ -195,13 +195,14 @@ export const useMatchStore = create<MatchState>((set, get) => ({
 
   expireOldMatches: () => {
     // DB-ready: server CRON: UPDATE matches SET status='cancelled' WHERE status='waiting' AND expires_at < NOW()
+    // Only matches with an explicit expiresAt (set by addMatch) are eligible — seed data never expires.
     const now = Date.now();
     const expiredIds: string[] = [];
     set((state) => ({
       matches: state.matches.map((m) => {
         if (m.status !== "waiting") return m;
-        const age = now - new Date(m.createdAt).getTime();
-        if (age < 30 * 60 * 1000) return m;
+        if (!m.expiresAt) return m;                                    // seed / legacy rows — never auto-expire
+        if (new Date(m.expiresAt).getTime() > now) return m;           // not yet expired
         expiredIds.push(m.id);
         return { ...m, status: "cancelled" as MatchStatus };
       }),

@@ -232,17 +232,21 @@ describe("matchStore", () => {
 
   // ── expireOldMatches ───────────────────────────────────────────────────────────
 
-  it("expireOldMatches marks waiting matches older than 30min as cancelled", () => {
+  it("expireOldMatches marks waiting matches with expired expiresAt as cancelled", () => {
     const added = useMatchStore.getState().addMatch({
       type: "public", host: "OldHost", hostId: "u-old",
       game: "CS2", mode: "1v1", betAmount: 10,
       players: [], maxPlayers: 2, status: "waiting",
     });
-    // Backdating the match to 31 minutes ago
+    // Backdate both createdAt and expiresAt to simulate a 31-minute-old room
     useMatchStore.setState((s) => ({
       matches: s.matches.map((m) =>
         m.id === added.id
-          ? { ...m, createdAt: new Date(Date.now() - 31 * 60 * 1000).toISOString() }
+          ? {
+              ...m,
+              createdAt:  new Date(Date.now() - 31 * 60 * 1000).toISOString(),
+              expiresAt:  new Date(Date.now() - 1 * 60 * 1000).toISOString(),  // 1 min ago → expired
+            }
           : m
       ),
     }));
@@ -257,10 +261,11 @@ describe("matchStore", () => {
     expect(useMatchStore.getState().matches.find((m) => m.id === "c3")!.status).toBe(statusBefore);
   });
 
-  it("expireOldMatches returns empty array when no matches are stale", () => {
-    // Seed waiting matches have old createdAt but are used for other tests; result is an array
+  it("expireOldMatches returns empty array when no user-created matches are stale", () => {
+    // Seed matches have no expiresAt, so they are never auto-expired by this function
     const result = useMatchStore.getState().expireOldMatches();
     expect(Array.isArray(result)).toBe(true);
+    expect(result).toHaveLength(0);  // seeds should NOT be expired
   });
 
   // ── expiresAt ─────────────────────────────────────────────────────────────────
