@@ -24,18 +24,20 @@ def make_synthetic_image(color: str, path: str, size: tuple[int, int] = (300, 40
     Create a solid-colour image and save to path.
 
     Supported colours and their detector mappings:
-      "green"       → CS2 VICTORY   (BGR 0,200,0   — HSV H≈60, in CS2 green range 35-85)
-      "red"         → CS2 DEFEAT    (BGR 0,0,200   — HSV H≈0, in CS2 red range 0-10)
-      "teal"        → VAL VICTORY   (BGR 200,200,0 — HSV H≈90, in Valorant teal range 75-100)
-      "blue_purple" → VAL DEFEAT    (BGR 200,0,0   — HSV H≈120, in Valorant range 110-145)
+      "green"   → CS2 VICTORY   (BGR 0,200,0   — HSV H≈60, in CS2 green range 35-85)
+      "red"     → CS2 DEFEAT    (BGR 0,0,200   — HSV H≈0, in CS2 red range 0-10)
+      "teal"    → VAL VICTORY   (BGR 200,200,0 — HSV H≈90, in Valorant teal range 75-105)
+      "val_red" → VAL DEFEAT    (BGR 0,0,200   — HSV H≈0, in Valorant red range 0-8)
+                  Same BGR as CS2 red — Valorant DEFEAT is also crimson/red.
+                  game="Valorant" on the engine ensures correct routing.
     """
     h, w = size
     img = np.zeros((h, w, 3), dtype=np.uint8)
     colour_map = {
-        "green":       (0,   200, 0),    # CS2 VICTORY
-        "red":         (0,   0,   200),  # CS2 DEFEAT
-        "teal":        (200, 200, 0),    # Valorant VICTORY
-        "blue_purple": (200, 0,   0),    # Valorant DEFEAT
+        "green":   (0,   200, 0),    # CS2 VICTORY
+        "red":     (0,   0,   200),  # CS2 DEFEAT
+        "teal":    (200, 200, 0),    # Valorant VICTORY
+        "val_red": (0,   0,   200),  # Valorant DEFEAT — red/crimson (real screenshot confirmed)
     }
     img[:] = colour_map[color]
     cv2.imwrite(path, img)
@@ -85,9 +87,9 @@ def val_victory_image(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def val_defeat_image(tmp_path_factory):
-    """800x400 blue-purple image for Valorant defeat detection."""
+    """800x400 red/crimson image for Valorant defeat detection (real screenshot: red background)."""
     path = str(tmp_path_factory.mktemp("val") / "val_defeat.png")
-    return make_synthetic_image("blue_purple", path, size=(400, 800))
+    return make_synthetic_image("val_red", path, size=(400, 800))
 
 
 @pytest.fixture
