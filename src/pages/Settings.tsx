@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -11,6 +11,7 @@ import {
   AlertCircle, ChevronRight, Wallet, Gamepad2, User,
   Eye, EyeOff, CheckCircle2, SlidersHorizontal, ShieldAlert, Check, X,
   Smartphone, Copy, RefreshCw, KeyRound, ShieldCheck, ShieldOff, Mail,
+  Ticket,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -21,6 +22,7 @@ import { useUserStore } from "@/stores/userStore";
 import { useWalletStore } from "@/stores/walletStore";
 import { cn } from "@/lib/utils";
 import { PASSWORD_RULES, isPasswordValid } from "@/lib/passwordValidation";
+import { SupportTicketDialog } from "@/components/support/SupportTicketDialog";
 
 // ─── Nav sections ──────────────────────────────────────────────
 const SECTIONS = [
@@ -29,6 +31,7 @@ const SECTIONS = [
   { id: "security",      icon: Shield,           label: "Security",      color: "text-arena-orange" },
   { id: "betting",       icon: Wallet,           label: "Betting",       color: "text-arena-gold"   },
   { id: "game",          icon: Gamepad2,         label: "Game",          color: "text-primary"      },
+  { id: "support",       icon: Ticket,           label: "Help & ticket", color: "text-arena-cyan"   },
   { id: "danger",        icon: Trash2,           label: "Danger Zone",   color: "text-destructive"  },
 ] as const;
 
@@ -58,11 +61,13 @@ const SectionTitle = ({ icon: Icon, label, color }: { icon: React.ElementType; l
 const SettingsPage = () => {
   const { toast } = useToast();
   const { user, greetingType } = useUserStore();
+  const [searchParams, setSearchParams] = useSearchParams();
   // Google users cannot change email — managed by Google OAuth
   const isGoogleAccount = greetingType === "google";
   const { platformBettingMax, dailyBettingLimit, dailyBettingUsed, setDailyBettingLimit } = useWalletStore();
 
   const [active, setActive] = useState<SectionId>("account");
+  const [supportTicketOpen, setSupportTicketOpen] = useState(false);
   const [deleteConfirmName, setDeleteConfirmName] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showCurrentPw, setShowCurrentPw] = useState(false);
@@ -193,6 +198,19 @@ const SettingsPage = () => {
     showRegion: true,
     autoReady: false,
   });
+
+  // Deep link: /settings?section=support, /settings?section=support&openTicket=1
+  useEffect(() => {
+    const sec = searchParams.get("section");
+    const openT = searchParams.get("openTicket") === "1";
+    if (sec === "support" || openT) setActive("support");
+    if (openT) {
+      setSupportTicketOpen(true);
+      const n = new URLSearchParams(searchParams);
+      n.delete("openTicket");
+      setSearchParams(n, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   const handlePasswordUpdate = () => {
     // DB-ready: PATCH /api/auth/password { currentPassword: currentPw, newPassword: newPw }
@@ -504,6 +522,25 @@ const SettingsPage = () => {
                   />
                 </SettingRow>
               </div>
+            </div>
+          )}
+
+          {/* ── HELP & TICKET ── */}
+          {active === "support" && (
+            <div>
+              <SectionTitle icon={Ticket} label="Help & ticket" color="text-arena-cyan" />
+              <p className="text-sm text-muted-foreground mb-4 max-w-md leading-relaxed">
+                Submit a ticket for account access, payments & escrow, bugs, match outcomes, or general feedback.
+                Admins review tickets in the <span className="text-foreground font-medium">Reports</span> queue (same pipeline as match appeals).
+              </p>
+              <Button
+                type="button"
+                className="glow-green font-display"
+                onClick={() => setSupportTicketOpen(true)}
+              >
+                <Ticket className="h-4 w-4 mr-2" />
+                New support ticket
+              </Button>
             </div>
           )}
 
@@ -926,6 +963,12 @@ const SettingsPage = () => {
         </div>
       </DialogContent>
     </Dialog>
+
+    <SupportTicketDialog
+      open={supportTicketOpen}
+      onOpenChange={setSupportTicketOpen}
+      mode="general_support"
+    />
     </>
   );
 };

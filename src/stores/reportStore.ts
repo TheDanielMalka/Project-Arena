@@ -1,5 +1,11 @@
 import { create } from "zustand";
-import type { SupportTicket, TicketReason, TicketStatus } from "@/types";
+import type {
+  SupportTicket,
+  SupportTicketCategory,
+  SupportTopic,
+  TicketReason,
+  TicketStatus,
+} from "@/types";
 
 // ─── Seed Data ────────────────────────────────────────────────
 // DB-ready: replace with GET /api/admin/reports
@@ -60,6 +66,10 @@ interface ReportState {
     reportedUsername: string;
     reason: TicketReason;
     description: string;
+    ticketCategory?: SupportTicketCategory;
+    matchId?: string;
+    attachmentDataUrl?: string;
+    supportTopic?: SupportTopic;
   }) => SupportTicket;
 
   // DB-ready: replace with PATCH /api/admin/reports/:id
@@ -80,6 +90,7 @@ export const useReportStore = create<ReportState>((set, get) => ({
     const ticket: SupportTicket = {
       id: `T-${String(get().tickets.length + 1).padStart(3, "0")}`,
       ...report,
+      ticketCategory: report.ticketCategory ?? "player_report",
       status: "open",
       createdAt: new Date().toISOString(),
     };

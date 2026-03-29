@@ -29,7 +29,12 @@ import type {
 } from "@/types";
 import { cn } from "@/lib/utils";
 import { useReportStore } from "@/stores/reportStore";
-import type { SupportTicket, TicketStatus } from "@/types";
+import type {
+  SupportTicket,
+  SupportTicketCategory,
+  SupportTopic,
+  TicketStatus,
+} from "@/types";
 
 // ─── Seed Data ────────────────────────────────────────────────
 // When DB is connected: replace with API calls to /admin/disputes, /admin/users/flagged, /admin/audit-logs
@@ -583,6 +588,20 @@ const Admin = () => {
                         disconnect_abuse: "Disconnect Abuse",
                         other:            "Other",
                       };
+                      const categoryLabel: Record<SupportTicketCategory, string> = {
+                        player_report:   "Player report",
+                        match_dispute:   "Match appeal",
+                        general_support: "Support ticket",
+                      };
+                      const topicLabel: Record<SupportTopic, string> = {
+                        account_access:  "Account & login",
+                        payments_escrow: "Payments & escrow",
+                        bug_technical:   "Bug / technical",
+                        match_outcome:   "Match outcome",
+                        feedback:        "Feedback",
+                        other:           "Other",
+                      };
+                      const cat = t.ticketCategory ?? "player_report";
                       return (
                         <div
                           key={t.id}
@@ -601,6 +620,14 @@ const Admin = () => {
                               <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-border/40 text-muted-foreground">
                                 {reasonLabel[t.reason] ?? t.reason}
                               </Badge>
+                              <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-primary/30 text-primary/90">
+                                {categoryLabel[cat]}
+                              </Badge>
+                              {t.supportTopic && (
+                                <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-arena-cyan/30 text-arena-cyan">
+                                  {topicLabel[t.supportTopic]}
+                                </Badge>
+                              )}
                             </div>
                             <span className="font-mono text-[10px] text-muted-foreground">
                               {new Date(t.createdAt).toLocaleDateString()}
@@ -608,15 +635,39 @@ const Admin = () => {
                           </div>
 
                           {/* Players */}
-                          <div className="flex items-center gap-1.5 text-xs mb-2">
+                          <div className="flex items-center gap-1.5 text-xs mb-2 flex-wrap">
                             <span className="text-muted-foreground">by</span>
                             <span className="font-medium">{t.reporterName}</span>
-                            <span className="text-muted-foreground">→ reported</span>
+                            <span className="text-muted-foreground">→</span>
                             <span className="font-display font-semibold text-destructive">{t.reportedUsername}</span>
                           </div>
 
+                          {t.matchId && (
+                            <p className="text-[10px] font-mono text-arena-orange mb-2">
+                              Match: {t.matchId}
+                            </p>
+                          )}
+
                           {/* Description */}
-                          <p className="text-xs text-muted-foreground line-clamp-2 mb-3">{t.description}</p>
+                          <p className="text-xs text-muted-foreground whitespace-pre-wrap line-clamp-4 mb-3">{t.description}</p>
+
+                          {t.attachmentDataUrl && (
+                            <div className="mb-3">
+                              <p className="text-[10px] text-muted-foreground mb-1">Attachment</p>
+                              <a
+                                href={t.attachmentDataUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-block"
+                              >
+                                <img
+                                  src={t.attachmentDataUrl}
+                                  alt="Ticket attachment"
+                                  className="max-h-32 rounded border border-border object-contain"
+                                />
+                              </a>
+                            </div>
+                          )}
 
                           {/* Admin note */}
                           {t.adminNote && (

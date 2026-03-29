@@ -49,4 +49,14 @@ describe("History page", () => {
 
     expect(screen.queryByText(/team a \(/i)).not.toBeInTheDocument();
   });
+
+  it("shows Appeal match when a completed match is expanded", () => {
+    render(
+      <MemoryRouter>
+        <History />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByText("YOU vs ShadowKill3r"));
+    expect(screen.getByRole("button", { name: /appeal match/i })).toBeInTheDocument();
+  });
 });

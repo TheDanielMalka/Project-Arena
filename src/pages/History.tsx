@@ -11,10 +11,12 @@ import { MatchRosterAvatar } from "@/components/match/MatchRosterAvatar";
 import { isCurrentUserSlot, slotToProfileUsername } from "@/lib/matchPlayerDisplay";
 import {
   Search, Swords, Inbox, Gamepad2, Users, Trophy,
-  ChevronDown, ChevronUp, TrendingUp, DollarSign, Shield,
+  ChevronDown, ChevronUp, TrendingUp, DollarSign,   Shield,
   Monitor, Smartphone,
+  Scale,
 } from "lucide-react";
-import type { Game, MatchStatus } from "@/types";
+import type { Game, Match, MatchStatus } from "@/types";
+import { SupportTicketDialog } from "@/components/support/SupportTicketDialog";
 
 const ITEMS_PER_PAGE = 8;
 
@@ -238,8 +240,12 @@ const History = () => {
   const [page,         setPage]         = useState(1);
   const [expandedMatchId, setExpandedMatchId] = useState<string | null>(null);
   const [playerPopover, setPlayerPopover] = useState<{ slotValue: string; rect: DOMRect } | null>(null);
+  const [appealMatch, setAppealMatch] = useState<Match | null>(null);
 
   const myId = user?.id ?? "";
+
+  const canAppealMatch = (m: Match) =>
+    m.status === "completed" || m.status === "disputed" || m.status === "cancelled";
 
   // ── Only user's matches, no waiting ───────────────────────────────────
   const userMatches = matches.filter((m) => {
@@ -660,7 +666,7 @@ const History = () => {
                           <button
                             type="button"
                             className="text-foreground font-medium hover:text-primary hover:underline rounded-sm focus:outline-none focus-visible:ring-1 focus-visible:ring-primary"
-                            onClick={(e) => openPlayerPopover(e, m.winnerId)}
+                            onClick={(e) => openPlayerPopover(e, m.winnerId!)}
                           >
                             {isCurrentUserSlot(m.winnerId, user?.id, user?.username)
                               ? "You"
@@ -668,6 +674,21 @@ const History = () => {
                           </button>
                           <span>·</span>
                           <span className="text-arena-gold font-medium">+${m.betAmount}</span>
+                        </div>
+                      )}
+
+                      {canAppealMatch(m) && (
+                        <div className="flex justify-end pt-1" onClick={(e) => e.stopPropagation()}>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs font-display border-arena-orange/40 text-arena-orange hover:bg-arena-orange/10"
+                            onClick={() => setAppealMatch(m)}
+                          >
+                            <Scale className="h-3.5 w-3.5 mr-1.5" />
+                            Appeal match
+                          </Button>
                         </div>
                       )}
                     </div>
@@ -697,6 +718,15 @@ const History = () => {
           ))}
         </div>
       )}
+
+      <SupportTicketDialog
+        open={!!appealMatch}
+        onOpenChange={(o) => {
+          if (!o) setAppealMatch(null);
+        }}
+        mode="match_dispute"
+        match={appealMatch}
+      />
     </div>
   );
 };

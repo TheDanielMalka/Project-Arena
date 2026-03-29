@@ -306,6 +306,8 @@ export interface Notification {
 
 // ─── Player Reports / Tickets ─────────────────────────────────
 // DB: support_tickets table
+// TODO: Claude — align API + migrations with ticketCategory, matchId, supportTopic, attachmentDataUrl
+//       (columns e.g. category, match_id FK nullable, support_topic enum, attachment_url text)
 
 export type TicketReason =
   | "cheating"
@@ -316,11 +318,23 @@ export type TicketReason =
 
 export type TicketStatus = "open" | "investigating" | "dismissed" | "resolved";
 
+/** DB: support_tickets.category — how the ticket was opened */
+export type SupportTicketCategory = "player_report" | "match_dispute" | "general_support";
+
+/** DB: support_tickets.support_topic — set when category = general_support */
+export type SupportTopic =
+  | "account_access"
+  | "payments_escrow"
+  | "bug_technical"
+  | "match_outcome"
+  | "feedback"
+  | "other";
+
 export interface SupportTicket {
   id: string;                   // DB: support_tickets.id (UUID)
   reporterId: string;           // DB: support_tickets.reporter_id (FK → users.id)
   reporterName: string;         // DB: JOIN users.username
-  reportedId: string;           // DB: support_tickets.reported_id (FK → users.id)
+  reportedId: string;           // DB: support_tickets.reported_id (FK → users.id) — use sentinel for platform queue
   reportedUsername: string;     // DB: JOIN users.username
   reason: TicketReason;         // DB: support_tickets.reason (enum)
   description: string;          // DB: support_tickets.description
@@ -328,6 +342,12 @@ export interface SupportTicket {
   adminNote?: string;           // DB: support_tickets.admin_note
   createdAt: string;            // DB: support_tickets.created_at (ISO 8601)
   updatedAt?: string;           // DB: support_tickets.updated_at
+  /** Defaults to player_report when omitted (legacy seed / player-profile reports). */
+  ticketCategory?: SupportTicketCategory;
+  matchId?: string;             // DB: support_tickets.match_id (FK → matches.id, nullable)
+  /** DB: support_tickets.attachment_url — client may hold data URL until upload API exists */
+  attachmentDataUrl?: string;
+  supportTopic?: SupportTopic;
 }
 
 // ─── Public Player Profile ────────────────────────────────────
