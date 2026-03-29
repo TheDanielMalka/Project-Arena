@@ -40,6 +40,10 @@ export interface UserProfile {
   avatarInitials: string;
   avatar?: string;    // "initials" | emoji | "upload:{dataURL}" | "preset:{id}" — Identity Studio catalog in avatarPresets.ts · DB: users.avatar TEXT
   avatarBg?: string;  // bgId from avatarBgs.ts — DB: stored as text, defaults to "default"
+  /** DB: users.equipped_badge_icon — Forge badge:* string (e.g. badge:founders); shown as small pin on avatar ring */
+  equippedBadgeIcon?: string;
+  /** DB: users.forge_unlocked_item_ids — Forge catalog item ids the user owns (mirrors purchases; server is source of truth in prod) */
+  unlockedForgeItemIds?: string[];
   preferredGame: Game;
   arenaId: ArenaId;     // DB: users.arena_id — immutable public ID (ARENA-XXXXXX)
   memberSince: string;
@@ -315,6 +319,7 @@ export interface PublicPlayerProfile {
   avatarInitials: string;       // DB: users.avatar_initials
   avatar?: string;              // DB: users.avatar
   avatarBg?: string;            // DB: users.avatar_bg
+  equippedBadgeIcon?: string;  // DB: users.equipped_badge_icon
   rank: string;                 // DB: users.rank
   tier: string;                 // DB: users.tier
   preferredGame: Game;          // DB: users.preferred_game
