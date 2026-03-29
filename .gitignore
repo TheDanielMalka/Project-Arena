@@ -1,4 +1,11 @@
 # -----------------------------
+# Agent instructions (local only — never committed)
+# -----------------------------
+CLAUDE.md
+.cursorrules
+.cursor/rules/
+
+# -----------------------------
 # OS / Editor
 # -----------------------------
 .DS_Store
