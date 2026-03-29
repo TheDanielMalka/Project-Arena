@@ -171,6 +171,55 @@ describe("reportStore — ticket categories and new fields", () => {
   });
 });
 
+describe("reportStore — getTicketsByCategory", () => {
+  it("returns only player_report tickets when category is player_report", () => {
+    const store = useReportStore.getState();
+    store.submitReport({
+      reporterId: "u1", reporterName: "A", reportedId: "u2", reportedUsername: "B",
+      reason: "cheating", description: "Clear aimbot across five consecutive matches",
+      ticketCategory: "player_report",
+    });
+    store.submitReport({
+      reporterId: "u1", reporterName: "A",
+      reportedId: "platform", reportedUsername: "Support queue",
+      reason: "other", description: "Account locked after email change request",
+      ticketCategory: "general_support",
+    });
+    const result = useReportStore.getState().getTicketsByCategory("player_report");
+    expect(result).toHaveLength(1);
+    expect(result[0].ticketCategory).toBe("player_report");
+  });
+
+  it("returns only match_dispute tickets when category is match_dispute", () => {
+    const store = useReportStore.getState();
+    store.submitReport({
+      reporterId: "u1", reporterName: "A", reportedId: "u2", reportedUsername: "B",
+      reason: "fake_screenshot", description: "Screenshot score doesn't match server outcome",
+      ticketCategory: "match_dispute", matchId: "M-999",
+    });
+    store.submitReport({
+      reporterId: "u1", reporterName: "A", reportedId: "u3", reportedUsername: "C",
+      reason: "cheating", description: "Wallhacks confirmed by multiple spectators",
+      ticketCategory: "player_report",
+    });
+    const result = useReportStore.getState().getTicketsByCategory("match_dispute");
+    expect(result).toHaveLength(1);
+    expect(result[0].matchId).toBe("M-999");
+  });
+
+  it("defaults missing ticketCategory to player_report in filter", () => {
+    const store = useReportStore.getState();
+    // Submitting without explicit ticketCategory — defaults to player_report
+    store.submitReport({
+      reporterId: "u1", reporterName: "A", reportedId: "u2", reportedUsername: "B",
+      reason: "harassment", description: "Hostile behaviour throughout the entire match",
+    });
+    const result = useReportStore.getState().getTicketsByCategory("player_report");
+    expect(result).toHaveLength(1);
+    expect(result[0].ticketCategory).toBe("player_report");
+  });
+});
+
 describe("reportStore — getTicketsByReported", () => {
   it("returns only tickets for the specified username", () => {
     const store = useReportStore.getState();

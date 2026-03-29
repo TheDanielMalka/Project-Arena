@@ -312,6 +312,7 @@ CREATE TRIGGER trg_support_tickets_updated_at
 CREATE INDEX idx_tickets_reported ON support_tickets(reported_id);
 CREATE INDEX idx_tickets_reporter ON support_tickets(reporter_id);
 CREATE INDEX idx_tickets_status   ON support_tickets(status);
+CREATE INDEX idx_tickets_category ON support_tickets(category);   -- Admin panel filters by category
 
 -- ── Arena ID Generator Function ───────────────────────────────
 -- Generates a unique ARENA-XXXXXX identifier on user registration

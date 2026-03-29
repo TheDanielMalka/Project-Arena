@@ -21,6 +21,7 @@ const SEED_TICKETS: SupportTicket[] = [
     description:
       "This player had a 98% headshot rate across our last 3 matches. Definitely using aimbot — I have video proof.",
     status: "investigating",
+    ticketCategory: "player_report",   // DB: support_tickets.category DEFAULT 'player_report'
     adminNote: "Pattern matches known cheat software fingerprint — under active review",
     createdAt: "2026-03-08T10:30:00Z",
     updatedAt: "2026-03-08T12:00:00Z",
@@ -35,6 +36,7 @@ const SEED_TICKETS: SupportTicket[] = [
     description:
       "BlazeFury sent threatening messages after losing the match. Screenshots available on request.",
     status: "open",
+    ticketCategory: "player_report",   // DB: support_tickets.category DEFAULT 'player_report'
     createdAt: "2026-03-09T08:15:00Z",
   },
   {
@@ -47,6 +49,7 @@ const SEED_TICKETS: SupportTicket[] = [
     description:
       "Player submitted a doctored screenshot claiming victory. Score shown (42–2) doesn't match the API data (23–18).",
     status: "resolved",
+    ticketCategory: "player_report",   // DB: support_tickets.category DEFAULT 'player_report'
     adminNote: "Screenshot confirmed as edited — match awarded to NovaBlade",
     createdAt: "2026-03-07T15:45:00Z",
     updatedAt: "2026-03-07T18:00:00Z",
@@ -81,6 +84,8 @@ interface ReportState {
 
   // DB-ready: replace with GET /api/admin/reports?reported=username
   getTicketsByReported: (username: string) => SupportTicket[];
+  // DB-ready: replace with GET /api/admin/reports?category=X — used by Admin panel tab filters
+  getTicketsByCategory: (category: SupportTicketCategory) => SupportTicket[];
 }
 
 export const useReportStore = create<ReportState>((set, get) => ({
@@ -114,4 +119,7 @@ export const useReportStore = create<ReportState>((set, get) => ({
 
   getTicketsByReported: (username) =>
     get().tickets.filter((t) => t.reportedUsername === username),
+
+  getTicketsByCategory: (category) =>
+    get().tickets.filter((t) => (t.ticketCategory ?? "player_report") === category),
 }));
