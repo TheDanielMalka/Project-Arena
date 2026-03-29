@@ -84,6 +84,11 @@ export interface UserBalance {
   inEscrow: number;
 }
 
+/** Client / PATCH payload — `stats` may be partial; merged into existing user_stats row in userStore.updateProfile */
+export type UserProfilePatch = Omit<Partial<UserProfile>, "stats"> & {
+  stats?: Partial<UserStats>;
+};
+
 // ─── Matches ─────────────────────────────────────────────────
 
 export interface Match {

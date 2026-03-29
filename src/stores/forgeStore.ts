@@ -94,6 +94,8 @@ interface ForgeState {
   getActiveEvents: () => ForgeEvent[];
   // DB-ready: replace with GET /api/forge/events?status=upcoming
   getUpcomingEvents: () => ForgeEvent[];
+  /** DB-ready: after POST /api/wallet/buy-at — sync arenaTokens from server balance */
+  addArenaTokens: (amount: number) => void;
 }
 
 export const useForgeStore = create<ForgeState>()(
@@ -112,6 +114,8 @@ export const useForgeStore = create<ForgeState>()(
       : get().items.filter((i) => i.category === category),
 
   getFeaturedItem: () => get().items.find((i) => i.featured),
+
+  addArenaTokens: (amount) => set((s) => ({ arenaTokens: s.arenaTokens + amount })),
 
   purchaseItem: (itemId, currency) => {
     const item = get().items.find((i) => i.id === itemId);

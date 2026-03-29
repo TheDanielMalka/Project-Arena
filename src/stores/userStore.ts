@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { UserProfile, ForgeCategory, ShopEntitlement } from "@/types";
+import type { UserProfile, UserProfilePatch, ForgeCategory, ShopEntitlement } from "@/types";
 
 interface UserState {
   user: UserProfile | null;
@@ -20,7 +20,7 @@ interface UserState {
   // DB-ready: replace with POST /api/wallet/disconnect
   disconnectWallet: () => void;
   // DB-ready: PATCH /api/users/me — persist identity row (avatar, avatar_bg, equipped_badge_icon, forge_unlocked_item_ids, …)
-  updateProfile: (updates: Partial<UserProfile>) => void;
+  updateProfile: (updates: UserProfilePatch) => void;
   /** DB-ready: POST /api/forge/purchase response — append forge_unlocked_item_ids; for badge also set equipped_badge_icon to purchased icon (auto-equip) */
   applyForgePurchase: (payload: { itemId: string; category: ForgeCategory; icon: string }) => void;
   /** DB-ready: POST /api/forge/drops/:id/purchase — timed grants (VIP days, boost stacks) */
@@ -150,9 +150,10 @@ export const useUserStore = create<UserState>((set) => ({
     set((state) => {
       if (!state.user) return { user: null };
       const u = state.user;
-      const next: UserProfile = { ...u, ...updates };
-      if (updates.stats && u.stats) {
-        next.stats = { ...u.stats, ...updates.stats };
+      const { stats: statsPatch, ...restPatch } = updates;
+      const next: UserProfile = { ...u, ...restPatch };
+      if (statsPatch !== undefined) {
+        next.stats = { ...u.stats, ...statsPatch };
       }
       return { user: next };
     }),
