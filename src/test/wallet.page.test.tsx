@@ -56,6 +56,11 @@ describe("Wallet page — non-custodial", () => {
     expect(screen.getByText(/on-chain activity/i)).toBeInTheDocument();
   });
 
+  it("shows Buy Arena Tokens button in AT section", () => {
+    render(<MemoryRouter><Wallet /></MemoryRouter>);
+    expect(screen.getByRole("button", { name: /buy arena tokens/i })).toBeInTheDocument();
+  });
+
   it("does NOT show a Deposit button — non-custodial model", () => {
     render(<MemoryRouter><Wallet /></MemoryRouter>);
     const depositBtn = screen.queryByRole("button", { name: /^deposit$/i });
