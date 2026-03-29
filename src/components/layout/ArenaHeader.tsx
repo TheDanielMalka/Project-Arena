@@ -52,7 +52,7 @@ export function ArenaHeader() {
       <div className="flex items-center gap-2">
         <SidebarTrigger />
         <button
-          onClick={() => navigate("/dashboard")}
+          onClick={() => navigate("/lobby")}
           className="font-display text-sm text-muted-foreground tracking-wider uppercase hover:text-primary transition-colors"
         >
           Play for Stakes
