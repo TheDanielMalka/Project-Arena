@@ -1,7 +1,12 @@
 """
 ARENA Desktop Client - Main Entry Point
-Runs as a system tray application that monitors CS2 matches,
+Runs as a system tray application that monitors CS2 and Valorant matches,
 captures screenshots, and sends them to the Engine API for OCR processing.
+
+Active games (v1):  CS2, Valorant
+Coming Soon:        Fortnite, Apex Legends, PUBG, COD, League of Legends
+                    → process names kept as comments below as infrastructure.
+                      Uncomment and add to ACTIVE_GAME_PROCESSES when supported.
 
 NOTE: All vision/OCR processing happens SERVER-SIDE.
 The client only captures screenshots and uploads them.
@@ -26,12 +31,18 @@ from PIL import Image, ImageDraw
 from pystray import MenuItem, Menu
 
 # ── Per-game capture intervals (seconds) ──────────────────────
+# Only active games listed — Coming Soon games excluded from detection.
+# To enable a new game: add its interval here + add its process to ACTIVE_GAME_PROCESSES.
 GAME_INTERVALS = {
-    "AUTO":         5,   # fallback when auto-detecting
-    "CS2":          3,   # fast-paced – capture more often
-    "Valorant":     5,
-    "Fortnite":     5,
-    "Apex Legends": 5,
+    "AUTO":     5,   # fallback when auto-detecting
+    "CS2":      3,   # fast-paced – capture more often
+    "Valorant": 5,
+    # Coming Soon — uncomment when Arena Client adds support:
+    # "Fortnite":     5,
+    # "Apex Legends": 5,
+    # "PUBG":         5,
+    # "COD":          5,
+    # "League of Legends": 8,
 }
 
 # ── Config ────────────────────────────────────────────────────
@@ -51,7 +62,8 @@ DEFAULT_CONFIG = {
     "monitor": 1,
     "auto_start": True,
     "minimize_to_tray": True,
-    # AUTO: client will auto-detect supported games (CS2 / Valorant / Fortnite / Apex)
+    # AUTO: client will auto-detect active games (CS2 / Valorant).
+    # Coming Soon games (Fortnite, Apex, PUBG, COD, LoL) not detected until enabled.
     "game": "AUTO",
     "screenshot_dir": os.path.join(_BASE_DIR, "screenshots"),
     "log_dir": os.path.join(_BASE_DIR, "logs"),
@@ -126,17 +138,23 @@ def capture_screenshot(output_dir: str, monitor_num: int = 1, game_name: str | N
 
 
 # ── Game Detection ────────────────────────────────────────────
+# ACTIVE_GAME_PROCESSES: only CS2 and Valorant detected in v1.
+# Coming Soon processes kept as comments — uncomment when Arena Client adds support.
+ACTIVE_GAME_PROCESSES: dict[str, list[str]] = {
+    "CS2":      ["cs2.exe", "csgo.exe"],
+    "Valorant": ["VALORANT-Win64-Shipping.exe"],
+    # "Fortnite":           ["FortniteClient-Win64-Shipping.exe"],  # Coming Soon
+    # "Apex Legends":       ["r5apex.exe"],                         # Coming Soon
+    # "PUBG":               ["TslGame.exe"],                        # Coming Soon
+    # "COD":                ["cod.exe", "BlackOpsColdWar.exe"],     # Coming Soon
+    # "League of Legends":  ["League of Legends.exe"],              # Coming Soon
+}
+
 def is_game_running(game: str = "CS2") -> bool:
-    """Check if the target game process is running."""
+    """Check if the target game process is running. Only active games are checked."""
     try:
         import psutil
-        game_processes = {
-            "CS2": ["cs2.exe", "csgo.exe"],
-            "Valorant": ["VALORANT-Win64-Shipping.exe"],
-            "Fortnite": ["FortniteClient-Win64-Shipping.exe"],
-            "Apex Legends": ["r5apex.exe"],
-        }
-        target = game_processes.get(game, [])
+        target = ACTIVE_GAME_PROCESSES.get(game, [])
         for proc in psutil.process_iter(["name"]):
             if proc.info["name"] and proc.info["name"].lower() in [p.lower() for p in target]:
                 return True
@@ -147,15 +165,10 @@ def is_game_running(game: str = "CS2") -> bool:
     return False
 
 def detect_running_game() -> str | None:
+    """Auto-detect which active game is currently running. Coming Soon games are skipped."""
     try:
         import psutil
-        game_processes = {
-            "CS2": ["cs2.exe", "csgo.exe"],
-            "Valorant": ["VALORANT-Win64-Shipping.exe"],
-            "Fortnite": ["FortniteClient-Win64-Shipping.exe"],
-            "Apex Legends": ["r5apex.exe"],
-        }
-        for game, procs in game_processes.items():
+        for game, procs in ACTIVE_GAME_PROCESSES.items():
             names = [p.lower() for p in procs]
             for proc in psutil.process_iter(["name"]):
                 if proc.info["name"] and proc.info["name"].lower() in names:
@@ -423,8 +436,12 @@ class ArenaTray:
                 self._make_game_item("AUTO"),
                 self._make_game_item("CS2"),
                 self._make_game_item("Valorant"),
-                self._make_game_item("Fortnite"),
-                self._make_game_item("Apex Legends"),
+                # Coming Soon — uncomment when Arena Client adds support:
+                # self._make_game_item("Fortnite"),
+                # self._make_game_item("Apex Legends"),
+                # self._make_game_item("PUBG"),
+                # self._make_game_item("COD"),
+                # self._make_game_item("League of Legends"),
             )),
             MenuItem("Check Engine", self._on_status),
             Menu.SEPARATOR,
