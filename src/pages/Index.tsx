@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,12 +18,129 @@ const GAMES = [
   { name: "League of Legends",logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/2801460/capsule_sm_120.jpg",                                                                  comingSoon: true },
 ];
 
-const STATS = [
-  { value: "10K+",  label: "Matches" },
-  { value: "$2.5M", label: "Paid Out" },
-  { value: "5K+",   label: "Players" },
-  { value: "99.8%", label: "Resolved" },
-];
+/**
+ * Hero video: `/landing/hero.mp4` first (bundled stock that evokes tactical FPS — not real CS/VAL),
+ * then Mixkit fallbacks, then a Google sample. Override with VITE_LANDING_HERO_VIDEO=/your.mp4
+ */
+const ORDERED_HERO_VIDEO_SOURCES = [
+  "/landing/hero.mp4",
+  "https://assets.mixkit.co/videos/41790/41790-720.mp4",
+  "https://assets.mixkit.co/videos/42703/42703-720.mp4",
+  "https://assets.mixkit.co/videos/download/mixkit-gamer-playing-on-a-desktop-computer-4328-medium.mp4",
+  "https://assets.mixkit.co/videos/download/mixkit-man-playing-videogames-on-a-computer-4243-medium.mp4",
+  "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+] as const;
+
+const HERO_FADE_IN_SEC = 3;
+const HERO_FADE_OUT_SEC = 3;
+const HERO_VIDEO_PEAK_OPACITY = 0.78;
+
+function StaticHeroBackdrop() {
+  return (
+    <>
+      <div className="absolute inset-0 bg-[#040608]" />
+      <div className="absolute inset-0 bg-gradient-to-br from-orange-950/55 via-zinc-950 via-45% to-violet-950/50" />
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_100%_70%_at_50%_15%,rgba(220,38,38,0.14),transparent_55%)]" />
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_85%_75%,rgba(34,211,238,0.1),transparent_50%)]" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_100%,rgba(0,255,136,0.06),transparent_45%)]" />
+    </>
+  );
+}
+
+function HeroCinematicBackdrop() {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [videoOpacity, setVideoOpacity] = useState(HERO_VIDEO_PEAK_OPACITY * 0.35);
+  const [videoBroken, setVideoBroken] = useState(false);
+  const [reducedMotion, setReducedMotion] = useState(false);
+
+  const envSrc = (import.meta.env.VITE_LANDING_HERO_VIDEO as string | undefined)?.trim();
+  const [sourceIndex, setSourceIndex] = useState(0);
+  const videoSrc = envSrc || ORDERED_HERO_VIDEO_SOURCES[sourceIndex] || "";
+
+  useEffect(() => {
+    setReducedMotion(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  }, []);
+
+  const applyFadeOpacity = (v: HTMLVideoElement) => {
+    const d = v.duration;
+    if (!d || !Number.isFinite(d)) return;
+    const t = v.currentTime;
+    const fi = Math.min(HERO_FADE_IN_SEC, d * 0.12);
+    const fo = Math.min(HERO_FADE_OUT_SEC, d * 0.12);
+    let op = HERO_VIDEO_PEAK_OPACITY;
+    if (t < fi) op = HERO_VIDEO_PEAK_OPACITY * (t / fi);
+    else if (t > d - fo) op = HERO_VIDEO_PEAK_OPACITY * Math.max(0, (d - t) / fo);
+    setVideoOpacity(op);
+  };
+
+  useEffect(() => {
+    if (reducedMotion || videoBroken || !videoSrc) return;
+    const v = videoRef.current;
+    if (!v) return;
+
+    const onTime = () => applyFadeOpacity(v);
+    const onMeta = () => applyFadeOpacity(v);
+    const onPlaying = () => {
+      applyFadeOpacity(v);
+      setVideoOpacity((o) => Math.max(o, HERO_VIDEO_PEAK_OPACITY * 0.5));
+    };
+
+    v.addEventListener("timeupdate", onTime);
+    v.addEventListener("loadedmetadata", onMeta);
+    v.addEventListener("playing", onPlaying);
+
+    void v.play().catch(() => {
+      /* try next source if autoplay or decode fails */
+      if (!envSrc && sourceIndex + 1 < ORDERED_HERO_VIDEO_SOURCES.length) {
+        setSourceIndex((i) => i + 1);
+      }
+    });
+
+    return () => {
+      v.removeEventListener("timeupdate", onTime);
+      v.removeEventListener("loadedmetadata", onMeta);
+      v.removeEventListener("playing", onPlaying);
+    };
+  }, [reducedMotion, videoBroken, videoSrc, envSrc, sourceIndex]);
+
+  const showVideo = !reducedMotion && !videoBroken && !!videoSrc;
+
+  const handleVideoError = () => {
+    if (envSrc) {
+      setVideoBroken(true);
+      return;
+    }
+    if (sourceIndex + 1 < ORDERED_HERO_VIDEO_SOURCES.length) {
+      setSourceIndex((i) => i + 1);
+      return;
+    }
+    setVideoBroken(true);
+  };
+
+  return (
+    <>
+      <StaticHeroBackdrop />
+      {showVideo && (
+        <video
+          key={videoSrc}
+          ref={videoRef}
+          className="absolute inset-0 z-[1] h-full w-full scale-105 object-cover pointer-events-none"
+          style={{ opacity: videoOpacity }}
+          src={videoSrc}
+          muted
+          playsInline
+          loop
+          autoPlay
+          preload="auto"
+          onError={handleVideoError}
+        />
+      )}
+      {/* Lighter scrim so footage stays visible; text still readable */}
+      <div className="absolute inset-0 z-[2] bg-gradient-to-b from-black/55 via-black/25 to-black/70 pointer-events-none" />
+      <div className="absolute inset-0 z-[2] bg-[radial-gradient(ellipse_95%_75%_at_50%_35%,transparent_0%,rgba(0,0,0,0.35)_70%,rgba(0,0,0,0.75)_100%)] pointer-events-none" />
+    </>
+  );
+}
 
 const FEATURES = [
   { icon: Swords,  color: "text-primary",      bg: "bg-primary/10 border-primary/20",      title: "1v1 & 5v5",        desc: "Solo duels or full team battles across all supported titles." },
@@ -80,17 +198,12 @@ const Index = () => {
       </nav>
 
       {/* ── HERO ─────────────────────────────────────────────────────────── */}
-      <section className="relative flex flex-col items-center justify-center px-6 pt-24 pb-14 overflow-hidden">
-        {/* Grid background */}
-        <div
-          className="absolute inset-0 pointer-events-none opacity-[0.03]"
-          style={{
-            backgroundImage: "linear-gradient(rgba(0,255,136,1) 1px, transparent 1px), linear-gradient(90deg, rgba(0,255,136,1) 1px, transparent 1px)",
-            backgroundSize: "40px 40px",
-          }}
-        />
-        {/* Radial glow */}
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-primary/5 blur-[120px] pointer-events-none" />
+      <section className="relative flex flex-col items-center justify-center px-6 pt-24 pb-20 min-h-[min(88vh,900px)] overflow-hidden">
+        <div className="absolute inset-0 z-0">
+          <HeroCinematicBackdrop />
+        </div>
+        {/* Title glow (above video scrim) */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(100vw,720px)] h-[min(100vw,720px)] rounded-full bg-primary/[0.07] blur-[100px] pointer-events-none z-[1]" />
 
         <div className="relative z-10 text-center space-y-4 max-w-4xl">
           {/* Badge */}
@@ -134,21 +247,6 @@ const Index = () => {
               <Download className="mr-2 h-4 w-4" /> Get Client
             </Button>
           </div>
-        </div>
-      </section>
-
-      {/* ── STATS BAR ────────────────────────────────────────────────────── */}
-      <section className="border-y border-border bg-card/40 backdrop-blur-sm py-5">
-        <div className="max-w-4xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-4">
-          {STATS.map((s) => (
-            <div key={s.label} className="text-center">
-              <p className="font-display text-2xl md:text-3xl font-black text-primary tracking-wider"
-                style={{ textShadow: "0 0 20px rgba(0,255,136,0.3)" }}>
-                {s.value}
-              </p>
-              <p className="text-[10px] text-muted-foreground mt-0.5 font-mono uppercase tracking-widest">{s.label}</p>
-            </div>
-          ))}
         </div>
       </section>
 
@@ -319,7 +417,7 @@ const Index = () => {
             Ready to <span className="text-primary" style={{ textShadow: "0 0 30px rgba(0,255,136,0.4)" }}>Compete</span>?
           </h2>
           <p className="text-muted-foreground text-sm">
-            Join thousands of players earning on Arena. Sign up in 30 seconds.
+            Sign up in seconds — compete when you are ready.
           </p>
           <Button
             size="lg"
