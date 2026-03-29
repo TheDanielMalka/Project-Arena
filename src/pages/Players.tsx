@@ -9,15 +9,16 @@ import { cn } from "@/lib/utils";
 
 // ─── Constants ────────────────────────────────────────────────
 
-const GAME_FILTERS: Array<{ label: string; value: Game | "" }> = [
-  { label: "All Games", value: "" },
-  { label: "CS2", value: "CS2" },
-  { label: "Valorant", value: "Valorant" },
-  { label: "Fortnite", value: "Fortnite" },
-  { label: "Apex Legends", value: "Apex Legends" },
-  { label: "PUBG", value: "PUBG" },
-  { label: "COD", value: "COD" },
-  { label: "League of Legends", value: "League of Legends" },
+// DB-ready: comingSoon driven by games.enabled — flip to false when Client supports the game
+const GAME_FILTERS: Array<{ label: string; value: Game | ""; comingSoon?: boolean }> = [
+  { label: "All Games",         value: ""                  },
+  { label: "CS2",               value: "CS2"               },
+  { label: "Valorant",          value: "Valorant"          },
+  { label: "Fortnite",          value: "Fortnite",          comingSoon: true },
+  { label: "Apex Legends",      value: "Apex Legends",      comingSoon: true },
+  { label: "PUBG",              value: "PUBG",              comingSoon: true },
+  { label: "COD",               value: "COD",               comingSoon: true },
+  { label: "League of Legends", value: "League of Legends", comingSoon: true },
 ];
 
 const TIER_COLOR: Record<string, string> = {
@@ -70,20 +71,28 @@ export default function Players() {
 
       {/* Game filter pills */}
       <div className="flex flex-wrap gap-2">
-        {GAME_FILTERS.map((f) => (
-          <button
-            key={f.value}
-            onClick={() => setGameFilter(f.value as Game | "")}
-            className={cn(
-              "px-3 py-1.5 rounded-full text-xs font-medium border transition-all",
-              gameFilter === f.value
-                ? "bg-primary text-primary-foreground border-primary"
-                : "bg-secondary/40 border-border/40 text-muted-foreground hover:border-primary/50 hover:text-foreground"
-            )}
-          >
-            {f.label}
-          </button>
-        ))}
+        {GAME_FILTERS.map((f) =>
+          f.comingSoon ? (
+            <span key={f.value}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium border border-border/30 bg-secondary/20 text-muted-foreground/35 cursor-not-allowed select-none">
+              {f.label}
+              <span className="text-[8px] font-bold tracking-wide text-muted-foreground/30">SOON</span>
+            </span>
+          ) : (
+            <button
+              key={f.value}
+              onClick={() => setGameFilter(f.value as Game | "")}
+              className={cn(
+                "px-3 py-1.5 rounded-full text-xs font-medium border transition-all",
+                gameFilter === f.value
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-secondary/40 border-border/40 text-muted-foreground hover:border-primary/50 hover:text-foreground"
+              )}
+            >
+              {f.label}
+            </button>
+          )
+        )}
       </div>
 
       {/* Result count */}

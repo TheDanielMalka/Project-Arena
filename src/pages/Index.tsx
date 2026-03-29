@@ -41,7 +41,7 @@ const STEPS = [
 ];
 
 const CLIENT_FEATURES = [
-  "Auto-detects CS2, Valorant, Fortnite & more",
+  "Auto-detects CS2 & Valorant — more games coming soon",
   "OCR-powered result verification — zero manual input",
   "Runs in system tray — completely silent",
   "Lightweight & open source — under 50 MB",

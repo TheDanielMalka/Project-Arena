@@ -45,7 +45,8 @@ const fmtDate = (iso: string): string => {
 };
 
 // ── Game configs — identical URLs to Profile.tsx ─────────────────────────
-const PC_GAME_CONFIG: Record<string, { logo: string; color: string }> = {
+// comingSoon: true → game shown in dropdown but non-selectable (DB-ready: games.enabled)
+const PC_GAME_CONFIG: Record<string, { logo: string; color: string; comingSoon?: boolean }> = {
   CS2: {
     logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/730/capsule_sm_120.jpg",
     color: "#F97316",
@@ -57,10 +58,12 @@ const PC_GAME_CONFIG: Record<string, { logo: string; color: string }> = {
   Fortnite: {
     logo: "https://play-lh.googleusercontent.com/FxJDPDIDJKlG9C8lOxaS041X27A0SrHAa46SGDIpPusAd4IEJihZTyGf-8rTZ_GpF34aeLvULilVuO0cpCJxTg=s120",
     color: "#38BDF8",
+    comingSoon: true,
   },
   "Apex Legends": {
     logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/1172470/capsule_sm_120.jpg",
     color: "#FC4B08",
+    comingSoon: true,
   },
 };
 
@@ -133,7 +136,7 @@ const STATUS_CONFIG: Record<MatchStatus, { label: string; pillClass: string }> =
 interface GameDropdownProps {
   label: string;
   icon: React.ReactNode;
-  games: Record<string, { logo: string; color: string }>;
+  games: Record<string, { logo: string; color: string; comingSoon?: boolean }>;
   activeGame: Game | "all";
   onSelect: (game: Game | "all") => void;
   comingSoon?: boolean;
@@ -142,7 +145,7 @@ interface GameDropdownProps {
 const GameDropdown = ({ label, icon, games, activeGame, onSelect, comingSoon }: GameDropdownProps) => {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const hasActive = !comingSoon && Object.keys(games).some((g) => g === activeGame);
+  const hasActive = !comingSoon && Object.keys(games).some((g) => g === activeGame && !games[g].comingSoon);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -190,6 +193,16 @@ const GameDropdown = ({ label, icon, games, activeGame, onSelect, comingSoon }: 
             <div className="py-1">
               {Object.entries(games).map(([name, cfg]) => {
                 const isActive = activeGame === name;
+                // Per-game Coming Soon — DB-ready: flip cfg.comingSoon when games.enabled=true
+                if (cfg.comingSoon) return (
+                  <div key={name} className="flex items-center gap-2.5 px-3 py-2 text-xs opacity-40 cursor-not-allowed">
+                    <img src={cfg.logo} alt={name} className="rounded object-cover grayscale"
+                      style={{ width: 20, height: 20 }}
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                    <span className="font-medium text-muted-foreground">{name}</span>
+                    <span className="ml-auto text-[8px] bg-secondary px-1 py-0.5 rounded text-muted-foreground font-bold">SOON</span>
+                  </div>
+                );
                 return (
                   <button
                     key={name}
