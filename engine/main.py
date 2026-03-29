@@ -1,6 +1,8 @@
 import os
 import logging
+import threading
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File
 from pydantic import BaseModel
@@ -17,9 +19,6 @@ API_SECRET = os.getenv("API_SECRET", "change_me_in_production")
 SCREENSHOT_DIR = os.getenv("SCREENSHOT_DIR", "/app/screenshots")
 EVIDENCE_DIR = os.getenv("EVIDENCE_DIR", "/app/evidence")
 
-os.makedirs(SCREENSHOT_DIR, exist_ok=True)
-os.makedirs(EVIDENCE_DIR, exist_ok=True)
-
 logger = logging.getLogger("arena.engine")
 
 db_engine = create_engine(DB_URL, pool_pre_ping=True)
@@ -28,9 +27,21 @@ SessionLocal = sessionmaker(bind=db_engine)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    with db_engine.connect() as conn:
-        conn.execute(text("SELECT 1"))
-    logger.info("✅ Arena Engine connected to DB")
+    # Create runtime directories at startup, not at import time.
+    # Gracefully skipped in CI / restricted environments (tests still run).
+    for d in (SCREENSHOT_DIR, EVIDENCE_DIR):
+        try:
+            os.makedirs(d, exist_ok=True)
+        except PermissionError:
+            logger.warning("⚠️  Cannot create dir %s (restricted env — skipping)", d)
+
+    # DB connectivity check — non-fatal so tests and restricted envs still work.
+    try:
+        with db_engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        logger.info("✅ Arena Engine connected to DB")
+    except Exception as exc:
+        logger.warning("⚠️  DB not available at startup: %s", exc)
     yield
 
 
@@ -208,6 +219,155 @@ async def submit_result(result: MatchResult, token: str = Depends(verify_token))
         "match_id": result.match_id,
         "message": "Result queued for validation",
     }
+
+
+# ── Client Status — in-memory store ──────────────────────────────────────────
+# DB-ready: replace with UPSERT on client_sessions table
+#   Columns: wallet_address, status, game, session_id, match_id,
+#            client_version, last_heartbeat
+# Each connected desktop client sends a heartbeat every HEARTBEAT_INTERVAL
+# seconds; the web UI polls GET /client/status to display the connection badge.
+
+_client_store_lock = threading.Lock()
+_client_statuses: dict[str, dict] = {}   # wallet_address → latest heartbeat payload
+
+# A heartbeat older than this threshold is treated as "offline"
+_CLIENT_TIMEOUT_SECONDS = 30
+
+
+class HeartbeatRequest(BaseModel):
+    """
+    Payload sent by the desktop client every HEARTBEAT_INTERVAL seconds.
+
+    DB-ready: maps to client_sessions row —
+      wallet_address, status, game, session_id, match_id,
+      client_version, last_heartbeat (server-stamped)
+    """
+    wallet_address: str
+    client_version: str = "unknown"
+    status: str = "idle"            # "idle" | "in_game" | "in_match"
+    game: str | None = None         # "CS2" | "Valorant" | None
+    session_id: str | None = None   # DB-ready: FK → client_sessions.id
+    match_id: str | None = None     # DB-ready: FK → matches.id
+
+
+class ClientStatusResponse(BaseModel):
+    """
+    Response for GET /client/status.
+
+    DB-ready: sourced from client_sessions table once available.
+    """
+    wallet_address: str
+    status: str
+    game: str | None
+    session_id: str | None
+    match_id: str | None
+    client_version: str
+    last_seen: str          # ISO-8601 UTC timestamp; empty string when never seen
+    online: bool            # True if last heartbeat arrived < _CLIENT_TIMEOUT_SECONDS ago
+
+
+@app.post("/client/heartbeat", status_code=200)
+async def client_heartbeat(payload: HeartbeatRequest):
+    """
+    Receive a liveness heartbeat from the Arena desktop client.
+
+    The desktop client calls this every HEARTBEAT_INTERVAL seconds so the
+    web UI can show a "Client Connected" badge.
+
+    DB-ready: UPSERT INTO client_sessions
+              (wallet_address, status, game, session_id, match_id,
+               client_version, last_heartbeat)
+              ON CONFLICT (wallet_address) DO UPDATE SET ...
+    """
+    record = {
+        **payload.model_dump(),
+        "last_seen": datetime.now(timezone.utc).isoformat(),
+    }
+    with _client_store_lock:
+        _client_statuses[payload.wallet_address] = record
+    return {"accepted": True}
+
+
+@app.get("/client/status", response_model=ClientStatusResponse)
+async def client_status(wallet_address: str):
+    """
+    Return the latest known status for a desktop client identified by wallet.
+
+    Used by the web UI to display the Arena Client connection badge and
+    surface the active game / match to the player dashboard.
+
+    DB-ready: SELECT * FROM client_sessions
+              WHERE wallet_address = :w
+              ORDER BY last_heartbeat DESC LIMIT 1
+    """
+    with _client_store_lock:
+        record = _client_statuses.get(wallet_address)
+
+    if record is None:
+        return ClientStatusResponse(
+            wallet_address=wallet_address,
+            status="disconnected",
+            game=None,
+            session_id=None,
+            match_id=None,
+            client_version="unknown",
+            last_seen="",
+            online=False,
+        )
+
+    last_seen_str = record.get("last_seen", "")
+    try:
+        last_seen_dt = datetime.fromisoformat(last_seen_str)
+        elapsed = (datetime.now(timezone.utc) - last_seen_dt).total_seconds()
+        online = elapsed < _CLIENT_TIMEOUT_SECONDS
+    except (ValueError, TypeError):
+        online = False
+
+    return ClientStatusResponse(
+        wallet_address=record["wallet_address"],
+        status=record.get("status", "idle"),
+        game=record.get("game"),
+        session_id=record.get("session_id"),
+        match_id=record.get("match_id"),
+        client_version=record.get("client_version", "unknown"),
+        last_seen=last_seen_str,
+        online=online,
+    )
+
+
+@app.get("/client/match")
+async def client_active_match(wallet_address: str):
+    """
+    Return the active match_id for a given wallet address.
+
+    The desktop client polls this every few seconds while monitoring.
+    When a match_id is returned the client starts uploading screenshots.
+
+    DB-ready: SELECT id FROM matches
+              WHERE (player1_wallet = :w OR player2_wallet = :w)
+                AND status = 'active'
+              ORDER BY created_at DESC LIMIT 1
+    CONTRACT-ready: active match = escrow is locked; client should capture
+                    and upload until match transitions to 'completed'.
+    """
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT id FROM matches "
+                    "WHERE (player1_wallet = :w OR player2_wallet = :w) "
+                    "AND status = 'active' "
+                    "ORDER BY created_at DESC LIMIT 1"
+                ),
+                {"w": wallet_address},
+            ).fetchone()
+            if row:
+                return {"match_id": str(row[0]), "wallet_address": wallet_address}
+    except Exception:
+        pass
+    # DB not available or no active match found
+    return {"match_id": None, "wallet_address": wallet_address}
 
 
 @app.get("/match/{match_id}/status")
