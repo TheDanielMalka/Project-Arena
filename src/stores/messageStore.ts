@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import type { DirectMessage } from "@/types";
+import { useFriendStore } from "@/stores/friendStore";
+import { useNotificationStore } from "@/stores/notificationStore";
 
 // ─── Seed Data ────────────────────────────────────────────────
 // DB-ready: replace with GET /api/messages/:friendId
@@ -74,7 +76,7 @@ interface MessageState {
     myUsername: string;
     friendId:   string;
     content:    string;
-  }) => DirectMessage;
+  }) => DirectMessage | null;
 
   // DB-ready: replace with PATCH /api/messages/:friendId/read
   markRead: (friendId: string) => void;
@@ -93,6 +95,14 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     get().conversations[friendId] ?? [],
 
   sendMessage: ({ myId, myUsername, friendId, content }) => {
+    if (useFriendStore.getState().isIgnored(friendId)) {
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "Message blocked",
+        message: "You ignored this player. Unignore them in Friends to send messages.",
+      });
+      return null;
+    }
     const message: DirectMessage = {
       id:         `msg-${Date.now()}`,
       senderId:   myId,

@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useMessageStore } from "@/stores/messageStore";
+import { useFriendStore } from "@/stores/friendStore";
 
 beforeEach(() => {
   useMessageStore.setState({ conversations: {} });
+  useFriendStore.setState({ ignoredUsers: [] });
 });
 
 describe("messageStore — sendMessage", () => {
@@ -35,6 +37,15 @@ describe("messageStore — sendMessage", () => {
     store.sendMessage({ myId: "u1", myUsername: "A", friendId: "u3", content: "To friend three" });
     expect(useMessageStore.getState().getConversation("u2")).toHaveLength(1);
     expect(useMessageStore.getState().getConversation("u3")).toHaveLength(1);
+  });
+
+  it("returns null when friend is ignored", () => {
+    useFriendStore.getState().ignoreUser({ userId: "u2", username: "Blocked" });
+    const out = useMessageStore.getState().sendMessage({
+      myId: "u1", myUsername: "A", friendId: "u2", content: "Hi",
+    });
+    expect(out).toBeNull();
+    expect(useMessageStore.getState().getConversation("u2")).toHaveLength(0);
   });
 });
 

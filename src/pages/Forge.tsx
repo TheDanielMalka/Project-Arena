@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, createContext, useContext } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -34,9 +34,13 @@ interface PendingPurchase {
 
 interface ForgeConfirmCtx {
   openConfirm: (purchase: PendingPurchase) => void;
+  openAtTopUp: () => void;
 }
 
-const ForgeConfirmContext = createContext<ForgeConfirmCtx>({ openConfirm: () => {} });
+const ForgeConfirmContext = createContext<ForgeConfirmCtx>({
+  openConfirm: () => {},
+  openAtTopUp: () => {},
+});
 const useForgeConfirm = () => useContext(ForgeConfirmContext);
 
 // ─── Purchase Confirm Dialog ──────────────────────────────────────────────────
@@ -172,6 +176,41 @@ function PurchaseConfirmDialog({
               ? <><span className="animate-spin mr-1.5">⟳</span> Verifying…</>
               : <><ShoppingBag className="mr-1.5 h-3.5 w-3.5" /> Confirm Purchase</>
             }
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Shown when user taps an AT purchase but balance is too low — no password step. */
+function ArenaTokensTopUpDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const navigate = useNavigate();
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-sm border border-primary/25 bg-card">
+        <DialogDescription className="sr-only">Top up Arena Tokens</DialogDescription>
+        <DialogHeader>
+          <DialogTitle className="font-display text-base font-bold flex items-center gap-2">
+            <Zap className="h-5 w-5 text-primary" /> Need more Arena Tokens
+          </DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          Your balance is not enough for this purchase. Top up Arena Tokens in your wallet, then come back to complete the buy.
+        </p>
+        <div className="flex gap-2 pt-2">
+          <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            className="flex-1 text-xs font-display font-bold"
+            onClick={() => {
+              onClose();
+              navigate("/wallet");
+            }}
+          >
+            Go to Wallet
           </Button>
         </div>
       </DialogContent>
@@ -329,7 +368,7 @@ function ItemCard({ item, onBuy, success, error, arenaTokens }: ItemCardProps) {
             className={cn(
               "h-7 text-[11px] font-semibold w-full transition-all",
               success && "bg-primary/20 text-primary border-primary/30",
-              !success && arenaTokens < item.priceAT && "opacity-50"
+              !success && arenaTokens < item.priceAT && "border-amber-500/40 text-amber-600 dark:text-amber-400"
             )}
             onClick={() => onBuy(item.id, "AT")}
             disabled={success}
@@ -368,7 +407,7 @@ function ItemCard({ item, onBuy, success, error, arenaTokens }: ItemCardProps) {
 
 function ShopTab() {
   const { items, arenaTokens, purchaseItem, getFeaturedItem, getItemsByCategory } = useForgeStore();
-  const { openConfirm } = useForgeConfirm();
+  const { openConfirm, openAtTopUp } = useForgeConfirm();
   const featured = getFeaturedItem();
   const [category, setCategory] = useState<ForgeCategory | "all">("all");
   const [successItems, setSuccessItems] = useState<Set<string>>(new Set());
@@ -383,6 +422,10 @@ function ShopTab() {
   function handleBuy(itemId: string, currency: "AT" | "USDT") {
     const item = items.find((i) => i.id === itemId);
     if (!item) return;
+    if (currency === "AT" && item.priceAT != null && arenaTokens < item.priceAT) {
+      openAtTopUp();
+      return;
+    }
     const price = currency === "AT" ? item.priceAT! : item.priceUSDT!;
     openConfirm({
       icon: item.icon ?? "🛒",
@@ -496,9 +539,18 @@ function ShopTab() {
               )}
               {featured.priceAT && (
                 <Button
-                  className="h-8 px-4 text-xs font-bold"
+                  className={cn(
+                    "h-8 px-4 text-xs font-bold",
+                    !successItems.has(featured.id) &&
+                      arenaTokens < featured.priceAT &&
+                      "border-amber-500/50 text-amber-600 dark:text-amber-400"
+                  )}
                   variant={successItems.has(featured.id) ? "default" : "outline"}
-                  style={!successItems.has(featured.id) ? { borderColor: featuredRc.color, color: featuredRc.color } : undefined}
+                  style={
+                    !successItems.has(featured.id) && arenaTokens >= featured.priceAT
+                      ? { borderColor: featuredRc.color, color: featuredRc.color }
+                      : undefined
+                  }
                   onClick={() => handleBuy(featured.id, "AT")}
                   disabled={successItems.has(featured.id)}
                 >
@@ -1171,13 +1223,16 @@ export default function Forge() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = (searchParams.get("tab") ?? "shop") as "shop" | "challenges" | "events" | "drops";
   const [pending, setPending] = useState<PendingPurchase | null>(null);
+  const [atTopUpOpen, setAtTopUpOpen] = useState(false);
 
   function setTab(value: string) { setSearchParams({ tab: value }); }
   const openConfirm = (p: PendingPurchase) => setPending(p);
+  const openAtTopUp = () => setAtTopUpOpen(true);
 
   return (
-    <ForgeConfirmContext.Provider value={{ openConfirm }}>
+    <ForgeConfirmContext.Provider value={{ openConfirm, openAtTopUp }}>
     <PurchaseConfirmDialog pending={pending} onClose={() => setPending(null)} />
+    <ArenaTokensTopUpDialog open={atTopUpOpen} onClose={() => setAtTopUpOpen(false)} />
     <div className="min-h-screen bg-background">
       <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
         {/* Page header */}

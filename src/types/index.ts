@@ -370,6 +370,7 @@ export interface DirectMessage {
 // ─── Inbox Messages ───────────────────────────────────────────
 // DB: inbox_messages table — formal messages sent by Arena ID (not real-time chat)
 
+// Client ignore list is local until wired; production: POST /api/users/:id/block syncs blocks + prunes inbox/DM edges.
 export interface InboxMessage {
   id: string;                  // DB: inbox_messages.id (UUID)
   senderId: string;            // DB: inbox_messages.sender_id (FK → users.id)

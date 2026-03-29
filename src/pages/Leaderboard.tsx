@@ -15,7 +15,7 @@ import {
 import {
   Trophy, Flame, Crown, ChevronUp, ChevronDown, Minus, Zap, TrendingUp,
   Star, Gem, Shield, UserPlus, UserCheck, Clock, MessageSquare, Flag,
-  ExternalLink, Send, CheckCircle2,
+  ExternalLink, Send, CheckCircle2, Ban,
 } from "lucide-react";
 import { useUserStore }         from "@/stores/userStore";
 import { useFriendStore }       from "@/stores/friendStore";
@@ -173,6 +173,9 @@ function PlayerActionPopover({ player, children }: PlayerActionPopoverProps) {
   const sendFriendRequest = useFriendStore((s) => s.sendFriendRequest);
   const friendships  = useFriendStore((s) => s.friendships);
   const declineRequest = useFriendStore((s) => s.declineRequest);
+  const blockPlayer    = useFriendStore((s) => s.blockPlayer);
+  const isIgnored      = useFriendStore((s) => s.isIgnored);
+  const unignoreUser   = useFriendStore((s) => s.unignoreUser);
   const sendMessage  = useMessageStore((s) => s.sendMessage);
   const submitReport = useReportStore((s) => s.submitReport);
   const addNotif     = useNotificationStore((s) => s.addNotification);
@@ -205,7 +208,7 @@ function PlayerActionPopover({ player, children }: PlayerActionPopoverProps) {
   // ── Friend ──────────────────────────────────────────────────
   const handleAddFriend = () => {
     if (!currentUser) return;
-    sendFriendRequest({
+    const created = sendFriendRequest({
       myId: currentUser.id, myUsername: currentUser.username,
       myArenaId: currentUser.arenaId, myAvatarInitials: currentUser.avatarInitials,
       myRank: currentUser.rank, myTier: currentUser.tier, myPreferredGame: currentUser.preferredGame,
@@ -213,6 +216,7 @@ function PlayerActionPopover({ player, children }: PlayerActionPopoverProps) {
       targetArenaId: player.arenaId, targetAvatarInitials: player.username.slice(0, 2).toUpperCase(),
       targetRank: "—", targetTier: "—", targetPreferredGame: player.game,
     });
+    if (!created) return;
     addNotif({ type: "system", title: "Friend Request Sent", message: `Request sent to ${player.username}` });
   };
 
@@ -224,9 +228,22 @@ function PlayerActionPopover({ player, children }: PlayerActionPopoverProps) {
   // ── Message ─────────────────────────────────────────────────
   const handleSendMessage = () => {
     if (!currentUser || !msgText.trim()) return;
-    sendMessage({ myId: currentUser.id, myUsername: currentUser.username, friendId: player.id, content: msgText.trim() });
+    const sent = sendMessage({ myId: currentUser.id, myUsername: currentUser.username, friendId: player.id, content: msgText.trim() });
+    if (!sent) return;
     setMsgSent(true);
     addNotif({ type: "system", title: "Message Sent", message: `Your message was delivered to ${player.username}` });
+  };
+
+  const handleBlockFromPopover = () => {
+    if (!currentUser) return;
+    blockPlayer({ myId: currentUser.id, targetUserId: player.id, targetUsername: player.username });
+    setOpen(false);
+  };
+
+  const handleUnignoreFromPopover = () => {
+    unignoreUser(player.id);
+    addNotif({ type: "system", title: "Unignored", message: `You can interact with ${player.username} again.` });
+    setOpen(false);
   };
 
   // ── Report ──────────────────────────────────────────────────
@@ -282,10 +299,33 @@ function PlayerActionPopover({ player, children }: PlayerActionPopoverProps) {
 
           {/* Avatar + identity */}
           <div className="flex items-center gap-3">
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-display text-sm font-bold shrink-0 ${avatarBg(player.username)} ${avatarRing(player.winRate)}`}>
-              {player.avatar && player.avatar !== "initials"
-                ? <span className="text-lg">{player.avatar}</span>
-                : player.username.slice(0, 2)}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-display text-sm font-bold ${avatarBg(player.username)} ${avatarRing(player.winRate)}`}>
+                {player.avatar && player.avatar !== "initials"
+                  ? <span className="text-lg">{player.avatar}</span>
+                  : player.username.slice(0, 2)}
+              </div>
+              {!isSelf && currentUser && (
+                isIgnored(player.id) ? (
+                  <button
+                    type="button"
+                    title="Unignore player"
+                    onClick={handleUnignoreFromPopover}
+                    className="h-8 w-8 rounded-lg border border-border/50 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors"
+                  >
+                    <Ban className="h-4 w-4" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    title="Ignore player"
+                    onClick={handleBlockFromPopover}
+                    className="h-8 w-8 rounded-lg border border-destructive/25 flex items-center justify-center text-destructive/80 hover:bg-destructive/10 transition-colors"
+                  >
+                    <Ban className="h-4 w-4" />
+                  </button>
+                )
+              )}
             </div>
             <div className="min-w-0">
               <p className="font-display font-bold text-sm leading-tight truncate">{player.username}</p>
@@ -363,6 +403,26 @@ function PlayerActionPopover({ player, children }: PlayerActionPopoverProps) {
                     </button>
                   )}
 
+                  {isIgnored(player.id) ? (
+                    <button
+                      type="button"
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-left hover:bg-secondary/60 text-muted-foreground transition-colors"
+                      onClick={handleUnignoreFromPopover}
+                    >
+                      <Ban className="h-3.5 w-3.5" />
+                      Unignore player
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-left hover:bg-destructive/10 text-destructive/80 transition-colors"
+                      onClick={handleBlockFromPopover}
+                    >
+                      <Ban className="h-3.5 w-3.5" />
+                      Ignore player
+                    </button>
+                  )}
+
                   {/* Report */}
                   <button
                     className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-left hover:bg-destructive/10 text-destructive/70 hover:text-destructive transition-colors"
@@ -400,14 +460,46 @@ function PlayerActionPopover({ player, children }: PlayerActionPopoverProps) {
                     }}
                   />
                   <p className="text-[9px] text-muted-foreground text-right">{msgText.length}/500 · Ctrl+Enter to send</p>
-                  <div className="flex gap-1.5">
+                  <div className="flex flex-wrap gap-1.5 items-center">
                     <button
-                      className="flex-1 text-xs text-muted-foreground hover:text-foreground transition-colors py-1.5"
+                      className="text-xs text-muted-foreground hover:text-foreground transition-colors py-1.5 px-1"
                       onClick={() => setTab("actions")}
                     >← Back</button>
+                    {rel !== "accepted" && rel !== "pending" && !isIgnored(player.id) && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs shrink-0 border-primary/30 text-primary gap-1"
+                        onClick={() => { handleAddFriend(); setOpen(false); }}
+                      >
+                        <UserPlus className="h-3 w-3" /> Add Friend
+                      </Button>
+                    )}
+                    {isIgnored(player.id) ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs shrink-0"
+                        onClick={handleUnignoreFromPopover}
+                      >
+                        Unignore
+                      </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs shrink-0 border-destructive/35 text-destructive hover:bg-destructive/10 gap-1"
+                        onClick={handleBlockFromPopover}
+                      >
+                        <Ban className="h-3 w-3" /> Ignore
+                      </Button>
+                    )}
                     <Button
                       size="sm"
-                      className="flex-1 h-7 text-xs gap-1.5"
+                      className="flex-1 min-w-[6rem] h-7 text-xs gap-1.5"
                       disabled={!msgText.trim()}
                       onClick={handleSendMessage}
                     >

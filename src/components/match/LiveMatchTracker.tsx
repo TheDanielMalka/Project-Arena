@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Radio, Clock, Users, Zap, ChevronDown, ChevronUp, Hash, Shield, Gamepad2 } from "lucide-react";
+import { Radio, Clock, Users, Zap, ChevronDown, ChevronUp, Shield, Gamepad2 } from "lucide-react";
 import { useMatchStore } from "@/stores/matchStore";
+import { useUserStore } from "@/stores/userStore";
+import { PlayerPopoverLayer } from "@/components/players/PlayerCardPopover";
 import type { Match } from "@/types";
 
 // Game logos — mirrors Profile.tsx / History.tsx
@@ -20,9 +21,19 @@ const playerColor = (name: string) => {
 
 const LiveMatchTracker = () => {
   const { matches } = useMatchStore();
+  const { user } = useUserStore();
   const liveMatches = matches.filter(m => m.status === "in_progress");
   const [now, setNow] = useState(Date.now());
   const [expandedMatchId, setExpandedMatchId] = useState<string | null>(null);
+  const [playerPopover, setPlayerPopover] = useState<{ slotValue: string; rect: DOMRect } | null>(null);
+
+  const openPlayer = (e: React.MouseEvent, slotValue: string) => {
+    e.stopPropagation();
+    setPlayerPopover({
+      slotValue,
+      rect: (e.currentTarget as HTMLElement).getBoundingClientRect(),
+    });
+  };
 
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 1000);
@@ -64,6 +75,13 @@ const LiveMatchTracker = () => {
 
   return (
     <div className="space-y-3">
+      <PlayerPopoverLayer
+        open={!!playerPopover && !!user}
+        slotValue={playerPopover?.slotValue ?? null}
+        rect={playerPopover?.rect ?? null}
+        onClose={() => setPlayerPopover(null)}
+        enableLeaveRoom={false}
+      />
       {liveMatches.map((match) => {
         const isExpanded = expandedMatchId === match.id;
         const cfg = GAME_CONFIG[match.game];
@@ -91,9 +109,18 @@ const LiveMatchTracker = () => {
                 )}
 
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-arena-cyan animate-pulse shrink-0" />
-                    <p className="font-display font-semibold text-sm truncate">{match.host}'s Match</p>
+                    <p className="font-display font-semibold text-sm min-w-0 flex items-baseline gap-0">
+                      <button
+                        type="button"
+                        onClick={(e) => openPlayer(e, match.host)}
+                        className="truncate min-w-0 text-left hover:text-primary hover:underline underline-offset-2"
+                      >
+                        {match.host}
+                      </button>
+                      <span className="shrink-0">'s Match</span>
+                    </p>
                   </div>
                   <p className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
                     <span style={{ color: cfg?.color }}>{match.game}</span>
@@ -123,22 +150,34 @@ const LiveMatchTracker = () => {
               {/* 1v1 progress bar */}
               {match.mode === "1v1" && match.players.length === 2 && (
                 <div className="mt-3 flex items-center gap-2">
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0"
-                      style={{ background: playerColor(match.players[0]) }}>
-                      {match.players[0][0]?.toUpperCase()}
-                    </div>
-                    <span className="text-xs font-display font-medium text-primary truncate max-w-[80px]">{match.players[0]}</span>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <button
+                      type="button"
+                      onClick={(e) => openPlayer(e, match.players[0])}
+                      className="flex items-center gap-1.5 min-w-0 rounded-lg hover:bg-secondary/40 -mx-0.5 px-0.5 py-0.5"
+                    >
+                      <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0"
+                        style={{ background: playerColor(match.players[0]) }}>
+                        {match.players[0][0]?.toUpperCase()}
+                      </div>
+                      <span className="text-xs font-display font-medium text-primary truncate max-w-[80px]">{match.players[0]}</span>
+                    </button>
                   </div>
                   <div className="flex-1 h-1 rounded-full bg-secondary overflow-hidden">
                     <div className="h-full w-1/2 rounded-full bg-gradient-to-r from-primary to-arena-cyan animate-pulse" />
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-display font-medium text-arena-orange truncate max-w-[80px] text-right">{match.players[1]}</span>
-                    <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0"
-                      style={{ background: playerColor(match.players[1]) }}>
-                      {match.players[1][0]?.toUpperCase()}
-                    </div>
+                  <div className="flex items-center gap-1.5 min-w-0 justify-end">
+                    <button
+                      type="button"
+                      onClick={(e) => openPlayer(e, match.players[1])}
+                      className="flex items-center gap-1.5 min-w-0 rounded-lg hover:bg-secondary/40 -mx-0.5 px-0.5 py-0.5"
+                    >
+                      <span className="text-xs font-display font-medium text-arena-orange truncate max-w-[80px] text-right">{match.players[1]}</span>
+                      <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0"
+                        style={{ background: playerColor(match.players[1]) }}>
+                        {match.players[1][0]?.toUpperCase()}
+                      </div>
+                    </button>
                   </div>
                 </div>
               )}
@@ -165,14 +204,18 @@ const LiveMatchTracker = () => {
                     </p>
                     <div className="flex flex-wrap gap-2">
                       {match.players.length > 0 ? match.players.map(player => (
-                        <div key={`${match.id}-${player}`}
-                          className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-border bg-secondary/40 text-xs">
+                        <button
+                          key={`${match.id}-${player}`}
+                          type="button"
+                          onClick={(e) => openPlayer(e, player)}
+                          className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-border bg-secondary/40 text-xs hover:border-primary/40 hover:bg-secondary/60 transition-colors"
+                        >
                           <div className="w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white"
                             style={{ background: playerColor(player) }}>
                             {player[0]?.toUpperCase()}
                           </div>
                           {player}
-                        </div>
+                        </button>
                       )) : (
                         <span className="text-xs text-muted-foreground">No players listed yet</span>
                       )}

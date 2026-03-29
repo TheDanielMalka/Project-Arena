@@ -9,7 +9,7 @@ import {
 import {
   Users2, Search, UserPlus, UserCheck, Clock, MessageCircle,
   Send, X, ChevronRight, Check, Flag, ArrowLeft,
-  Mail, Trash2, Eye, Pencil, Inbox, Plus, CheckCheck, Shuffle,
+  Mail, Trash2, Eye, Pencil, Inbox, Plus, CheckCheck, Shuffle, Ban,
 } from "lucide-react";
 import { usePlayerStore }  from "@/stores/playerStore";
 import { useFriendStore }  from "@/stores/friendStore";
@@ -50,9 +50,11 @@ interface FriendChatPanelProps {
   myId: string;
   myUsername: string;
   onClose: () => void;
+  /** DB-ready: maps to POST /api/users/:id/block */
+  onIgnoreFromChat?: () => void;
 }
 
-function FriendChatPanel({ friend, myId, myUsername, onClose }: FriendChatPanelProps) {
+function FriendChatPanel({ friend, myId, myUsername, onClose, onIgnoreFromChat }: FriendChatPanelProps) {
   const getConversation = useMessageStore((s) => s.getConversation);
   const sendMessage     = useMessageStore((s) => s.sendMessage);
   const markRead        = useMessageStore((s) => s.markRead);
@@ -69,8 +71,8 @@ function FriendChatPanel({ friend, myId, myUsername, onClose }: FriendChatPanelP
   const handleSend = () => {
     const content = input.trim();
     if (!content) return;
-    sendMessage({ myId, myUsername, friendId: friend.friendId, content });
-    setInput("");
+    const sent = sendMessage({ myId, myUsername, friendId: friend.friendId, content });
+    if (sent) setInput("");
   };
 
   const handleKey = (e: React.KeyboardEvent) => {
@@ -164,14 +166,30 @@ function FriendChatPanel({ friend, myId, myUsername, onClose }: FriendChatPanelP
           <Send className="h-3 w-3" />
         </button>
       </div>
+
+      {onIgnoreFromChat && (
+        <div className="px-2.5 py-1.5 border-t border-border/20 shrink-0 flex justify-end">
+          <button
+            type="button"
+            onClick={onIgnoreFromChat}
+            className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-destructive transition-colors"
+          >
+            <Ban className="h-3 w-3 shrink-0" /> Ignore player
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
 // ─── Messages Tab: Chat Panel ──────────────────────────────────
 
-function MsgChatPanel({ friend, myId, myUsername, onBack }: {
-  friend: Friendship; myId: string; myUsername: string; onBack: () => void;
+function MsgChatPanel({ friend, myId, myUsername, onBack, onIgnoreFromChat }: {
+  friend: Friendship;
+  myId: string;
+  myUsername: string;
+  onBack: () => void;
+  onIgnoreFromChat?: () => void;
 }) {
   const getConv  = useMessageStore((s) => s.getConversation);
   const sendMsg  = useMessageStore((s) => s.sendMessage);
@@ -187,8 +205,8 @@ function MsgChatPanel({ friend, myId, myUsername, onBack }: {
 
   const doSend = () => {
     if (!input.trim()) return;
-    sendMsg({ myId, myUsername, friendId: friend.friendId, content: input });
-    setInput("");
+    const sent = sendMsg({ myId, myUsername, friendId: friend.friendId, content: input });
+    if (sent) setInput("");
   };
 
   return (
@@ -271,6 +289,18 @@ function MsgChatPanel({ friend, myId, myUsername, onBack }: {
           <Send className="h-3 w-3" />
         </button>
       </div>
+
+      {onIgnoreFromChat && (
+        <div className="px-2.5 py-1.5 border-t border-border/20 shrink-0 flex justify-end">
+          <button
+            type="button"
+            onClick={onIgnoreFromChat}
+            className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-destructive transition-colors"
+          >
+            <Ban className="h-3 w-3 shrink-0" /> Ignore player
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -459,6 +489,10 @@ export default function Hub() {
   const acceptRequest      = useFriendStore((s) => s.acceptRequest);
   const declineRequest     = useFriendStore((s) => s.declineRequest);
   const removeFriend       = useFriendStore((s) => s.removeFriend);
+  const ignoredUsers       = useFriendStore((s) => s.ignoredUsers);
+  const unignoreUser       = useFriendStore((s) => s.unignoreUser);
+  const blockPlayer        = useFriendStore((s) => s.blockPlayer);
+  const isIgnoredUser      = useFriendStore((s) => s.isIgnored);
 
   // Message store
   const getUnreadCount  = useMessageStore((s) => s.getUnreadCount);
@@ -494,10 +528,25 @@ export default function Hub() {
     avatarInitials: string; rank: string; tier: string; preferredGame: string;
   } | null>(null);
 
+  useEffect(() => {
+    if (activeChatFriend && ignoredUsers.some((u) => u.userId === activeChatFriend.friendId)) {
+      setActiveChatFriend(null);
+    }
+  }, [ignoredUsers, activeChatFriend]);
+
+  useEffect(() => {
+    if (activePanel?.type === "chat" && ignoredUsers.some((u) => u.userId === activePanel.friend.friendId)) {
+      setActivePanel(null);
+    }
+  }, [ignoredUsers, activePanel]);
+
   // Derived data
   const communityResults = useMemo(
-    () => searchPlayers(query, gameFilter || undefined).filter((p) => p.id !== user?.id),
-    [query, gameFilter, searchPlayers, user?.id]
+    () =>
+      searchPlayers(query, gameFilter || undefined).filter(
+        (p) => p.id !== user?.id && !ignoredUsers.some((u) => u.userId === p.id)
+      ),
+    [query, gameFilter, searchPlayers, user?.id, ignoredUsers]
   );
 
   // 9 random players for the no-search view
@@ -513,8 +562,14 @@ export default function Hub() {
     return arr.slice(0, 9);
   }, [communityResults, refreshSeed, query, gameFilter]);
 
-  const friends         = useMemo(() => getFriends(), [getFriends, friendships]);
-  const pendingReceived = useMemo(() => user ? getPendingReceived(user.id) : [], [getPendingReceived, user, friendships]);
+  const friends         = useMemo(
+    () => getFriends().filter((f) => !ignoredUsers.some((u) => u.userId === f.friendId)),
+    [getFriends, friendships, ignoredUsers]
+  );
+  const pendingReceived = useMemo(
+    () => (user ? getPendingReceived(user.id) : []),
+    [getPendingReceived, user, friendships, ignoredUsers]
+  );
   const pendingSent     = useMemo(() => user ? getPendingSent(user.id) : [], [getPendingSent, user, friendships]);
 
   const filteredFriends = useMemo(() =>
@@ -546,7 +601,7 @@ export default function Hub() {
 
   const handleFrConfirm = (message: string) => {
     if (!user || !frModalTarget) return;
-    sendFriendRequest({
+    const created = sendFriendRequest({
       myId: user.id, myUsername: user.username,
       myArenaId: user.arenaId, myAvatarInitials: user.avatarInitials,
       myRank: user.rank, myTier: user.tier, myPreferredGame: user.preferredGame,
@@ -556,6 +611,7 @@ export default function Hub() {
       targetPreferredGame: frModalTarget.preferredGame,
       message: message || undefined,
     });
+    if (!created) return;
     addNotif({
       type: "system", title: "Friend Request Sent",
       message: `Request sent to ${frModalTarget.username} (${frModalTarget.arenaId})`,
@@ -569,6 +625,59 @@ export default function Hub() {
   };
 
   const handleDecline = (f: Friendship) => { declineRequest(f.id); };
+
+  const handleIgnoreRequest = (f: Friendship) => {
+    if (!user) return;
+    blockPlayer({ myId: user.id, targetUserId: f.initiatorId, targetUsername: f.friendUsername, quiet: true });
+    addNotif({
+      type: "system",
+      title: "Request dismissed",
+      message: `${f.friendUsername} is ignored and cannot send you friend requests or messages.`,
+    });
+  };
+
+  const handleIgnoreFriend = (f: Friendship) => {
+    if (!user) return;
+    blockPlayer({ myId: user.id, targetUserId: f.friendId, targetUsername: f.friendUsername, quiet: true });
+    if (activeChatFriend?.friendId === f.friendId) setActiveChatFriend(null);
+    if (activePanel?.type === "chat" && activePanel.friend.friendId === f.friendId) setActivePanel(null);
+    addNotif({
+      type: "system",
+      title: "Friend ignored",
+      message: `${f.friendUsername} was removed from friends and cannot contact you.`,
+    });
+  };
+
+  const handleIgnoreInboxSender = (msg: InboxMessage) => {
+    if (!user) return;
+    blockPlayer({ myId: user.id, targetUserId: msg.senderId, targetUsername: msg.senderName, quiet: true });
+    addNotif({
+      type: "system",
+      title: "Sender ignored",
+      message: `${msg.senderName} cannot message or add you while ignored.`,
+    });
+    setActivePanel(null);
+  };
+
+  const handleAddFriendFromInbox = (msg: InboxMessage) => {
+    if (!user) return;
+    const p = usePlayerStore.getState().players.find((pl) => pl.id === msg.senderId);
+    const created = sendFriendRequest({
+      myId: user.id, myUsername: user.username,
+      myArenaId: user.arenaId, myAvatarInitials: user.avatarInitials,
+      myRank: user.rank, myTier: user.tier, myPreferredGame: user.preferredGame,
+      targetId: msg.senderId, targetUsername: msg.senderName,
+      targetArenaId: msg.senderArenaId,
+      targetAvatarInitials: p?.avatarInitials ?? msg.senderName.slice(0, 2).toUpperCase(),
+      targetRank: p?.rank ?? "—", targetTier: p?.tier ?? "—",
+      targetPreferredGame: p?.preferredGame ?? "CS2",
+    });
+    if (!created) return;
+    addNotif({
+      type: "system", title: "Friend Request Sent",
+      message: `Request sent to ${msg.senderName}.`,
+    });
+  };
 
   const handleRemoveFriend = (friendId: string, friendUsername: string) => {
     removeFriend(friendId);
@@ -752,29 +861,50 @@ export default function Hub() {
                       </div>
                     </div>
 
-                    {/* Action icon */}
-                    {relationship === "accepted" ? (
-                      <span title="Friends"><UserCheck className="h-3.5 w-3.5 text-primary shrink-0" /></span>
-                    ) : relationship === "pending" ? (
-                      <button
-                        onClick={() => {
-                          const f = friendships.find((fr) => fr.friendId === player.id && fr.status === "pending");
-                          if (f) declineRequest(f.id);
-                        }}
-                        title="Cancel request"
-                        className="text-muted-foreground hover:text-destructive transition-colors shrink-0"
-                      >
-                        <Clock className="h-3.5 w-3.5" />
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => handleAddFriend(player)}
-                        title="Add Friend"
-                        className="text-muted-foreground hover:text-primary transition-colors shrink-0"
-                      >
-                        <UserPlus className="h-3.5 w-3.5" />
-                      </button>
-                    )}
+                    {/* Action icons */}
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      {relationship === "accepted" ? (
+                        <span title="Friends"><UserCheck className="h-3.5 w-3.5 text-primary" /></span>
+                      ) : relationship === "pending" ? (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const f = friendships.find((fr) => fr.friendId === player.id && fr.status === "pending");
+                            if (f) declineRequest(f.id);
+                          }}
+                          title="Cancel request"
+                          className="text-muted-foreground hover:text-destructive transition-colors p-0.5"
+                        >
+                          <Clock className="h-3.5 w-3.5" />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleAddFriend(player); }}
+                          title="Add Friend"
+                          className="text-muted-foreground hover:text-primary transition-colors p-0.5"
+                        >
+                          <UserPlus className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {user && player.id !== user.id && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            blockPlayer({ myId: user.id, targetUserId: player.id, targetUsername: player.username, quiet: true });
+                            addNotif({
+                              type: "system",
+                              title: "Ignored",
+                              message: `${player.username} is blocked from contacting you.`,
+                            });
+                          }}
+                          title="Ignore player"
+                          className="text-muted-foreground hover:text-destructive transition-colors p-0.5"
+                        >
+                          <Ban className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -822,14 +952,19 @@ export default function Hub() {
                             <p className="font-mono text-[9px] text-muted-foreground">{f.friendArenaId}</p>
                           </div>
                         </div>
-                        <div className="flex gap-2">
+                        <div className="grid grid-cols-3 gap-1.5">
                           <button onClick={() => handleAccept(f)}
-                            className="flex-1 flex items-center justify-center gap-1 text-[11px] py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors font-medium">
-                            <Check className="h-3 w-3" /> Accept
+                            className="flex items-center justify-center gap-1 text-[10px] py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors font-medium">
+                            <Check className="h-3 w-3 shrink-0" /> Accept
                           </button>
                           <button onClick={() => handleDecline(f)}
-                            className="flex-1 flex items-center justify-center gap-1 text-[11px] py-1.5 rounded-lg bg-secondary/60 text-muted-foreground hover:text-foreground transition-colors">
-                            <X className="h-3 w-3" /> Decline
+                            className="flex items-center justify-center gap-1 text-[10px] py-1.5 rounded-lg bg-secondary/60 text-muted-foreground hover:text-foreground transition-colors">
+                            <X className="h-3 w-3 shrink-0" /> Decline
+                          </button>
+                          <button onClick={() => handleIgnoreRequest(f)}
+                            title="Ignore — block requests & messages"
+                            className="flex items-center justify-center gap-1 text-[10px] py-1.5 rounded-lg border border-destructive/25 text-destructive/90 hover:bg-destructive/10 transition-colors font-medium">
+                            <Ban className="h-3 w-3 shrink-0" /> Ignore
                           </button>
                         </div>
                       </div>
@@ -862,6 +997,32 @@ export default function Hub() {
                       </div>
                     );
                   })}
+                </div>
+              )}
+
+              {ignoredUsers.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider px-1 flex items-center gap-1">
+                    <Ban className="h-3 w-3" /> Ignored ({ignoredUsers.length})
+                  </p>
+                  {ignoredUsers.map((u) => (
+                    <div
+                      key={u.userId}
+                      className="flex items-center gap-2 px-2 py-2 rounded-xl border border-border/40 bg-secondary/10"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium truncate">{u.username}</p>
+                        <p className="text-[9px] text-muted-foreground">Cannot message or add you</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => unignoreUser(u.userId)}
+                        className="text-[10px] px-2 py-1 rounded-lg border border-border/50 text-muted-foreground hover:text-foreground hover:bg-secondary/50 shrink-0"
+                      >
+                        Unignore
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
 
@@ -898,7 +1059,15 @@ export default function Hub() {
                           <p className="font-display text-xs font-semibold truncate">{f.friendUsername}</p>
                           <p className="text-[9px] text-muted-foreground font-mono">{f.friendArenaId}</p>
                         </div>
-                        <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            type="button"
+                            title="Ignore — remove friend & block contact"
+                            onClick={(e) => { e.stopPropagation(); handleIgnoreFriend(f); }}
+                            className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                          >
+                            <Ban className="h-3.5 w-3.5" />
+                          </button>
                           <MessageCircle className={cn("h-3.5 w-3.5", isActive ? "text-primary" : "text-muted-foreground")} />
                         </div>
                       </div>
@@ -907,7 +1076,7 @@ export default function Hub() {
                 </div>
               )}
 
-              {friends.length === 0 && pendingReceived.length === 0 && pendingSent.length === 0 && (
+              {friends.length === 0 && pendingReceived.length === 0 && pendingSent.length === 0 && ignoredUsers.length === 0 && (
                 <div className="text-center py-16 text-muted-foreground">
                   <Users2 className="h-10 w-10 mx-auto mb-3 opacity-30" />
                   <p className="text-sm font-medium">No friends yet</p>
@@ -933,6 +1102,7 @@ export default function Hub() {
                 myId={user?.id ?? ""}
                 myUsername={user?.username ?? ""}
                 onClose={() => setActiveChatFriend(null)}
+                onIgnoreFromChat={() => handleIgnoreFriend(activeChatFriend)}
               />
             </div>
           ) : (
@@ -1103,14 +1273,58 @@ export default function Hub() {
                     {activePanel.msg.content}
                   </p>
                 </div>
-                <div className="px-5 py-4 border-t border-border/50 shrink-0">
-                  <Button size="sm" variant="outline" className="text-xs border-border/50 gap-1.5"
+                <div className="px-5 py-4 border-t border-border/50 shrink-0 flex flex-wrap gap-2 items-center">
+                  {user && activePanel.msg.senderId !== user.id && !isIgnoredUser(activePanel.msg.senderId) &&
+                    getRelationship(activePanel.msg.senderId) !== "accepted" &&
+                    getRelationship(activePanel.msg.senderId) !== "pending" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs border-primary/30 text-primary gap-1.5"
+                      onClick={() => handleAddFriendFromInbox(activePanel.msg)}
+                    >
+                      <UserPlus className="h-3.5 w-3.5" /> Add Friend
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-xs border-border/50 gap-1.5"
                     onClick={() => {
                       setReplyArenaId(activePanel.msg.senderArenaId);
                       setComposeOpen(true);
-                    }}>
+                    }}
+                  >
                     <Send className="h-3.5 w-3.5" /> Reply
                   </Button>
+                  {user && activePanel.msg.senderId !== user.id && (
+                    isIgnoredUser(activePanel.msg.senderId) ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-xs text-muted-foreground"
+                        onClick={() => {
+                          unignoreUser(activePanel.msg.senderId);
+                          addNotif({
+                            type: "system",
+                            title: "Unignored",
+                            message: `You can receive messages and requests from ${activePanel.msg.senderName} again.`,
+                          });
+                        }}
+                      >
+                        Unignore sender
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-xs gap-1.5 border-destructive/35 text-destructive hover:bg-destructive/10"
+                        onClick={() => handleIgnoreInboxSender(activePanel.msg)}
+                      >
+                        <Ban className="h-3.5 w-3.5" /> Ignore
+                      </Button>
+                    )
+                  )}
                 </div>
               </div>
             ) : (
@@ -1119,6 +1333,7 @@ export default function Hub() {
                 myId={user?.id ?? ""}
                 myUsername={user?.username ?? ""}
                 onBack={() => setActivePanel(null)}
+                onIgnoreFromChat={() => handleIgnoreFriend(activePanel.friend)}
               />
             )}
           </div>
