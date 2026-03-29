@@ -123,6 +123,103 @@ describe("reportStore — updateTicketStatus", () => {
   });
 });
 
+describe("reportStore — ticket categories and new fields", () => {
+  it("ticketCategory defaults to 'player_report' when not provided", () => {
+    const ticket = useReportStore.getState().submitReport({
+      reporterId: "u1", reporterName: "A", reportedId: "u2", reportedUsername: "B",
+      reason: "cheating", description: "Obvious aimbot usage throughout the match",
+    });
+    expect(ticket.ticketCategory).toBe("player_report");
+  });
+
+  it("creates a general_support ticket with supportTopic and null-safe reportedId", () => {
+    const ticket = useReportStore.getState().submitReport({
+      reporterId: "u1", reporterName: "A",
+      reportedId: "platform", reportedUsername: "Support queue",
+      reason: "other",
+      description: "I cannot access my account after changing email",
+      ticketCategory: "general_support",
+      supportTopic: "account_access",
+    });
+    expect(ticket.ticketCategory).toBe("general_support");
+    expect(ticket.supportTopic).toBe("account_access");
+    expect(ticket.matchId).toBeUndefined();
+  });
+
+  it("creates a match_dispute ticket with matchId correctly set", () => {
+    const ticket = useReportStore.getState().submitReport({
+      reporterId: "u1", reporterName: "A", reportedId: "u2", reportedUsername: "B",
+      reason: "fake_screenshot",
+      description: "Screenshot score does not match server data at all",
+      ticketCategory: "match_dispute",
+      matchId: "M-test-42",
+    });
+    expect(ticket.ticketCategory).toBe("match_dispute");
+    expect(ticket.matchId).toBe("M-test-42");
+    expect(ticket.supportTopic).toBeUndefined();
+  });
+
+  it("stores attachmentDataUrl when provided", () => {
+    const fakeDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANS";
+    const ticket = useReportStore.getState().submitReport({
+      reporterId: "u1", reporterName: "A", reportedId: "u2", reportedUsername: "B",
+      reason: "fake_screenshot",
+      description: "Here is a screenshot showing the doctored result",
+      attachmentDataUrl: fakeDataUrl,
+    });
+    expect(ticket.attachmentDataUrl).toBe(fakeDataUrl);
+  });
+});
+
+describe("reportStore — getTicketsByCategory", () => {
+  it("returns only player_report tickets when category is player_report", () => {
+    const store = useReportStore.getState();
+    store.submitReport({
+      reporterId: "u1", reporterName: "A", reportedId: "u2", reportedUsername: "B",
+      reason: "cheating", description: "Clear aimbot across five consecutive matches",
+      ticketCategory: "player_report",
+    });
+    store.submitReport({
+      reporterId: "u1", reporterName: "A",
+      reportedId: "platform", reportedUsername: "Support queue",
+      reason: "other", description: "Account locked after email change request",
+      ticketCategory: "general_support",
+    });
+    const result = useReportStore.getState().getTicketsByCategory("player_report");
+    expect(result).toHaveLength(1);
+    expect(result[0].ticketCategory).toBe("player_report");
+  });
+
+  it("returns only match_dispute tickets when category is match_dispute", () => {
+    const store = useReportStore.getState();
+    store.submitReport({
+      reporterId: "u1", reporterName: "A", reportedId: "u2", reportedUsername: "B",
+      reason: "fake_screenshot", description: "Screenshot score doesn't match server outcome",
+      ticketCategory: "match_dispute", matchId: "M-999",
+    });
+    store.submitReport({
+      reporterId: "u1", reporterName: "A", reportedId: "u3", reportedUsername: "C",
+      reason: "cheating", description: "Wallhacks confirmed by multiple spectators",
+      ticketCategory: "player_report",
+    });
+    const result = useReportStore.getState().getTicketsByCategory("match_dispute");
+    expect(result).toHaveLength(1);
+    expect(result[0].matchId).toBe("M-999");
+  });
+
+  it("defaults missing ticketCategory to player_report in filter", () => {
+    const store = useReportStore.getState();
+    // Submitting without explicit ticketCategory — defaults to player_report
+    store.submitReport({
+      reporterId: "u1", reporterName: "A", reportedId: "u2", reportedUsername: "B",
+      reason: "harassment", description: "Hostile behaviour throughout the entire match",
+    });
+    const result = useReportStore.getState().getTicketsByCategory("player_report");
+    expect(result).toHaveLength(1);
+    expect(result[0].ticketCategory).toBe("player_report");
+  });
+});
+
 describe("reportStore — getTicketsByReported", () => {
   it("returns only tickets for the specified username", () => {
     const store = useReportStore.getState();
