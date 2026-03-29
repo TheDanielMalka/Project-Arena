@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { useUserStore } from "@/stores/userStore";
 import { useMatchStore } from "@/stores/matchStore";
@@ -259,6 +260,7 @@ const PlayerCardPopover = ({
   onLeaveRoom: () => void;
   isOwnSlot: boolean;
 }) => {
+  const navigate = useNavigate();
   const { players } = usePlayerStore();
   const { friendships, sendFriendRequest } = useFriendStore();
   const { submitReport } = useReportStore();
@@ -438,16 +440,19 @@ const PlayerCardPopover = ({
           </>
         )}
 
-        {/* View Profile link */}
+        {/* View Profile — client navigate like Leaderboard; <a href> full reload loses auth hydrate → /auth */}
         {/* DB-ready: GET /api/players/:username — always resolves in production */}
         {!isOwnSlot && (
-          <a
-            href={`/players/${username}`}
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/40 rounded-lg transition-colors"
-            onClick={onClose}
+          <button
+            type="button"
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/40 rounded-lg transition-colors text-left"
+            onClick={() => {
+              navigate(`/players/${username}`);
+              onClose();
+            }}
           >
             <UserCircle2 className="h-3 w-3" /> View Profile
-          </a>
+          </button>
         )}
       </div>
     </div>
