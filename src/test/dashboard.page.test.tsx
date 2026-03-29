@@ -38,10 +38,10 @@ describe("Dashboard page", () => {
     expect(screen.getAllByText((_, el) => !!el?.textContent?.toLowerCase().includes("silver")).length).toBeGreaterThan(0);
   });
 
-  it("shows Find Match and Deposit quick action buttons", () => {
+  it("shows Find Match and Wallet quick action buttons", () => {
     render(<MemoryRouter><Dashboard /></MemoryRouter>);
     expect(screen.getByRole("button", { name: /find match/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /deposit/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^wallet$/i })).toBeInTheDocument();
   });
 
   it("shows Daily Challenges section", () => {

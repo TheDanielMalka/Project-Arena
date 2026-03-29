@@ -11,8 +11,8 @@ const data = [
 ];
 
 const W = 560;
-const H = 160;
-const PAD = { top: 16, right: 16, bottom: 28, left: 40 };
+const H = 96;
+const PAD = { top: 10, right: 12, bottom: 18, left: 34 };
 const INNER_W = W - PAD.left - PAD.right;
 const INNER_H = H - PAD.top - PAD.bottom;
 
@@ -72,27 +72,27 @@ export function EarningsChart() {
 
   return (
     <Card className="bg-card border-border">
-      <CardHeader className="pb-1">
-        <div className="flex justify-between items-start">
-          <CardTitle className="font-display text-lg tracking-widest uppercase text-muted-foreground">
+      <CardHeader className="pb-0 pt-3 px-3">
+        <div className="flex justify-between items-start gap-2">
+          <CardTitle className="font-display text-xs tracking-widest uppercase text-muted-foreground">
             Earnings History
           </CardTitle>
-          <div className="text-right">
-            <div className="font-display text-2xl font-bold text-foreground leading-none">
+          <div className="text-right shrink-0">
+            <div className="font-display text-lg font-bold text-foreground leading-none">
               ${total.toLocaleString()}
             </div>
-            <div className="font-display text-[10px] tracking-widest text-muted-foreground uppercase mt-0.5">
+            <div className="font-display text-[9px] tracking-widest text-muted-foreground uppercase mt-0.5">
               Total
             </div>
           </div>
         </div>
       </CardHeader>
 
-      <CardContent className="pt-2 pb-3">
+      <CardContent className="pt-1 pb-2 px-3">
         <svg
           viewBox={`0 0 ${W} ${H}`}
           className="w-full"
-          style={{ height: 160 }}
+          style={{ height: 96 }}
         >
           <defs>
             {/* Red gradient fill */}
@@ -130,10 +130,10 @@ export function EarningsChart() {
                   strokeWidth={1}
                 />
                 <text
-                  x={PAD.left - 6}
-                  y={y + 4}
+                  x={PAD.left - 4}
+                  y={y + 3}
                   textAnchor="end"
-                  fontSize={9}
+                  fontSize={8}
                   fill="hsl(0 0% 40%)"
                   fontFamily="Rajdhani, sans-serif"
                   letterSpacing="0.05em"
@@ -173,7 +173,7 @@ export function EarningsChart() {
             d={linePath}
             fill="none"
             stroke="hsl(355 78% 52%)"
-            strokeWidth={2}
+            strokeWidth={1.5}
             filter="url(#lineGlow)"
             strokeDasharray={length || 9999}
             strokeDashoffset={drawn ? 0 : length || 9999}
@@ -202,7 +202,7 @@ export function EarningsChart() {
                 <circle
                   cx={pt.x}
                   cy={pt.y}
-                  r={7}
+                  r={5}
                   fill="none"
                   stroke="hsl(355 78% 52% / 0.3)"
                   strokeWidth={1.5}
@@ -212,7 +212,7 @@ export function EarningsChart() {
               <circle
                 cx={pt.x}
                 cy={pt.y}
-                r={hovered === i ? 4 : 3}
+                r={hovered === i ? 3.5 : 2.5}
                 fill={hovered === i ? "hsl(355 78% 65%)" : "hsl(355 78% 52%)"}
                 stroke="hsl(0 0% 8%)"
                 strokeWidth={2}
@@ -226,20 +226,20 @@ export function EarningsChart() {
               {hovered === i && (
                 <g>
                   <rect
-                    x={pt.x - 28}
-                    y={pt.y - 36}
-                    width={56}
-                    height={22}
-                    rx={4}
+                    x={pt.x - 24}
+                    y={pt.y - 28}
+                    width={48}
+                    height={18}
+                    rx={3}
                     fill="hsl(0 0% 10%)"
                     stroke="hsl(355 78% 52% / 0.25)"
                     strokeWidth={1}
                   />
                   <text
                     x={pt.x}
-                    y={pt.y - 20}
+                    y={pt.y - 15}
                     textAnchor="middle"
-                    fontSize={11}
+                    fontSize={9}
                     fontWeight="bold"
                     fill="hsl(0 0% 95%)"
                     fontFamily="Rajdhani, sans-serif"
@@ -257,9 +257,9 @@ export function EarningsChart() {
             <text
               key={i}
               x={toX(i)}
-              y={H - 4}
+              y={H - 2}
               textAnchor="middle"
-              fontSize={9}
+              fontSize={8}
               fill={hovered === i ? "hsl(355 78% 65%)" : "hsl(0 0% 40%)"}
               fontFamily="Rajdhani, sans-serif"
               letterSpacing="0.12em"
@@ -271,14 +271,14 @@ export function EarningsChart() {
         </svg>
 
         {/* Bottom stats */}
-        <div className="flex justify-between mt-2 px-1">
+        <div className="flex justify-between mt-1 px-0.5">
           <div>
-            <div className="font-display text-[10px] tracking-widest text-muted-foreground uppercase">Peak</div>
-            <div className="font-display text-base font-bold text-foreground">${peak}</div>
+            <div className="font-display text-[9px] tracking-widest text-muted-foreground uppercase">Peak</div>
+            <div className="font-display text-sm font-bold text-foreground">${peak}</div>
           </div>
           <div className="text-right">
-            <div className="font-display text-[10px] tracking-widest text-muted-foreground uppercase">Avg / Month</div>
-            <div className="font-display text-base font-bold text-foreground">
+            <div className="font-display text-[9px] tracking-widest text-muted-foreground uppercase">Avg / Month</div>
+            <div className="font-display text-sm font-bold text-foreground">
               ${Math.round(total / data.length)}
             </div>
           </div>

@@ -183,7 +183,7 @@ const Dashboard = () => {
             </button>
             <button onClick={() => navigate("/wallet")}
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-border bg-secondary/40 text-muted-foreground font-display text-sm hover:border-primary/30 hover:text-foreground transition-all">
-              <Wallet className="h-3.5 w-3.5" /> Deposit
+              <Wallet className="h-3.5 w-3.5" /> Wallet
             </button>
             <button onClick={() => navigate("/history")}
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-border bg-secondary/40 text-muted-foreground font-display text-sm hover:border-primary/30 hover:text-foreground transition-all">
@@ -237,7 +237,7 @@ const Dashboard = () => {
         <span className="font-display text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">Performance</span>
         <div className="flex-1 h-px bg-border" />
       </div>
-      <div className="grid md:grid-cols-2 gap-6">
+      <div className="grid md:grid-cols-2 gap-3 md:gap-4">
         <WinLossChart />
         <EarningsChart />
       </div>

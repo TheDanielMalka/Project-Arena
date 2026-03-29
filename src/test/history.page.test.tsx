@@ -3,12 +3,14 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import History from "@/pages/History";
 import { useMatchStore } from "@/stores/matchStore";
+import { useUserStore } from "@/stores/userStore";
 
 const seedMatches = useMatchStore.getState().matches;
 
 describe("History page", () => {
   beforeEach(() => {
     useMatchStore.setState({ matches: seedMatches });
+    useUserStore.getState().login("player@arena.gg", "test");
   });
 
   it("filters matches by search input", () => {

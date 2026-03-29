@@ -74,9 +74,9 @@ function PurchaseConfirmDialog({
   };
 
   const isUSDT   = pending?.currency === "USDT";
-  const accentCl = isUSDT ? "text-arena-green" : "text-arena-purple";
-  const borderCl = isUSDT ? "border-arena-green/30" : "border-arena-purple/30";
-  const bgCl     = isUSDT ? "bg-arena-green/5"  : "bg-arena-purple/5";
+  const accentCl = isUSDT ? "text-destructive" : "text-arena-purple";
+  const borderCl = isUSDT ? "border-destructive/35" : "border-arena-purple/30";
+  const bgCl     = isUSDT ? "bg-destructive/8" : "bg-arena-purple/5";
 
   return (
     <Dialog open={!!pending} onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -165,7 +165,7 @@ function PurchaseConfirmDialog({
             className={cn(
               "flex-1 text-xs font-display font-bold",
               isUSDT
-                ? "bg-arena-green hover:bg-arena-green/80 text-black"
+                ? "bg-destructive hover:bg-destructive/90 text-destructive-foreground"
                 : "bg-arena-purple hover:bg-arena-purple/80 text-white"
             )}>
             {loading
@@ -243,65 +243,65 @@ function ItemCard({ item, onBuy, success, error, arenaTokens }: ItemCardProps) {
 
   return (
     <div
-      className="relative flex flex-col rounded-xl border p-4 transition-all duration-200 hover:scale-[1.02] hover:shadow-lg cursor-default"
+      className="relative flex flex-col rounded-lg border p-2.5 transition-all duration-200 hover:scale-[1.02] hover:shadow-lg cursor-default"
       style={{
         background: rc.bg,
         borderColor: rc.border,
-        boxShadow: success ? `0 0 20px ${rc.color}40` : undefined,
+        boxShadow: success ? `0 0 14px ${rc.color}35` : undefined,
       }}
     >
       {/* Rarity glow overlay */}
       <div
-        className="pointer-events-none absolute inset-0 rounded-xl opacity-20"
+        className="pointer-events-none absolute inset-0 rounded-lg opacity-20"
         style={{ background: `radial-gradient(ellipse at 50% 0%, ${rc.color}33 0%, transparent 70%)` }}
       />
 
       {/* Badges row */}
-      <div className="relative flex items-center gap-1.5 mb-3 flex-wrap">
+      <div className="relative flex items-center gap-1 mb-2 flex-wrap">
         <span
-          className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+          className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full"
           style={{ background: `${rc.color}22`, color: rc.color, border: `1px solid ${rc.color}44` }}
         >
           {rc.label}
         </span>
         {item.limited && (
-          <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-destructive/20 text-destructive border border-destructive/30">
+          <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-destructive/20 text-destructive border border-destructive/30">
             Limited
           </span>
         )}
         {item.featured && (
-          <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-primary/20 text-primary border border-primary/30">
+          <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-primary/20 text-primary border border-primary/30">
             Featured
           </span>
         )}
       </div>
 
       {/* Icon + name */}
-      <div className="relative flex items-center gap-3 mb-2">
+      <div className="relative flex items-center gap-2 mb-1.5">
         <div
-          className="w-12 h-12 rounded-lg flex items-center justify-center text-2xl flex-shrink-0"
+          className="w-9 h-9 rounded-md flex items-center justify-center text-lg flex-shrink-0"
           style={{ background: `${rc.color}18`, border: `1px solid ${rc.color}44` }}
         >
           {item.icon}
         </div>
         <div className="min-w-0">
-          <p className="font-display font-semibold text-sm text-foreground leading-tight truncate">{item.name}</p>
+          <p className="font-display font-semibold text-xs text-foreground leading-tight truncate">{item.name}</p>
           {item.ownedBy !== undefined && (
-            <p className="text-[11px] text-muted-foreground mt-0.5">
-              <Users2 className="w-3 h-3 inline mr-1" />{item.ownedBy.toLocaleString()} own this
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              <Users2 className="w-2.5 h-2.5 inline mr-0.5" />{item.ownedBy.toLocaleString()} own this
             </p>
           )}
         </div>
       </div>
 
       {/* Description */}
-      <p className="relative text-xs text-muted-foreground leading-relaxed mb-3 line-clamp-2 flex-1">
+      <p className="relative text-[11px] text-muted-foreground leading-snug mb-2 line-clamp-2 flex-1">
         {item.description}
       </p>
 
       {/* Stock / countdown */}
       {(item.stock !== undefined || countdown) && (
-        <div className="relative flex items-center gap-3 mb-3 text-[11px] text-muted-foreground">
+        <div className="relative flex items-center gap-2 mb-2 text-[10px] text-muted-foreground">
           {item.stock !== undefined && (
             <span className="flex items-center gap-1">
               <Tag className="w-3 h-3" />{item.stock} left
@@ -317,17 +317,17 @@ function ItemCard({ item, onBuy, success, error, arenaTokens }: ItemCardProps) {
 
       {/* Error */}
       {error && (
-        <p className="relative text-[11px] text-destructive mb-2 font-medium">{error}</p>
+        <p className="relative text-[10px] text-destructive mb-1.5 font-medium">{error}</p>
       )}
 
       {/* Buy buttons */}
-      <div className="relative flex flex-col gap-1.5 mt-auto">
+      <div className="relative flex flex-col gap-1 mt-auto">
         {item.priceAT && (
           <Button
             size="sm"
             variant={success ? "default" : "outline"}
             className={cn(
-              "h-8 text-xs font-semibold w-full transition-all",
+              "h-7 text-[11px] font-semibold w-full transition-all",
               success && "bg-primary/20 text-primary border-primary/30",
               !success && arenaTokens < item.priceAT && "opacity-50"
             )}
@@ -345,12 +345,12 @@ function ItemCard({ item, onBuy, success, error, arenaTokens }: ItemCardProps) {
           <Button
             size="sm"
             className={cn(
-              "h-8 text-xs font-semibold w-full",
-              success && "bg-green-500/20 text-green-400 border-green-500/30"
+              "h-7 text-[11px] font-semibold w-full",
+              success && "bg-green-500/20 text-green-400 border-green-500/30",
+              !success && "bg-destructive hover:bg-destructive/90 text-destructive-foreground"
             )}
             onClick={() => onBuy(item.id, "USDT")}
             disabled={success}
-            style={!success ? { background: `${rc.color}22`, color: rc.color, borderColor: `${rc.color}55` } : undefined}
           >
             {success ? (
               <><CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />Purchased!</>
@@ -421,11 +421,11 @@ function ShopTab() {
       {/* Featured hero */}
       {featured && (
         <div
-          className="relative overflow-hidden rounded-2xl p-6 border"
+          className="relative overflow-hidden rounded-xl p-4 border"
           style={{
             background: `linear-gradient(135deg, ${featuredRc.color}18 0%, rgba(0,0,0,0.4) 60%, ${featuredRc.color}10 100%)`,
             borderColor: featuredRc.border,
-            boxShadow: `0 0 40px ${featuredRc.color}30, inset 0 1px 0 ${featuredRc.color}20`,
+            boxShadow: `0 0 28px ${featuredRc.color}28, inset 0 1px 0 ${featuredRc.color}18`,
           }}
         >
           {/* Background glow */}
@@ -444,33 +444,33 @@ function ShopTab() {
             </span>
           </div>
 
-          <div className="relative flex items-center gap-6 flex-wrap">
+          <div className="relative flex items-center gap-4 flex-wrap">
             <div
-              className="w-20 h-20 rounded-2xl flex items-center justify-center text-5xl flex-shrink-0"
+              className="w-14 h-14 rounded-xl flex items-center justify-center text-3xl flex-shrink-0"
               style={{
                 background: `${featuredRc.color}18`,
                 border: `2px solid ${featuredRc.color}55`,
-                boxShadow: `0 0 20px ${featuredRc.color}40`,
+                boxShadow: `0 0 14px ${featuredRc.color}35`,
               }}
             >
               {featured.icon}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
                 <span
-                  className="text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+                  className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full"
                   style={{ background: `${featuredRc.color}22`, color: featuredRc.color }}
                 >
                   {RARITY_CONFIG[featured.rarity].label}
                 </span>
                 {featured.limited && (
-                  <Badge variant="destructive" className="text-xs font-bold">Limited Edition</Badge>
+                  <Badge variant="destructive" className="text-[10px] font-bold px-1.5 py-0">Limited Edition</Badge>
                 )}
               </div>
-              <h3 className="font-display text-2xl font-bold text-foreground">{featured.name}</h3>
-              <p className="text-sm text-muted-foreground mt-1 max-w-md">{featured.description}</p>
+              <h3 className="font-display text-lg font-bold text-foreground">{featured.name}</h3>
+              <p className="text-xs text-muted-foreground mt-0.5 max-w-md line-clamp-2">{featured.description}</p>
 
-              <div className="flex items-center gap-4 mt-3 flex-wrap text-sm">
+              <div className="flex items-center gap-3 mt-2 flex-wrap text-xs">
                 {featured.stock !== undefined && (
                   <span className="flex items-center gap-1.5 text-muted-foreground">
                     <Tag className="w-3.5 h-3.5" />
@@ -490,31 +490,30 @@ function ShopTab() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-2 flex-shrink-0">
+            <div className="flex flex-col gap-1.5 flex-shrink-0">
               {errorItem?.id === featured.id && (
-                <p className="text-xs text-destructive font-medium">{errorItem.msg}</p>
+                <p className="text-[10px] text-destructive font-medium">{errorItem.msg}</p>
               )}
               {featured.priceAT && (
                 <Button
-                  className="h-10 px-6 font-bold"
+                  className="h-8 px-4 text-xs font-bold"
                   variant={successItems.has(featured.id) ? "default" : "outline"}
                   style={!successItems.has(featured.id) ? { borderColor: featuredRc.color, color: featuredRc.color } : undefined}
                   onClick={() => handleBuy(featured.id, "AT")}
                   disabled={successItems.has(featured.id)}
                 >
                   {successItems.has(featured.id) ? (
-                    <><CheckCircle2 className="w-4 h-4 mr-2" />Purchased!</>
+                    <><CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />Purchased!</>
                   ) : (
-                    <><Zap className="w-4 h-4 mr-2" />{featured.priceAT.toLocaleString()} AT</>
+                    <><Zap className="w-3.5 h-3.5 mr-1.5" />{featured.priceAT.toLocaleString()} AT</>
                   )}
                 </Button>
               )}
               {featured.priceUSDT && (
                 <Button
-                  className="h-10 px-6 font-bold"
+                  className="h-8 px-4 text-xs font-bold bg-destructive hover:bg-destructive/90 text-destructive-foreground"
                   onClick={() => handleBuy(featured.id, "USDT")}
                   disabled={successItems.has(featured.id)}
-                  style={{ background: featuredRc.color, color: "#000" }}
                 >
                   ${featured.priceUSDT.toFixed(2)} USDT
                 </Button>
@@ -531,7 +530,7 @@ function ShopTab() {
             key={pill.value}
             onClick={() => setCategory(pill.value)}
             className={cn(
-              "flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all",
+              "flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all",
               category === pill.value
                 ? "bg-primary text-primary-foreground border-primary"
                 : "bg-card/30 border-border/40 text-muted-foreground hover:text-foreground hover:border-border"
@@ -550,7 +549,7 @@ function ShopTab() {
           <p className="text-sm">No items in this category</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">
           {filteredItems.map((item) => (
             <ItemCard
               key={item.id}
@@ -598,7 +597,7 @@ function ChallengesTab() {
     return (
       <div
         className={cn(
-          "relative flex items-center gap-4 rounded-xl border p-4 transition-all",
+          "relative flex items-center gap-3 rounded-lg border p-2.5 transition-all",
           isClaimed
             ? "bg-card/20 border-border/20 opacity-60"
             : "bg-card/30 border-border/40 hover:border-border/70"
@@ -607,7 +606,7 @@ function ChallengesTab() {
         {/* Icon */}
         <div
           className={cn(
-            "w-11 h-11 rounded-xl flex items-center justify-center text-xl flex-shrink-0 border",
+            "w-9 h-9 rounded-lg flex items-center justify-center text-lg flex-shrink-0 border",
             isClaimed ? "bg-muted/20 border-border/20" : "bg-primary/10 border-primary/20"
           )}
         >
@@ -696,17 +695,17 @@ function ChallengesTab() {
       </div>
 
       {/* Stats overview */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {[
-          { label: "Daily Active",    value: daily.filter(c => c.status === "active").length,    icon: <Target className="w-4 h-4" />,       color: "text-primary" },
-          { label: "Ready to Claim",  value: [...daily, ...weekly].filter(c => c.status === "claimable").length, icon: <Gift className="w-4 h-4" />, color: "text-green-400" },
-          { label: "Weekly Active",   value: weekly.filter(c => c.status === "active").length,   icon: <TrendingUp className="w-4 h-4" />,   color: "text-amber-400" },
-          { label: "Completed Today", value: daily.filter(c => c.status === "claimed").length,   icon: <CheckCircle2 className="w-4 h-4" />, color: "text-muted-foreground" },
+          { label: "Daily Active",    value: daily.filter(c => c.status === "active").length,    icon: <Target className="w-3.5 h-3.5" />,       color: "text-primary" },
+          { label: "Ready to Claim",  value: [...daily, ...weekly].filter(c => c.status === "claimable").length, icon: <Gift className="w-3.5 h-3.5" />, color: "text-green-400" },
+          { label: "Weekly Active",   value: weekly.filter(c => c.status === "active").length,   icon: <TrendingUp className="w-3.5 h-3.5" />,   color: "text-amber-400" },
+          { label: "Completed Today", value: daily.filter(c => c.status === "claimed").length,   icon: <CheckCircle2 className="w-3.5 h-3.5" />, color: "text-muted-foreground" },
         ].map((stat) => (
-          <div key={stat.label} className="bg-card/30 border border-border/40 rounded-xl p-3 text-center">
-            <div className={cn("flex justify-center mb-1", stat.color)}>{stat.icon}</div>
-            <div className={cn("text-xl font-bold font-display", stat.color)}>{stat.value}</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">{stat.label}</div>
+          <div key={stat.label} className="bg-card/30 border border-border/40 rounded-lg p-2 text-center">
+            <div className={cn("flex justify-center mb-0.5", stat.color)}>{stat.icon}</div>
+            <div className={cn("text-lg font-bold font-display", stat.color)}>{stat.value}</div>
+            <div className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{stat.label}</div>
           </div>
         ))}
       </div>
@@ -785,7 +784,7 @@ function EventsTab() {
     return (
       <div
         className={cn(
-          "relative overflow-hidden rounded-xl border p-5 transition-all hover:border-border/70",
+          "relative overflow-hidden rounded-lg border p-3.5 transition-all hover:border-border/70",
           isActive ? "bg-card/30 border-border/40" : "bg-card/20 border-border/30"
         )}
       >
@@ -803,13 +802,13 @@ function EventsTab() {
           </div>
         )}
 
-        <div className="flex items-start gap-4">
-          <div className="w-12 h-12 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-2xl flex-shrink-0">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-xl flex-shrink-0">
             {event.icon}
           </div>
-          <div className="flex-1 min-w-0 pr-20">
-            <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-              <h4 className="font-display font-bold text-base text-foreground">{event.name}</h4>
+          <div className="flex-1 min-w-0 pr-16">
+            <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+              <h4 className="font-display font-bold text-sm text-foreground">{event.name}</h4>
               <span className="text-[11px] px-2 py-0.5 rounded-full bg-card/50 border border-border/30 text-muted-foreground">
                 {event.game}
               </span>
@@ -997,13 +996,13 @@ function DropsTab() {
     return (
       <div
         className={cn(
-          "relative overflow-hidden rounded-2xl border transition-all hover:scale-[1.01]",
-          hero ? "p-6" : "p-5",
+          "relative overflow-hidden rounded-xl border transition-all hover:scale-[1.01]",
+          hero ? "p-4" : "p-3.5",
           isFlash
             ? "bg-gradient-to-br from-purple-900/20 to-card/30 border-purple-500/30"
             : "bg-card/30 border-border/40"
         )}
-        style={hero ? { boxShadow: "0 0 40px rgba(34,197,94,0.15)" } : undefined}
+        style={hero ? { boxShadow: "0 0 28px rgba(34,197,94,0.12)" } : undefined}
       >
         {/* Tag badge */}
         {drop.tag && (
@@ -1022,11 +1021,11 @@ function DropsTab() {
           </div>
         )}
 
-        <div className={cn("flex gap-4", hero ? "items-center" : "items-start")}>
+        <div className={cn("flex gap-3", hero ? "items-center" : "items-start")}>
           <div
             className={cn(
-              "rounded-2xl flex items-center justify-center flex-shrink-0",
-              hero ? "w-16 h-16 text-4xl" : "w-12 h-12 text-2xl",
+              "rounded-xl flex items-center justify-center flex-shrink-0",
+              hero ? "w-12 h-12 text-3xl" : "w-10 h-10 text-xl",
               isFlash ? "bg-purple-500/15 border border-purple-500/30" : "bg-primary/10 border border-primary/20"
             )}
           >
@@ -1096,8 +1095,9 @@ function DropsTab() {
               <Button
                 className={cn(
                   "font-bold transition-all",
-                  hero ? "h-11 px-8 text-sm" : "h-9 px-5 text-xs",
-                  isBought && "bg-green-500/20 text-green-400 border-green-500/30"
+                  hero ? "h-9 px-5 text-xs" : "h-8 px-4 text-[11px]",
+                  isBought && "bg-green-500/20 text-green-400 border-green-500/30",
+                  !isBought && drop.salePriceUSDT && "bg-destructive hover:bg-destructive/90 text-destructive-foreground"
                 )}
                 onClick={() => handleBuy(drop.id)}
                 disabled={isBought}
@@ -1156,7 +1156,7 @@ function DropsTab() {
             <Package className="w-4 h-4 text-primary" />
             <h3 className="font-display font-semibold text-sm text-foreground">Limited Bundles</h3>
           </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
             {bundles.map((d) => <DropCard key={d.id} drop={d} />)}
           </div>
         </div>

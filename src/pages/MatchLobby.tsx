@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { useUserStore } from "@/stores/userStore";
 import { useMatchStore } from "@/stores/matchStore";
@@ -14,15 +13,13 @@ import {
   Search, Copy, UserPlus, Crown, Shield, Hash, KeyRound, Eye, EyeOff,
   AlertCircle, ChevronDown, Monitor, Smartphone, Zap, TrendingUp,
   Wallet, Loader2, ScanLine, LogOut, AlertTriangle, Timer,
-  UserCheck, Flag, UserCircle2, Trash2, WifiOff, Download,
+  Trash2, WifiOff, Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { MatchStatus, Game, Match, MatchMode, TicketReason } from "@/types";
-import { useFriendStore }  from "@/stores/friendStore";
-import { useReportStore }  from "@/stores/reportStore";
-import { usePlayerStore }  from "@/stores/playerStore";
+import type { MatchStatus, Game, Match, MatchMode } from "@/types";
 import { useClientStore }  from "@/stores/clientStore";
 import { GAME_MODES, getDefaultMode, getTeamSize, getTotalPlayers, isGameActive } from "@/config/gameModes";
+import { PlayerPopoverLayer } from "@/components/players/PlayerCardPopover";
 
 // ─── Game configs ─────────────────────────────────────────────────────────────
 // comingSoon: true → game visible in dropdowns but non-selectable (greyed, locked)
@@ -244,227 +241,11 @@ const LiveTicker = ({ matches }: { matches: Match[] }) => {
   );
 };
 
-// ── PlayerCardPopover ─────────────────────────────────────────────────────────
-// Mini-profile card shown when clicking a player's name in team slots
-// DB-ready: GET /api/players/:username for profile data
-//           POST /api/friends for Add Friend action
-//           POST /api/reports for Report action
-const PlayerCardPopover = ({
-  username,
-  onClose,
-  onLeaveRoom,
-  isOwnSlot,
-}: {
-  username: string;
-  onClose: () => void;
-  onLeaveRoom: () => void;
-  isOwnSlot: boolean;
-}) => {
-  const navigate = useNavigate();
-  const { players } = usePlayerStore();
-  const { friendships, sendFriendRequest } = useFriendStore();
-  const { submitReport } = useReportStore();
-  const { user } = useUserStore();
-
-  const [reportStep, setReportStep] = useState<"idle" | "form" | "done">("idle");
-  const [reportReason, setReportReason] = useState<TicketReason>("cheating");
-  const [reportDesc, setReportDesc] = useState("");
-
-  // DB-ready: GET /api/players/:username
-  const profile = players.find((p) => p.username === username);
-
-  // Fallback profile fields for players not yet in playerStore
-  // DB-ready: GET /api/players/:username will always resolve the full profile
-  const targetId       = profile?.id             ?? `u-${username.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
-  const targetArenaId  = profile?.arenaId        ?? `ARENA-${username.slice(0, 2).toUpperCase()}`;
-  const targetInitials = profile?.avatarInitials ?? username.slice(0, 2).toUpperCase();
-  const targetRank     = profile?.rank           ?? "—";
-  const targetTier     = profile?.tier           ?? "—";
-  const targetGame     = profile?.preferredGame  ?? "—";
-
-  // Uses targetId (fallback-safe) so relationship lookup works for all players
-  const existingFr = friendships.find((f) => f.friendId === targetId);
-  const isFriend   = existingFr?.status === "accepted";
-  const isPending  = existingFr?.status === "pending";
-
-  const REASON_LABELS: Record<TicketReason, string> = {
-    cheating:             "Cheating / Hacking",
-    harassment:           "Harassment",
-    fake_screenshot:      "Fake Screenshot",
-    disconnect_abuse:     "Disconnect Abuse",
-    other:                "Other",
-  };
-
-  const handleAddFriend = () => {
-    if (!user) return;
-    // DB-ready: POST /api/friends
-    sendFriendRequest({
-      myId:                 user.id,
-      myUsername:           user.username,
-      myArenaId:            user.arenaId,
-      myAvatarInitials:     user.avatarInitials,
-      myRank:               user.rank,
-      myTier:               user.tier,
-      myPreferredGame:      user.preferredGame,
-      targetId,
-      targetUsername:       username,
-      targetArenaId,
-      targetAvatarInitials: targetInitials,
-      targetRank,
-      targetTier,
-      targetPreferredGame:  targetGame,
-    });
-    // Notify HUB inbox so user sees confirmation
-    useNotificationStore.getState().addNotification({
-      type:    "friend_request",
-      title:   "Friend Request Sent",
-      message: `Your friend request to ${username} was sent. You'll be notified when they accept.`,
-    });
-    onClose();
-  };
-
-  const handleReport = () => {
-    if (!user) return;
-    // DB-ready: POST /api/reports — ticket lands in Admin Panel → Support Tickets tab
-    submitReport({
-      reporterId:       user.id,
-      reporterName:     user.username,
-      reportedId:       targetId,
-      reportedUsername: username,
-      reason:           reportReason,
-      description:      reportDesc,
-    });
-    // Notify HUB inbox — admin will see ticket in Admin Panel
-    useNotificationStore.getState().addNotification({
-      type:    "system",
-      title:   "Report Submitted",
-      message: `Your report on ${username} has been sent to the moderation team. We'll review it shortly.`,
-    });
-    setReportStep("done");
-    setTimeout(onClose, 1200);
-  };
-
-  return (
-    <div className="w-56 rounded-xl border border-border/60 bg-card shadow-2xl overflow-hidden">
-      {/* Header */}
-      <div className="px-3 py-2.5 bg-secondary/40 border-b border-border/40 flex items-center gap-2">
-        <div className="w-7 h-7 rounded-lg bg-primary/20 border border-primary/30 flex items-center justify-center font-display text-[10px] font-bold text-primary shrink-0">
-          {username.slice(0, 2).toUpperCase()}
-        </div>
-        <div className="min-w-0">
-          <p className="text-xs font-bold font-display truncate">{username}</p>
-          <p className="text-[10px] text-muted-foreground truncate">
-            {profile?.rank ?? "—"} · {profile?.preferredGame ?? "—"}
-          </p>
-        </div>
-      </div>
-
-      {/* Actions */}
-      <div className="p-2 space-y-1">
-        {isOwnSlot ? (
-          <button
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
-            onClick={() => { onClose(); onLeaveRoom(); }}
-          >
-            <LogOut className="h-3 w-3" /> Leave Room
-          </button>
-        ) : (
-          <>
-            {/* Add Friend */}
-            {isFriend ? (
-              <div className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground">
-                <UserCheck className="h-3 w-3" /> Friends
-              </div>
-            ) : isPending ? (
-              <div className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground">
-                <Clock className="h-3 w-3" /> Request Sent
-              </div>
-            ) : (
-              <button
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-secondary/60 rounded-lg transition-colors"
-                onClick={handleAddFriend}
-              >
-                <UserPlus className="h-3 w-3 text-primary" /> Add Friend
-              </button>
-            )}
-
-            {/* Report */}
-            {reportStep === "idle" && (
-              <button
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-destructive/70 hover:bg-destructive/10 hover:text-destructive rounded-lg transition-colors"
-                onClick={() => setReportStep("form")}
-              >
-                <Flag className="h-3 w-3" /> Report
-              </button>
-            )}
-
-            {reportStep === "form" && (
-              <div className="space-y-1.5 pt-1">
-                <select
-                  value={reportReason}
-                  onChange={(e) => setReportReason(e.target.value as TicketReason)}
-                  className="w-full text-[10px] rounded-md border border-border/50 bg-secondary/50 px-2 py-1"
-                >
-                  {(Object.entries(REASON_LABELS) as [TicketReason, string][]).map(([k, v]) => (
-                    <option key={k} value={k}>{v}</option>
-                  ))}
-                </select>
-                <textarea
-                  value={reportDesc}
-                  onChange={(e) => setReportDesc(e.target.value)}
-                  placeholder="Brief description…"
-                  rows={2}
-                  className="w-full text-[10px] rounded-md border border-border/50 bg-secondary/50 px-2 py-1 resize-none"
-                />
-                <div className="flex gap-1">
-                  <button
-                    disabled={!reportDesc.trim()}
-                    onClick={handleReport}
-                    className="flex-1 text-[10px] bg-destructive text-destructive-foreground rounded-md py-1 disabled:opacity-40"
-                  >
-                    Submit
-                  </button>
-                  <button
-                    onClick={() => setReportStep("idle")}
-                    className="text-[10px] px-2 rounded-md border border-border/40 hover:bg-secondary/60"
-                  >
-                    Back
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {reportStep === "done" && (
-              <p className="text-[10px] text-primary px-2.5 py-1.5">✓ Report submitted</p>
-            )}
-          </>
-        )}
-
-        {/* View Profile — client navigate like Leaderboard; <a href> full reload loses auth hydrate → /auth */}
-        {/* DB-ready: GET /api/players/:username — always resolves in production */}
-        {!isOwnSlot && (
-          <button
-            type="button"
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/40 rounded-lg transition-colors text-left"
-            onClick={() => {
-              navigate(`/players/${username}`);
-              onClose();
-            }}
-          >
-            <UserCircle2 className="h-3 w-3" /> View Profile
-          </button>
-        )}
-      </div>
-    </div>
-  );
-};
-
 // ─── Main ─────────────────────────────────────────────────────────────────────
 const MatchLobby = () => {
   const { user } = useUserStore();
   const { matches, addMatch, joinMatch, leaveMatch, updateMatchStatus, getMatchByCode, deleteMatch, expireOldMatches } = useMatchStore();
   const { lockEscrow, cancelEscrow } = useWalletStore();
-  const { friendships, sendFriendRequest } = useFriendStore();
   const canPlay      = useClientStore((s) => s.canPlay());
   const clientStatus = useClientStore((s) => s.status);
   const markInMatch  = useClientStore((s) => s.markInMatch);
@@ -494,7 +275,7 @@ const MatchLobby = () => {
   const [countdown, setCountdown]         = useState<number | null>(null);
   const [leaveConfirmOpen,      setLeaveConfirmOpen]      = useState(false);
   const [deleteRoomConfirmOpen, setDeleteRoomConfirmOpen] = useState(false);
-  const [playerPopover,         setPlayerPopover]         = useState<{ username: string; rect: DOMRect } | null>(null);
+  const [playerPopover,         setPlayerPopover]         = useState<{ slotValue: string; rect: DOMRect } | null>(null);
 
   const publicMatches = matches.filter(m => m.type === "public");
   const customMatches = matches.filter(m => m.type === "custom");
@@ -917,7 +698,7 @@ const MatchLobby = () => {
                         <Shield className="h-3 w-3" /> {label} ({players.length}/{maxPerTeam})
                       </p>
                       <div className="space-y-0.5">
-                        {players.map((p, i) => <PlayerRow key={`${p}-${i}`} name={p} isHost={label === "Team A"} index={i} onPlayerClick={(name, rect) => setPlayerPopover({ username: name, rect })} />)}
+                        {players.map((p, i) => <PlayerRow key={`${p}-${i}`} name={p} isHost={label === "Team A"} index={i} onPlayerClick={(name, rect) => setPlayerPopover({ slotValue: name, rect })} />)}
                         {Array.from({ length: maxPerTeam - players.length }).map((_, i) => (
                           <p key={i} className="text-sm text-muted-foreground/30 italic pl-5">Empty slot</p>
                         ))}
@@ -1016,7 +797,7 @@ const MatchLobby = () => {
                               className="truncate text-left hover:text-primary transition-colors w-full"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setPlayerPopover({ username: player, rect: e.currentTarget.getBoundingClientRect() });
+                                setPlayerPopover({ slotValue: player, rect: e.currentTarget.getBoundingClientRect() });
                               }}
                             >
                               {player}
@@ -1043,7 +824,7 @@ const MatchLobby = () => {
                               className="truncate text-left hover:text-primary transition-colors w-full"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setPlayerPopover({ username: player, rect: e.currentTarget.getBoundingClientRect() });
+                                setPlayerPopover({ slotValue: player, rect: e.currentTarget.getBoundingClientRect() });
                               }}
                             >
                               {player}
@@ -1520,7 +1301,7 @@ const MatchLobby = () => {
                             <Shield className="h-3 w-3" /> {label} ({players.length}/{match.maxPerTeam})
                           </p>
                           <div className="space-y-0.5">
-                            {players.map((p, i) => <PlayerRow key={i} name={p} isHost={isA} index={i} onPlayerClick={(name, rect) => setPlayerPopover({ username: name, rect })} />)}
+                            {players.map((p, i) => <PlayerRow key={i} name={p} isHost={isA} index={i} onPlayerClick={(name, rect) => setPlayerPopover({ slotValue: name, rect })} />)}
                             {Array.from({ length: match.maxPerTeam - players.length }).map((_, i) => (
                               <p key={i} className="text-sm text-muted-foreground/30 italic pl-5">Empty slot</p>
                             ))}
@@ -1618,32 +1399,14 @@ const MatchLobby = () => {
       )}
 
       {/* ── Player Card Popover ───────────────────────────────────────── */}
-      {playerPopover && user && (() => {
-        const rect = playerPopover.rect;
-        const top  = Math.min(rect.bottom + 8, window.innerHeight - 320);
-        const left = Math.min(rect.left, window.innerWidth - 232);
-        return (
-          <>
-            {/* Click-away backdrop */}
-            <div
-              className="fixed inset-0 z-[70]"
-              onClick={() => setPlayerPopover(null)}
-            />
-            {/* Popover card */}
-            <div
-              className="fixed z-[71]"
-              style={{ top, left }}
-            >
-              <PlayerCardPopover
-                username={playerPopover.username}
-                onClose={() => setPlayerPopover(null)}
-                onLeaveRoom={() => { setPlayerPopover(null); setLeaveConfirmOpen(true); }}
-                isOwnSlot={playerPopover.username === user.username}
-              />
-            </div>
-          </>
-        );
-      })()}
+      <PlayerPopoverLayer
+        open={!!playerPopover && !!user}
+        slotValue={playerPopover?.slotValue ?? null}
+        rect={playerPopover?.rect ?? null}
+        onClose={() => setPlayerPopover(null)}
+        onLeaveRoom={() => { setPlayerPopover(null); setLeaveConfirmOpen(true); }}
+        enableLeaveRoom
+      />
     </div>
   );
 };
