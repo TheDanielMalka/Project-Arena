@@ -9,10 +9,9 @@ from sqlalchemy.orm import sessionmaker
 
 from src.config import DATABASE_URL, ENVIRONMENT
 from src.vision.capture import capture_screen, crop_roi
-from src.vision.ocr import extract_text, extract_player_names, extract_score
-from src.vision.matcher import detect_result, match_template
+from src.vision.engine import VisionEngine, VisionEngineConfig
 
-# ── Config ────────────────────────────────────────────────────
+# ── Config ────────────────────────────────────────────────────────────────────
 DB_URL = DATABASE_URL or "postgresql://arena_admin:arena_secret_change_me@arena-db:5432/arena"
 API_SECRET = os.getenv("API_SECRET", "change_me_in_production")
 SCREENSHOT_DIR = os.getenv("SCREENSHOT_DIR", "/app/screenshots")
@@ -43,7 +42,7 @@ app = FastAPI(
 )
 
 
-# ── Auth dependency ───────────────────────────────────────────
+# ── Auth dependency ───────────────────────────────────────────────────────────
 async def verify_token(authorization: str = Header(...)):
     if not authorization.startswith("Bearer "):
         raise HTTPException(401, "Invalid token format")
@@ -52,13 +51,25 @@ async def verify_token(authorization: str = Header(...)):
     return token
 
 
-# ── Models ────────────────────────────────────────────────────
+# ── Request / Response models ─────────────────────────────────────────────────
+
 class MatchResult(BaseModel):
+    """
+    Validated match result submitted by the desktop client after the local
+    StateMachine reaches CONFIRMED.
+
+    TODO:
+    - validate match_id against DB before accepting
+    - cross-reference players_detected with registered match participants
+    - trigger escrow release once winner_id is confirmed
+    """
     match_id: str
     winner_id: str
+    game: str = "CS2"                    # "CS2" | "Valorant"
     screenshot_path: str | None = None
     ocr_confidence: float = 0.0
     players_detected: list[str] = []
+    agents_detected: list[str] = []      # Valorant agent names; [] for CS2
     score: str | None = None
 
 
@@ -69,10 +80,19 @@ class HealthResponse(BaseModel):
 
 
 class ValidationResponse(BaseModel):
+    """
+    Response returned by POST /validate/screenshot.
+
+    TODO:
+    - persist this as a match_evidence row in DB once schema is ready
+    - add match_id foreign key once matches table exists
+    """
     match_id: str
+    game: str                            # "CS2" | "Valorant"
     result: str | None
     confidence: float
     players: list[str]
+    agents: list[str] = []              # Valorant agent names; [] for CS2
     score: str | None
     evidence_path: str | None
 
@@ -82,7 +102,8 @@ class CaptureResponse(BaseModel):
     message: str
 
 
-# ── Routes ────────────────────────────────────────────────────
+# ── Routes ────────────────────────────────────────────────────────────────────
+
 @app.get("/health", response_model=HealthResponse)
 async def health():
     try:
@@ -117,12 +138,24 @@ async def crop_capture(
 @app.post("/validate/screenshot", response_model=ValidationResponse)
 async def validate_screenshot(
     match_id: str,
+    game: str = "CS2",
     file: UploadFile = File(...),
     token: str = Depends(verify_token),
 ):
     """
-    Upload a screenshot → run OCR + color detection → return match result.
-    Full pipeline: save → detect_result → extract_players → extract_score
+    Upload a screenshot → run the full vision pipeline → return match result.
+
+    The `game` query parameter ("CS2" | "Valorant") determines which colour
+    detector and OCR regions are used.  All routing goes through VisionEngine
+    so this endpoint always stays in sync with the watcher pipeline.
+
+    Pipeline: save → VisionEngine.process_frame() → save evidence → respond
+
+    TODO:
+    - validate `game` against ACTIVE_GAMES from DB config
+    - validate `match_id` exists in DB before processing
+    - store ValidationResponse as match_evidence row in DB
+    - enforce per-match submission limits (1 submission per wallet per match)
     """
     import shutil
     from datetime import datetime
@@ -133,26 +166,26 @@ async def validate_screenshot(
     with open(save_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    # 1. Color-based win/loss detection
-    result, confidence = detect_result(save_path)
+    # Route through game-aware VisionEngine — single source of truth for
+    # all detection logic (colour + OCR + agents), identical to the watcher.
+    vision = VisionEngine(config=VisionEngineConfig(game=game))
+    output = vision.process_frame(save_path)
 
-    # 2. OCR — extract player names
-    players = extract_player_names(save_path) or []
-
-    # 3. OCR — extract score
-    score = extract_score(save_path)
-
+    # Evidence is already saved inside detect_result() via save_evidence().
+    # Store the path here for the API response so the caller can reference it.
     evidence_path = None
-    if result:
+    if output.result:
         from src.vision.matcher import save_evidence
-        evidence_path = save_evidence(save_path, result, confidence)
+        evidence_path = save_evidence(save_path, output.result, output.confidence)
 
     return ValidationResponse(
         match_id=match_id,
-        result=result,
-        confidence=confidence,
-        players=players,
-        score=score,
+        game=game,
+        result=output.result,
+        confidence=output.confidence,
+        players=output.players,
+        agents=output.agents,
+        score=output.score,
         evidence_path=evidence_path,
     )
 
@@ -160,10 +193,15 @@ async def validate_screenshot(
 @app.post("/match/result")
 async def submit_result(result: MatchResult, token: str = Depends(verify_token)):
     """
-    Receives validated match result from desktop client.
+    Receives a validated match result from the desktop client after local
+    consensus is reached.
+
     TODO:
-    - Update match status in DB
-    - Release escrow funds to winner
+    - validate match_id against DB
+    - verify winner_id is a registered participant
+    - cross-reference players_detected / agents_detected with DB records
+    - update match status to "completed" in DB
+    - trigger ArenaEscrow release to winner_id
     """
     return {
         "accepted": True,
@@ -174,7 +212,11 @@ async def submit_result(result: MatchResult, token: str = Depends(verify_token))
 
 @app.get("/match/{match_id}/status")
 async def match_status(match_id: str):
-    """Check match validation status from DB."""
+    """
+    Check match validation status from DB.
+
+    TODO: return full match record once schema is finalised.
+    """
     try:
         with SessionLocal() as session:
             row = session.execute(
