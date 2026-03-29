@@ -64,7 +64,7 @@ const SEED_FRIENDSHIPS: Friendship[] = [
     friendAvatarInitials: "CW",
     friendRank:           "Gold II",
     friendTier:           "Gold",
-    friendPreferredGame:  "PUBG",
+    friendPreferredGame:  "Valorant",
     status: "pending",
     createdAt: "2026-03-09T11:00:00Z",
   },
