@@ -33,6 +33,11 @@ API_SECRET = os.getenv("API_SECRET", "change_me_in_production")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 SCREENSHOT_INTERVAL = int(os.getenv("SCREENSHOT_INTERVAL", "5"))
 
+# ── Arena Desktop Client ──────────────────────────────────────
+CLIENT_VERSION        = os.getenv("CLIENT_VERSION", "0.1.0")
+PROCESS_POLL_INTERVAL = int(os.getenv("PROCESS_POLL_INTERVAL", "3"))   # seconds between process scans
+HEARTBEAT_INTERVAL    = int(os.getenv("HEARTBEAT_INTERVAL", "15"))     # seconds between API pings
+
 REQUIRED_VARS = [
     "DATABASE_URL",
     "API_SECRET",

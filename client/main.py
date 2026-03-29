@@ -67,6 +67,10 @@ DEFAULT_CONFIG = {
     "game": "AUTO",
     "screenshot_dir": os.path.join(_BASE_DIR, "screenshots"),
     "log_dir": os.path.join(_BASE_DIR, "logs"),
+    # DB-ready: wallet_address synced from user account after login
+    "wallet_address": "unknown",
+    # Bumped on each EXE release; surfaced in GET /client/status
+    "client_version": "1.0.0",
 }
 
 
@@ -217,7 +221,11 @@ class MatchMonitor:
     1. Detect if game is running
     2. Capture screenshots at interval
     3. Upload to Engine API for server-side OCR processing
+    4. Send heartbeat to Engine so the web UI shows the client as connected
     """
+
+    # Heartbeat interval in seconds — keep in sync with engine _CLIENT_TIMEOUT_SECONDS (30s)
+    _HEARTBEAT_INTERVAL = 15
 
     def __init__(self, config: dict):
         self.config = config
@@ -226,20 +234,30 @@ class MatchMonitor:
         self.monitoring = False
         self.current_match_id: str | None = None
         self._thread: threading.Thread | None = None
+        self._heartbeat_thread: threading.Thread | None = None
         self._capture_count = 0
+        self._heartbeat_stop = threading.Event()
 
     def start(self):
         if self.running:
             return
         self.running = True
+        self._heartbeat_stop.clear()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop, daemon=True, name="ArenaHeartbeat"
+        )
+        self._heartbeat_thread.start()
         logger.info("Match monitor started")
 
     def stop(self):
         self.running = False
+        self._heartbeat_stop.set()
         if self._thread:
             self._thread.join(timeout=10)
+        if self._heartbeat_thread:
+            self._heartbeat_thread.join(timeout=5)
         logger.info("Match monitor stopped")
 
     def _loop(self):
@@ -302,6 +320,46 @@ class MatchMonitor:
 
             base = self.config.get("screenshot_interval", 5)
             time.sleep(base + random.uniform(-0.5, 0.5))
+
+    def _heartbeat_loop(self):
+        """
+        Send a heartbeat to POST /client/heartbeat every _HEARTBEAT_INTERVAL
+        seconds so the web UI can display the "Client Connected" badge.
+
+        Non-fatal — a failed heartbeat never interrupts capture.
+        """
+        logger.debug(f"Heartbeat loop started (interval={self._HEARTBEAT_INTERVAL}s)")
+        while not self._heartbeat_stop.wait(timeout=self._HEARTBEAT_INTERVAL):
+            self._send_heartbeat()
+        logger.debug("Heartbeat loop stopped")
+
+    def _send_heartbeat(self):
+        """POST /client/heartbeat — tells the engine (and web UI) this client is online."""
+        try:
+            game = detect_running_game()
+            status = (
+                "in_match" if self.current_match_id
+                else ("in_game" if game else "idle")
+            )
+            payload = {
+                "wallet_address": self.config.get("wallet_address", "unknown"),
+                "client_version": self.config.get("client_version", "1.0.0"),
+                "status": status,
+                "game": game,
+                "session_id": None,        # DB-ready: attach session UUID once client_sessions table exists
+                "match_id": self.current_match_id,
+            }
+            resp = self.engine.client.post(
+                f"{self.engine.base_url}/client/heartbeat",
+                json=payload,
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                logger.debug(f"Heartbeat OK | status={status} | game={game}")
+            else:
+                logger.warning(f"Heartbeat rejected: {resp.status_code}")
+        except Exception as e:
+            logger.debug(f"Heartbeat error (non-fatal): {e}")
 
     def set_match_id(self, match_id: str):
         self.current_match_id = match_id

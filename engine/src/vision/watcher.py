@@ -1,6 +1,7 @@
 import time
 import os
 import logging
+import threading
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from src.vision.engine import VisionEngine, VisionEngineConfig
@@ -85,7 +86,8 @@ class ScreenshotHandler(FileSystemEventHandler):
 def watch(game: str, screenshots_dir: str = "screenshots",
           config: Optional[VisionEngineConfig] = None,
           wallet_address: str = "unknown",
-          consensus: Optional[MatchConsensus] = None):
+          consensus: Optional[MatchConsensus] = None,
+          stop_event: Optional[threading.Event] = None):
     """
     Watch a directory for new PNG screenshots and run the vision pipeline
     on each one.
@@ -106,6 +108,10 @@ def watch(game: str, screenshots_dir: str = "screenshots",
         consensus       : optional MatchConsensus instance; when provided
                           the confirmed result is submitted for multi-player
                           consensus evaluation.
+        stop_event      : optional threading.Event; when set, the watcher
+                          loop exits cleanly.  If None, the loop runs until
+                          KeyboardInterrupt (original behaviour — fully
+                          backward-compatible).
 
     Critical note: when config=None the engine is seeded with game=<game>.
     Callers that pass a custom config are responsible for setting config.game
@@ -143,8 +149,14 @@ def watch(game: str, screenshots_dir: str = "screenshots",
           f"game: {engine.config.game}")
 
     try:
-        while True:
-            time.sleep(1)
+        if stop_event is not None:
+            # Programmatic stop — check event every 0.5 s so shutdown is prompt
+            while not stop_event.is_set():
+                time.sleep(0.5)
+        else:
+            # Interactive / CLI mode — run until Ctrl-C (original behaviour)
+            while True:
+                time.sleep(1)
     except KeyboardInterrupt:
         observer.stop()
 
