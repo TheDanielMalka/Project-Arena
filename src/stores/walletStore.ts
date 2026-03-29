@@ -55,6 +55,8 @@ interface WalletState {
   // DB-ready: wagmi useAccount() / useConnect()
   connectWallet: (address: string, network: Network) => void;
   disconnectWallet: () => void;
+  /** DB-ready: POST /api/wallet/buy-at — mock deducts USDT, credits atBalance; returns false if insufficient */
+  buyArenaTokens: (atAmount: number, totalUsdtCost: number) => boolean;
 }
 
 let txCounter = 100;
@@ -243,5 +245,24 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       matchId,
       note: `Match ${matchId} — ${won ? "Victory! (×2 − 5% fee)" : "Defeat"}`,
     });
+  },
+
+  buyArenaTokens: (atAmount, totalUsdtCost) => {
+    const state = get();
+    if (state.usdtBalance < totalUsdtCost) return false;
+    set((s) => ({
+      usdtBalance: s.usdtBalance - totalUsdtCost,
+      atBalance: s.atBalance + atAmount,
+    }));
+    get().addTransaction({
+      userId: "user-001",
+      type: "at_purchase",
+      amount: -totalUsdtCost,
+      token: "USDT",
+      usdValue: totalUsdtCost,
+      status: "completed",
+      note: `Purchased ${atAmount} AT — buy flow`,
+    });
+    return true;
   },
 }));

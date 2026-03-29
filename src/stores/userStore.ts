@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { UserProfile, ForgeCategory } from "@/types";
+import type { UserProfile, UserProfilePatch, ForgeCategory, ShopEntitlement } from "@/types";
 
 interface UserState {
   user: UserProfile | null;
@@ -19,10 +19,14 @@ interface UserState {
   connectWallet: () => void;
   // DB-ready: replace with POST /api/wallet/disconnect
   disconnectWallet: () => void;
-  // DB-ready: replace with PATCH /api/users/me
-  updateProfile: (updates: Partial<UserProfile>) => void;
-  /** DB-ready: POST /api/forge/purchase — merge unlock + apply cosmetic to current user (call after successful checkout) */
+  // DB-ready: PATCH /api/users/me — persist identity row (avatar, avatar_bg, equipped_badge_icon, forge_unlocked_item_ids, …)
+  updateProfile: (updates: UserProfilePatch) => void;
+  /** DB-ready: POST /api/forge/purchase response — append forge_unlocked_item_ids; for badge also set equipped_badge_icon to purchased icon (auto-equip) */
   applyForgePurchase: (payload: { itemId: string; category: ForgeCategory; icon: string }) => void;
+  /** DB-ready: POST /api/forge/drops/:id/purchase — timed grants (VIP days, boost stacks) */
+  applyDropPurchaseEffects: (dropId: string) => void;
+  /** Client mirror of DB TTL cleanup — call on app tick / GET /users/me normalization */
+  pruneExpiredShopEntitlements: () => void;
   clearLoginGreeting: () => void;
 }
 
@@ -61,6 +65,33 @@ const MOCK_USER: UserProfile = {
 };
 
 const ADMIN_EMAILS = new Set(["admin@arena.gg"]);
+
+function extendVipExpiresAt(currentIso: string | undefined, days: number): string {
+  const now = Date.now();
+  const base = currentIso ? Math.max(now, new Date(currentIso).getTime()) : now;
+  return new Date(base + days * 864e5).toISOString();
+}
+
+function appendBoostHours(user: UserProfile, itemId: string, label: string, hours: number): UserProfile {
+  const list: ShopEntitlement[] = [...(user.shopEntitlements ?? [])];
+  const expiresAt = new Date(Date.now() + hours * 3600e3).toISOString();
+  list.push({ itemId, kind: "boost", label, expiresAt });
+  return { ...user, shopEntitlements: list };
+}
+
+function grantEliteBundle(user: UserProfile): UserProfile {
+  let next: UserProfile = { ...user };
+  const keys = new Set(next.unlockedForgeItemIds ?? []);
+  keys.add("item-012");
+  keys.add("item-006");
+  next.unlockedForgeItemIds = [...keys];
+  next.equippedBadgeIcon = "badge:champions";
+  next.vipExpiresAt = extendVipExpiresAt(next.vipExpiresAt, 30);
+  for (let i = 0; i < 3; i++) {
+    next = appendBoostHours(next, "item-008", "Double XP (24h)", 24);
+  }
+  return next;
+}
 
 function scheduleSyncForgePurchasesToProfile() {
   void import("@/stores/forgeStore").then((m) => m.syncForgePurchasesToUserProfile());
@@ -116,23 +147,82 @@ export const useUserStore = create<UserState>((set) => ({
   disconnectWallet: () => set({ walletConnected: false }),
 
   updateProfile: (updates) =>
-    set((state) => ({
-      user: state.user ? { ...state.user, ...updates } : null,
-    })),
+    set((state) => {
+      if (!state.user) return { user: null };
+      const u = state.user;
+      const { stats: statsPatch, ...restPatch } = updates;
+      const next: UserProfile = { ...u, ...restPatch };
+      if (statsPatch !== undefined) {
+        next.stats = { ...u.stats, ...statsPatch };
+      }
+      return { user: next };
+    }),
+
+  applyDropPurchaseEffects: (dropId) =>
+    set((state) => {
+      if (!state.user) return state;
+      let next: UserProfile = { ...state.user };
+      if (dropId === "dr-001") {
+        next.vipExpiresAt = extendVipExpiresAt(next.vipExpiresAt, 30);
+      } else if (dropId === "dr-002") {
+        next.vipExpiresAt = extendVipExpiresAt(next.vipExpiresAt, 7);
+        for (let i = 0; i < 3; i++) {
+          next = appendBoostHours(next, "item-008", "Double XP (24h)", 24);
+        }
+      } else if (dropId === "dr-003") {
+        const keys = new Set(next.unlockedForgeItemIds ?? []);
+        keys.add("item-005");
+        next.unlockedForgeItemIds = [...keys];
+        next.equippedBadgeIcon = "badge:founders";
+        next.vipExpiresAt = extendVipExpiresAt(next.vipExpiresAt, 30);
+      }
+      return { user: next };
+    }),
+
+  pruneExpiredShopEntitlements: () =>
+    set((state) => {
+      if (!state.user) return state;
+      const now = Date.now();
+      const ent = (state.user.shopEntitlements ?? []).filter((e) => new Date(e.expiresAt).getTime() > now);
+      let vip = state.user.vipExpiresAt;
+      if (vip && new Date(vip).getTime() <= now) vip = undefined;
+      if (
+        ent.length === (state.user.shopEntitlements ?? []).length &&
+        vip === state.user.vipExpiresAt
+      ) {
+        return state;
+      }
+      return { user: { ...state.user, shopEntitlements: ent, vipExpiresAt: vip } };
+    }),
 
   applyForgePurchase: ({ itemId, category, icon }) =>
     set((state) => {
       if (!state.user) return state;
       const prev = state.user.unlockedForgeItemIds ?? [];
       const unlockedForgeItemIds = prev.includes(itemId) ? prev : [...prev, itemId];
-      const next: UserProfile = { ...state.user, unlockedForgeItemIds };
+      let next: UserProfile = { ...state.user, unlockedForgeItemIds };
+
+      if (category === "bundle" && itemId === "item-012") {
+        return { user: grantEliteBundle(next) };
+      }
+
       if (category === "avatar" && icon.startsWith("preset:")) {
         next.avatar = icon;
       } else if (category === "frame" && icon.startsWith("bg:")) {
         next.avatarBg = icon.slice(3);
       } else if (category === "badge" && icon.startsWith("badge:")) {
         next.equippedBadgeIcon = icon;
+      } else if (category === "vip") {
+        const days = itemId === "item-010" ? 30 : itemId === "item-011" ? 7 : 0;
+        if (days > 0) {
+          next.vipExpiresAt = extendVipExpiresAt(next.vipExpiresAt, days);
+        }
+      } else if (category === "boost") {
+        const hours = itemId === "item-008" ? 24 : itemId === "item-009" ? 72 : 24;
+        const label = itemId === "item-008" ? "Double XP (24h)" : itemId === "item-009" ? "Win Shield (72h)" : "Boost";
+        next = appendBoostHours(next, itemId, label, hours);
       }
+
       return { user: next };
     }),
 }));

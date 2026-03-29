@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { useForgeStore, SEED_ITEMS, SEED_CHALLENGES, SEED_EVENTS, SEED_DROPS } from "@/stores/forgeStore";
+import {
+  useForgeStore,
+  SEED_ITEMS,
+  SEED_CHALLENGES,
+  SEED_EVENTS,
+  SEED_DROPS,
+  syncForgePurchasesToUserProfile,
+} from "@/stores/forgeStore";
 import { useWalletStore } from "@/stores/walletStore";
 import { useUserStore } from "@/stores/userStore";
 
@@ -372,7 +379,18 @@ describe("forgeStore — purchaseItem with USDT", () => {
 // ─── claimChallenge ───────────────────────────────────────────
 
 describe("forgeStore — claimChallenge", () => {
-  beforeEach(resetForge);
+  beforeEach(() => {
+    resetForge();
+    useUserStore.getState().logout();
+  });
+
+  it("adds rewardXP to logged-in user (DB user_stats.xp)", () => {
+    useUserStore.getState().login("player@arena.gg", "pw");
+    const xpBefore = useUserStore.getState().user!.stats.xp;
+    const result = useForgeStore.getState().claimChallenge("ch-d02");
+    expect(result.success).toBe(true);
+    expect(useUserStore.getState().user!.stats.xp).toBe(xpBefore + 30);
+  });
 
   it("succeeds for a claimable challenge (ch-d02: Play 5 Games, 100 AT)", () => {
     const result = useForgeStore.getState().claimChallenge("ch-d02");
@@ -508,6 +526,84 @@ describe("forgeStore — purchaseDrop", () => {
     const result = useForgeStore.getState().purchaseDrop("dr-999");
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/not found/i);
+  });
+});
+
+// ─── syncForgePurchasesToUserProfile ───────────────────────────
+
+describe("forgeStore — syncForgePurchasesToUserProfile", () => {
+  beforeEach(() => {
+    resetForge();
+    resetWallet();
+    useUserStore.getState().logout();
+  });
+
+  it("no-ops when no user is logged in", () => {
+    useForgeStore.setState({
+      purchases: [
+        {
+          id: "p1",
+          itemId: "item-006",
+          itemName: "Champion's Seal",
+          currency: "AT" as const,
+          amount: 900,
+          purchasedAt: "2026-01-02T00:00:00.000Z",
+        },
+      ],
+    });
+    syncForgePurchasesToUserProfile();
+    expect(useUserStore.getState().user).toBeNull();
+  });
+
+  it("merges cosmetic purchase ids into unlockedForgeItemIds and equips newest badge last", () => {
+    useUserStore.getState().login("player@arena.gg", "pw");
+    // Store prepends newest first (same as purchaseItem)
+    useForgeStore.setState({
+      purchases: [
+        {
+          id: "p2",
+          itemId: "item-007",
+          itemName: "Veteran's Mark",
+          currency: "AT" as const,
+          amount: 400,
+          purchasedAt: "2026-01-03T00:00:00.000Z",
+        },
+        {
+          id: "p1",
+          itemId: "item-006",
+          itemName: "Champion's Seal",
+          currency: "AT" as const,
+          amount: 900,
+          purchasedAt: "2026-01-02T00:00:00.000Z",
+        },
+      ],
+    });
+    syncForgePurchasesToUserProfile();
+    const u = useUserStore.getState().user;
+    expect(u?.unlockedForgeItemIds).toContain("item-006");
+    expect(u?.unlockedForgeItemIds).toContain("item-007");
+    expect(u?.equippedBadgeIcon).toBe("badge:veterans");
+  });
+
+  it("keeps existing unlockedForgeItemIds not present in forge purchases (server grants)", () => {
+    useUserStore.getState().login("player@arena.gg", "pw");
+    useUserStore.getState().updateProfile({ unlockedForgeItemIds: ["custom-grant-1"] });
+    useForgeStore.setState({
+      purchases: [
+        {
+          id: "p1",
+          itemId: "item-006",
+          itemName: "Champion's Seal",
+          currency: "AT" as const,
+          amount: 900,
+          purchasedAt: "2026-01-02T00:00:00.000Z",
+        },
+      ],
+    });
+    syncForgePurchasesToUserProfile();
+    const ids = useUserStore.getState().user?.unlockedForgeItemIds ?? [];
+    expect(ids).toContain("custom-grant-1");
+    expect(ids).toContain("item-006");
   });
 });
 

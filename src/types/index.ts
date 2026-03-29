@@ -25,6 +25,18 @@ export type UserStatus = "active" | "flagged" | "banned" | "suspended";
 export type ArenaId = string;
 
 // ─── User / Profile ─────────────────────────────────────────
+// DB-ready: PATCH /api/users/me — send snake_case JSON aligned with `users` row:
+//   username, avatar, avatar_bg, equipped_badge_icon (NULL to clear pin),
+//   forge_unlocked_item_ids (TEXT[]), vip_expires_at, shop_entitlements (JSONB).
+//   Client maps UserProfile camelCase ↔ SQL.
+
+/** DB: users.shop_entitlements[] — time-limited Forge entitlements (boosts, etc.) */
+export interface ShopEntitlement {
+  itemId: string;
+  kind: "boost" | "bundle";
+  label: string;
+  expiresAt: string; // ISO 8601
+}
 
 export interface UserProfile {
   id: string;
@@ -44,6 +56,10 @@ export interface UserProfile {
   equippedBadgeIcon?: string;
   /** DB: users.forge_unlocked_item_ids — Forge catalog item ids the user owns (mirrors purchases; server is source of truth in prod) */
   unlockedForgeItemIds?: string[];
+  /** DB: users.vip_expires_at — NULL when inactive; server clears when past */
+  vipExpiresAt?: string;
+  /** DB: users.shop_entitlements — JSONB array; server prunes expired rows on read or cron */
+  shopEntitlements?: ShopEntitlement[];
   preferredGame: Game;
   arenaId: ArenaId;     // DB: users.arena_id — immutable public ID (ARENA-XXXXXX)
   memberSince: string;
@@ -67,6 +83,11 @@ export interface UserBalance {
   available: number;
   inEscrow: number;
 }
+
+/** Client / PATCH payload — `stats` may be partial; merged into existing user_stats row in userStore.updateProfile */
+export type UserProfilePatch = Omit<Partial<UserProfile>, "stats"> & {
+  stats?: Partial<UserStats>;
+};
 
 // ─── Matches ─────────────────────────────────────────────────
 

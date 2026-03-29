@@ -6,100 +6,60 @@ import type { ReactNode } from "react";
 import type { ForgeCategory } from "@/types";
 import { getAvatarBackground, getForgePreviewCircleStyle } from "@/lib/avatarBgs";
 import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
+import type { ForgeBadgeId } from "@/lib/forgeBadges";
+import { parseForgeBadgeId } from "@/lib/forgeBadges";
 import { cn } from "@/lib/utils";
 import {
   Crown, Gem, Package, Shield, ShieldCheck, Sparkles, Trophy, Zap,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-type BadgeKey = "founders" | "champions" | "veterans";
-
-/** Hex medallion — Identity Studio jewelry language; used for shop tiles (layout "tile") */
-const BADGE_HEX =
-  "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)" as const;
-
-const BADGE_ART: Record<
-  BadgeKey,
-  {
-    Icon: LucideIcon;
-    shellBg: string;
-    shellShadow: string;
-    faceBg: string;
-    iconClass: string;
-  }
+/** Identity Studio line — compact enamel “sigil” (not hex medallion); pairs with portrait art direction */
+const BADGE_SIGIL: Record<
+  ForgeBadgeId,
+  { Icon: LucideIcon; bezel: string; face: string; iconClass: string }
 > = {
   founders: {
     Icon: Sparkles,
-    shellBg: "linear-gradient(165deg, #fcd34d 0%, #d97706 28%, #451a03 72%, #0c0a09 100%)",
-    shellShadow:
-      "0 0 26px rgba(251,191,36,0.55), 0 0 52px rgba(234,179,8,0.18), inset 0 1px 0 rgba(255,255,255,0.35)",
-    faceBg:
-      "linear-gradient(155deg, rgba(255,251,235,0.98) 0%, rgba(245,158,11,0.85) 18%, rgba(146,64,14,0.92) 52%, rgba(12,10,9,1) 100%)",
-    iconClass:
-      "text-amber-50 drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)] drop-shadow-[0_0_10px_rgba(251,191,36,0.85)]",
+    bezel: "bg-gradient-to-br from-amber-200/55 via-amber-600/35 to-zinc-900",
+    face: "bg-gradient-to-b from-zinc-800/90 via-zinc-950 to-black",
+    iconClass: "text-amber-100/95",
   },
   champions: {
     Icon: Trophy,
-    shellBg: "linear-gradient(165deg, #e9d5ff 0%, #9333ea 35%, #4c1d95 78%, #0f172a 100%)",
-    shellShadow:
-      "0 0 26px rgba(168,85,247,0.55), 0 0 48px rgba(139,92,246,0.2), inset 0 1px 0 rgba(255,255,255,0.28)",
-    faceBg:
-      "linear-gradient(158deg, rgba(243,232,255,0.95) 0%, rgba(147,51,234,0.9) 28%, rgba(88,28,135,0.95) 58%, rgba(15,23,42,1) 100%)",
-    iconClass:
-      "text-violet-50 drop-shadow-[0_2px_6px_rgba(0,0,0,0.92)] drop-shadow-[0_0_12px_rgba(196,181,253,0.75)]",
+    bezel: "bg-gradient-to-br from-violet-300/45 via-fuchsia-700/35 to-zinc-900",
+    face: "bg-gradient-to-b from-violet-950/90 via-zinc-950 to-black",
+    iconClass: "text-violet-100/95",
   },
   veterans: {
     Icon: Shield,
-    shellBg: "linear-gradient(165deg, #94a3b8 0%, #334155 38%, #0f172a 82%, #020617 100%)",
-    shellShadow:
-      "0 0 22px rgba(34,211,238,0.35), 0 0 40px rgba(56,189,248,0.12), inset 0 1px 0 rgba(255,255,255,0.22)",
-    faceBg:
-      "linear-gradient(155deg, rgba(226,232,240,0.92) 0%, rgba(71,85,105,0.88) 32%, rgba(30,41,59,0.95) 62%, rgba(2,6,23,1) 100%)",
-    iconClass:
-      "text-cyan-50 drop-shadow-[0_2px_6px_rgba(0,0,0,0.92)] drop-shadow-[0_0_8px_rgba(34,211,238,0.55)]",
+    bezel: "bg-gradient-to-br from-slate-300/40 via-slate-600/35 to-zinc-900",
+    face: "bg-gradient-to-b from-slate-900/90 via-zinc-950 to-black",
+    iconClass: "text-cyan-100/90",
   },
 };
 
-function ForgeBadgeMedallion({ badgeKey, iconSm }: { badgeKey: BadgeKey; iconSm: string }) {
-  const art = BADGE_ART[badgeKey];
-  const I = art.Icon;
+/** Shop / card tile — tight, minimal outer glow */
+function ForgeBadgeSigilTile({ badgeKey, iconClass }: { badgeKey: ForgeBadgeId; iconClass: string }) {
+  const s = BADGE_SIGIL[badgeKey];
+  const I = s.Icon;
   return (
-    <div className="relative h-full w-full">
+    <div className="relative h-full w-full rounded-[7px] p-px shadow-[0_0_10px_rgba(0,0,0,0.45)]">
+      <div className={cn("absolute inset-0 rounded-[inherit]", s.bezel)} aria-hidden />
       <div
-        className="absolute inset-0"
-        style={{
-          clipPath: BADGE_HEX,
-          background: art.shellBg,
-          boxShadow: art.shellShadow,
-        }}
-        aria-hidden
-      />
-      <div
-        className="absolute inset-[2px] flex items-center justify-center"
-        style={{
-          clipPath: BADGE_HEX,
-          background: art.faceBg,
-          boxShadow:
-            "inset 0 2px 14px rgba(0,0,0,0.55), inset 0 -2px 10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.22)",
-        }}
+        className={cn(
+          "relative flex h-full w-full items-center justify-center rounded-[6px] shadow-[inset_0_1px_6px_rgba(0,0,0,0.65)]",
+          s.face,
+        )}
       >
-        <div
-          className="pointer-events-none absolute inset-0 opacity-[0.52]"
+        <span
+          className="pointer-events-none absolute inset-0 rounded-[inherit] opacity-[0.35]"
           style={{
-            background:
-              "linear-gradient(128deg, rgba(255,255,255,0.5) 0%, transparent 40%, transparent 62%, rgba(255,255,255,0.06) 100%)",
+            background: "linear-gradient(145deg, rgba(255,255,255,0.2) 0%, transparent 42%, transparent 58%, rgba(0,0,0,0.25) 100%)",
           }}
           aria-hidden
         />
-        <div
-          className="pointer-events-none absolute inset-0 opacity-[0.18] mix-blend-overlay"
-          style={{
-            backgroundImage:
-              "repeating-linear-gradient(-18deg, transparent, transparent 2px, rgba(0,0,0,0.12) 2px, rgba(0,0,0,0.12) 3px)",
-          }}
-          aria-hidden
-        />
-        <I className={cn(iconSm, "relative z-[2]", art.iconClass)} strokeWidth={2.35} />
+        <I className={cn(iconClass, s.iconClass, "relative z-[1]")} strokeWidth={2.05} />
       </div>
     </div>
   );
@@ -135,7 +95,9 @@ export function renderForgeShopIcon(
 ): ReactNode {
   if (!icon) return "🛒";
   const iconSm = sizeHint === "sm" ? "h-4 w-4" : "h-5 w-5";
-  const pinIcon = sizeHint === "sm" ? "h-[10px] w-[10px]" : "h-3 w-3";
+  /** Badges use slightly smaller glyphs so the sigil stays legible without dominating the card */
+  const badgeTileIcon = sizeHint === "sm" ? "h-3 w-3" : "h-3.5 w-3.5";
+  const pinIcon = sizeHint === "sm" ? "h-[9px] w-[9px]" : "h-2.5 w-2.5";
 
   const presetUrl = getAvatarImageUrlFromStorage(icon);
   if (presetUrl) {
@@ -160,31 +122,28 @@ export function renderForgeShopIcon(
     );
   }
   if (icon.startsWith("badge:")) {
-    const key = icon.slice(6) as BadgeKey;
-    const art = BADGE_ART[key];
-    if (!art) return <span aria-hidden>{icon}</span>;
-    const I = art.Icon;
+    const key = parseForgeBadgeId(icon);
+    if (!key) return <span aria-hidden>{icon}</span>;
+    const s = BADGE_SIGIL[key];
+    const I = s.Icon;
     if (layout === "pin") {
-      const pinShell =
-        key === "founders"
-          ? "bg-gradient-to-br from-amber-900/95 to-zinc-950"
-          : key === "champions"
-            ? "bg-gradient-to-br from-violet-900/95 to-zinc-950"
-            : "bg-gradient-to-br from-slate-800/95 to-zinc-950";
       return (
-        <div
-          className={cn(
-            "h-full w-full rounded-full flex items-center justify-center ring-1 ring-white/25 shadow-[0_1px_3px_rgba(0,0,0,0.6)]",
-            pinShell,
-          )}
-        >
-          <I className={cn(pinIcon, "text-white/95")} strokeWidth={2.4} />
+        <div className="h-full w-full rounded-full p-px bg-gradient-to-br from-white/30 to-zinc-800 shadow-[0_1px_2px_rgba(0,0,0,0.55)]">
+          <div
+            className={cn(
+              "flex h-full w-full items-center justify-center rounded-full",
+              s.face,
+              "ring-1 ring-black/40",
+            )}
+          >
+            <I className={cn(pinIcon, s.iconClass)} strokeWidth={2.15} />
+          </div>
         </div>
       );
     }
     return (
-      <div className="h-full w-full rounded-sm overflow-hidden">
-        <ForgeBadgeMedallion badgeKey={key} iconSm={iconSm} />
+      <div className="h-full w-full overflow-hidden rounded-[7px]">
+        <ForgeBadgeSigilTile badgeKey={key} iconClass={badgeTileIcon} />
       </div>
     );
   }
@@ -320,7 +279,7 @@ export function ForgeLookPreview({
           <AvatarFace avatar={faceAvatar} username={username} />
         </span>
         {badgeOverlay && tryOnIcon && (
-          <span className="absolute bottom-0 right-0 z-[3] h-[18px] w-[18px] rounded-full overflow-hidden ring-1 ring-black/55 translate-x-[1px] translate-y-[1px]">
+          <span className="absolute bottom-0 right-0 z-[3] h-[15px] w-[15px] overflow-hidden translate-x-px translate-y-px">
             {renderForgeShopIcon(tryOnIcon, "sm", "pin")}
           </span>
         )}

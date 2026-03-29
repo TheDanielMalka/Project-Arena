@@ -355,6 +355,50 @@ function useCountdown(isoDate?: string) {
   return isoDate ? formatCountdown(isoDate) : null;
 }
 
+function ForgeEntitlementTimer({ expiresAt }: { expiresAt: string }) {
+  const left = useCountdown(expiresAt);
+  return <span className="font-mono text-amber-400 tabular-nums">{left ?? "—"}</span>;
+}
+
+/** DB-ready: mirrors users.vip_expires_at + shop_entitlements — per-user countdown after password checkout */
+function ForgeActiveEntitlementsStrip() {
+  const user = useUserStore((s) => s.user);
+  const prune = useUserStore((s) => s.pruneExpiredShopEntitlements);
+  useEffect(() => {
+    prune();
+  }, [prune]);
+  const vipIso = user?.vipExpiresAt;
+  const vipLive = vipIso ? new Date(vipIso).getTime() > Date.now() : false;
+  const boosts = (user?.shopEntitlements ?? []).filter((e) => new Date(e.expiresAt).getTime() > Date.now());
+  if (!vipLive && boosts.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-primary/25 bg-primary/[0.04] px-3 py-2 space-y-1.5">
+      <p className="text-[10px] font-display font-bold uppercase tracking-wider text-muted-foreground">
+        Active on your account (DB: vip_expires_at · shop_entitlements)
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {vipLive && vipIso && (
+          <div className="flex items-center gap-2 rounded-md border border-arena-gold/40 bg-arena-gold/10 px-2.5 py-1 text-[11px]">
+            <Crown className="h-3.5 w-3.5 text-arena-gold shrink-0" />
+            <span className="font-display font-semibold text-foreground">VIP</span>
+            <ForgeEntitlementTimer expiresAt={vipIso} />
+          </div>
+        )}
+        {boosts.map((e, i) => (
+          <div
+            key={`${e.itemId}-${e.expiresAt}-${i}`}
+            className="flex items-center gap-2 rounded-md border border-border/60 bg-card/50 px-2.5 py-1 text-[11px]"
+          >
+            <Zap className="h-3.5 w-3.5 text-primary shrink-0" />
+            <span className="font-display font-semibold truncate max-w-[160px]">{e.label}</span>
+            <ForgeEntitlementTimer expiresAt={e.expiresAt} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Sub-components ───────────────────────────────────────────
 
 interface ItemCardProps {
@@ -377,6 +421,7 @@ function ItemCard({ item, onBuy, success, error, arenaTokens, focused, onTryOn }
     item.category === "boost" ||
     item.category === "vip" ||
     item.category === "bundle";
+  const isBadgeCard = item.category === "badge";
 
   return (
     <div
@@ -427,16 +472,24 @@ function ItemCard({ item, onBuy, success, error, arenaTokens, focused, onTryOn }
         <div
           className={cn(
             "flex flex-shrink-0 items-center justify-center overflow-hidden",
-            isDeluxeCosmetic ? "relative h-11 w-11 rounded-xl text-xl shadow-lg" : "h-9 w-9 rounded-md text-lg",
+            isBadgeCard && "relative h-9 w-9 rounded-lg text-base",
+            isDeluxeCosmetic && !isBadgeCard && "relative h-11 w-11 rounded-xl text-xl shadow-lg",
+            !isDeluxeCosmetic && "h-9 w-9 rounded-md text-lg",
           )}
           style={
-            isDeluxeCosmetic
+            isBadgeCard
               ? {
-                  background: `linear-gradient(145deg, ${rc.color}60 0%, rgba(0,0,0,0.82) 50%, ${rc.color}38 100%)`,
-                  border: `1px solid ${rc.color}aa`,
-                  boxShadow: `0 0 26px ${rc.color}45, inset 0 1px 0 rgba(255,255,255,0.22)`,
+                  background: `linear-gradient(145deg, ${rc.color}35 0%, rgba(0,0,0,0.9) 55%, ${rc.color}22 100%)`,
+                  border: `1px solid ${rc.color}66`,
+                  boxShadow: `0 0 12px ${rc.color}28, inset 0 1px 0 rgba(255,255,255,0.12)`,
                 }
-              : { background: `${rc.color}18`, border: `1px solid ${rc.color}44` }
+              : isDeluxeCosmetic
+                ? {
+                    background: `linear-gradient(145deg, ${rc.color}60 0%, rgba(0,0,0,0.82) 50%, ${rc.color}38 100%)`,
+                    border: `1px solid ${rc.color}aa`,
+                    boxShadow: `0 0 26px ${rc.color}45, inset 0 1px 0 rgba(255,255,255,0.22)`,
+                  }
+                : { background: `${rc.color}18`, border: `1px solid ${rc.color}44` }
           }
         >
           {isDeluxeCosmetic && (
@@ -449,7 +502,7 @@ function ItemCard({ item, onBuy, success, error, arenaTokens, focused, onTryOn }
                 className="pointer-events-none absolute inset-0 opacity-25 bg-gradient-to-br from-transparent via-transparent to-black/80"
               />
               {item.category === "badge" && (
-                <Award className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 text-arena-gold drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)] z-[2] pointer-events-none" />
+                <Award className="absolute -right-0.5 -top-0.5 h-3 w-3 text-arena-gold/90 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] z-[2] pointer-events-none" />
               )}
             </>
           )}
@@ -823,6 +876,7 @@ function ShopTab() {
 
 function ChallengesTab() {
   const { arenaTokens, getDailyChallenges, getWeeklyChallenges, claimChallenge } = useForgeStore();
+  const profileXp = useUserStore((s) => s.user?.stats.xp ?? 0);
   const daily  = getDailyChallenges();
   const weekly = getWeeklyChallenges();
   const [justClaimed, setJustClaimed] = useState<Set<string>>(new Set());
@@ -937,7 +991,11 @@ function ChallengesTab() {
       <div>
         <h2 className="font-display text-lg font-bold text-foreground tracking-tight">Challenges</h2>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Stack free AT & XP — claim streaks before reset. Balance: <span className="text-primary font-semibold tabular-nums">{arenaTokens.toLocaleString()} AT</span>
+          Stack free AT & XP — claim streaks before reset. Balance:{" "}
+          <span className="text-primary font-semibold tabular-nums">{arenaTokens.toLocaleString()} AT</span>
+          {" · "}
+          Profile XP (DB <span className="font-mono text-[10px]">user_stats.xp</span>):{" "}
+          <span className="text-arena-cyan font-semibold tabular-nums">{profileXp.toLocaleString()}</span>
         </p>
       </div>
 
@@ -1467,6 +1525,8 @@ export default function Forge() {
         </div>
 
         <ForgeTreasuryStrip />
+
+        <ForgeActiveEntitlementsStrip />
 
         {/* Tab bar */}
         <div className="flex items-center gap-0.5 p-0.5 bg-card/35 border border-border/45 rounded-lg w-full max-w-full overflow-x-auto [scrollbar-width:thin]">

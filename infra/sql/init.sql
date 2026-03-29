@@ -38,6 +38,8 @@ CREATE TABLE users (
     avatar_bg       TEXT DEFAULT 'default',     -- bgId from avatarBgs.ts
     equipped_badge_icon TEXT,                   -- Forge badge:* (e.g. badge:founders); NULL = none — aligns with UserProfile.equippedBadgeIcon
     forge_unlocked_item_ids TEXT[] NOT NULL DEFAULT '{}',  -- Forge shop item ids owned (catalog ids until UUID API)
+    vip_expires_at  TIMESTAMPTZ,                             -- VIP pass active until; NULL = none — aligns with UserProfile.vipExpiresAt
+    shop_entitlements JSONB NOT NULL DEFAULT '[]'::jsonb,   -- [{ "itemId", "kind", "label", "expiresAt" }] — timed boosts / bundle grants
     preferred_game  game DEFAULT 'CS2',
     arena_id        VARCHAR(12) UNIQUE,   -- immutable public ID (ARENA-XXXXXX) — set on registration, never changed
     status          user_status DEFAULT 'active',
@@ -62,7 +64,7 @@ CREATE TABLE user_stats (
     win_rate        NUMERIC(5,2) DEFAULT 0,
     total_earnings  NUMERIC(12,2) DEFAULT 0,
     in_escrow       NUMERIC(12,2) DEFAULT 0,
-    xp              INT DEFAULT 0               -- earned via challenges & wins
+    xp              INT DEFAULT 0               -- POST /api/forge/challenges/:id/claim increments; Profile/leaderboard read this row
 );
 
 -- ── User Balances ────────────────────────────────────────────
@@ -304,6 +306,19 @@ $$;
 CREATE TRIGGER trg_set_arena_id
     BEFORE INSERT ON users
     FOR EACH ROW EXECUTE FUNCTION set_arena_id();
+
+-- Touch users.updated_at on profile / cosmetic changes (avatar, avatar_bg, equipped_badge_icon, forge_unlocked_item_ids, etc.)
+CREATE OR REPLACE FUNCTION set_users_updated_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.updated_at := NOW();
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_users_updated_at
+    BEFORE UPDATE ON users
+    FOR EACH ROW EXECUTE FUNCTION set_users_updated_at();
 
 -- ── Friendships ───────────────────────────────────────────────
 CREATE TYPE friendship_status AS ENUM ('pending','accepted','blocked');

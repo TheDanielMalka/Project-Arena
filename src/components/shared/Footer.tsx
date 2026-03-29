@@ -15,6 +15,7 @@ const footerLinks = [
     links: [
       { label: "Profile", to: "/profile" },
       { label: "Wallet", to: "/wallet" },
+      { label: "Settings", to: "/settings" },
     ],
   },
   {

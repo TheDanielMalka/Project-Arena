@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import {
   User, Shield, Gamepad2, Wallet, Link2, CheckCircle, XCircle,
   Copy, ExternalLink, Edit2, Save, Trophy, TrendingUp, Zap, Smartphone, Monitor, X,
-  Camera, Lock, Upload, Crown, Medal, Gem, Sparkles, Flame,
+  Camera, Lock, Upload, Crown, Medal, Gem, Sparkles, Flame, Award,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -68,31 +68,36 @@ const Profile = () => {
 
   // Avatar picker state
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
-  const [pickerMode, setPickerMode]             = useState<"avatar" | "background">("avatar");
+  const [pickerMode, setPickerMode]             = useState<"avatar" | "background" | "badge">("avatar");
   const [selectedAvatar, setSelectedAvatar]     = useState<string>(user?.avatar ?? "initials");
   const [avatarTab, setAvatarTab]               = useState<"free" | "event" | "premium">("free");
   const [selectedBg, setSelectedBg]             = useState<string>(user?.avatarBg ?? "default");
   const [bgTab, setBgTab]                       = useState<"free" | "event" | "premium">("free");
+  const [selectedEquippedBadge, setSelectedEquippedBadge] = useState<string | undefined>(user?.equippedBadgeIcon);
   /** Draft inside picker — committed only via Apply */
   const [draftAvatar, setDraftAvatar]           = useState<string>(user?.avatar ?? "initials");
   const [draftBg, setDraftBg]                   = useState<string>(user?.avatarBg ?? "default");
+  const [draftEquippedBadge, setDraftEquippedBadge] = useState<string | undefined>(user?.equippedBadgeIcon);
 
   useEffect(() => {
     if (!user) return;
     setSelectedBg(user.avatarBg ?? "default");
     setSelectedAvatar(user.avatar ?? "initials");
-  }, [user?.avatarBg, user?.avatar, user]);
+    setSelectedEquippedBadge(user.equippedBadgeIcon);
+  }, [user?.avatarBg, user?.avatar, user?.equippedBadgeIcon, user]);
 
   useEffect(() => {
     if (!showAvatarPicker) return;
     setDraftAvatar(selectedAvatar);
     setDraftBg(selectedBg);
+    setDraftEquippedBadge(selectedEquippedBadge);
   }, [showAvatarPicker]);
 
   const forgeAvatarIcons   = new Set(
     SEED_ITEMS.filter((i) => i.category === "avatar").map((i) => i.icon),
   );
   const forgeAvatarItems   = SEED_ITEMS.filter((i) => i.category === "avatar");
+  const forgeBadgeItems    = SEED_ITEMS.filter((i) => i.category === "badge");
   const forgePurchases     = useForgeStore((s) => s.purchases);
   const ownsForgeItem = (itemId: string) =>
     forgePurchases.some((p) => p.itemId === itemId) ||
@@ -198,8 +203,17 @@ const Profile = () => {
 
   const handleSaveProfile = () => {
     setEditMode(false);
-    updateProfile({ username, avatar: selectedAvatar, avatarBg: selectedBg });
-    addNotification({ type: "system", title: "✅ Profile Updated", message: `Username set to "${username}". Changes saved successfully.` });
+    updateProfile({
+      username,
+      avatar: selectedAvatar,
+      avatarBg: selectedBg,
+      equippedBadgeIcon: selectedEquippedBadge,
+    });
+    addNotification({
+      type: "system",
+      title: "✅ Profile Updated",
+      message: `Identity saved for "${username}" (portrait, frame, ring badge) — same fields as DB: users.avatar, avatar_bg, equipped_badge_icon.`,
+    });
   };
 
   /** Premium frames require Forge purchase; already-saved premium `committedBg` may still be applied. */
@@ -252,8 +266,17 @@ const Profile = () => {
     }
     setSelectedAvatar(draftAvatar);
     setSelectedBg(draftBg);
+    setSelectedEquippedBadge(draftEquippedBadge);
+    updateProfile({
+      avatar: draftAvatar,
+      avatarBg: draftBg,
+      equippedBadgeIcon: draftEquippedBadge,
+    });
     setShowAvatarPicker(false);
-    toast({ title: "Look locked in", description: "Press Save on your profile to sync everywhere." });
+    toast({
+      title: "Look locked in",
+      description: "Synced to your Arena profile (sidebar, Forge preview, DB fields on deploy). Save still updates username if you edit it.",
+    });
   };
 
   const handleUnlinkGame = (gameName: string) => {
@@ -423,9 +446,9 @@ const Profile = () => {
                   <span className="relative z-[1] flex h-full w-full items-center justify-center">{renderAvatarContent(selectedAvatar)}</span>
                 </div>
               )}
-              {user?.equippedBadgeIcon?.startsWith("badge:") ? (
-                <div className="absolute -bottom-0.5 -right-0.5 z-[4] h-[18px] w-[18px] rounded-full overflow-hidden ring-2 ring-background shadow-sm">
-                  {renderForgeShopIcon(user.equippedBadgeIcon, "sm", "pin")}
+              {selectedEquippedBadge?.startsWith("badge:") ? (
+                <div className="absolute -bottom-0.5 -right-0.5 z-[4] h-[15px] w-[15px] overflow-hidden ring-2 ring-background rounded-full shadow-sm">
+                  {renderForgeShopIcon(selectedEquippedBadge, "sm", "pin")}
                 </div>
               ) : (
                 <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-primary border-2 border-background flex items-center justify-center">
@@ -822,30 +845,47 @@ const Profile = () => {
           <div className="flex flex-col items-center gap-1 mb-2 shrink-0">
             <div
               className={cn(
-                "relative flex h-[4.5rem] w-[4.5rem] items-center justify-center overflow-hidden rounded-full ring-1 ring-white/15",
+                "relative flex h-[4.5rem] w-[4.5rem] items-center justify-center overflow-visible rounded-full ring-1 ring-white/15",
                 getAvatarBackground(draftBg).pulse && "motion-safe:animate-pulse",
               )}
               style={getForgePreviewCircleStyle(draftBg)}
             >
-              <span className="pointer-events-none absolute inset-0 opacity-[0.14] bg-gradient-to-br from-white/45 to-transparent" />
+              <span className="pointer-events-none absolute inset-0 overflow-hidden rounded-full opacity-[0.14] bg-gradient-to-br from-white/45 to-transparent" />
               <span className="pointer-events-none absolute inset-[3px] rounded-full border border-white/10" />
               <span className="relative z-[1] flex h-[78%] w-[78%] items-center justify-center overflow-hidden rounded-full bg-black/20">
                 {renderAvatarContent(draftAvatar)}
               </span>
+              {draftEquippedBadge?.startsWith("badge:") && (
+                <span className="absolute bottom-0.5 right-0.5 z-[4] h-[15px] w-[15px] overflow-hidden">
+                  {renderForgeShopIcon(draftEquippedBadge, "sm", "pin")}
+                </span>
+              )}
             </div>
-            <span className="text-[9px] font-mono text-muted-foreground">Preview · not saved until Apply</span>
+            <span className="text-[9px] font-mono text-muted-foreground text-center px-2">
+              Preview · not saved until Apply
+              {pickerMode === "badge" ? " · Badge tab = ring pin" : ""}
+            </span>
           </div>
 
           <div className="flex-1 min-h-0 overflow-y-auto pr-0.5 -mr-0.5 space-y-0">
 
-          {/* Mode toggle: AVATAR | BACKGROUND */}
-          <div className="flex gap-1 mb-3 bg-secondary/60 rounded-lg p-0.5">
-            {(["avatar","background"] as const).map((mode) => (
-              <button key={mode} onClick={() => setPickerMode(mode)}
-                className={`flex-1 text-[10px] font-display uppercase tracking-widest py-1.5 rounded-md transition-all font-semibold ${
-                  pickerMode === mode ? "bg-primary text-white" : "text-muted-foreground hover:text-foreground"
-                }`}>
-                {mode === "avatar" ? "Avatar" : "Background"}
+          {/* Mode toggle: AVATAR | FRAME | BADGE */}
+          <div className="flex gap-0.5 mb-3 bg-secondary/60 rounded-lg p-0.5">
+            {(["avatar", "background", "badge"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setPickerMode(mode)}
+                className={cn(
+                  "flex-1 min-w-0 text-[9px] sm:text-[10px] font-display uppercase tracking-wider py-1.5 rounded-md transition-all font-semibold",
+                  pickerMode === mode ? "bg-primary text-white" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {mode === "avatar" ? "Avatar" : mode === "background" ? "Frame" : (
+                  <span className="inline-flex items-center justify-center gap-0.5">
+                    <Award className="h-2.5 w-2.5 shrink-0 opacity-90" /> Badge
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -1192,6 +1232,100 @@ const Profile = () => {
                         <span className="absolute bottom-0 inset-x-0 z-[1] flex items-center justify-center py-px bg-black/75 text-[6px] leading-none font-display font-bold text-arena-gold truncate px-0.5">
                           {bg.price}
                         </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* BADGE — Forge sigils; equip owned, shop for locked (DB: users.equipped_badge_icon) */}
+          {pickerMode === "badge" && (
+            <div className="space-y-2 pb-1">
+              <p className="text-[10px] text-muted-foreground font-display uppercase tracking-[0.12em]">
+                Ring badge · owned items only — purchase still uses Forge checkout + password
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-full h-8 text-[11px] font-display border-arena-purple/30 text-arena-purple hover:bg-arena-purple/10"
+                onClick={() => {
+                  navigate("/forge?tab=shop&category=badge");
+                  setShowAvatarPicker(false);
+                }}
+              >
+                Go to Forge · Badges
+              </Button>
+              <button
+                type="button"
+                onClick={() => setDraftEquippedBadge(undefined)}
+                className={cn(
+                  "w-full rounded-lg border p-2.5 text-left transition-all font-display text-[11px]",
+                  draftEquippedBadge === undefined
+                    ? "border-primary ring-2 ring-primary/35 bg-primary/5"
+                    : "border-border/60 hover:border-muted-foreground/40 bg-secondary/20",
+                )}
+              >
+                <span className="font-bold text-foreground">None</span>
+                <span className="block text-[9px] text-muted-foreground mt-0.5">No badge pin on your ring</span>
+              </button>
+              <div className="grid grid-cols-1 gap-2 max-h-[220px] overflow-y-auto pr-0.5">
+                {forgeBadgeItems.map((item) => {
+                  const owned = ownsForgeItem(item.id);
+                  const selected = draftEquippedBadge === item.icon;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={cn(
+                        "flex items-center gap-2.5 rounded-lg border p-2 text-left transition-all",
+                        owned
+                          ? "bg-gradient-to-r from-emerald-950/30 to-transparent border-emerald-500/40 hover:border-emerald-400/55"
+                          : "border-arena-purple/35 bg-gradient-to-r from-arena-purple/10 to-transparent hover:border-arena-purple/50",
+                        selected && "ring-2 ring-primary/50 scale-[1.01]",
+                      )}
+                      onClick={() => {
+                        if (owned) {
+                          setDraftEquippedBadge(item.icon);
+                          return;
+                        }
+                        navigate(`/forge?tab=shop&category=badge&focus=${encodeURIComponent(item.id)}`);
+                        setShowAvatarPicker(false);
+                        toast({
+                          title: "Forge",
+                          description: `Unlock “${item.name}” in the Shop — same password confirmation as today.`,
+                        });
+                      }}
+                    >
+                      <span
+                        className={cn(
+                          "flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md",
+                          owned ? "ring-1 ring-emerald-500/30" : "ring-1 ring-white/10",
+                        )}
+                      >
+                        {renderForgeShopIcon(item.icon, "sm")}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[11px] font-display font-bold truncate">{item.name}</p>
+                        {owned ? (
+                          <p className="text-[9px] text-emerald-400/95 font-display uppercase tracking-wider mt-0.5 flex items-center gap-1">
+                            <CheckCircle className="h-3 w-3 shrink-0" />
+                            Owned — tap to equip on ring
+                          </p>
+                        ) : (
+                          <p className="text-[9px] text-muted-foreground mt-0.5">
+                            {item.priceAT != null && <span className="text-primary font-mono">{item.priceAT.toLocaleString()} AT</span>}
+                            {item.priceAT != null && item.priceUSDT != null && " · "}
+                            {item.priceUSDT != null && <span className="text-arena-gold font-mono">${item.priceUSDT.toFixed(2)} USDT</span>}
+                          </p>
+                        )}
+                      </div>
+                      {owned ? (
+                        <CheckCircle className="h-4 w-4 text-emerald-400 shrink-0" aria-hidden />
+                      ) : (
+                        <Flame className="h-3.5 w-3.5 text-arena-purple shrink-0" aria-hidden />
                       )}
                     </button>
                   );

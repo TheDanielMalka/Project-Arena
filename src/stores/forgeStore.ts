@@ -94,6 +94,8 @@ interface ForgeState {
   getActiveEvents: () => ForgeEvent[];
   // DB-ready: replace with GET /api/forge/events?status=upcoming
   getUpcomingEvents: () => ForgeEvent[];
+  /** DB-ready: after POST /api/wallet/buy-at — sync arenaTokens from server balance */
+  addArenaTokens: (amount: number) => void;
 }
 
 export const useForgeStore = create<ForgeState>()(
@@ -112,6 +114,8 @@ export const useForgeStore = create<ForgeState>()(
       : get().items.filter((i) => i.category === category),
 
   getFeaturedItem: () => get().items.find((i) => i.featured),
+
+  addArenaTokens: (amount) => set((s) => ({ arenaTokens: s.arenaTokens + amount })),
 
   purchaseItem: (itemId, currency) => {
     const item = get().items.find((i) => i.id === itemId);
@@ -153,19 +157,26 @@ export const useForgeStore = create<ForgeState>()(
     wallet.addTransaction({ userId: "user-001", type: "at_purchase", amount: -price, token: "USDT", usdValue: price, status: "completed", note: `Purchased drop: ${drop.name}` });
     const purchase: ForgePurchase = { id: `pur-drop-${Date.now()}`, itemId: dropId, itemName: drop.name, currency: "USDT", amount: price, purchasedAt: new Date().toISOString() };
     set((s) => ({ purchases: [purchase, ...s.purchases] }));
+    useUserStore.getState().applyDropPurchaseEffects(dropId);
     return { success: true };
   },
 
   claimChallenge: (challengeId) => {
     const challenge = get().challenges.find((c) => c.id === challengeId);
     if (!challenge || challenge.status !== "claimable") return { success: false };
-    // DB-ready: replace with POST /api/forge/challenges/:id/claim → awards AT + XP server-side
+    // DB-ready: replace with POST /api/forge/challenges/:id/claim → awards AT + XP server-side (user_stats.xp)
     set((s) => ({
       challenges: s.challenges.map((c) =>
         c.id === challengeId ? { ...c, status: "claimed" as const } : c
       ),
       arenaTokens: s.arenaTokens + challenge.rewardAT,
     }));
+    const u = useUserStore.getState().user;
+    if (u && challenge.rewardXP > 0) {
+      useUserStore.getState().updateProfile({
+        stats: { xp: u.stats.xp + challenge.rewardXP },
+      });
+    }
     return { success: true, earned: challenge.rewardAT };
   },
 
@@ -201,11 +212,25 @@ export const useForgeStore = create<ForgeState>()(
   )
 );
 
-/** Re-apply persisted Forge purchases to the logged-in profile (order: oldest → newest so latest cosmetic wins). */
+/**
+ * After login: union all cosmetic purchases into `unlockedForgeItemIds`, then replay applies (oldest → newest)
+ * so the latest purchased avatar / frame / badge wins — mirrors rehydrating from DB + forge ledger.
+ * DB-ready: production should prefer GET /users/me row for equipped fields; this keeps local demo aligned with persisted forge cart.
+ */
 export function syncForgePurchasesToUserProfile(): void {
   const { purchases, items } = useForgeStore.getState();
-  const apply = useUserStore.getState().applyForgePurchase;
+  const user = useUserStore.getState().user;
+  if (!user) return;
+
   const cosmetic = new Set<ForgeCategory>(["avatar", "frame", "badge"]);
+  const mergedIds = new Set(user.unlockedForgeItemIds ?? []);
+  for (const p of purchases) {
+    const item = items.find((i) => i.id === p.itemId);
+    if (item && cosmetic.has(item.category)) mergedIds.add(item.id);
+  }
+  useUserStore.getState().updateProfile({ unlockedForgeItemIds: [...mergedIds] });
+
+  const apply = useUserStore.getState().applyForgePurchase;
   for (const p of [...purchases].reverse()) {
     const item = items.find((i) => i.id === p.itemId);
     if (!item || !cosmetic.has(item.category)) continue;
