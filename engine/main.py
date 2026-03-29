@@ -19,9 +19,6 @@ API_SECRET = os.getenv("API_SECRET", "change_me_in_production")
 SCREENSHOT_DIR = os.getenv("SCREENSHOT_DIR", "/app/screenshots")
 EVIDENCE_DIR = os.getenv("EVIDENCE_DIR", "/app/evidence")
 
-os.makedirs(SCREENSHOT_DIR, exist_ok=True)
-os.makedirs(EVIDENCE_DIR, exist_ok=True)
-
 logger = logging.getLogger("arena.engine")
 
 db_engine = create_engine(DB_URL, pool_pre_ping=True)
@@ -30,9 +27,21 @@ SessionLocal = sessionmaker(bind=db_engine)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    with db_engine.connect() as conn:
-        conn.execute(text("SELECT 1"))
-    logger.info("✅ Arena Engine connected to DB")
+    # Create runtime directories at startup, not at import time.
+    # Gracefully skipped in CI / restricted environments (tests still run).
+    for d in (SCREENSHOT_DIR, EVIDENCE_DIR):
+        try:
+            os.makedirs(d, exist_ok=True)
+        except PermissionError:
+            logger.warning("⚠️  Cannot create dir %s (restricted env — skipping)", d)
+
+    # DB connectivity check — non-fatal so tests and restricted envs still work.
+    try:
+        with db_engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        logger.info("✅ Arena Engine connected to DB")
+    except Exception as exc:
+        logger.warning("⚠️  DB not available at startup: %s", exc)
     yield
 
 
