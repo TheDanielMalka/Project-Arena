@@ -72,8 +72,15 @@ const SEED_FRIENDSHIPS: Friendship[] = [
 
 // ─── Store ────────────────────────────────────────────────────
 
+/** Users I ignored — no friend requests or DMs from them in this client (DB-ready: server enforces). */
+export interface IgnoredUserRef {
+  userId: string;
+  username: string;
+}
+
 interface FriendState {
   friendships: Friendship[];
+  ignoredUsers: IgnoredUserRef[];
 
   // Derived selectors
   getFriends:         ()                    => Friendship[];   // accepted only
@@ -82,6 +89,22 @@ interface FriendState {
   isFriend:           (friendId: string)    => boolean;
   hasPendingWith:     (friendId: string)    => boolean;
   getRelationship:    (friendId: string)    => FriendshipStatus | null;
+  isIgnored:          (userId: string)       => boolean;
+
+  ignoreUser:   (ref: IgnoredUserRef) => void;
+  unignoreUser: (userId: string)       => void;
+
+  /**
+   * Drop pending + accepted links with target and add to ignore list.
+   * DB-ready: POST /api/users/:id/block (server mirrors block + clears friend rows).
+   */
+  blockPlayer: (params: {
+    myId: string;
+    targetUserId: string;
+    targetUsername: string;
+    /** Skip default toast when the UI shows its own confirmation. */
+    quiet?: boolean;
+  }) => void;
 
   // DB-ready: replace with POST /api/friends/request
   sendFriendRequest: (params: {
@@ -100,7 +123,7 @@ interface FriendState {
     targetTier:           string;
     targetPreferredGame:  string;
     message?:             string;
-  }) => Friendship;
+  }) => Friendship | null;
 
   // DB-ready: replace with PATCH /api/friends/:id/accept
   acceptRequest: (friendshipId: string) => void;
@@ -114,13 +137,17 @@ interface FriendState {
 
 export const useFriendStore = create<FriendState>((set, get) => ({
   friendships: SEED_FRIENDSHIPS,
+  ignoredUsers: [],
 
   getFriends: () =>
     get().friendships.filter((f) => f.status === "accepted"),
 
   getPendingReceived: (myId) =>
     get().friendships.filter(
-      (f) => f.status === "pending" && f.receiverId === myId
+      (f) =>
+        f.status === "pending" &&
+        f.receiverId === myId &&
+        !get().ignoredUsers.some((u) => u.userId === f.initiatorId)
     ),
 
   getPendingSent: (myId) =>
@@ -143,7 +170,50 @@ export const useFriendStore = create<FriendState>((set, get) => ({
     return f ? f.status : null;
   },
 
+  isIgnored: (userId) => get().ignoredUsers.some((u) => u.userId === userId),
+
+  ignoreUser: (ref) =>
+    set((s) =>
+      s.ignoredUsers.some((u) => u.userId === ref.userId)
+        ? s
+        : { ignoredUsers: [...s.ignoredUsers, ref] }
+    ),
+
+  unignoreUser: (userId) =>
+    set((s) => ({ ignoredUsers: s.ignoredUsers.filter((u) => u.userId !== userId) })),
+
+  blockPlayer: ({ myId, targetUserId, targetUsername, quiet }) => {
+    if (targetUserId === myId) return;
+    set((s) => {
+      const friendships = s.friendships.filter((f) => {
+        if (f.status === "accepted" && f.friendId === targetUserId) return false;
+        if (f.status === "pending" && f.receiverId === myId && f.initiatorId === targetUserId) return false;
+        if (f.status === "pending" && f.initiatorId === myId && f.receiverId === targetUserId) return false;
+        return true;
+      });
+      const ignoredUsers = s.ignoredUsers.some((u) => u.userId === targetUserId)
+        ? s.ignoredUsers
+        : [...s.ignoredUsers, { userId: targetUserId, username: targetUsername }];
+      return { friendships, ignoredUsers };
+    });
+    if (!quiet) {
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "Player ignored",
+        message: `${targetUsername} cannot send you friend requests or messages.`,
+      });
+    }
+  },
+
   sendFriendRequest: (params) => {
+    if (get().ignoredUsers.some((u) => u.userId === params.targetId)) {
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "Cannot send request",
+        message: "You ignored this player. Unignore them in Friends first.",
+      });
+      return null;
+    }
     const friendship: Friendship = {
       id:                   `fr-${Date.now()}`,
       initiatorId:          params.myId,

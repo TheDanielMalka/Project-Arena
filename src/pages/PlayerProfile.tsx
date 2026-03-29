@@ -274,6 +274,9 @@ export default function PlayerProfile() {
   const sendFriendRequest = useFriendStore((s) => s.sendFriendRequest);
   const friendships       = useFriendStore((s) => s.friendships);
   const declineRequest    = useFriendStore((s) => s.declineRequest);
+  const blockPlayer       = useFriendStore((s) => s.blockPlayer);
+  const isIgnored         = useFriendStore((s) => s.isIgnored);
+  const unignoreUser      = useFriendStore((s) => s.unignoreUser);
   const addNotif          = useNotificationStore((s) => s.addNotification);
   const [reportOpen, setReportOpen] = useState(false);
   const [frModalOpen, setFrModalOpen] = useState(false);
@@ -297,7 +300,7 @@ export default function PlayerProfile() {
 
   const handleFrConfirm = (message: string) => {
     if (!currentUser || !player) return;
-    sendFriendRequest({
+    const created = sendFriendRequest({
       myId: currentUser.id, myUsername: currentUser.username,
       myArenaId: currentUser.arenaId, myAvatarInitials: currentUser.avatarInitials,
       myRank: currentUser.rank, myTier: currentUser.tier, myPreferredGame: currentUser.preferredGame,
@@ -306,6 +309,7 @@ export default function PlayerProfile() {
       targetRank: player.rank, targetTier: player.tier, targetPreferredGame: player.preferredGame,
       message: message || undefined,
     });
+    if (!created) return;
     addNotif({
       type: "system",
       title: "Friend Request Sent",
@@ -339,7 +343,7 @@ export default function PlayerProfile() {
 
           {/* Avatar + info */}
           <div className="flex items-center gap-4">
-            <div className="relative shrink-0">
+            <div className="relative shrink-0 flex items-start gap-2">
               <div
                 className="w-16 h-16 rounded-2xl flex items-center justify-center font-display text-xl font-bold"
                 style={{
@@ -353,6 +357,37 @@ export default function PlayerProfile() {
                   ? <span className="text-2xl">{player.avatar}</span>
                   : player.avatarInitials}
               </div>
+              {!isSelf && currentUser && (
+                isIgnored(player.id) ? (
+                  <button
+                    type="button"
+                    title="Unignore player"
+                    onClick={() => {
+                      unignoreUser(player.id);
+                      addNotif({
+                        type: "system",
+                        title: "Unignored",
+                        message: `You can interact with ${player.username} again.`,
+                      });
+                    }}
+                    className="mt-0.5 h-8 w-8 rounded-lg border border-border/50 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors shrink-0"
+                  >
+                    <Ban className="h-4 w-4" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    title="Ignore player"
+                    onClick={() => {
+                      if (!currentUser) return;
+                      blockPlayer({ myId: currentUser.id, targetUserId: player.id, targetUsername: player.username });
+                    }}
+                    className="mt-0.5 h-8 w-8 rounded-lg border border-destructive/25 flex items-center justify-center text-destructive/80 hover:bg-destructive/10 transition-colors shrink-0"
+                  >
+                    <Ban className="h-4 w-4" />
+                  </button>
+                )
+              )}
               {/* Leaderboard tier icon badge on avatar */}
               {player.leaderboardRank && (() => {
                 const tier = getRankTier(player.leaderboardRank);
@@ -462,6 +497,34 @@ export default function PlayerProfile() {
                   </Button>
                 );
               })()}
+              {currentUser && !isSelf && (
+                isIgnored(player.id) ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-border/50 text-muted-foreground gap-1.5"
+                    onClick={() => {
+                      unignoreUser(player.id);
+                      addNotif({
+                        type: "system",
+                        title: "Unignored",
+                        message: `You can interact with ${player.username} again.`,
+                      });
+                    }}
+                  >
+                    <Ban className="h-3.5 w-3.5" /> Unignore
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-destructive/30 text-destructive hover:bg-destructive/10 gap-1.5"
+                    onClick={() => blockPlayer({ myId: currentUser.id, targetUserId: player.id, targetUsername: player.username })}
+                  >
+                    <Ban className="h-3.5 w-3.5" /> Ignore
+                  </Button>
+                )
+              )}
               {/* Report button */}
               <Button
                 variant="outline"

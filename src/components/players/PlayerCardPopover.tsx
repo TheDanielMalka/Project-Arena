@@ -8,6 +8,7 @@ import {
   Flag,
   UserCircle2,
   Mail,
+  Ban,
 } from "lucide-react";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { useUserStore } from "@/stores/userStore";
@@ -35,7 +36,7 @@ export function PlayerCardPopover({
   const navigate = useNavigate();
   const { user } = useUserStore();
   const { players } = usePlayerStore();
-  const { friendships, sendFriendRequest } = useFriendStore();
+  const { friendships, sendFriendRequest, isIgnored, blockPlayer, unignoreUser } = useFriendStore();
   const { submitReport } = useReportStore();
 
   const username = slotToProfileUsername(slotValue, user?.id, user?.username);
@@ -68,7 +69,7 @@ export function PlayerCardPopover({
 
   const handleAddFriend = () => {
     if (!user) return;
-    sendFriendRequest({
+    const created = sendFriendRequest({
       myId: user.id,
       myUsername: user.username,
       myArenaId: user.arenaId,
@@ -84,6 +85,7 @@ export function PlayerCardPopover({
       targetTier,
       targetPreferredGame: targetGame,
     });
+    if (!created) return;
     useNotificationStore.getState().addNotification({
       type: "friend_request",
       title: "Friend Request Sent",
@@ -111,13 +113,52 @@ export function PlayerCardPopover({
     setTimeout(onClose, 1200);
   };
 
+  const handleBlockPlayer = () => {
+    if (!user) return;
+    blockPlayer({ myId: user.id, targetUserId: targetId, targetUsername: username });
+    onClose();
+  };
+
+  const handleUnignore = () => {
+    unignoreUser(targetId);
+    useNotificationStore.getState().addNotification({
+      type: "system",
+      title: "Unignored",
+      message: `You can interact with ${username} again.`,
+    });
+    onClose();
+  };
+
   return (
     <div className="w-56 rounded-xl border border-border/60 bg-card shadow-2xl overflow-hidden">
       <div className="px-3 py-2.5 bg-secondary/40 border-b border-border/40 flex items-center gap-2">
-        <div className="w-7 h-7 rounded-lg bg-primary/20 border border-primary/30 flex items-center justify-center font-display text-[10px] font-bold text-primary shrink-0">
-          {username.slice(0, 2).toUpperCase()}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <div className="w-7 h-7 rounded-lg bg-primary/20 border border-primary/30 flex items-center justify-center font-display text-[10px] font-bold text-primary">
+            {username.slice(0, 2).toUpperCase()}
+          </div>
+          {!isOwnSlot && user && (
+            isIgnored(targetId) ? (
+              <button
+                type="button"
+                title="Unignore"
+                onClick={handleUnignore}
+                className="h-7 w-7 rounded-lg border border-border/50 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors"
+              >
+                <Ban className="h-3.5 w-3.5" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                title="Ignore player"
+                onClick={handleBlockPlayer}
+                className="h-7 w-7 rounded-lg border border-destructive/25 flex items-center justify-center text-destructive/80 hover:bg-destructive/10 transition-colors"
+              >
+                <Ban className="h-3.5 w-3.5" />
+              </button>
+            )
+          )}
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-xs font-bold font-display truncate">{username}</p>
           <p className="text-[10px] text-muted-foreground truncate">
             {profile?.rank ?? "—"} · {profile?.preferredGame ?? "—"}
@@ -158,6 +199,10 @@ export function PlayerCardPopover({
               <div className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground">
                 <Clock className="h-3 w-3" /> Request Sent
               </div>
+            ) : isIgnored(targetId) ? (
+              <div className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground">
+                <Ban className="h-3 w-3" /> Ignored
+              </div>
             ) : (
               <button
                 type="button"
@@ -179,6 +224,16 @@ export function PlayerCardPopover({
               <Mail className="h-3 w-3" /> Messages
               {/* DB-ready: deep-link ?user=username to open DM thread */}
             </button>
+
+            {!isIgnored(targetId) && (
+              <button
+                type="button"
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-destructive/80 hover:bg-destructive/10 rounded-lg transition-colors"
+                onClick={handleBlockPlayer}
+              >
+                <Ban className="h-3 w-3" /> Ignore player
+              </button>
+            )}
 
             {reportStep === "idle" && (
               <button

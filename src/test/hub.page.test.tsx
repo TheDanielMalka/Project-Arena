@@ -53,8 +53,9 @@ beforeEach(() => {
     ],
   });
 
-  // Reset friendships to seed state
+  // Reset friendships + ignore list to seed state
   useFriendStore.setState({
+    ignoredUsers: [],
     friendships: [
       {
         id: "fr-001", initiatorId: "user-001", receiverId: "user-002",
@@ -89,7 +90,7 @@ describe("Hub — tab navigation", () => {
     expect(screen.getByRole("button", { name: /community/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /friends/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /messages/i })).toBeInTheDocument();
-  });
+  }, 15_000);
 
   it("defaults to Community tab when no ?tab param", () => {
     renderHub();

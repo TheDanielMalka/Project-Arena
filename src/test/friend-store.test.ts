@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { useFriendStore } from "@/stores/friendStore";
 
 beforeEach(() => {
-  useFriendStore.setState({ friendships: [] });
+  useFriendStore.setState({ friendships: [], ignoredUsers: [] });
 });
 
 describe("friendStore — sendFriendRequest", () => {
@@ -144,5 +144,27 @@ describe("friendStore — derived selectors", () => {
     expect(useFriendStore.getState().getRelationship("user-002")).toBe("accepted");
     expect(useFriendStore.getState().getRelationship("user-003")).toBe("pending");
     expect(useFriendStore.getState().getRelationship("user-999")).toBeNull();
+  });
+});
+
+describe("friendStore — blockPlayer", () => {
+  it("removes accepted friend and adds ignored ref", () => {
+    useFriendStore.setState({ friendships: [], ignoredUsers: [] });
+    const f = useFriendStore.getState().sendFriendRequest({
+      myId: "a", myUsername: "A", myArenaId: "ARENA-A",
+      myAvatarInitials: "A", myRank: "Gold", myTier: "Gold", myPreferredGame: "CS2",
+      targetId: "b", targetUsername: "B", targetArenaId: "ARENA-B",
+      targetAvatarInitials: "B", targetRank: "Gold", targetTier: "Gold", targetPreferredGame: "CS2",
+    });
+    useFriendStore.getState().acceptRequest(f!.id);
+    expect(useFriendStore.getState().getFriends()).toHaveLength(1);
+    useFriendStore.getState().blockPlayer({
+      myId: "a",
+      targetUserId: "b",
+      targetUsername: "B",
+      quiet: true,
+    });
+    expect(useFriendStore.getState().getFriends()).toHaveLength(0);
+    expect(useFriendStore.getState().isIgnored("b")).toBe(true);
   });
 });
