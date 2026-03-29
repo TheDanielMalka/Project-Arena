@@ -7,6 +7,7 @@ import { Search, Users2, ChevronRight } from "lucide-react";
 import type { Game } from "@/types";
 import { cn } from "@/lib/utils";
 import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
+import { renderForgeShopIcon } from "@/lib/forgeItemIcon";
 
 // ─── Constants ────────────────────────────────────────────────
 
@@ -120,22 +121,29 @@ export default function Players() {
                 {/* Top row: avatar + name + arrow */}
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-3">
-                    <div
-                      className="w-10 h-10 rounded-xl flex items-center justify-center font-display text-sm font-bold shrink-0 overflow-hidden"
-                      style={{
-                        background: `${tierColor}20`,
-                        border: `1.5px solid ${tierColor}50`,
-                        color: tierColor,
-                      }}
-                    >
-                      {player.avatar && player.avatar !== "initials"
-                        ? player.avatar.startsWith("upload:")
-                          ? <img src={player.avatar.slice(7)} className="w-full h-full object-cover" alt="" />
-                          : (() => {
-                            const u = getAvatarImageUrlFromStorage(player.avatar);
-                            return u ? <img src={u} className={cn("h-full w-full", identityPortraitCropClassName)} alt="" decoding="async" /> : <span className="text-base">{player.avatar}</span>;
-                          })()
-                        : player.avatarInitials}
+                    <div className="relative w-10 h-10 shrink-0">
+                      <div
+                        className="w-full h-full rounded-xl flex items-center justify-center font-display text-sm font-bold overflow-hidden"
+                        style={{
+                          background: `${tierColor}20`,
+                          border: `1.5px solid ${tierColor}50`,
+                          color: tierColor,
+                        }}
+                      >
+                        {player.avatar && player.avatar !== "initials"
+                          ? player.avatar.startsWith("upload:")
+                            ? <img src={player.avatar.slice(7)} className="w-full h-full object-cover" alt="" />
+                            : (() => {
+                              const u = getAvatarImageUrlFromStorage(player.avatar);
+                              return u ? <img src={u} className={cn("h-full w-full", identityPortraitCropClassName)} alt="" decoding="async" /> : <span className="text-base">{player.avatar}</span>;
+                            })()
+                          : player.avatarInitials}
+                      </div>
+                      {player.equippedBadgeIcon?.startsWith("badge:") && (
+                        <div className="absolute -bottom-0.5 -right-0.5 z-[1] h-4 w-4 overflow-hidden rounded-full ring-2 ring-background shadow-sm">
+                          {renderForgeShopIcon(player.equippedBadgeIcon, "sm", "pin")}
+                        </div>
+                      )}
                     </div>
                     <div>
                       <p className="font-display text-sm font-semibold leading-tight">

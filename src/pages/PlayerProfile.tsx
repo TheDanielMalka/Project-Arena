@@ -23,6 +23,7 @@ import { useFriendStore } from "@/stores/friendStore";
 import type { TicketReason } from "@/types";
 import { cn } from "@/lib/utils";
 import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
+import { renderForgeShopIcon } from "@/lib/forgeItemIcon";
 
 // ─── Constants ────────────────────────────────────────────────
 
@@ -344,24 +345,47 @@ export default function PlayerProfile() {
 
           {/* Avatar + info */}
           <div className="flex items-center gap-4">
-            <div className="relative shrink-0 flex items-start gap-2">
-              <div
-                className="w-16 h-16 rounded-2xl flex items-center justify-center font-display text-xl font-bold overflow-hidden"
-                style={{
-                  background: `${tierColor}20`,
-                  border: `2px solid ${tierColor}60`,
-                  color: tierColor,
-                  boxShadow: `0 0 20px ${tierColor}20`,
-                }}
-              >
-                {player.avatar && player.avatar !== "initials"
-                  ? player.avatar.startsWith("upload:")
-                    ? <img src={player.avatar.slice(7)} className="w-full h-full object-cover" alt="" />
-                    : (() => {
-                      const u = getAvatarImageUrlFromStorage(player.avatar);
-                      return u ? <img src={u} className={cn("h-full w-full", identityPortraitCropClassName)} alt="" decoding="async" /> : <span className="text-2xl">{player.avatar}</span>;
-                    })()
-                  : player.avatarInitials}
+            <div className="flex items-start gap-2 shrink-0">
+              <div className="relative w-16 h-16 shrink-0">
+                <div
+                  className="w-full h-full rounded-2xl flex items-center justify-center font-display text-xl font-bold overflow-hidden"
+                  style={{
+                    background: `${tierColor}20`,
+                    border: `2px solid ${tierColor}60`,
+                    color: tierColor,
+                    boxShadow: `0 0 20px ${tierColor}20`,
+                  }}
+                >
+                  {player.avatar && player.avatar !== "initials"
+                    ? player.avatar.startsWith("upload:")
+                      ? <img src={player.avatar.slice(7)} className="w-full h-full object-cover" alt="" />
+                      : (() => {
+                        const u = getAvatarImageUrlFromStorage(player.avatar);
+                        return u ? <img src={u} className={cn("h-full w-full", identityPortraitCropClassName)} alt="" decoding="async" /> : <span className="text-2xl">{player.avatar}</span>;
+                      })()
+                    : player.avatarInitials}
+                </div>
+                {player.leaderboardRank && (() => {
+                  const tier = getRankTier(player.leaderboardRank);
+                  if (!tier) return null;
+                  return (
+                    <div
+                      className={`absolute -top-1 -right-1 z-[2] w-5 h-5 rounded-full flex items-center justify-center ${tier.color}`}
+                      style={{ background: "hsl(var(--card))", border: "1.5px solid currentColor" }}
+                      title={`Rank #${player.leaderboardRank}`}
+                    >
+                      <tier.Icon className="h-2.5 w-2.5" />
+                    </div>
+                  );
+                })()}
+                {player.equippedBadgeIcon?.startsWith("badge:") && (
+                  <div
+                    className="absolute bottom-0.5 right-0.5 z-[3] h-[18px] w-[18px] overflow-hidden rounded-full ring-2 ring-background shadow-sm"
+                    title="Forge ring badge"
+                  >
+                    {renderForgeShopIcon(player.equippedBadgeIcon, "sm", "pin")}
+                  </div>
+                )}
               </div>
               {!isSelf && currentUser && (
                 isIgnored(player.id) ? (
@@ -394,20 +418,6 @@ export default function PlayerProfile() {
                   </button>
                 )
               )}
-              {/* Leaderboard tier icon badge on avatar */}
-              {player.leaderboardRank && (() => {
-                const tier = getRankTier(player.leaderboardRank);
-                if (!tier) return null;
-                return (
-                  <div
-                    className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center ${tier.color}`}
-                    style={{ background: "hsl(var(--card))", border: "1.5px solid currentColor" }}
-                    title={`Rank #${player.leaderboardRank}`}
-                  >
-                    <tier.Icon className="h-2.5 w-2.5" />
-                  </div>
-                );
-              })()}
             </div>
 
             <div>

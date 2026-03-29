@@ -12,6 +12,7 @@ import { useMessageStore } from "@/stores/messageStore";
 import { getXpInfo }       from "@/lib/xp";
 import { getAvatarSidebarStyle } from "@/lib/avatarBgs";
 import { renderUserAvatarDiscContent } from "@/lib/userAvatarRing";
+import { renderForgeShopIcon } from "@/lib/forgeItemIcon";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
@@ -69,30 +70,44 @@ export function ArenaSidebar() {
 
   const renderAvatar = (size = 28) => {
     const frame = getAvatarSidebarStyle(user?.avatarBg);
+    const pinPx = size <= 24 ? 10 : 12;
     return (
       <div
-        className="relative shrink-0 overflow-hidden ring-1 ring-white/10"
-        style={{
-          width: size,
-          height: size,
-          ...frame,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
+        className="relative shrink-0"
+        style={{ width: size, height: size }}
       >
-        <span
-          className="pointer-events-none absolute inset-0 opacity-[0.12]"
+        <div
+          className="relative overflow-hidden ring-1 ring-white/10 rounded-md"
           style={{
-            background: "linear-gradient(135deg, rgba(255,255,255,0.5) 0%, transparent 45%, transparent 100%)",
+            width: size,
+            height: size,
+            ...frame,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
           }}
-        />
-        {renderUserAvatarDiscContent({
-          avatar: user?.avatar,
-          initialsSource,
-          sizePx: size,
-          mediaRoundedClass: "rounded-md",
-        })}
+        >
+          <span
+            className="pointer-events-none absolute inset-0 opacity-[0.12]"
+            style={{
+              background: "linear-gradient(135deg, rgba(255,255,255,0.5) 0%, transparent 45%, transparent 100%)",
+            }}
+          />
+          {renderUserAvatarDiscContent({
+            avatar: user?.avatar,
+            initialsSource,
+            sizePx: size,
+            mediaRoundedClass: "rounded-md",
+          })}
+        </div>
+        {user?.equippedBadgeIcon?.startsWith("badge:") && (
+          <div
+            className="absolute -bottom-0.5 -right-0.5 z-[2] overflow-hidden rounded-full ring-2 ring-background shadow-sm"
+            style={{ width: pinPx, height: pinPx }}
+          >
+            {renderForgeShopIcon(user.equippedBadgeIcon, "sm", "pin")}
+          </div>
+        )}
       </div>
     );
   };

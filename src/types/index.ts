@@ -437,6 +437,8 @@ export interface InboxMessage {
 
 export type ForgeCategory = "avatar" | "badge" | "boost" | "vip" | "bundle" | "frame";
 export type ForgeRarity   = "common" | "rare" | "epic" | "legendary";
+/** Identity Studio badge sub-tab — DB-ready: forge_items.badge_shelf */
+export type ForgeBadgeShelf = "free" | "event" | "premium";
 export type ForgeChallengeType   = "daily" | "weekly";
 export type ForgeChallengeStatus = "active" | "claimable" | "claimed";
 export type ForgeEventType   = "tournament" | "seasonal" | "special";
@@ -457,6 +459,10 @@ export interface ForgeItem {
   stock?: number;        // DB: forge_items.stock (NULL = unlimited)
   expiresAt?: string;    // DB: forge_items.expires_at (TIMESTAMPTZ)
   ownedBy?: number;      // DB: COUNT(forge_purchases) WHERE item_id = id
+  /** Starter ring badges — always equippable in Identity Studio; not sold in Forge */
+  freeBadge?: boolean;
+  /** Badge picker tab (Free / Event / Premium) */
+  badgeShelf?: ForgeBadgeShelf;
 }
 
 export interface ForgeChallenge {

@@ -45,9 +45,9 @@ function resetWallet() {
 // ─── Seed data integrity ───────────────────────────────────────
 
 describe("forgeStore — seed items integrity", () => {
-  it("contains exactly 16 seed items", () => {
+  it("contains exactly 26 seed items", () => {
     const { items } = useForgeStore.getState();
-    expect(items).toHaveLength(16);
+    expect(items).toHaveLength(26);
   });
 
   it("every item has a unique id", () => {
@@ -222,7 +222,7 @@ describe("forgeStore — seed drops integrity", () => {
 describe("forgeStore — getItemsByCategory", () => {
   it("returns all items when category is 'all'", () => {
     const items = useForgeStore.getState().getItemsByCategory("all");
-    expect(items).toHaveLength(16);
+    expect(items).toHaveLength(26);
   });
 
   it("returns only avatar items when category is 'avatar'", () => {
