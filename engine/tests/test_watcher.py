@@ -1,8 +1,8 @@
 import pytest
 from unittest.mock import MagicMock, patch, call
 
-from src.vision.watcher import ScreenshotHandler
-from src.vision.engine import VisionEngineOutput
+from src.vision.watcher import ScreenshotHandler, watch
+from src.vision.engine import VisionEngine, VisionEngineConfig, VisionEngineOutput
 
 
 # ─── helpers ────────────────────────────────────────────────────────────────
@@ -146,3 +146,94 @@ class TestOutput:
 
         output = capsys.readouterr().out
         assert "no confidence" in output
+
+
+# ── watch() game-config threading tests ──────────────────────────────────────
+
+class TestWatchGameConfig:
+    """
+    Verify that watch() correctly seeds VisionEngineConfig with the game
+    argument so Valorant screenshots are never processed by the CS2 detector.
+
+    These tests patch watchdog Observer to avoid spawning real FS threads.
+    """
+
+    def test_watch_no_config_seeds_cs2_game(self, tmp_path):
+        """watch('CS2') with no config creates engine with game='CS2'."""
+        created_engines: list[VisionEngine] = []
+
+        original_init = VisionEngine.__init__
+
+        def capture_engine(self, config=None):
+            original_init(self, config)
+            created_engines.append(self)
+
+        with patch.object(VisionEngine, "__init__", capture_engine), \
+             patch("src.vision.watcher.Observer") as mock_obs:
+            mock_obs.return_value.start = MagicMock()
+            mock_obs.return_value.schedule = MagicMock()
+            # Simulate immediate KeyboardInterrupt so watch() exits cleanly
+            with patch("time.sleep", side_effect=KeyboardInterrupt):
+                try:
+                    watch("CS2", screenshots_dir=str(tmp_path))
+                except Exception:
+                    pass
+
+        assert len(created_engines) == 1
+        assert created_engines[0].config.game == "CS2"
+
+    def test_watch_no_config_seeds_valorant_game(self, tmp_path):
+        """
+        watch('Valorant') with no config must create engine with game='Valorant'.
+        This is the critical regression test: before the fix, watch('Valorant')
+        would create a CS2 engine (VisionEngineConfig() defaulted to 'CS2').
+        """
+        created_engines: list[VisionEngine] = []
+
+        original_init = VisionEngine.__init__
+
+        def capture_engine(self, config=None):
+            original_init(self, config)
+            created_engines.append(self)
+
+        with patch.object(VisionEngine, "__init__", capture_engine), \
+             patch("src.vision.watcher.Observer") as mock_obs:
+            mock_obs.return_value.start = MagicMock()
+            mock_obs.return_value.schedule = MagicMock()
+            with patch("time.sleep", side_effect=KeyboardInterrupt):
+                try:
+                    watch("Valorant", screenshots_dir=str(tmp_path))
+                except Exception:
+                    pass
+
+        assert len(created_engines) == 1
+        assert created_engines[0].config.game == "Valorant"
+
+    def test_watch_explicit_config_is_used_as_is(self, tmp_path):
+        """
+        When a caller passes an explicit config, watch() must use it unchanged
+        (not override config.game with the game argument).
+        """
+        custom_config = VisionEngineConfig(game="Valorant", confidence_threshold=0.9)
+        created_engines: list[VisionEngine] = []
+
+        original_init = VisionEngine.__init__
+
+        def capture_engine(self, config=None):
+            original_init(self, config)
+            created_engines.append(self)
+
+        with patch.object(VisionEngine, "__init__", capture_engine), \
+             patch("src.vision.watcher.Observer") as mock_obs:
+            mock_obs.return_value.start = MagicMock()
+            mock_obs.return_value.schedule = MagicMock()
+            with patch("time.sleep", side_effect=KeyboardInterrupt):
+                try:
+                    watch("Valorant", screenshots_dir=str(tmp_path),
+                          config=custom_config)
+                except Exception:
+                    pass
+
+        assert len(created_engines) == 1
+        assert created_engines[0].config.confidence_threshold == 0.9
+        assert created_engines[0].config.game == "Valorant"

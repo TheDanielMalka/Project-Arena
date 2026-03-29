@@ -1,11 +1,14 @@
 import time
 import os
+import logging
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from src.vision.engine import VisionEngine, VisionEngineConfig
 from src.vision.state_machine import StateMachine, MatchState
 from src.vision.consensus import MatchConsensus, ConsensusStatus
 from typing import Optional
+
+log = logging.getLogger("vision.watcher")
 
 
 class ScreenshotHandler(FileSystemEventHandler):
@@ -52,6 +55,9 @@ class ScreenshotHandler(FileSystemEventHandler):
             confirmed = self.state_machine.confirmed_output
             print(f"CONFIRMED: {confirmed.result} | confidence: {confirmed.confidence:.0%}")
             print(f"players: {confirmed.players}")
+            # Valorant: also log agent names alongside usernames
+            if confirmed.agents:
+                print(f"agents:  {confirmed.agents}")
             self.state_machine.mark_reported()
 
             # Submit to consensus if a match session is active
@@ -80,19 +86,61 @@ def watch(game: str, screenshots_dir: str = "screenshots",
           config: Optional[VisionEngineConfig] = None,
           wallet_address: str = "unknown",
           consensus: Optional[MatchConsensus] = None):
+    """
+    Watch a directory for new PNG screenshots and run the vision pipeline
+    on each one.
 
+    Args:
+        game            : "CS2" | "Valorant" — determines which screenshot
+                          sub-directory to watch AND which vision detector
+                          to use.
+        screenshots_dir : root screenshots directory; watched path will be
+                          <screenshots_dir>/<game>/
+        config          : optional VisionEngineConfig override.
+                          - If None  → a default config is created with
+                            game=<game> so the engine always matches the
+                            directory being watched.
+                          - If provided → used as-is.  A warning is logged
+                            if config.game differs from the `game` argument.
+        wallet_address  : player's wallet address for consensus submissions.
+        consensus       : optional MatchConsensus instance; when provided
+                          the confirmed result is submitted for multi-player
+                          consensus evaluation.
+
+    Critical note: when config=None the engine is seeded with game=<game>.
+    Callers that pass a custom config are responsible for setting config.game
+    correctly. This prevents Valorant screenshots from being processed by
+    the CS2 colour detector (and vice-versa).
+    """
     watch_path = os.path.join(screenshots_dir, game.replace(" ", "_"))
     os.makedirs(watch_path, exist_ok=True)
 
+    # ── Ensure the engine is configured for the correct game ─────────────────
+    if config is None:
+        # Build a default config seeded with the correct game so that
+        # watch("Valorant") always creates a Valorant-aware engine.
+        config = VisionEngineConfig(game=game)
+        log.debug(f"[watcher] created default config: game={game}")
+    elif config.game != game:
+        # Caller passed a config whose game disagrees with the watch() game
+        # argument.  Trust the config but warn so the mismatch is visible.
+        log.warning(
+            f"[watcher] game='{game}' but config.game='{config.game}' — "
+            f"engine will use config.game='{config.game}'"
+        )
+
     engine = VisionEngine(config=config)
-    handler = ScreenshotHandler(engine, wallet_address=wallet_address, consensus=consensus)
+    handler = ScreenshotHandler(engine, wallet_address=wallet_address,
+                                consensus=consensus)
 
     observer = Observer()
     observer.schedule(handler, path=watch_path, recursive=False)
     observer.start()
 
-    print(f"waiting for new photos: {watch_path}")
-    print(f"confidence threshold: {engine.config.confidence_threshold:.0%} | cooldown: {engine.config.cooldown_seconds}s")
+    print(f"[{game}] watching: {watch_path}")
+    print(f"confidence threshold: {engine.config.confidence_threshold:.0%} | "
+          f"cooldown: {engine.config.cooldown_seconds}s | "
+          f"game: {engine.config.game}")
 
     try:
         while True:
