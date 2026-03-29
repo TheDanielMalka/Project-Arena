@@ -5,6 +5,12 @@
 
 import type { Game, MatchMode } from "@/types";
 
+// ─── Active games — only CS2 & Valorant are live in the Arena Client ─────────
+// DB-ready: games.enabled column in DB — flip to true when Client adds support.
+// All other games stay in code as infrastructure, shown as "Coming Soon" in UI.
+export const ACTIVE_GAMES: readonly string[] = ["CS2", "Valorant"] as const;
+export const isGameActive = (game: string): boolean => ACTIVE_GAMES.includes(game);
+
 export interface GameModeOption {
   mode: MatchMode;
   teamSize: number;   // players per team (1, 2, 4, or 5)

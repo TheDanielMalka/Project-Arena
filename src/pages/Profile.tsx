@@ -586,32 +586,48 @@ const Profile = () => {
           </CardTitle>
         </CardHeader>
         <CardContent className="pt-0">
+          {/* DB-ready: isGameActive driven by games.enabled — Link/Unlink enabled only for active games */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
             {gameConnections.filter(g => g.platform === "pc").map((game) => {
               const cfg = gameConfig[game.name] ?? { abbr: game.name.slice(0,2).toUpperCase(), color: "#888", bg: "rgba(136,136,136,0.1)" };
+              const active = game.name === "CS2" || game.name === "Valorant";
               return (
-                <div key={game.name} className="relative flex flex-col items-center gap-1.5 p-3 rounded-lg bg-secondary/40 border border-border/50 hover:border-primary/20 transition-all">
-                  {/* status dot */}
-                  <div className={`absolute top-2 right-2 w-1.5 h-1.5 rounded-full ${game.status === "connected" ? "bg-primary" : "bg-muted-foreground/30"}`} />
+                <div key={game.name} className={`relative flex flex-col items-center gap-1.5 p-3 rounded-lg border transition-all ${
+                  active
+                    ? "bg-secondary/40 border-border/50 hover:border-primary/20"
+                    : "bg-secondary/20 border-border/30 opacity-60"
+                }`}>
+                  {/* status dot — hidden for coming-soon games */}
+                  {active && (
+                    <div className={`absolute top-2 right-2 w-1.5 h-1.5 rounded-full ${game.status === "connected" ? "bg-primary" : "bg-muted-foreground/30"}`} />
+                  )}
+                  {/* Coming Soon badge */}
+                  {!active && (
+                    <span className="absolute top-1.5 right-1.5 text-[8px] font-display font-bold px-1 py-0.5 rounded bg-muted text-muted-foreground/50 tracking-wide">SOON</span>
+                  )}
                   {/* game badge */}
-                  <div className="w-9 h-9 rounded-lg overflow-hidden flex items-center justify-center font-display font-bold text-xs" style={{ background: cfg.bg, border: `1px solid ${cfg.color}30` }}>
+                  <div className={`w-9 h-9 rounded-lg overflow-hidden flex items-center justify-center font-display font-bold text-xs ${!active ? "grayscale" : ""}`} style={{ background: cfg.bg, border: `1px solid ${cfg.color}30` }}>
                     {cfg.img
                       ? <img src={cfg.img} alt={game.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display="none"; (e.target as HTMLImageElement).parentElement!.innerHTML = `<span style="color:${cfg.color};font-size:10px;font-weight:700">${cfg.abbr}</span>`; }} />
                       : <span style={{ color: cfg.color }}>{cfg.abbr}</span>
                     }
                   </div>
                   <span className="font-display text-xs font-semibold text-center leading-tight">{game.name}</span>
-                  {game.status === "connected" && (
+                  {active && game.status === "connected" && (
                     <span className="text-[10px] text-muted-foreground font-mono truncate max-w-full px-1 text-center">{game.accountId}</span>
                   )}
-                  {game.status === "connected" ? (
-                    <button onClick={() => handleUnlinkGame(game.name)} className="text-[10px] font-display px-2 py-0.5 rounded border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors">
-                      Unlink
-                    </button>
+                  {active ? (
+                    game.status === "connected" ? (
+                      <button onClick={() => handleUnlinkGame(game.name)} className="text-[10px] font-display px-2 py-0.5 rounded border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors">
+                        Unlink
+                      </button>
+                    ) : (
+                      <button onClick={() => handleOpenLinkDialog(game.name, "game", game.platform)} className="text-[10px] font-display px-2 py-0.5 rounded border border-border hover:border-primary/50 text-muted-foreground hover:text-foreground transition-colors">
+                        Link
+                      </button>
+                    )
                   ) : (
-                    <button onClick={() => handleOpenLinkDialog(game.name, "game", game.platform)} className="text-[10px] font-display px-2 py-0.5 rounded border border-border hover:border-primary/50 text-muted-foreground hover:text-foreground transition-colors">
-                      Link
-                    </button>
+                    <span className="text-[10px] text-muted-foreground/40 font-display">Coming Soon</span>
                   )}
                 </div>
               );
@@ -628,31 +644,21 @@ const Profile = () => {
           </CardTitle>
         </CardHeader>
         <CardContent className="pt-0">
+          {/* All mobile games are Coming Soon — Arena Client v1 is PC-only */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
             {gameConnections.filter(g => g.platform === "mobile").map((game) => {
               const cfg = gameConfig[game.name] ?? { abbr: game.name.slice(0,2).toUpperCase(), color: "#888", bg: "rgba(136,136,136,0.1)" };
               return (
-                <div key={game.name} className="relative flex flex-col items-center gap-1.5 p-3 rounded-lg bg-secondary/40 border border-border/50 hover:border-primary/20 transition-all">
-                  <div className={`absolute top-2 right-2 w-1.5 h-1.5 rounded-full ${game.status === "connected" ? "bg-primary" : "bg-muted-foreground/30"}`} />
-                  <div className="w-9 h-9 rounded-lg overflow-hidden flex items-center justify-center font-display font-bold text-xs" style={{ background: cfg.bg, border: `1px solid ${cfg.color}30` }}>
+                <div key={game.name} className="relative flex flex-col items-center gap-1.5 p-3 rounded-lg bg-secondary/20 border border-border/30 opacity-55 transition-all">
+                  <span className="absolute top-1.5 right-1.5 text-[8px] font-display font-bold px-1 py-0.5 rounded bg-muted text-muted-foreground/50 tracking-wide">SOON</span>
+                  <div className="w-9 h-9 rounded-lg overflow-hidden flex items-center justify-center font-display font-bold text-xs grayscale" style={{ background: cfg.bg, border: `1px solid ${cfg.color}30` }}>
                     {cfg.img
                       ? <img src={cfg.img} alt={game.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display="none"; (e.target as HTMLImageElement).parentElement!.innerHTML = `<span style="color:${cfg.color};font-size:10px;font-weight:700">${cfg.abbr}</span>`; }} />
                       : <span style={{ color: cfg.color }}>{cfg.abbr}</span>
                     }
                   </div>
                   <span className="font-display text-xs font-semibold text-center leading-tight">{game.name}</span>
-                  {game.status === "connected" && (
-                    <span className="text-[10px] text-muted-foreground font-mono truncate max-w-full px-1 text-center">{game.accountId}</span>
-                  )}
-                  {game.status === "connected" ? (
-                    <button onClick={() => handleUnlinkGame(game.name)} className="text-[10px] font-display px-2 py-0.5 rounded border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors">
-                      Unlink
-                    </button>
-                  ) : (
-                    <button onClick={() => handleOpenLinkDialog(game.name, "game", game.platform)} className="text-[10px] font-display px-2 py-0.5 rounded border border-border hover:border-primary/50 text-muted-foreground hover:text-foreground transition-colors">
-                      Link
-                    </button>
-                  )}
+                  <span className="text-[10px] text-muted-foreground/40 font-display">Coming Soon</span>
                 </div>
               );
             })}

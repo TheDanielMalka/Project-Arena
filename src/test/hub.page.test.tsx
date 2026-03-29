@@ -144,11 +144,14 @@ describe("Hub — Community tab", () => {
     expect(screen.getByRole("button", { name: /shuffle/i })).toBeInTheDocument();
   });
 
-  it("shows game filter buttons (CS2, Valorant, Fortnite etc.)", () => {
+  it("shows game filter buttons (CS2, Valorant) and Coming Soon pills (Fortnite etc.)", () => {
     renderHub("community");
+    // Active games are buttons
     expect(screen.getByRole("button", { name: /^cs2$/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /valorant/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /fortnite/i })).toBeInTheDocument();
+    // Coming Soon games are non-interactive spans (not buttons)
+    expect(screen.queryByRole("button", { name: /fortnite/i })).toBeNull();
+    expect(screen.getByText(/fortnite/i)).toBeInTheDocument();
   });
 
   it("shows All filter button", () => {
