@@ -14,7 +14,7 @@ import type { LucideIcon } from "lucide-react";
 
 type BadgeKey = "founders" | "champions" | "veterans";
 
-/** Hex medallion — shop tiles & checkout cards (layout "tile") */
+/** Hex medallion — Identity Studio jewelry language; used for shop tiles (layout "tile") */
 const BADGE_HEX =
   "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)" as const;
 
