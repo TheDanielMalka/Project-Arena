@@ -2,9 +2,10 @@
 Tests for engine client routes:
   POST /client/heartbeat
   GET  /client/status
+  GET  /client/match
 
-These routes allow the Arena desktop client to announce its presence
-and let the web UI display a "Client Connected" badge.
+These routes allow the Arena desktop client to announce its presence,
+display a "Client Connected" badge, and auto-detect an active match_id.
 """
 from __future__ import annotations
 
@@ -215,3 +216,33 @@ class TestClientStatus:
         assert resp_a.json()["game"] == "CS2"
         assert resp_b.json()["game"] == "Valorant"
         assert resp_b.json()["match_id"] == "M-100"
+
+
+# ── GET /client/match ─────────────────────────────────────────────────────────
+
+class TestClientActiveMatch:
+
+    def test_returns_null_match_when_no_db(self):
+        """
+        With no DB connected (CI / test env), endpoint returns match_id: null
+        gracefully — never raises.
+        """
+        resp = client.get("/client/match", params={"wallet_address": "0xPLAYER"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["match_id"] is None
+        assert data["wallet_address"] == "0xPLAYER"
+
+    def test_echoes_wallet_address(self):
+        resp = client.get("/client/match", params={"wallet_address": "0xECHO"})
+        assert resp.json()["wallet_address"] == "0xECHO"
+
+    def test_missing_wallet_returns_422(self):
+        resp = client.get("/client/match")
+        assert resp.status_code == 422
+
+    def test_different_wallets_return_independently(self):
+        r1 = client.get("/client/match", params={"wallet_address": "0xAAA"})
+        r2 = client.get("/client/match", params={"wallet_address": "0xBBB"})
+        assert r1.json()["wallet_address"] == "0xAAA"
+        assert r2.json()["wallet_address"] == "0xBBB"

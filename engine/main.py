@@ -336,6 +336,40 @@ async def client_status(wallet_address: str):
     )
 
 
+@app.get("/client/match")
+async def client_active_match(wallet_address: str):
+    """
+    Return the active match_id for a given wallet address.
+
+    The desktop client polls this every few seconds while monitoring.
+    When a match_id is returned the client starts uploading screenshots.
+
+    DB-ready: SELECT id FROM matches
+              WHERE (player1_wallet = :w OR player2_wallet = :w)
+                AND status = 'active'
+              ORDER BY created_at DESC LIMIT 1
+    CONTRACT-ready: active match = escrow is locked; client should capture
+                    and upload until match transitions to 'completed'.
+    """
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT id FROM matches "
+                    "WHERE (player1_wallet = :w OR player2_wallet = :w) "
+                    "AND status = 'active' "
+                    "ORDER BY created_at DESC LIMIT 1"
+                ),
+                {"w": wallet_address},
+            ).fetchone()
+            if row:
+                return {"match_id": str(row[0]), "wallet_address": wallet_address}
+    except Exception:
+        pass
+    # DB not available or no active match found
+    return {"match_id": None, "wallet_address": wallet_address}
+
+
 @app.get("/match/{match_id}/status")
 async def match_status(match_id: str):
     """

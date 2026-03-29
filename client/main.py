@@ -196,6 +196,27 @@ class EngineClient:
             logger.error(f"Engine health check failed: {e}")
             return None
 
+    def get_active_match(self, wallet_address: str) -> str | None:
+        """
+        Poll GET /client/match to check if there is an active match for this wallet.
+
+        Returns the match_id string, or None if no active match exists or
+        the engine is unreachable.
+
+        DB-ready: engine queries matches table once available.
+        """
+        try:
+            r = self.client.get(
+                f"{self.base_url}/client/match",
+                params={"wallet_address": wallet_address},
+                timeout=5,
+            )
+            if r.status_code == 200:
+                return r.json().get("match_id")
+        except Exception as e:
+            logger.debug(f"Active match poll failed (non-fatal): {e}")
+        return None
+
     def upload_screenshot(self, match_id: str, filepath: str) -> dict | None:
         """Upload screenshot to Engine for server-side OCR processing."""
         try:
@@ -277,6 +298,16 @@ class MatchMonitor:
                         logger.info(f"{game} detected - starting capture")
                         self.monitoring = True
 
+                    # Auto-fetch match_id from engine when game is running but
+                    # no active match is set yet.
+                    # DB-ready: engine returns real match_id once matches table exists.
+                    if not self.current_match_id:
+                        wallet = self.config.get("wallet_address", "unknown")
+                        match_id_from_engine = self.engine.get_active_match(wallet)
+                        if match_id_from_engine:
+                            self.set_match_id(match_id_from_engine)
+                            logger.info(f"Active match auto-detected: {match_id_from_engine}")
+
                     game_output_dir = os.path.join(
                         self.config["screenshot_dir"],
                         game.replace(" ", "_"),
@@ -314,6 +345,8 @@ class MatchMonitor:
                     if self.monitoring:
                         logger.info(f"{game} closed - pausing capture")
                         self.monitoring = False
+                        # Clear match_id so the next game session fetches a fresh one
+                        self.current_match_id = None
 
             except Exception as e:
                 logger.error(f"Monitor loop error: {e}")
