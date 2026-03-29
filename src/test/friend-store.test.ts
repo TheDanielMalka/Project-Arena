@@ -98,7 +98,7 @@ describe("friendStore — derived selectors", () => {
         id: "fr-recv", initiatorId: "user-004", receiverId: "user-001",
         friendId: "user-004", friendUsername: "Sender", friendArenaId: "ARENA-S1",
         friendAvatarInitials: "S1", friendRank: "Platinum", friendTier: "Platinum",
-        friendPreferredGame: "PUBG", status: "pending" as const, createdAt: new Date().toISOString(),
+        friendPreferredGame: "CS2", status: "pending" as const, createdAt: new Date().toISOString(),
       }],
     }));
   };

@@ -31,24 +31,28 @@ logger.addHandler(console_handler)
 logger.addHandler(file_handler)
 
 
-def detect_result(image_path, region=None):
+# ── CS2 ───────────────────────────────────────────────────────────────────────
 
-    logger.info(f"detecting match result: {image_path}")
+def _detect_result_cs2(image_path: str, region=None):
+    """
+    CS2 end-screen result detection.
 
-    if not os.path.exists(image_path):
-        logger.error(f"image file not found: {image_path}")
-        return None, 0.0
+    VICTORY : green banner  — HSV H 35-85  (pure green glow)
+    DEFEAT  : red banner    — HSV H 0-10 / 170-180  (red glow, wraps around)
 
+    Default crop: y 12-17%, x 34-68% of the frame.
+    That window sits over the CS2 "VICTORY / DEFEAT" text in the top-centre.
+    """
     img = cv2.imread(image_path)
 
     if region:
         x, y, w, h = region
-        crop = img[y:y+h, x:x+w]
-        logger.info(f"cropped region: x={x}, y={y}, w={w}, h={h}")
+        crop = img[y:y + h, x:x + w]
+        logger.info(f"[CS2] cropped region: x={x}, y={y}, w={w}, h={h}")
     else:
         h, w = img.shape[:2]
-        crop = img[int(h*0.12):int(h*0.17), int(w*0.34):int(w*0.68)]
-        logger.info("using default region (top center)")
+        crop = img[int(h * 0.12):int(h * 0.17), int(w * 0.34):int(w * 0.68)]
+        logger.info("[CS2] using default region (top centre)")
 
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
     total_pixels = hsv.shape[0] * hsv.shape[1]
@@ -60,25 +64,118 @@ def detect_result(image_path, region=None):
     red_mask2 = cv2.inRange(hsv, (170, 50, 50), (180, 255, 255))
     red_pct = np.sum((red_mask1 | red_mask2) > 0) / total_pixels * 100
 
-    logger.debug(f"green: {green_pct:.1f}%, red: {red_pct:.1f}%")
+    logger.debug(f"[CS2] green: {green_pct:.1f}%, red: {red_pct:.1f}%")
 
     if green_pct > 30:
         result = "victory"
         confidence = round(green_pct / 100, 4)
-        logger.info(f"VICTORY detected - confidence: {confidence}")
+        logger.info(f"[CS2] VICTORY detected - confidence: {confidence}")
         save_evidence(image_path, result, confidence)
         return result, confidence
 
-    elif red_pct > 30:
+    if red_pct > 30:
         result = "defeat"
         confidence = round(red_pct / 100, 4)
-        logger.info(f"DEFEAT detected - confidence: {confidence}")
+        logger.info(f"[CS2] DEFEAT detected - confidence: {confidence}")
         save_evidence(image_path, result, confidence)
         return result, confidence
 
+    logger.warning(f"[CS2] no result - green: {green_pct:.1f}%, red: {red_pct:.1f}%")
+    return None, 0.0
+
+
+# ── Valorant ──────────────────────────────────────────────────────────────────
+
+def _detect_result_valorant(image_path: str, region=None):
+    """
+    Valorant end-screen result detection.
+
+    VICTORY : teal/cyan banner   — HSV H 75-100
+              (Valorant's distinctive turquoise victory colour)
+    DEFEAT  : blue-purple banner — HSV H 110-145
+              (confirmed by visual inspection; refine once a real DEFEAT
+               screenshot is provided)
+
+    Default crop: y 3-25%, x 20-80% of the frame.
+    That window captures the large "VICTORY / DEFEAT" text in the centre-top
+    while excluding the numeric score that appears in the far corners.
+
+    TODO: tighten DEFEAT HSV thresholds once an actual Valorant DEFEAT
+          screenshot is available.
+    """
+    img = cv2.imread(image_path)
+
+    if region:
+        x, y, w, h = region
+        crop = img[y:y + h, x:x + w]
+        logger.info(f"[Valorant] cropped region: x={x}, y={y}, w={w}, h={h}")
     else:
-        logger.warning(f"no result detected - green: {green_pct:.1f}%, red: {red_pct:.1f}%")
+        h, w = img.shape[:2]
+        crop = img[int(h * 0.03):int(h * 0.25), int(w * 0.20):int(w * 0.80)]
+        logger.info("[Valorant] using default region (top centre - VICTORY/DEFEAT text area)")
+
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    total_pixels = hsv.shape[0] * hsv.shape[1]
+
+    # VICTORY: teal/cyan - Valorant's signature post-game victory colour
+    teal_mask = cv2.inRange(hsv, (75, 80, 80), (100, 255, 255))
+    teal_pct = np.sum(teal_mask > 0) / total_pixels * 100
+
+    # DEFEAT: blue-purple - per user confirmation; adjust after DEFEAT screenshot
+    blue_purple_mask = cv2.inRange(hsv, (110, 50, 50), (145, 255, 255))
+    blue_purple_pct = np.sum(blue_purple_mask > 0) / total_pixels * 100
+
+    logger.debug(f"[Valorant] teal: {teal_pct:.1f}%, blue_purple: {blue_purple_pct:.1f}%")
+
+    if teal_pct > 25:
+        result = "victory"
+        confidence = round(teal_pct / 100, 4)
+        logger.info(f"[Valorant] VICTORY detected - confidence: {confidence}")
+        save_evidence(image_path, result, confidence)
+        return result, confidence
+
+    if blue_purple_pct > 25:
+        result = "defeat"
+        confidence = round(blue_purple_pct / 100, 4)
+        logger.info(f"[Valorant] DEFEAT detected - confidence: {confidence}")
+        save_evidence(image_path, result, confidence)
+        return result, confidence
+
+    logger.warning(
+        f"[Valorant] no result - teal: {teal_pct:.1f}%, blue_purple: {blue_purple_pct:.1f}%"
+    )
+    return None, 0.0
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+def detect_result(image_path: str, region=None, game: str = "CS2"):
+    """
+    Unified win/loss detector. Routes to the correct game-specific
+    implementation based on `game`.
+
+    Args:
+        image_path : Path to the end-screen screenshot.
+        region     : Optional (x, y, w, h) crop override. When None each
+                     game uses its own calibrated default region.
+        game       : "CS2" | "Valorant"   (default: "CS2")
+
+    Returns:
+        (result, confidence)
+          result     - "victory" | "defeat" | None
+          confidence - float in [0, 1]; 0.0 when nothing is detected.
+    """
+    logger.info(f"detect_result: game={game}, image={image_path}")
+
+    if not os.path.exists(image_path):
+        logger.error(f"image file not found: {image_path}")
         return None, 0.0
+
+    if game == "Valorant":
+        return _detect_result_valorant(image_path, region)
+
+    # Default -> CS2
+    return _detect_result_cs2(image_path, region)
 
 
 def match_template(image_path, template_path, threshold=0.8):
@@ -110,7 +207,7 @@ def match_template(image_path, template_path, threshold=0.8):
     result = cv2.matchTemplate(img, template, cv2.TM_CCOEFF_NORMED)
     _, base_max_val, _, base_max_loc = cv2.minMaxLoc(result)
 
-    # Alternative matching on edge maps (shape-focused, less color/noise-sensitive)
+    # Edge-map matching - shape-focused, less sensitive to colour / noise
     img_edges = cv2.Canny(img, 50, 150)
     template_edges = cv2.Canny(template, 50, 150)
     edge_result = cv2.matchTemplate(img_edges, template_edges, cv2.TM_CCOEFF_NORMED)
@@ -162,9 +259,19 @@ def save_evidence(image_path, result, confidence):
 
 
 if __name__ == "__main__":
-    result, confidence = detect_result("src/vision/templates/cs2/template2.jpg")
-    print(f"Result: {result}, Confidence: {confidence}")
-    result, confidence = detect_result("src/vision/templates/cs2/temp3.webp")
-    print(f"Result: {result}, Confidence: {confidence}")
-    result, confidence = detect_result("src/vision/templates/cs2/temp4.jpg")
-    print(f"Result: {result}, Confidence: {confidence}")
+    # CS2 quick-test
+    for path in [
+        "src/vision/templates/cs2/template2.jpg",
+        "src/vision/templates/cs2/temp3.webp",
+        "src/vision/templates/cs2/temp4.jpg",
+    ]:
+        result, confidence = detect_result(path, game="CS2")
+        print(f"[CS2]      {path} -> result={result}, confidence={confidence}")
+
+    # Valorant quick-test
+    for path in [
+        "src/vision/templates/valorant/valorant_1920x1080_victory.png",
+        "src/vision/templates/valorant/valorant_1920x1080_defeat.png",
+    ]:
+        result, confidence = detect_result(path, game="Valorant")
+        print(f"[Valorant] {path} -> result={result}, confidence={confidence}")

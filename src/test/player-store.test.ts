@@ -102,14 +102,15 @@ describe("playerStore — seed data integrity", () => {
     expect(tiers.has("Silver")).toBe(true);
   });
 
-  it("covers multiple preferred games (CS2, Valorant, Fortnite, PUBG, Apex Legends)", () => {
+  it("covers only active preferred games (CS2, Valorant — Coming Soon games not in seed)", () => {
     const { players } = usePlayerStore.getState();
     const games = new Set(players.map((p) => p.preferredGame));
     expect(games.has("CS2")).toBe(true);
     expect(games.has("Valorant")).toBe(true);
-    expect(games.has("Fortnite")).toBe(true);
-    expect(games.has("PUBG")).toBe(true);
-    expect(games.has("Apex Legends")).toBe(true);
+    // Coming Soon games must NOT appear as preferredGame in seed players
+    expect(games.has("Fortnite")).toBe(false);
+    expect(games.has("PUBG")).toBe(false);
+    expect(games.has("Apex Legends")).toBe(false);
   });
 });
 

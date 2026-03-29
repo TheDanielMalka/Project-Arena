@@ -45,14 +45,14 @@ const SEED_PLAYERS: PublicPlayerProfile[] = [
   {
     id: "lb-007", arenaId: "ARENA-IW0007",
     username: "IronWolf", avatarInitials: "IW",
-    rank: "Platinum II", tier: "Platinum", preferredGame: "Fortnite",
+    rank: "Platinum II", tier: "Platinum", preferredGame: "CS2",
     memberSince: "December 2025", status: "active", leaderboardRank: 7,
     stats: { matches: 143, wins: 95, losses: 48, winRate: 66.4, totalEarnings: 2200 },
   },
   {
     id: "lb-008", arenaId: "ARENA-CN0008",
     username: "CyberNinja", avatarInitials: "CN",
-    rank: "Platinum III", tier: "Platinum", preferredGame: "Apex Legends",
+    rank: "Platinum III", tier: "Platinum", preferredGame: "Valorant",
     memberSince: "January 2026", status: "active", leaderboardRank: 8,
     stats: { matches: 145, wins: 90, losses: 55, winRate: 62.1, totalEarnings: 1900 },
   },
@@ -116,14 +116,14 @@ const SEED_PLAYERS: PublicPlayerProfile[] = [
   {
     id: "user-007", arenaId: "ARENA-DV0008",
     username: "DarkViper", avatarInitials: "DV",
-    rank: "Platinum I", tier: "Platinum", preferredGame: "Fortnite",
+    rank: "Platinum I", tier: "Platinum", preferredGame: "CS2",
     memberSince: "January 2026", status: "active",
     stats: { matches: 88, wins: 48, losses: 40, winRate: 54.5, totalEarnings: 970 },
   },
   {
     id: "user-008", arenaId: "ARENA-CW0009",
     username: "CyberWolf", avatarInitials: "CW",
-    rank: "Gold II", tier: "Gold", preferredGame: "PUBG",
+    rank: "Gold II", tier: "Gold", preferredGame: "Valorant",
     memberSince: "February 2026", status: "active",
     stats: { matches: 156, wins: 76, losses: 80, winRate: 48.7, totalEarnings: 1120 },
   },
@@ -137,7 +137,7 @@ const SEED_PLAYERS: PublicPlayerProfile[] = [
   {
     id: "user-010", arenaId: "ARENA-NH0011",
     username: "NightHawk", avatarInitials: "NH",
-    rank: "Platinum II", tier: "Platinum", preferredGame: "Apex Legends",
+    rank: "Platinum II", tier: "Platinum", preferredGame: "CS2",
     memberSince: "December 2025", status: "active",
     stats: { matches: 110, wins: 66, losses: 44, winRate: 60.0, totalEarnings: 1640 },
   },
