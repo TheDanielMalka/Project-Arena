@@ -1,5 +1,9 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMatchStore } from "@/stores/matchStore";
+import { useUserStore } from "@/stores/userStore";
+import { PlayerPopoverLayer } from "@/components/players/PlayerCardPopover";
+import { slotToProfileUsername } from "@/lib/matchPlayerDisplay";
 import { Swords, Inbox, Gamepad2, Clock } from "lucide-react";
 
 // ── Game logos — mirrors Profile.tsx / History.tsx ──────────────────────────
@@ -33,7 +37,9 @@ interface RecentMatchesProps {
 
 export function RecentMatches({ showViewAll = true, limit = 5 }: RecentMatchesProps) {
   const navigate = useNavigate();
+  const { user } = useUserStore();
   const { matches } = useMatchStore();
+  const [playerPopover, setPlayerPopover] = useState<{ slotValue: string; rect: DOMRect } | null>(null);
 
   // Filter to current user's matches only, exclude waiting
   const recentMatches = matches
@@ -46,8 +52,23 @@ export function RecentMatches({ showViewAll = true, limit = 5 }: RecentMatchesPr
     )
     .slice(0, limit);
 
+  const openPlayer = (e: React.MouseEvent, slotValue: string) => {
+    e.stopPropagation();
+    setPlayerPopover({
+      slotValue,
+      rect: (e.currentTarget as HTMLElement).getBoundingClientRect(),
+    });
+  };
+
   return (
     <div className="rounded-2xl border border-border bg-card overflow-hidden">
+      <PlayerPopoverLayer
+        open={!!playerPopover && !!user}
+        slotValue={playerPopover?.slotValue ?? null}
+        rect={playerPopover?.rect ?? null}
+        onClose={() => setPlayerPopover(null)}
+        enableLeaveRoom={false}
+      />
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div className="flex items-center gap-2">
@@ -91,11 +112,16 @@ export function RecentMatches({ showViewAll = true, limit = 5 }: RecentMatchesPr
             const badgeLabel  = isWin ? "Win" : isLoss ? "Loss" : isLive ? "Live" : m.status.replace("_", " ");
             const amountColor = isWin ? "text-primary" : isLoss ? "text-destructive" : isLive ? "text-arena-cyan" : "text-arena-gold";
             const amountLabel = isWin ? `+$${m.betAmount}` : isLoss ? `-$${m.betAmount}` : `$${m.betAmount}`;
-            const opponent    = m.type === "custom"
-              ? `${m.host}'s Custom`
-              : m.hostId === MY_ID
-                ? `vs ${(m.players.find(p => p !== MY_ID) ?? m.teamB?.[0] ?? "Opponent")}`
-                : `vs ${m.host}`;
+            const oppSlot =
+              m.type === "custom"
+                ? m.host
+                : m.hostId === MY_ID
+                  ? (m.players.find((p) => p !== MY_ID) ??
+                      m.teamB?.[0] ??
+                      m.teamA?.find((p) => p !== MY_ID) ??
+                      "Opponent")
+                  : m.host;
+            const oppDisplay = slotToProfileUsername(oppSlot, user?.id, user?.username);
 
             return (
               <div key={m.id}
@@ -116,11 +142,33 @@ export function RecentMatches({ showViewAll = true, limit = 5 }: RecentMatchesPr
 
                 {/* Info */}
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className={`text-[10px] font-display font-semibold px-1.5 py-0.5 rounded border ${badgeClass}`}>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`text-[10px] font-display font-semibold px-1.5 py-0.5 rounded border shrink-0 ${badgeClass}`}>
                       {badgeLabel}
                     </span>
-                    <span className="text-sm font-medium truncate">{opponent}</span>
+                    {m.type === "custom" ? (
+                      <span className="text-sm font-medium truncate min-w-0">
+                        <button
+                          type="button"
+                          className="hover:text-primary hover:underline rounded-sm focus:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                          onClick={(e) => openPlayer(e, m.host)}
+                        >
+                          {m.host}
+                        </button>
+                        <span className="text-muted-foreground">'s Custom</span>
+                      </span>
+                    ) : (
+                      <span className="text-sm font-medium truncate min-w-0">
+                        <span className="text-muted-foreground">vs </span>
+                        <button
+                          type="button"
+                          className="hover:text-primary hover:underline rounded-sm focus:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                          onClick={(e) => openPlayer(e, oppSlot)}
+                        >
+                          {oppDisplay}
+                        </button>
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1.5">
                     <span style={{ color: cfg?.color }}>{m.game}</span>

@@ -4,7 +4,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useMatchStore } from "@/stores/matchStore";
+import { useUserStore } from "@/stores/userStore";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { PlayerPopoverLayer } from "@/components/players/PlayerCardPopover";
 import {
   Search, Swords, Inbox, Gamepad2, Users, Trophy,
   ChevronDown, ChevronUp, TrendingUp, DollarSign, Shield,
@@ -236,6 +238,7 @@ const GameDropdown = ({ label, icon, games, activeGame, onSelect, comingSoon }: 
 // ─────────────────────────────────────────────────────────────────────────
 const History = () => {
   const navigate = useNavigate();
+  const { user } = useUserStore();
   const [searchParams] = useSearchParams();
   const { matches } = useMatchStore();
   const [timeRange,    setTimeRange]    = useState<TimeRange>("alltime");
@@ -244,6 +247,7 @@ const History = () => {
   const [statusFilter, setStatusFilter] = useState<MatchStatus | "all">("all");
   const [page,         setPage]         = useState(1);
   const [expandedMatchId, setExpandedMatchId] = useState<string | null>(null);
+  const [playerPopover, setPlayerPopover] = useState<{ slotValue: string; rect: DOMRect } | null>(null);
 
   const MY_ID = "user-001";
 
@@ -295,8 +299,21 @@ const History = () => {
   // No "waiting" in history status filters
   const STATUSES: (MatchStatus | "all")[] = ["all", "in_progress", "completed", "cancelled", "disputed"];
 
+  const openPlayerPopover = (e: React.MouseEvent, slotValue: string) => {
+    e.stopPropagation();
+    setPlayerPopover({ slotValue, rect: (e.currentTarget as HTMLElement).getBoundingClientRect() });
+  };
+
   return (
     <div className="space-y-6">
+      <PlayerPopoverLayer
+        open={!!playerPopover && !!user}
+        slotValue={playerPopover?.slotValue ?? null}
+        rect={playerPopover?.rect ?? null}
+        onClose={() => setPlayerPopover(null)}
+        enableLeaveRoom={false}
+      />
+
       {/* ── Header ── */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <h1 className="font-display text-3xl font-bold tracking-wide">Match History</h1>
@@ -598,7 +615,13 @@ const History = () => {
                             {teamA.map((player, i) => (
                               <div key={`${m.id}-a-${player}-${i}`} className="flex items-center gap-2">
                                 <PlayerInitial name={player} isYou={player === MY_ID} />
-                                <span className="text-xs truncate">{player === MY_ID ? "You" : player}</span>
+                                <button
+                                  type="button"
+                                  className="text-xs truncate text-left hover:text-primary hover:underline font-medium rounded-sm focus:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                                  onClick={(e) => openPlayerPopover(e, player)}
+                                >
+                                  {player === MY_ID ? "You" : player}
+                                </button>
                               </div>
                             ))}
                             {Array.from({ length: maxPerTeam - teamA.length }).map((_, i) => (
@@ -620,7 +643,13 @@ const History = () => {
                             {teamB.map((player, i) => (
                               <div key={`${m.id}-b-${player}-${i}`} className="flex items-center gap-2">
                                 <PlayerInitial name={player} isYou={player === MY_ID} />
-                                <span className="text-xs truncate">{player === MY_ID ? "You" : player}</span>
+                                <button
+                                  type="button"
+                                  className="text-xs truncate text-left hover:text-primary hover:underline font-medium rounded-sm focus:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                                  onClick={(e) => openPlayerPopover(e, player)}
+                                >
+                                  {player === MY_ID ? "You" : player}
+                                </button>
                               </div>
                             ))}
                             {Array.from({ length: maxPerTeam - teamB.length }).map((_, i) => (
@@ -634,7 +663,13 @@ const History = () => {
                         <div className="flex items-center gap-2 text-xs text-muted-foreground">
                           <Trophy className="h-3 w-3 text-arena-gold" />
                           <span>Winner:</span>
-                          <span className="text-foreground font-medium">{m.winnerId === MY_ID ? "You" : m.winnerId}</span>
+                          <button
+                            type="button"
+                            className="text-foreground font-medium hover:text-primary hover:underline rounded-sm focus:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                            onClick={(e) => openPlayerPopover(e, m.winnerId)}
+                          >
+                            {m.winnerId === MY_ID ? "You" : m.winnerId}
+                          </button>
                           <span>·</span>
                           <span className="text-arena-gold font-medium">+${m.betAmount}</span>
                         </div>
