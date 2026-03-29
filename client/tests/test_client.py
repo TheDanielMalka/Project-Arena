@@ -99,20 +99,27 @@ class TestGameDetection:
             assert is_game_running("CS2") is False
 
     def test_detect_running_game_returns_correct_game(self):
-        """detect_running_game returns the name of the running game."""
+        """detect_running_game detects only active games (CS2 & Valorant in v1)."""
         with patch("psutil.process_iter") as mock_iter:
+            mock_iter.return_value = [self._make_proc("VALORANT-Win64-Shipping.exe")]
+            assert detect_running_game() == "Valorant"
+
+    def test_detect_running_game_ignores_coming_soon_games(self):
+        """detect_running_game returns None for Coming Soon games (Fortnite, Apex etc.)."""
+        with patch("psutil.process_iter") as mock_iter:
+            # Fortnite process running — should NOT be detected (Coming Soon)
             mock_iter.return_value = [self._make_proc("FortniteClient-Win64-Shipping.exe")]
-            assert detect_running_game() == "Fortnite"
+            assert detect_running_game() is None
 
     def test_detect_running_game_returns_none_when_no_game(self):
-        """detect_running_game returns None when no supported game is running."""
+        """detect_running_game returns None when no active game is running."""
         with patch("psutil.process_iter") as mock_iter:
             mock_iter.return_value = [self._make_proc("chrome.exe")]
             assert detect_running_game() is None
 
-    def test_game_intervals_covers_all_supported_games(self):
-        """GAME_INTERVALS has an entry for every supported game + AUTO."""
-        expected = {"AUTO", "CS2", "Valorant", "Fortnite", "Apex Legends"}
+    def test_game_intervals_covers_all_active_games(self):
+        """GAME_INTERVALS has entries only for active games + AUTO (CS2 & Valorant in v1)."""
+        expected = {"AUTO", "CS2", "Valorant"}
         assert set(GAME_INTERVALS.keys()) == expected
 
     def test_cs2_has_fastest_interval(self):

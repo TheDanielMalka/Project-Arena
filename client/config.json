@@ -5,7 +5,7 @@
   "monitor": 1,
   "auto_start": true,
   "minimize_to_tray": true,
-  "game": "CS2",
+  "game": "AUTO",
   "screenshot_dir": "screenshots",
   "log_dir": "logs"
 }
