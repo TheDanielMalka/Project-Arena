@@ -123,8 +123,6 @@ const Profile = () => {
 
   // Local state for game connections (togglable)
   const [gameConnections, setGameConnections] = useState<GameConnection[]>([
-    { name: "CS2", platform: "pc", status: "connected", accountId: "76561198XXXXXXXX" },
-    { name: "Valorant", platform: "pc", status: "connected", accountId: "Player#TAG1" },
     { name: "COD", platform: "pc", status: "disconnected" },
     { name: "League of Legends", platform: "pc", status: "disconnected" },
     { name: "PUBG", platform: "pc", status: "disconnected" },
@@ -144,6 +142,8 @@ const Profile = () => {
   const [serviceConnections, setServiceConnections] = useState<Record<string, string | false>>({
     discord: false,
     faceit: false,
+    // DB-ready: riot Riot account id / Riot ID from OAuth or profile API
+    riot: false,
   });
 
   const walletAddress = user?.walletShort ?? "0x1a2B...9fE4";
@@ -176,12 +176,10 @@ const Profile = () => {
     "MLBB":        { matches: 12, winRate: 58.3, earnings: 0,    kd: 1.6,  rank: "Epic",     streak: 3 },
   };
 
-  // Game Stats only shows active games (CS2 & Valorant) — other connected games shown in Connections section only
-  // DB-ready: filter by games.enabled — when a game becomes active, it auto-appears here
-  const connectedGames = gameConnections.filter(
-    g => g.status === "connected" && (g.name === "CS2" || g.name === "Valorant")
-  );
-  const [activeGameTab, setActiveGameTab] = useState<string>(connectedGames[0]?.name ?? "CS2");
+  // Game Stats tabs: CS2 & Valorant (Arena v1) — account linking is via Steam / Riot / FACEIT in Connections
+  // DB-ready: tab list from backend (per-game stats when user has played / linked platforms)
+  const gameStatsTabGames: string[] = ["CS2", "Valorant"];
+  const [activeGameTab, setActiveGameTab] = useState<string>(gameStatsTabGames[0] ?? "CS2");
 
   const addNotification = useNotificationStore((s) => s.addNotification);
 
@@ -227,9 +225,14 @@ const Profile = () => {
         prev.map((g) => g.name !== name ? g : { ...g, status: "connected", accountId })
       );
     } else {
-      // service connection
-      const key = name.toLowerCase() as "discord" | "faceit";
-      setServiceConnections((prev) => ({ ...prev, [key]: accountId }));
+      // service connection — map display name → store key (DB-ready: align keys with API)
+      const serviceKeyMap: Record<string, "discord" | "faceit" | "riot"> = {
+        discord: "discord",
+        faceit: "faceit",
+        "riot games": "riot",
+      };
+      const key = serviceKeyMap[name.toLowerCase()];
+      if (key) setServiceConnections((prev) => ({ ...prev, [key]: accountId }));
     }
 
     toast({ title: `${name} Connected!`, description: `Linked as ${accountId}` });
@@ -238,8 +241,8 @@ const Profile = () => {
     setLinkAccountId("");
   };
 
-  const handleDisconnectService = (service: "discord" | "faceit") => {
-    const label = service === "discord" ? "Discord" : "FACEIT";
+  const handleDisconnectService = (service: "discord" | "faceit" | "riot") => {
+    const label = service === "discord" ? "Discord" : service === "faceit" ? "FACEIT" : "Riot Games";
     setServiceConnections((prev) => ({ ...prev, [service]: false }));
     toast({ title: `${label} Disconnected`, description: `Your ${label} account has been unlinked.` });
     addNotification({ type: "system", title: `🔗 ${label} Unlinked`, message: `Your ${label} account has been disconnected from Arena.` });
@@ -293,6 +296,19 @@ const Profile = () => {
       bgColor: "bg-arena-orange/5",
       onConnect: () => handleOpenLinkDialog("FACEIT", "service", undefined, "your_faceit_username"),
       onDisconnect: () => handleDisconnectService("faceit"),
+    },
+    {
+      name: "Riot Games",
+      icon: Gamepad2,
+      img: "https://cdn.simpleicons.org/riotgames/D32936",
+      imgBg: "rgba(211,41,54,0.12)",
+      status: serviceConnections.riot ? "connected" as const : "disconnected" as const,
+      detail: serviceConnections.riot || "Not connected",
+      color: "text-red-400",
+      borderColor: "border-red-500/30",
+      bgColor: "bg-red-500/5",
+      onConnect: () => handleOpenLinkDialog("Riot Games", "service", undefined, "Riot ID / gameName#TAG"),
+      onDisconnect: () => handleDisconnectService("riot"),
     },
   ];
 
@@ -432,13 +448,13 @@ const Profile = () => {
         <CardContent className="pt-0 space-y-3">
           {/* Game Tabs */}
           <div className="flex gap-1.5 flex-wrap">
-            {connectedGames.map((game) => {
-              const cfg = gameConfig[game.name] ?? { abbr: game.name.slice(0,2).toUpperCase(), color: "#888", bg: "rgba(136,136,136,0.1)" };
-              const isActive = activeGameTab === game.name;
+            {gameStatsTabGames.map((gameName) => {
+              const cfg = gameConfig[gameName] ?? { abbr: gameName.slice(0,2).toUpperCase(), color: "#888", bg: "rgba(136,136,136,0.1)" };
+              const isActive = activeGameTab === gameName;
               return (
                 <button
-                  key={game.name}
-                  onClick={() => setActiveGameTab(game.name)}
+                  key={gameName}
+                  onClick={() => setActiveGameTab(gameName)}
                   className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-display font-semibold transition-all"
                   style={{
                     background: isActive ? cfg.bg : "transparent",
@@ -448,7 +464,7 @@ const Profile = () => {
                 >
                   <div className="w-4 h-4 rounded overflow-hidden flex items-center justify-center flex-shrink-0" style={{ background: cfg.bg }}>
                     {cfg.img
-                      ? <img src={cfg.img} alt={game.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display="none"; }} />
+                      ? <img src={cfg.img} alt={gameName} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display="none"; }} />
                       : <span style={{ color: cfg.color, fontSize: "7px", fontWeight: 700 }}>{cfg.abbr.slice(0,2)}</span>
                     }
                   </div>
@@ -526,21 +542,21 @@ const Profile = () => {
           </CardTitle>
         </CardHeader>
         <CardContent className="pt-0">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="grid grid-cols-5 gap-1 min-[380px]:gap-1.5 sm:gap-2">
             {connections.map((conn) => (
               <div
                 key={conn.name}
-                className="relative flex flex-col items-center justify-center gap-1.5 p-3 rounded-lg bg-secondary/40 border border-border/50 hover:border-primary/20 transition-all group"
+                className="relative flex flex-col items-center justify-center gap-1 p-1.5 min-[380px]:p-2 sm:p-2.5 rounded-md sm:rounded-lg bg-secondary/40 border border-border/50 hover:border-primary/20 transition-all group min-w-0"
               >
                 {/* Status dot */}
-                <div className={`absolute top-2 right-2 w-1.5 h-1.5 rounded-full ${conn.status === "connected" ? "bg-primary" : "bg-muted-foreground/30"}`} />
+                <div className={`absolute top-1 right-1 sm:top-1.5 sm:right-1.5 w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full shrink-0 ${conn.status === "connected" ? "bg-primary" : "bg-muted-foreground/30"}`} />
 
                 {conn.img ? (
-                  <div className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden" style={{ background: conn.imgBg }}>
+                  <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-md flex items-center justify-center overflow-hidden shrink-0" style={{ background: conn.imgBg }}>
                     <img
                       src={conn.img}
                       alt={conn.name}
-                      className="w-5 h-5 object-contain"
+                      className="w-4 h-4 sm:w-[18px] sm:h-[18px] object-contain"
                       onError={(e) => {
                         (e.target as HTMLImageElement).style.display = "none";
                         (e.target as HTMLImageElement).parentElement!.innerHTML = `<span class="${conn.status === "connected" ? conn.color : "text-muted-foreground/50"}">${conn.name.slice(0,2)}</span>`;
@@ -548,21 +564,21 @@ const Profile = () => {
                     />
                   </div>
                 ) : (
-                  <conn.icon className={`h-5 w-5 ${conn.status === "connected" ? conn.color : "text-muted-foreground/50"}`} />
+                  <conn.icon className={`h-4 w-4 sm:h-[18px] sm:w-[18px] shrink-0 ${conn.status === "connected" ? conn.color : "text-muted-foreground/50"}`} />
                 )}
-                <span className="font-display text-xs font-semibold tracking-wide">{conn.name}</span>
+                <span className="font-display text-[9px] sm:text-[10px] font-semibold tracking-wide text-center leading-tight line-clamp-2">{conn.name}</span>
 
                 {conn.status === "connected" ? (
-                  <div className="flex flex-col items-center gap-1 w-full">
-                    <span className="text-[10px] text-muted-foreground font-mono truncate max-w-full px-1 text-center">{conn.detail}</span>
-                    <div className="flex gap-1 w-full">
+                  <div className="flex flex-col items-center gap-0.5 w-full min-w-0">
+                    <span className="text-[8px] sm:text-[9px] text-muted-foreground font-mono truncate max-w-full px-0.5 text-center">{conn.detail}</span>
+                    <div className="flex gap-0.5 w-full">
                       {conn.name === "Wallet" && (
-                        <button onClick={handleCopyWallet} className="flex-1 text-[10px] py-0.5 rounded bg-secondary hover:bg-secondary/80 text-muted-foreground transition-colors">
-                          {copiedWallet ? "✓" : <Copy className="h-2.5 w-2.5 mx-auto" />}
+                        <button onClick={handleCopyWallet} className="flex-1 text-[8px] sm:text-[10px] py-0.5 rounded bg-secondary hover:bg-secondary/80 text-muted-foreground transition-colors">
+                          {copiedWallet ? "✓" : <Copy className="h-2 w-2 sm:h-2.5 sm:w-2.5 mx-auto" />}
                         </button>
                       )}
                       {"onDisconnect" in conn && conn.onDisconnect && (
-                        <button onClick={conn.onDisconnect as () => void} className="flex-1 text-[10px] py-0.5 rounded bg-destructive/10 hover:bg-destructive/20 text-destructive transition-colors">
+                        <button onClick={conn.onDisconnect as () => void} className="flex-1 text-[8px] sm:text-[10px] py-0.5 rounded bg-destructive/10 hover:bg-destructive/20 text-destructive transition-colors">
                           ✕
                         </button>
                       )}
@@ -571,7 +587,7 @@ const Profile = () => {
                 ) : (
                   <button
                     onClick={"onConnect" in conn && conn.onConnect ? conn.onConnect as () => void : undefined}
-                    className={`text-[10px] font-display px-3 py-0.5 rounded border ${conn.borderColor} ${conn.color} hover:opacity-80 transition-opacity`}
+                    className={`text-[8px] sm:text-[10px] font-display px-1.5 sm:px-2 py-0.5 rounded border ${conn.borderColor} ${conn.color} hover:opacity-80 transition-opacity`}
                   >
                     Connect
                   </button>
@@ -594,7 +610,8 @@ const Profile = () => {
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
             {gameConnections.filter(g => g.platform === "pc").map((game) => {
               const cfg = gameConfig[game.name] ?? { abbr: game.name.slice(0,2).toUpperCase(), color: "#888", bg: "rgba(136,136,136,0.1)" };
-              const active = game.name === "CS2" || game.name === "Valorant";
+              const active = false; // All PC games are Coming Soon in Arena v1
+              // DB-ready: driven by games.enabled flag from API
               return (
                 <div key={game.name} className={`relative flex flex-col items-center gap-1.5 p-3 rounded-lg border transition-all ${
                   active
