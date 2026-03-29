@@ -318,7 +318,10 @@ class MatchMonitor:
             except Exception as e:
                 logger.error(f"Monitor loop error: {e}")
 
-            base = self.config.get("screenshot_interval", 5)
+            # In AUTO mode use the per-game interval; fall back to config value
+            # when no game is detected or the game is manually selected.
+            active_game = detect_running_game()
+            base = GAME_INTERVALS.get(active_game, self.config.get("screenshot_interval", 5))
             time.sleep(base + random.uniform(-0.5, 0.5))
 
     def _heartbeat_loop(self):
