@@ -5,7 +5,9 @@ import { useUserStore } from "@/stores/userStore";
 import { PlayerPopoverLayer } from "@/components/players/PlayerCardPopover";
 import { slotToProfileUsername } from "@/lib/matchPlayerDisplay";
 import { MatchRosterAvatar } from "@/components/match/MatchRosterAvatar";
-import { Swords, Inbox, Gamepad2, Clock } from "lucide-react";
+import { Swords, Inbox, Gamepad2, Clock, Scale } from "lucide-react";
+import type { Match } from "@/types";
+import { SupportTicketDialog } from "@/components/support/SupportTicketDialog";
 
 // ── Game logos — mirrors Profile.tsx / History.tsx ──────────────────────────
 const GAME_CONFIG: Record<string, { logo: string; color: string }> = {
@@ -39,6 +41,10 @@ export function RecentMatches({ showViewAll = true, limit = 5 }: RecentMatchesPr
   const { user } = useUserStore();
   const { matches } = useMatchStore();
   const [playerPopover, setPlayerPopover] = useState<{ slotValue: string; rect: DOMRect } | null>(null);
+  const [appealMatch, setAppealMatch] = useState<Match | null>(null);
+
+  const canAppeal = (m: Match) =>
+    m.status === "completed" || m.status === "disputed" || m.status === "cancelled";
 
   // Filter to current user's matches only, exclude waiting
   const myId = user?.id ?? "";
@@ -186,13 +192,26 @@ export function RecentMatches({ showViewAll = true, limit = 5 }: RecentMatchesPr
                   </p>
                 </div>
 
-                {/* Amount */}
-                <div className="text-right shrink-0">
+                {/* Amount + appeal */}
+                <div className="text-right shrink-0 flex flex-col items-end gap-1">
                   <p className={`font-display text-sm font-bold ${amountColor}`}>{amountLabel}</p>
                   {isLive && m.timeLeft && (
                     <p className="text-[10px] text-arena-cyan flex items-center gap-1 justify-end mt-0.5">
                       <Clock className="h-2.5 w-2.5" />{m.timeLeft}
                     </p>
+                  )}
+                  {canAppeal(m) && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setAppealMatch(m);
+                      }}
+                      className="text-[10px] font-display uppercase tracking-wide px-2 py-0.5 rounded border border-arena-orange/40 text-arena-orange hover:bg-arena-orange/10 transition-colors"
+                    >
+                      <Scale className="inline h-2.5 w-2.5 mr-0.5 align-middle" />
+                      Appeal
+                    </button>
                   )}
                 </div>
               </div>
@@ -200,6 +219,15 @@ export function RecentMatches({ showViewAll = true, limit = 5 }: RecentMatchesPr
           })}
         </div>
       )}
+
+      <SupportTicketDialog
+        open={!!appealMatch}
+        onOpenChange={(o) => {
+          if (!o) setAppealMatch(null);
+        }}
+        mode="match_dispute"
+        match={appealMatch}
+      />
     </div>
   );
 }

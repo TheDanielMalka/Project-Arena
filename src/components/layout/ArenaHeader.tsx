@@ -1,5 +1,5 @@
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { Wallet, LogOut, User, ChevronDown, Wifi, WifiOff, Loader2, MonitorPlay, Download } from "lucide-react";
+import { Wallet, LogOut, User, ChevronDown, Wifi, WifiOff, Loader2, MonitorPlay, Download, Lightbulb } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NotificationCenter } from "@/components/notifications/NotificationCenter";
 import { useUserStore } from "@/stores/userStore";
@@ -96,6 +96,28 @@ export function ArenaHeader() {
                     <Download className="h-2.5 w-2.5" /> Click to download client
                   </p>
                 )}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
+
+        {isAuthenticated && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 text-arena-gold hover:text-arena-gold hover:bg-arena-gold/10"
+                  aria-label="Help — submit a support ticket"
+                  onClick={() => navigate("/settings?section=support&openTicket=1")}
+                >
+                  <Lightbulb className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-xs">
+                <p className="text-xs">Help — open a support ticket</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>

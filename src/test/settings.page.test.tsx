@@ -43,4 +43,9 @@ describe("Settings page", () => {
     fireEvent.click(securityTab);
     expect(screen.getAllByText(/security/i).length).toBeGreaterThan(0);
   });
+
+  it("shows Help & ticket section in sidebar", () => {
+    render(<MemoryRouter><Settings /></MemoryRouter>);
+    expect(screen.getByRole("button", { name: /help & ticket/i })).toBeInTheDocument();
+  });
 });

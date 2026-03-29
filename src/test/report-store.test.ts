@@ -7,6 +7,24 @@ beforeEach(() => {
 });
 
 describe("reportStore — submitReport", () => {
+  it("creates a match_dispute ticket with matchId and category", () => {
+    useReportStore.setState({ tickets: [] });
+    const store = useReportStore.getState();
+    const ticket = store.submitReport({
+      reporterId: "user-001",
+      reporterName: "Tester",
+      reportedId: "opp-slot",
+      reportedUsername: "Opponent",
+      reason: "fake_screenshot",
+      description: "Match outcome looks wrong",
+      ticketCategory: "match_dispute",
+      matchId: "M-test-999",
+    });
+    expect(ticket.ticketCategory).toBe("match_dispute");
+    expect(ticket.matchId).toBe("M-test-999");
+    expect(ticket.status).toBe("open");
+  });
+
   it("creates a ticket with status 'open'", () => {
     const store = useReportStore.getState();
     const ticket = store.submitReport({

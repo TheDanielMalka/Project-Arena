@@ -166,6 +166,56 @@ describe("walletStore — non-custodial model", () => {
     expect(Math.abs(fee!.amount)).toBe(5);
   });
 
+  // ── buyArenaTokens ────────────────────────────────────────────────────────
+  it("buyArenaTokens returns true on success", () => {
+    const result = useWalletStore.getState().buyArenaTokens(1000, 10.50);
+    expect(result).toBe(true);
+  });
+
+  it("buyArenaTokens deducts totalUsdtCost from usdtBalance", () => {
+    const before = useWalletStore.getState().usdtBalance;
+    useWalletStore.getState().buyArenaTokens(1000, 10.50);
+    expect(useWalletStore.getState().usdtBalance).toBeCloseTo(before - 10.50, 2);
+  });
+
+  it("buyArenaTokens credits atBalance with atAmount", () => {
+    const before = useWalletStore.getState().atBalance;
+    useWalletStore.getState().buyArenaTokens(1000, 10.50);
+    expect(useWalletStore.getState().atBalance).toBe(before + 1000);
+  });
+
+  it("buyArenaTokens creates an at_purchase transaction", () => {
+    const countBefore = useWalletStore.getState().transactions.length;
+    useWalletStore.getState().buyArenaTokens(500, 5.50);
+    const txs = useWalletStore.getState().transactions;
+    expect(txs.length).toBe(countBefore + 1);
+    const atTx = txs[0]; // newest is first
+    expect(atTx.type).toBe("at_purchase");
+    expect(atTx.token).toBe("USDT");
+    expect(atTx.status).toBe("completed");
+    expect(Math.abs(atTx.amount)).toBeCloseTo(5.50, 2);
+  });
+
+  it("buyArenaTokens returns false when usdtBalance is insufficient", () => {
+    useWalletStore.setState({ usdtBalance: 5.00 });
+    const result = useWalletStore.getState().buyArenaTokens(1000, 10.50);
+    expect(result).toBe(false);
+  });
+
+  it("buyArenaTokens does not change balances when insufficient", () => {
+    useWalletStore.setState({ usdtBalance: 2.00, atBalance: 350 });
+    useWalletStore.getState().buyArenaTokens(1000, 10.50);
+    expect(useWalletStore.getState().usdtBalance).toBe(2.00);
+    expect(useWalletStore.getState().atBalance).toBe(350);
+  });
+
+  it("buyArenaTokens does not add transaction when insufficient", () => {
+    useWalletStore.setState({ usdtBalance: 2.00 });
+    const countBefore = useWalletStore.getState().transactions.length;
+    useWalletStore.getState().buyArenaTokens(1000, 10.50);
+    expect(useWalletStore.getState().transactions.length).toBe(countBefore);
+  });
+
   // ── connectWallet / disconnectWallet ──────────────────────────────────────
   it("connectWallet sets connectedAddress and network", () => {
     useWalletStore.getState().connectWallet("0xNEWADDR", "ethereum");

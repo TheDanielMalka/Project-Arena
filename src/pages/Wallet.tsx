@@ -9,7 +9,7 @@ import {
   Copy, CheckCircle2, Eye, EyeOff, ExternalLink,
   TrendingUp, TrendingDown, Clock, RefreshCw,
   Search, Landmark, Flame, Wallet, ShieldCheck,
-  ChevronLeft, ChevronRight, Swords, WifiOff,
+  ChevronLeft, ChevronRight, Swords, WifiOff, Zap,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useWalletStore } from "@/stores/walletStore";
@@ -17,6 +17,7 @@ import { useUserStore } from "@/stores/userStore";
 import { useForgeStore } from "@/stores/forgeStore";
 import type { TransactionType, TransactionStatus } from "@/types";
 import { cn } from "@/lib/utils";
+import { BuyArenaTokensModal } from "@/components/wallet/BuyArenaTokensModal";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -65,6 +66,7 @@ const WalletPage = () => {
   const [txFilter, setTxFilter]             = useState<TransactionType | "all">("all");
   const [txSearch, setTxSearch]             = useState("");
   const [txPage, setTxPage]                 = useState(1);
+  const [buyATOpen, setBuyATOpen]           = useState(false);
 
   // Derived
   const networkCfg      = NETWORKS[selectedNetwork];
@@ -201,6 +203,7 @@ const WalletPage = () => {
             <CardHeader className="pb-2 pt-4 px-4">
               <CardTitle className="font-display text-xs uppercase tracking-widest text-muted-foreground">
                 Arena Tokens (AT)
+                {/* DB-ready: GET /api/users/me/at-balance — live balance synced after every purchase / Forge spend */}
               </CardTitle>
             </CardHeader>
             <CardContent className="px-4 pb-4 space-y-3">
@@ -212,8 +215,16 @@ const WalletPage = () => {
               </div>
               <p className="text-[11px] text-muted-foreground leading-relaxed">
                 Platform-only currency. Used in the Forge store for cosmetics, challenges and events.
-                {/* DB-ready: GET /api/users/me/at-balance */}
               </p>
+              {/* Buy AT — primary CTA */}
+              <Button
+                size="sm"
+                className="w-full text-xs font-display bg-arena-purple hover:bg-arena-purple/90 text-white"
+                onClick={() => setBuyATOpen(true)}
+              >
+                <Zap className="mr-1.5 h-3.5 w-3.5" /> Buy Arena Tokens
+              </Button>
+              {/* Secondary — open store */}
               <Link to="/forge">
                 <Button size="sm" variant="outline" className="w-full text-xs font-display border-arena-purple/30 text-arena-purple hover:bg-arena-purple/10">
                   <Flame className="mr-1.5 h-3.5 w-3.5" /> Open Forge Store
@@ -413,6 +424,9 @@ const WalletPage = () => {
           </Card>
         </div>
       </div>
+
+      {/* ── Buy Arena Tokens Modal ── */}
+      <BuyArenaTokensModal open={buyATOpen} onClose={() => setBuyATOpen(false)} />
     </div>
   );
 };
