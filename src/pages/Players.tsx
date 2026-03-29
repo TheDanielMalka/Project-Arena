@@ -6,6 +6,7 @@ import { usePlayerStore } from "@/stores/playerStore";
 import { Search, Users2, ChevronRight } from "lucide-react";
 import type { Game } from "@/types";
 import { cn } from "@/lib/utils";
+import { getAvatarImageUrlFromStorage } from "@/lib/avatarPresets";
 
 // ─── Constants ────────────────────────────────────────────────
 
@@ -120,7 +121,7 @@ export default function Players() {
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-3">
                     <div
-                      className="w-10 h-10 rounded-xl flex items-center justify-center font-display text-sm font-bold shrink-0"
+                      className="w-10 h-10 rounded-xl flex items-center justify-center font-display text-sm font-bold shrink-0 overflow-hidden"
                       style={{
                         background: `${tierColor}20`,
                         border: `1.5px solid ${tierColor}50`,
@@ -128,7 +129,12 @@ export default function Players() {
                       }}
                     >
                       {player.avatar && player.avatar !== "initials"
-                        ? <span className="text-base">{player.avatar}</span>
+                        ? player.avatar.startsWith("upload:")
+                          ? <img src={player.avatar.slice(7)} className="w-full h-full object-cover" alt="" />
+                          : (() => {
+                            const u = getAvatarImageUrlFromStorage(player.avatar);
+                            return u ? <img src={u} className="w-full h-full object-cover" alt="" /> : <span className="text-base">{player.avatar}</span>;
+                          })()
                         : player.avatarInitials}
                     </div>
                     <div>

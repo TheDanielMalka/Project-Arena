@@ -38,7 +38,7 @@ export interface UserProfile {
   tier: string;
   verified: boolean;
   avatarInitials: string;
-  avatar?: string;    // "initials" | emoji | "upload:{dataURL}" — DB: stored as text
+  avatar?: string;    // "initials" | emoji | "upload:{dataURL}" | "preset:{id}" — DB: stored as text
   avatarBg?: string;  // bgId from avatarBgs.ts — DB: stored as text, defaults to "default"
   preferredGame: Game;
   arenaId: ArenaId;     // DB: users.arena_id — immutable public ID (ARENA-XXXXXX)
@@ -387,7 +387,7 @@ export interface InboxMessage {
 // ─── Forge / Store ─────────────────────────────────────────────
 // DB: forge_items, forge_challenges, forge_events, forge_drops, forge_purchases, arena_tokens
 
-export type ForgeCategory = "avatar" | "badge" | "boost" | "vip" | "bundle";
+export type ForgeCategory = "avatar" | "badge" | "boost" | "vip" | "bundle" | "frame";
 export type ForgeRarity   = "common" | "rare" | "epic" | "legendary";
 export type ForgeChallengeType   = "daily" | "weekly";
 export type ForgeChallengeStatus = "active" | "claimable" | "claimed";
@@ -466,4 +466,11 @@ export interface ForgePurchase {
   currency: "AT" | "USDT";
   amount: number;
   purchasedAt: string;       // DB: forge_purchases.purchased_at (TIMESTAMPTZ)
+}
+
+/** API contract preview: live USDT→AT quote for Forge (GET /api/forge/exchange-rate). Not wired in UI logic yet. */
+export interface ForgeExchangeRateQuote {
+  usdtToAt: number;
+  source?: "oracle" | "fixed" | "api";
+  validUntil?: string;
 }

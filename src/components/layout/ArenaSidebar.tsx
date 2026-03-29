@@ -10,7 +10,8 @@ import { useUserStore }    from "@/stores/userStore";
 import { useInboxStore }   from "@/stores/inboxStore";
 import { useMessageStore } from "@/stores/messageStore";
 import { getXpInfo }       from "@/lib/xp";
-import { getBgColor }      from "@/lib/avatarBgs";
+import { getAvatarSidebarStyle } from "@/lib/avatarBgs";
+import { getAvatarImageUrlFromStorage } from "@/lib/avatarPresets";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
@@ -57,7 +58,6 @@ export function ArenaSidebar() {
 
   const xpInfo        = getXpInfo(user?.stats.xp ?? 0);
   const XpIcon        = XP_ICON_MAP[xpInfo.iconName] ?? Medal;
-  const avatarBgColor = getBgColor(user?.avatarBg);
   const initials      = (user?.username ?? "??").slice(0, 2).toUpperCase();
 
   const visibleItems = user?.role === "admin"
@@ -66,22 +66,34 @@ export function ArenaSidebar() {
 
   const renderAvatar = (size = 28) => {
     const av = user?.avatar ?? "initials";
+    const frame = getAvatarSidebarStyle(user?.avatarBg);
+    const presetUrl =
+      av !== "initials" && !av.startsWith("upload:") ? getAvatarImageUrlFromStorage(av) : null;
     return (
       <div
+        className="relative shrink-0 overflow-hidden ring-1 ring-white/10"
         style={{
-          width: size, height: size,
-          background: `${avatarBgColor}22`,
-          border: `1.5px solid ${avatarBgColor}55`,
-          borderRadius: 8,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          overflow: "hidden", flexShrink: 0,
+          width: size,
+          height: size,
+          ...frame,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
         }}
       >
+        <span
+          className="pointer-events-none absolute inset-0 opacity-[0.12]"
+          style={{
+            background: "linear-gradient(135deg, rgba(255,255,255,0.5) 0%, transparent 45%, transparent 100%)",
+          }}
+        />
         {av === "initials"
-          ? <span style={{ fontSize: size * 0.32, fontWeight: 700, color: "#fff", fontFamily: "inherit" }}>{initials}</span>
+          ? <span className="relative z-[1]" style={{ fontSize: size * 0.32, fontWeight: 700, color: "#fff", fontFamily: "inherit", textShadow: "0 1px 8px rgba(0,0,0,0.65)" }}>{initials}</span>
           : av.startsWith("upload:")
-            ? <img src={av.slice(7)} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="av" />
-            : <span style={{ fontSize: size * 0.5 }}>{av}</span>}
+            ? <img src={av.slice(7)} className="relative z-[1] h-full w-full object-cover" alt="" />
+            : presetUrl
+              ? <img src={presetUrl} className="relative z-[1] h-full w-full object-cover" alt="" />
+              : <span className="relative z-[1]" style={{ fontSize: size * 0.48 }}>{av}</span>}
       </div>
     );
   };

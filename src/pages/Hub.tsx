@@ -19,6 +19,7 @@ import { useUserStore }    from "@/stores/userStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import type { Game, Friendship, InboxMessage } from "@/types";
 import { cn } from "@/lib/utils";
+import { getAvatarImageUrlFromStorage } from "@/lib/avatarPresets";
 
 // ─── Constants ────────────────────────────────────────────────
 
@@ -834,12 +835,17 @@ export default function Hub() {
                   >
                     {/* Avatar */}
                     <div
-                      className="w-7 h-7 rounded-lg flex items-center justify-center font-display text-[10px] font-bold shrink-0 cursor-pointer"
+                      className="w-7 h-7 rounded-lg flex items-center justify-center font-display text-[10px] font-bold shrink-0 cursor-pointer overflow-hidden"
                       style={{ background: `${tierColor}20`, border: `1.5px solid ${tierColor}50`, color: tierColor }}
                       onClick={() => navigate(`/players/${player.username}`)}
                     >
                       {player.avatar && player.avatar !== "initials"
-                        ? <span className="text-xs">{player.avatar}</span>
+                        ? player.avatar.startsWith("upload:")
+                          ? <img src={player.avatar.slice(7)} className="w-full h-full object-cover" alt="" />
+                          : (() => {
+                            const u = getAvatarImageUrlFromStorage(player.avatar);
+                            return u ? <img src={u} className="w-full h-full object-cover" alt="" /> : <span className="text-xs">{player.avatar}</span>;
+                          })()
                         : player.avatarInitials}
                     </div>
 

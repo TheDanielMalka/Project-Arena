@@ -7,19 +7,28 @@ import { useWalletStore } from "@/stores/walletStore";
 
 // ─── Seed Data ────────────────────────────────────────────────
 // DB-ready: replace with GET /api/forge/items
+// USDT→AT display/checkout quote: GET /api/forge/exchange-rate (see ForgeExchangeRateQuote)
 export const SEED_ITEMS: ForgeItem[] = [
-  { id: "item-001", name: "Shadow Phoenix", category: "avatar", rarity: "legendary", icon: "🔥", priceAT: 2400, description: "A mythical creature reborn from the ashes of defeat.", featured: true, limited: true, stock: 47, expiresAt: "2026-03-30T00:00:00Z", ownedBy: 23 },
-  { id: "item-002", name: "Neon Samurai",   category: "avatar", rarity: "epic",      icon: "⚔️", priceAT: 1200, description: "Strike fast, vanish faster.", ownedBy: 156 },
-  { id: "item-003", name: "Arctic Wolf",    category: "avatar", rarity: "rare",      icon: "🐺", priceAT: 600,  description: "Cold, calculated, dominant.", ownedBy: 489 },
-  { id: "item-004", name: "Iron Knight",    category: "avatar", rarity: "common",    icon: "🛡️", priceAT: 200,  description: "Honor through battle.", ownedBy: 1240 },
-  { id: "item-005", name: "Founder's Badge", category: "badge", rarity: "legendary", icon: "🏅", priceUSDT: 9.99, description: "Exclusive badge for Arena's earliest supporters.", limited: true, stock: 100, ownedBy: 89 },
-  { id: "item-006", name: "Champion's Seal", category: "badge", rarity: "epic",      icon: "🔱", priceAT: 900, description: "Earned by the elite.", ownedBy: 234 },
-  { id: "item-007", name: "Veteran's Mark",  category: "badge", rarity: "rare",      icon: "⚜️", priceAT: 400, description: "For those who've seen it all.", ownedBy: 678 },
-  { id: "item-008", name: "Double XP (24h)", category: "boost", rarity: "common",    icon: "⚡", priceAT: 150, description: "Earn 2× XP on all matches for 24 hours." },
-  { id: "item-009", name: "Win Shield",      category: "boost", rarity: "rare",      icon: "🔒", priceAT: 500, description: "Protect your win streak — one loss won't count." },
-  { id: "item-010", name: "VIP Pass (30d)",  category: "vip",   rarity: "epic",      icon: "👑", priceAT: 3000, priceUSDT: 14.99, description: "Priority matchmaking, 5% cashback, exclusive VIP badge." },
-  { id: "item-011", name: "VIP Pass (7d)",   category: "vip",   rarity: "rare",      icon: "💎", priceAT: 900,  priceUSDT: 4.99,  description: "A week of VIP treatment." },
-  { id: "item-012", name: "Elite Bundle",    category: "bundle", rarity: "legendary", icon: "📦", priceAT: 5000, priceUSDT: 24.99, description: "Neon Samurai + Champion's Seal + 30d VIP + 3× Double XP. Best value.", ownedBy: 12 },
+  // Premium anime-leaning portraits (stored as `preset:{id}` in users.avatar after purchase)
+  { id: "item-001", name: "Vermilion Edge",  category: "avatar", rarity: "legendary", icon: "preset:vermilion_edge", priceAT: 2400, description: "A radiant duelist — forged for clutch rounds.", featured: true, limited: true, stock: 47, expiresAt: "2026-03-30T00:00:00Z", ownedBy: 23 },
+  { id: "item-002", name: "Titan Shifter",   category: "avatar", rarity: "epic",      icon: "preset:titan_shifter", priceAT: 1200, description: "Unstoppable pressure. Zero fear.", ownedBy: 156 },
+  { id: "item-003", name: "Arcane Emperor",  category: "avatar", rarity: "rare",      icon: "preset:arcane_emperor",priceAT: 600,  description: "Command the arena with arcane authority.", ownedBy: 489 },
+  { id: "item-004", name: "Emerald Samurai", category: "avatar", rarity: "common",    icon: "preset:emerald_samurai",priceAT: 200,  description: "Clean cuts. Cleaner wins.", ownedBy: 1240 },
+
+  // Premium frames (stored as users.avatarBg id after purchase)
+  // icon uses `bg:{id}` and is rendered as a mini frame tile in the UI.
+  { id: "frame-001", name: "Sovereign Gold Frame",  category: "frame", rarity: "rare", icon: "bg:gold",    priceUSDT: 1.99, description: "Gold aura frame — premium glow.", ownedBy: 89 },
+  { id: "frame-002", name: "Chroma Luxe Frame",     category: "frame", rarity: "epic", icon: "bg:rainbow", priceUSDT: 2.99, description: "Prismatic chroma — flex worthy.", ownedBy: 34 },
+  { id: "frame-003", name: "Northern Pulse Frame",  category: "frame", rarity: "epic", icon: "bg:aurora",  priceUSDT: 2.99, description: "Aurora pulse — clean and cold.", ownedBy: 21 },
+  { id: "frame-004", name: "Magma Elite Frame",     category: "frame", rarity: "rare", icon: "bg:lava",    priceUSDT: 1.99, description: "Molten heat — loud but classy.", ownedBy: 55 },
+  { id: "item-005", name: "Founder's Badge", category: "badge", rarity: "legendary", icon: "badge:founders", priceUSDT: 9.99, description: "Exclusive badge for Arena's earliest supporters.", limited: true, stock: 100, ownedBy: 89 },
+  { id: "item-006", name: "Champion's Seal", category: "badge", rarity: "epic",      icon: "badge:champions", priceAT: 900, description: "Earned by the elite.", ownedBy: 234 },
+  { id: "item-007", name: "Veteran's Mark",  category: "badge", rarity: "rare",      icon: "badge:veterans", priceAT: 400, description: "For those who've seen it all.", ownedBy: 678 },
+  { id: "item-008", name: "Double XP (24h)", category: "boost", rarity: "common",    icon: "boost:xp", priceAT: 150, description: "Earn 2× XP on all matches for 24 hours." },
+  { id: "item-009", name: "Win Shield",      category: "boost", rarity: "rare",      icon: "boost:shield", priceAT: 500, description: "Protect your win streak — one loss won't count." },
+  { id: "item-010", name: "VIP Pass (30d)",  category: "vip",   rarity: "epic",      icon: "vip:month", priceAT: 3000, priceUSDT: 14.99, description: "Priority matchmaking, 5% cashback, exclusive VIP badge." },
+  { id: "item-011", name: "VIP Pass (7d)",   category: "vip",   rarity: "rare",      icon: "vip:week", priceAT: 900,  priceUSDT: 4.99,  description: "A week of VIP treatment." },
+  { id: "item-012", name: "Elite Bundle",    category: "bundle", rarity: "legendary", icon: "bundle:elite", priceAT: 5000, priceUSDT: 24.99, description: "Top cosmetics + Champion's Seal + 30d VIP + 3× Double XP. Best value.", ownedBy: 12 },
 ];
 
 // DB-ready: replace with GET /api/forge/challenges?type=daily&type=weekly

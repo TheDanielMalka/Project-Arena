@@ -10,7 +10,8 @@ import { useUserStore } from "@/stores/userStore";
 import { useMatchStore } from "@/stores/matchStore";
 import { Swords, Wallet, History, TrendingUp, Radio, Gift, Medal, Shield, Trophy, Gem, Sparkles, Crown, X, type LucideIcon } from "lucide-react";
 import { getXpInfo } from "@/lib/xp";
-import { getBgColor } from "@/lib/avatarBgs";
+import { getAvatarSidebarStyle } from "@/lib/avatarBgs";
+import { getAvatarImageUrlFromStorage } from "@/lib/avatarPresets";
 
 const XP_ICON_MAP: Record<string, LucideIcon> = {
   Medal, Shield, Trophy, Gem, Sparkles, Crown,
@@ -40,7 +41,6 @@ const Dashboard = () => {
   const initials = (user?.username ?? "??").slice(0, 2).toUpperCase();
   const xpInfo = getXpInfo(user?.stats.xp ?? 0);
   const XpIcon = XP_ICON_MAP[xpInfo.iconName] ?? Medal;
-  const avatarBgColor = getBgColor(user?.avatarBg);
 
   // Rank color (win-rate based)
   const rankColors: Record<string, string> = {
@@ -62,6 +62,8 @@ const Dashboard = () => {
     const av = user?.avatar ?? "initials";
     if (av === "initials") return <span className="font-display font-bold text-white" style={{ fontSize: size * 0.4 }}>{initials}</span>;
     if (av.startsWith("upload:")) return <img src={av.slice(7)} className="w-full h-full object-cover rounded-2xl" alt="avatar" />;
+    const presetUrl = getAvatarImageUrlFromStorage(av);
+    if (presetUrl) return <img src={presetUrl} className="w-full h-full object-cover rounded-2xl" alt="" />;
     return <span style={{ fontSize: size * 0.45 }}>{av}</span>;
   };
 
@@ -108,13 +110,12 @@ const Dashboard = () => {
           {/* Avatar + identity */}
           <div className="flex items-center gap-4 flex-1 min-w-0">
             <div className="relative shrink-0">
-              <div className="w-14 h-14 rounded-2xl flex items-center justify-center overflow-hidden"
-                style={{
-                  background: `linear-gradient(135deg, ${avatarBgColor}35, ${avatarBgColor}15)`,
-                  border: `2px solid ${avatarBgColor}55`,
-                  boxShadow: `0 0 18px ${avatarBgColor}30`,
-                }}>
-                {renderAvatar(56)}
+              <div
+                className="relative w-14 h-14 flex items-center justify-center overflow-hidden ring-1 ring-white/10"
+                style={{ ...getAvatarSidebarStyle(user?.avatarBg), borderRadius: 16, width: 56, height: 56 }}
+              >
+                <span className="pointer-events-none absolute inset-0 opacity-[0.12] bg-gradient-to-br from-white/40 to-transparent" />
+                <span className="relative z-[1] flex h-full w-full items-center justify-center">{renderAvatar(56)}</span>
               </div>
               {liveCount > 0 && (
                 <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-arena-cyan border-2 border-card animate-pulse" />

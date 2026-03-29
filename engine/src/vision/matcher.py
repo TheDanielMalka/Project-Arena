@@ -89,19 +89,19 @@ def _detect_result_cs2(image_path: str, region=None):
 def _detect_result_valorant(image_path: str, region=None):
     """
     Valorant end-screen result detection.
+    Calibrated from real VICTORY and DEFEAT screenshots.
 
-    VICTORY : teal/cyan banner   — HSV H 75-100
-              (Valorant's distinctive turquoise victory colour)
-    DEFEAT  : blue-purple banner — HSV H 110-145
-              (confirmed by visual inspection; refine once a real DEFEAT
-               screenshot is provided)
+    VICTORY : teal/cyan-green background — HSV H 75-105
+              Large "VICTORY" text + background glow fills the upper screen.
 
-    Default crop: y 3-25%, x 20-80% of the frame.
-    That window captures the large "VICTORY / DEFEAT" text in the centre-top
-    while excluding the numeric score that appears in the far corners.
+    DEFEAT  : red/crimson background     — HSV H 0-8 | H 170-180
+              Red wraps around in OpenCV HSV so two masks are OR-ed.
+              "DEFEAT" text and background are both bright crimson.
 
-    TODO: tighten DEFEAT HSV thresholds once an actual Valorant DEFEAT
-          screenshot is available.
+    Default crop: y 5-55%, x 10-90% of the frame.
+      - Captures the coloured background + large text.
+      - Excludes top-corner score numbers (x 0-8%, x 92-100%).
+      - Excludes dark player-card area below 55%.
     """
     img = cv2.imread(image_path)
 
@@ -111,39 +111,39 @@ def _detect_result_valorant(image_path: str, region=None):
         logger.info(f"[Valorant] cropped region: x={x}, y={y}, w={w}, h={h}")
     else:
         h, w = img.shape[:2]
-        crop = img[int(h * 0.03):int(h * 0.25), int(w * 0.20):int(w * 0.80)]
-        logger.info("[Valorant] using default region (top centre - VICTORY/DEFEAT text area)")
+        crop = img[int(h * 0.05):int(h * 0.55), int(w * 0.10):int(w * 0.90)]
+        logger.info("[Valorant] using default region (y 5-55%, x 10-90%)")
 
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
     total_pixels = hsv.shape[0] * hsv.shape[1]
 
-    # VICTORY: teal/cyan - Valorant's signature post-game victory colour
-    teal_mask = cv2.inRange(hsv, (75, 80, 80), (100, 255, 255))
+    # VICTORY: teal/cyan-green — confirmed from real Valorant VICTORY screenshot
+    teal_mask = cv2.inRange(hsv, (75, 60, 60), (105, 255, 255))
     teal_pct = np.sum(teal_mask > 0) / total_pixels * 100
 
-    # DEFEAT: blue-purple - per user confirmation; adjust after DEFEAT screenshot
-    blue_purple_mask = cv2.inRange(hsv, (110, 50, 50), (145, 255, 255))
-    blue_purple_pct = np.sum(blue_purple_mask > 0) / total_pixels * 100
+    # DEFEAT: red/crimson — confirmed from real Valorant DEFEAT screenshot.
+    # Red wraps around in OpenCV HSV: check both H 0-8 AND H 170-180.
+    red_mask1 = cv2.inRange(hsv, (0,   60, 60), (8,   255, 255))
+    red_mask2 = cv2.inRange(hsv, (170, 60, 60), (180, 255, 255))
+    red_pct   = np.sum((red_mask1 | red_mask2) > 0) / total_pixels * 100
 
-    logger.debug(f"[Valorant] teal: {teal_pct:.1f}%, blue_purple: {blue_purple_pct:.1f}%")
+    logger.debug(f"[Valorant] teal: {teal_pct:.1f}%, red: {red_pct:.1f}%")
 
-    if teal_pct > 25:
+    if teal_pct > 20:
         result = "victory"
         confidence = round(teal_pct / 100, 4)
         logger.info(f"[Valorant] VICTORY detected - confidence: {confidence}")
         save_evidence(image_path, result, confidence)
         return result, confidence
 
-    if blue_purple_pct > 25:
+    if red_pct > 15:
         result = "defeat"
-        confidence = round(blue_purple_pct / 100, 4)
+        confidence = round(red_pct / 100, 4)
         logger.info(f"[Valorant] DEFEAT detected - confidence: {confidence}")
         save_evidence(image_path, result, confidence)
         return result, confidence
 
-    logger.warning(
-        f"[Valorant] no result - teal: {teal_pct:.1f}%, blue_purple: {blue_purple_pct:.1f}%"
-    )
+    logger.warning(f"[Valorant] no result — teal: {teal_pct:.1f}%, red: {red_pct:.1f}%")
     return None, 0.0
 
 

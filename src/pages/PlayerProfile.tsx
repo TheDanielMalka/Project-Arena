@@ -22,6 +22,7 @@ import { useNotificationStore } from "@/stores/notificationStore";
 import { useFriendStore } from "@/stores/friendStore";
 import type { TicketReason } from "@/types";
 import { cn } from "@/lib/utils";
+import { getAvatarImageUrlFromStorage } from "@/lib/avatarPresets";
 
 // ─── Constants ────────────────────────────────────────────────
 
@@ -345,7 +346,7 @@ export default function PlayerProfile() {
           <div className="flex items-center gap-4">
             <div className="relative shrink-0 flex items-start gap-2">
               <div
-                className="w-16 h-16 rounded-2xl flex items-center justify-center font-display text-xl font-bold"
+                className="w-16 h-16 rounded-2xl flex items-center justify-center font-display text-xl font-bold overflow-hidden"
                 style={{
                   background: `${tierColor}20`,
                   border: `2px solid ${tierColor}60`,
@@ -354,7 +355,12 @@ export default function PlayerProfile() {
                 }}
               >
                 {player.avatar && player.avatar !== "initials"
-                  ? <span className="text-2xl">{player.avatar}</span>
+                  ? player.avatar.startsWith("upload:")
+                    ? <img src={player.avatar.slice(7)} className="w-full h-full object-cover" alt="" />
+                    : (() => {
+                      const u = getAvatarImageUrlFromStorage(player.avatar);
+                      return u ? <img src={u} className="w-full h-full object-cover" alt="" /> : <span className="text-2xl">{player.avatar}</span>;
+                    })()
                   : player.avatarInitials}
               </div>
               {!isSelf && currentUser && (

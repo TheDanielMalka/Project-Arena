@@ -29,11 +29,13 @@ describe("walletStore — non-custodial model", () => {
 
   // ── Architecture: no deposit/withdraw ────────────────────────────────────
   it("deposit function does not exist — non-custodial model", () => {
-    expect((useWalletStore.getState() as any).deposit).toBeUndefined();
+    const s = useWalletStore.getState() as Record<string, unknown>;
+    expect(s.deposit).toBeUndefined();
   });
 
   it("withdraw function does not exist — funds go contract → wallet directly", () => {
-    expect((useWalletStore.getState() as any).withdraw).toBeUndefined();
+    const s = useWalletStore.getState() as Record<string, unknown>;
+    expect(s.withdraw).toBeUndefined();
   });
 
   it("seed transactions contain no deposit or withdrawal types", () => {

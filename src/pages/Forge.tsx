@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, createContext, useContext } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { useSearchParams, useNavigate, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -10,12 +10,13 @@ import {
   Flame, Zap, Trophy, Package, Crown, Shield, Target, Gift,
   Clock, CheckCircle2, Lock, Ticket, Sparkles, ShoppingBag,
   ChevronRight, Users2, Timer, Award, Star, Tag, Percent,
-  CalendarDays, TrendingUp, Eye, EyeOff, AlertTriangle,
+  CalendarDays, TrendingUp, Eye, EyeOff, AlertTriangle, Coins, Radio,
 } from "lucide-react";
 import { useForgeStore } from "@/stores/forgeStore";
 import { useUserStore } from "@/stores/userStore";
 import { useWalletStore } from "@/stores/walletStore";
 import { cn } from "@/lib/utils";
+import { ForgeLookPreview, renderForgeShopIcon } from "@/lib/forgeItemIcon";
 import type { ForgeCategory } from "@/types";
 
 // ─── Purchase Confirm Context ─────────────────────────────────────────────────
@@ -28,6 +29,8 @@ interface PendingPurchase {
   price:    number;
   currency: "AT" | "USDT";
   label?:   string;         // e.g. "Event Entry", "Hot Drop", "Item"
+  /** When set, checkout shows “on your profile” preview for cosmetics */
+  itemCategory?: ForgeCategory;
   onConfirm: () => { success: boolean; error?: string };
   onSuccess?: () => void;
 }
@@ -50,6 +53,7 @@ function PurchaseConfirmDialog({
   pending: PendingPurchase | null;
   onClose: () => void;
 }) {
+  const user = useUserStore((s) => s.user);
   const [pw, setPw]           = useState("");
   const [showPw, setShowPw]   = useState(false);
   const [error, setError]     = useState("");
@@ -89,8 +93,8 @@ function PurchaseConfirmDialog({
 
         {/* Header */}
         <div className={cn("flex items-center gap-3 px-5 py-4 border-b border-border/60", bgCl)}>
-          <div className={cn("flex h-9 w-9 items-center justify-center rounded-xl border text-xl shrink-0", borderCl, bgCl)}>
-            {pending?.icon}
+          <div className={cn("flex h-9 w-9 items-center justify-center rounded-xl border shrink-0 overflow-hidden", borderCl, bgCl)}>
+            {renderForgeShopIcon(pending?.icon)}
           </div>
           <div className="min-w-0">
             <DialogHeader>
@@ -121,6 +125,25 @@ function PurchaseConfirmDialog({
               </p>
             </div>
           </div>
+
+          {pending?.itemCategory &&
+            ["avatar", "frame", "badge"].includes(pending.itemCategory) &&
+            pending.icon && (
+            <div className="rounded-lg border border-border/50 bg-secondary/30 px-3 py-3 flex flex-col sm:flex-row items-center gap-3">
+              <ForgeLookPreview
+                username={user?.username ?? "Arena"}
+                baseAvatar={user?.avatar}
+                baseBgId={user?.avatarBg}
+                tryOnIcon={pending.icon}
+                tryCategory={pending.itemCategory}
+                size="md"
+              />
+              <p className="text-[10px] text-muted-foreground leading-snug flex-1 text-center sm:text-left">
+                Final look after purchase — your password confirms escrow-style checkout.
+                {/* DB-ready: server validates owned cosmetics vs users.avatar / users.avatar_bg */}
+              </p>
+            </div>
+          )}
 
           {/* USDT warning */}
           {isUSDT && (
@@ -228,20 +251,86 @@ const RARITY_CONFIG: Record<string, { color: string; bg: string; border: string;
 };
 
 const CATEGORY_PILLS: Array<{ value: ForgeCategory | "all"; label: string; icon: React.ReactNode }> = [
-  { value: "all",    label: "All",     icon: <Sparkles className="w-3.5 h-3.5" /> },
-  { value: "avatar", label: "Avatars", icon: <Star      className="w-3.5 h-3.5" /> },
-  { value: "badge",  label: "Badges",  icon: <Award     className="w-3.5 h-3.5" /> },
-  { value: "boost",  label: "Boosts",  icon: <Zap       className="w-3.5 h-3.5" /> },
-  { value: "vip",    label: "VIP",     icon: <Crown     className="w-3.5 h-3.5" /> },
-  { value: "bundle", label: "Bundles", icon: <Package   className="w-3.5 h-3.5" /> },
+  { value: "all",    label: "All",     icon: <Sparkles className="w-3 h-3" /> },
+  { value: "avatar", label: "Avatars", icon: <Star      className="w-3 h-3" /> },
+  { value: "frame",  label: "Frames",  icon: <Shield    className="w-3 h-3" /> },
+  { value: "badge",  label: "Badges",  icon: <Award     className="w-3 h-3" /> },
+  { value: "boost",  label: "Boosts",  icon: <Zap       className="w-3 h-3" /> },
+  { value: "vip",    label: "VIP",     icon: <Crown     className="w-3 h-3" /> },
+  { value: "bundle", label: "Bundles", icon: <Package   className="w-3 h-3" /> },
 ];
 
 const TABS = [
-  { value: "shop",       label: "Shop",       icon: <ShoppingBag className="w-4 h-4" /> },
-  { value: "challenges", label: "Challenges", icon: <Target      className="w-4 h-4" /> },
-  { value: "events",     label: "Events",     icon: <Trophy      className="w-4 h-4" /> },
-  { value: "drops",      label: "Hot Drops",  icon: <Flame       className="w-4 h-4" /> },
+  { value: "shop",       label: "Shop",       icon: <ShoppingBag className="w-3.5 h-3.5" /> },
+  { value: "challenges", label: "Challenges", icon: <Target      className="w-3.5 h-3.5" /> },
+  { value: "events",     label: "Events",     icon: <Trophy      className="w-3.5 h-3.5" /> },
+  { value: "drops",      label: "Hot Drops",  icon: <Flame       className="w-3.5 h-3.5" /> },
 ];
+
+/** Display-only; production: GET /api/forge/exchange-rate (see ForgeExchangeRateQuote). */
+const DISPLAY_USDT_TO_AT_RATE = 100;
+
+function ForgeTreasuryStrip() {
+  const arenaTokens = useForgeStore((s) => s.arenaTokens);
+  const usdtBalance  = useWalletStore((s) => s.usdtBalance);
+  const estAt        = Math.floor(usdtBalance * DISPLAY_USDT_TO_AT_RATE);
+
+  return (
+    <div className="relative overflow-hidden rounded-xl border border-primary/25 bg-gradient-to-br from-card via-card/95 to-primary/[0.08] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+      <div className="pointer-events-none absolute -right-10 -top-12 h-36 w-36 rounded-full bg-primary/18 blur-3xl" />
+      <div className="pointer-events-none absolute -left-6 bottom-0 h-28 w-28 rounded-full bg-arena-purple/12 blur-2xl" />
+      <div className="relative flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+        <div className="flex flex-wrap items-stretch gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-primary/35 bg-primary/10">
+              <Zap className="h-4 w-4 text-primary" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground font-display">Arena balance</p>
+              <p className="font-display text-base font-bold text-foreground tabular-nums leading-tight">
+                {arenaTokens.toLocaleString()} <span className="text-xs font-semibold text-primary">AT</span>
+              </p>
+            </div>
+          </div>
+          <div className="hidden sm:block w-px self-stretch min-h-[2rem] bg-border/50" aria-hidden />
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-arena-gold/35 bg-arena-gold/10">
+              <Coins className="h-4 w-4 text-arena-gold" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground font-display">Wallet USDT</p>
+              <p className="font-display text-sm font-bold text-foreground tabular-nums leading-tight">
+                ${usdtBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-col gap-1 lg:items-end lg:text-right min-w-0">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1 rounded-full border border-green-500/25 bg-green-500/10 px-2 py-0.5 text-green-400 font-semibold">
+              <Radio className="w-2.5 h-2.5 animate-pulse" /> Live counter
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <Shield className="w-3 h-3 text-primary shrink-0" />
+              Non-custodial USDT · AT for Forge only
+            </span>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Display quote <span className="font-mono text-foreground/90">1 USDT ≈ {DISPLAY_USDT_TO_AT_RATE} AT</span>
+            {" · "}
+            <span className="text-foreground/80">~{estAt.toLocaleString()} AT</span> spend preview from wallet
+          </p>
+          <Link
+            to="/wallet"
+            className="inline-flex items-center gap-0.5 text-[11px] font-display font-bold text-primary hover:underline decoration-primary/40 underline-offset-2"
+          >
+            Wallet & top-up <ChevronRight className="h-3 w-3" />
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── Helpers ─────────────────────────────────────────────────
 
@@ -274,19 +363,37 @@ interface ItemCardProps {
   success: boolean;
   error: string | null;
   arenaTokens: number;
+  focused?: boolean;
+  onTryOn?: () => void;
 }
 
-function ItemCard({ item, onBuy, success, error, arenaTokens }: ItemCardProps) {
+function ItemCard({ item, onBuy, success, error, arenaTokens, focused, onTryOn }: ItemCardProps) {
   const rc = RARITY_CONFIG[item.rarity];
   const countdown = useCountdown(item.expiresAt);
+  const isDeluxeCosmetic =
+    item.category === "avatar" ||
+    item.category === "badge" ||
+    item.category === "frame" ||
+    item.category === "boost" ||
+    item.category === "vip" ||
+    item.category === "bundle";
 
   return (
     <div
-      className="relative flex flex-col rounded-lg border p-2.5 transition-all duration-200 hover:scale-[1.02] hover:shadow-lg cursor-default"
+      className={cn(
+        "relative flex flex-col rounded-lg border p-2 transition-all duration-200 hover:scale-[1.015] hover:shadow-lg cursor-default overflow-hidden",
+        isDeluxeCosmetic && "ring-1 ring-white/[0.07]",
+        focused && "ring-2 ring-primary/60 border-primary/50",
+      )}
+      id={`forge-item-${item.id}`}
       style={{
         background: rc.bg,
         borderColor: rc.border,
-        boxShadow: success ? `0 0 14px ${rc.color}35` : undefined,
+        boxShadow: success
+          ? `0 0 14px ${rc.color}35`
+          : isDeluxeCosmetic
+            ? `0 0 0 1px ${rc.color}33, 0 10px 40px ${rc.color}18, inset 0 1px 0 ${rc.color}25`
+            : undefined,
       }}
     >
       {/* Rarity glow overlay */}
@@ -318,10 +425,37 @@ function ItemCard({ item, onBuy, success, error, arenaTokens }: ItemCardProps) {
       {/* Icon + name */}
       <div className="relative flex items-center gap-2 mb-1.5">
         <div
-          className="w-9 h-9 rounded-md flex items-center justify-center text-lg flex-shrink-0"
-          style={{ background: `${rc.color}18`, border: `1px solid ${rc.color}44` }}
+          className={cn(
+            "flex flex-shrink-0 items-center justify-center overflow-hidden",
+            isDeluxeCosmetic ? "relative h-11 w-11 rounded-xl text-xl shadow-lg" : "h-9 w-9 rounded-md text-lg",
+          )}
+          style={
+            isDeluxeCosmetic
+              ? {
+                  background: `linear-gradient(145deg, ${rc.color}60 0%, rgba(0,0,0,0.82) 50%, ${rc.color}38 100%)`,
+                  border: `1px solid ${rc.color}aa`,
+                  boxShadow: `0 0 26px ${rc.color}45, inset 0 1px 0 rgba(255,255,255,0.22)`,
+                }
+              : { background: `${rc.color}18`, border: `1px solid ${rc.color}44` }
+          }
         >
-          {item.icon}
+          {isDeluxeCosmetic && (
+            <>
+              <span
+                className="pointer-events-none absolute inset-0 opacity-35"
+                style={{ background: `radial-gradient(circle at 30% 25%, rgba(255,255,255,0.5) 0%, transparent 45%)` }}
+              />
+              <span
+                className="pointer-events-none absolute inset-0 opacity-25 bg-gradient-to-br from-transparent via-transparent to-black/80"
+              />
+              {item.category === "badge" && (
+                <Award className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 text-arena-gold drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)] z-[2] pointer-events-none" />
+              )}
+            </>
+          )}
+          <span className={cn("relative z-[1] h-full w-full flex items-center justify-center", isDeluxeCosmetic && "drop-shadow-[0_2px_6px_rgba(0,0,0,0.85)]")}>
+            {renderForgeShopIcon(item.icon)}
+          </span>
         </div>
         <div className="min-w-0">
           <p className="font-display font-semibold text-xs text-foreground leading-tight truncate">{item.name}</p>
@@ -357,6 +491,16 @@ function ItemCard({ item, onBuy, success, error, arenaTokens }: ItemCardProps) {
       {/* Error */}
       {error && (
         <p className="relative text-[10px] text-destructive mb-1.5 font-medium">{error}</p>
+      )}
+
+      {onTryOn && (
+        <button
+          type="button"
+          onClick={onTryOn}
+          className="relative mb-1.5 flex items-center justify-center gap-1 rounded-md border border-primary/35 bg-primary/10 py-1 text-[10px] font-display font-bold text-primary hover:bg-primary/15 transition-colors"
+        >
+          <Eye className="h-3 w-3" /> Preview on you
+        </button>
       )}
 
       {/* Buy buttons */}
@@ -406,18 +550,40 @@ function ItemCard({ item, onBuy, success, error, arenaTokens }: ItemCardProps) {
 // ─── Shop Tab ────────────────────────────────────────────────
 
 function ShopTab() {
-  const { items, arenaTokens, purchaseItem, getFeaturedItem, getItemsByCategory } = useForgeStore();
+  const { items, arenaTokens, purchaseItem, getFeaturedItem } = useForgeStore();
   const { openConfirm, openAtTopUp } = useForgeConfirm();
+  const user = useUserStore((s) => s.user);
+  const [searchParams] = useSearchParams();
   const featured = getFeaturedItem();
   const [category, setCategory] = useState<ForgeCategory | "all">("all");
   const [successItems, setSuccessItems] = useState<Set<string>>(new Set());
   const [errorItem, setErrorItem] = useState<{ id: string; msg: string } | null>(null);
+  const [catalogPreview, setCatalogPreview] = useState<{ icon: string; category: ForgeCategory } | null>(null);
   const featuredCountdown = useCountdown(featured?.expiresAt);
+  const focusId = searchParams.get("focus");
 
-  const filteredItems = useMemo(
-    () => getItemsByCategory(category).filter((i) => !i.featured),
-    [category, items]
-  );
+  useEffect(() => {
+    const qp = searchParams.get("category");
+    const allowed: Array<ForgeCategory | "all"> = ["all", "avatar", "frame", "badge", "boost", "vip", "bundle"];
+    if (qp && (allowed as string[]).includes(qp)) {
+      setCategory(qp as ForgeCategory | "all");
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!focusId) return;
+    const el = document.getElementById(`forge-item-${focusId}`);
+    if (!el) return;
+    // Defer until after layout
+    const t = setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+    return () => clearTimeout(t);
+  }, [focusId, category]);
+
+  const filteredItems = useMemo(() => {
+    const byCategory =
+      category === "all" ? items : items.filter((i) => i.category === category);
+    return byCategory.filter((i) => !i.featured);
+  }, [category, items]);
 
   function handleBuy(itemId: string, currency: "AT" | "USDT") {
     const item = items.find((i) => i.id === itemId);
@@ -432,6 +598,7 @@ function ShopTab() {
       name: item.name,
       price,
       currency,
+      itemCategory: item.category,
       label: `Forge Shop · ${item.rarity.charAt(0).toUpperCase() + item.rarity.slice(1)}`,
       onConfirm: () => {
         setErrorItem(null);
@@ -447,24 +614,41 @@ function ShopTab() {
   const featuredRc = featured ? RARITY_CONFIG[featured.rarity] : RARITY_CONFIG.legendary;
 
   return (
-    <div className="space-y-6">
-      {/* AT Balance pill */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="font-display text-xl font-bold text-foreground">Forge Shop</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">Spend Arena Tokens or USDT on exclusive items</p>
-        </div>
-        <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 border border-primary/20">
-          <Zap className="w-4 h-4 text-primary" />
-          <span className="font-bold text-primary">{arenaTokens.toLocaleString()}</span>
-          <span className="text-xs text-muted-foreground">AT</span>
-        </div>
+    <div className="space-y-4">
+      <div>
+        <h2 className="font-display text-lg font-bold text-foreground tracking-tight">Forge Shop</h2>
+        <p className="text-xs text-muted-foreground mt-0.5 max-w-xl">
+          Cosmetics, boosts & VIP — instant with AT or secured USDT checkout. Limited runs move fast.
+        </p>
       </div>
+
+      {catalogPreview && (
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-primary/25 bg-card/40 p-3">
+          <ForgeLookPreview
+            username={user?.username ?? "Arena"}
+            baseAvatar={user?.avatar}
+            baseBgId={user?.avatarBg}
+            tryOnIcon={catalogPreview.icon}
+            tryCategory={catalogPreview.category}
+            size="md"
+          />
+          <div className="flex-1 min-w-0 space-y-1">
+            <p className="text-[11px] font-display font-bold text-foreground uppercase tracking-wider">Live preview</p>
+            <p className="text-[10px] text-muted-foreground leading-snug">
+              How this cosmetic reads on your Arena ring — use Preview on portrait, frame, or badge cards.
+            </p>
+            <Button type="button" variant="ghost" size="sm" className="h-7 text-[10px] font-display"
+              onClick={() => setCatalogPreview(null)}>
+              Clear preview
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Featured hero */}
       {featured && (
         <div
-          className="relative overflow-hidden rounded-xl p-4 border"
+          className="relative overflow-hidden rounded-xl p-3.5 border ring-1 ring-inset ring-white/[0.06]"
           style={{
             background: `linear-gradient(135deg, ${featuredRc.color}18 0%, rgba(0,0,0,0.4) 60%, ${featuredRc.color}10 100%)`,
             borderColor: featuredRc.border,
@@ -478,27 +662,27 @@ function ShopTab() {
               background: `radial-gradient(ellipse at 80% 50%, ${featuredRc.color}20 0%, transparent 60%)`,
             }}
           />
-          <div className="absolute top-3 right-3 flex items-center gap-1.5">
+          <div className="absolute top-2.5 right-2.5 z-20 flex items-center gap-1.5">
             <span
-              className="text-xs font-bold uppercase tracking-widest px-3 py-1 rounded-full animate-pulse"
+              className="text-[10px] font-bold uppercase tracking-widest px-2.5 py-0.5 rounded-full animate-pulse"
               style={{ background: `${featuredRc.color}30`, color: featuredRc.color, border: `1px solid ${featuredRc.color}50` }}
             >
               ★ Featured
             </span>
           </div>
 
-          <div className="relative flex items-center gap-4 flex-wrap">
+          <div className="relative z-10 flex items-center gap-3 flex-wrap">
             <div
-              className="w-14 h-14 rounded-xl flex items-center justify-center text-3xl flex-shrink-0"
+              className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl flex-shrink-0"
               style={{
                 background: `${featuredRc.color}18`,
                 border: `2px solid ${featuredRc.color}55`,
                 boxShadow: `0 0 14px ${featuredRc.color}35`,
               }}
             >
-              {featured.icon}
+              {renderForgeShopIcon(featured.icon)}
             </div>
-            <div className="flex-1 min-w-0">
+            <div className="flex-1 min-w-0 pr-24 sm:pr-40">
               <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
                 <span
                   className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full"
@@ -510,8 +694,8 @@ function ShopTab() {
                   <Badge variant="destructive" className="text-[10px] font-bold px-1.5 py-0">Limited Edition</Badge>
                 )}
               </div>
-              <h3 className="font-display text-lg font-bold text-foreground">{featured.name}</h3>
-              <p className="text-xs text-muted-foreground mt-0.5 max-w-md line-clamp-2">{featured.description}</p>
+              <h3 className="font-display text-base font-bold text-foreground">{featured.name}</h3>
+              <p className="text-[11px] text-muted-foreground mt-0.5 max-w-md line-clamp-2">{featured.description}</p>
 
               <div className="flex items-center gap-3 mt-2 flex-wrap text-xs">
                 {featured.stock !== undefined && (
@@ -533,9 +717,20 @@ function ShopTab() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-1.5 flex-shrink-0">
+            <div className="flex flex-col gap-1.5 flex-shrink-0 w-full sm:w-auto">
               {errorItem?.id === featured.id && (
                 <p className="text-[10px] text-destructive font-medium">{errorItem.msg}</p>
+              )}
+              {["avatar", "frame", "badge"].includes(featured.category) && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-[11px] font-display border-primary/35"
+                  onClick={() => setCatalogPreview({ icon: featured.icon, category: featured.category })}
+                >
+                  <Eye className="w-3.5 h-3.5 mr-1.5" /> Preview on you
+                </Button>
               )}
               {featured.priceAT && (
                 <Button
@@ -576,13 +771,13 @@ function ShopTab() {
       )}
 
       {/* Category filter pills */}
-      <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex items-center gap-1.5 flex-wrap">
         {CATEGORY_PILLS.map((pill) => (
           <button
             key={pill.value}
             onClick={() => setCategory(pill.value)}
             className={cn(
-              "flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all",
+              "flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border transition-all",
               category === pill.value
                 ? "bg-primary text-primary-foreground border-primary"
                 : "bg-card/30 border-border/40 text-muted-foreground hover:text-foreground hover:border-border"
@@ -601,7 +796,7 @@ function ShopTab() {
           <p className="text-sm">No items in this category</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
           {filteredItems.map((item) => (
             <ItemCard
               key={item.id}
@@ -610,6 +805,12 @@ function ShopTab() {
               success={successItems.has(item.id)}
               error={errorItem?.id === item.id ? errorItem.msg : null}
               arenaTokens={arenaTokens}
+              focused={focusId === item.id}
+              onTryOn={
+                ["avatar", "frame", "badge"].includes(item.category)
+                  ? () => setCatalogPreview({ icon: item.icon, category: item.category })
+                  : undefined
+              }
             />
           ))}
         </div>
@@ -649,16 +850,16 @@ function ChallengesTab() {
     return (
       <div
         className={cn(
-          "relative flex items-center gap-3 rounded-lg border p-2.5 transition-all",
+          "relative flex items-center gap-2 rounded-lg border p-2 transition-all",
           isClaimed
             ? "bg-card/20 border-border/20 opacity-60"
-            : "bg-card/30 border-border/40 hover:border-border/70"
+            : "bg-card/30 border-border/40 hover:border-primary/25"
         )}
       >
         {/* Icon */}
         <div
           className={cn(
-            "w-9 h-9 rounded-lg flex items-center justify-center text-lg flex-shrink-0 border",
+            "w-8 h-8 rounded-md flex items-center justify-center text-base flex-shrink-0 border",
             isClaimed ? "bg-muted/20 border-border/20" : "bg-primary/10 border-primary/20"
           )}
         >
@@ -667,8 +868,8 @@ function ChallengesTab() {
 
         {/* Info */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-0.5">
-            <p className={cn("font-semibold text-sm", isClaimed && "line-through text-muted-foreground")}>
+          <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+            <p className={cn("font-semibold text-xs", isClaimed && "line-through text-muted-foreground")}>
               {challenge.title}
             </p>
             {isClaimable && !isClaimed && (
@@ -677,11 +878,11 @@ function ChallengesTab() {
               </span>
             )}
           </div>
-          <p className="text-xs text-muted-foreground mb-2">{challenge.description}</p>
+          <p className="text-[11px] text-muted-foreground mb-1.5 line-clamp-2">{challenge.description}</p>
 
           {/* Progress bar */}
-          <div className="flex items-center gap-2">
-            <div className="flex-1 h-1.5 rounded-full bg-border/40 overflow-hidden">
+          <div className="flex items-center gap-1.5">
+            <div className="flex-1 h-1 rounded-full bg-border/40 overflow-hidden">
               <div
                 className="h-full rounded-full transition-all duration-500"
                 style={{
@@ -701,11 +902,11 @@ function ChallengesTab() {
         </div>
 
         {/* Reward + claim */}
-        <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-          <div className="flex items-center gap-1 text-xs font-bold text-primary">
+        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+          <div className="flex items-center gap-0.5 text-[11px] font-bold text-primary tabular-nums">
             <Zap className="w-3 h-3" />{challenge.rewardAT} AT
           </div>
-          <div className="text-[11px] text-muted-foreground">+{challenge.rewardXP} XP</div>
+          <div className="text-[10px] text-muted-foreground tabular-nums">+{challenge.rewardXP} XP</div>
           {isClaimed ? (
             <div className="flex items-center gap-1 text-xs text-green-400 font-semibold">
               <CheckCircle2 className="w-3.5 h-3.5" />Claimed
@@ -714,7 +915,7 @@ function ChallengesTab() {
             <Button
               size="sm"
               className={cn(
-                "h-7 px-3 text-xs font-bold transition-all",
+                "h-6 px-2.5 text-[11px] font-bold transition-all",
                 wasJustClaimed
                   ? "bg-green-500/20 text-green-400 border-green-500/30"
                   : "bg-green-500 hover:bg-green-600 text-white"
@@ -732,56 +933,50 @@ function ChallengesTab() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* AT Balance */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="font-display text-xl font-bold text-foreground">Challenges</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">Complete tasks to earn Arena Tokens and XP</p>
-        </div>
-        <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 border border-primary/20">
-          <Zap className="w-4 h-4 text-primary" />
-          <span className="font-bold text-primary">{arenaTokens.toLocaleString()}</span>
-          <span className="text-xs text-muted-foreground">AT Balance</span>
-        </div>
+    <div className="space-y-4">
+      <div>
+        <h2 className="font-display text-lg font-bold text-foreground tracking-tight">Challenges</h2>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Stack free AT & XP — claim streaks before reset. Balance: <span className="text-primary font-semibold tabular-nums">{arenaTokens.toLocaleString()} AT</span>
+        </p>
       </div>
 
       {/* Stats overview */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
         {[
-          { label: "Daily Active",    value: daily.filter(c => c.status === "active").length,    icon: <Target className="w-3.5 h-3.5" />,       color: "text-primary" },
-          { label: "Ready to Claim",  value: [...daily, ...weekly].filter(c => c.status === "claimable").length, icon: <Gift className="w-3.5 h-3.5" />, color: "text-green-400" },
-          { label: "Weekly Active",   value: weekly.filter(c => c.status === "active").length,   icon: <TrendingUp className="w-3.5 h-3.5" />,   color: "text-amber-400" },
-          { label: "Completed Today", value: daily.filter(c => c.status === "claimed").length,   icon: <CheckCircle2 className="w-3.5 h-3.5" />, color: "text-muted-foreground" },
+          { label: "Daily Active",    value: daily.filter(c => c.status === "active").length,    icon: <Target className="w-3 h-3" />,       color: "text-primary" },
+          { label: "Ready to Claim",  value: [...daily, ...weekly].filter(c => c.status === "claimable").length, icon: <Gift className="w-3 h-3" />, color: "text-green-400" },
+          { label: "Weekly Active",   value: weekly.filter(c => c.status === "active").length,   icon: <TrendingUp className="w-3 h-3" />,   color: "text-amber-400" },
+          { label: "Completed Today", value: daily.filter(c => c.status === "claimed").length,   icon: <CheckCircle2 className="w-3 h-3" />, color: "text-muted-foreground" },
         ].map((stat) => (
-          <div key={stat.label} className="bg-card/30 border border-border/40 rounded-lg p-2 text-center">
+          <div key={stat.label} className="bg-card/30 border border-border/40 rounded-lg py-1.5 px-1 text-center">
             <div className={cn("flex justify-center mb-0.5", stat.color)}>{stat.icon}</div>
-            <div className={cn("text-lg font-bold font-display", stat.color)}>{stat.value}</div>
-            <div className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{stat.label}</div>
+            <div className={cn("text-base font-bold font-display tabular-nums", stat.color)}>{stat.value}</div>
+            <div className="text-[9px] text-muted-foreground mt-0.5 leading-tight px-0.5">{stat.label}</div>
           </div>
         ))}
       </div>
 
       {/* Daily challenges */}
       <div>
-        <div className="flex items-center gap-2 mb-3">
-          <CalendarDays className="w-4 h-4 text-primary" />
-          <h3 className="font-display font-semibold text-sm text-foreground">Daily Challenges</h3>
+        <div className="flex items-center gap-2 mb-2">
+          <CalendarDays className="w-3.5 h-3.5 text-primary" />
+          <h3 className="font-display font-semibold text-xs text-foreground">Daily Challenges</h3>
           <span className="text-[11px] text-muted-foreground">— Resets in <span className="text-amber-400 font-mono">{formatCountdown(daily[0]?.expiresAt ?? "")}</span></span>
         </div>
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           {daily.map((c) => <ChallengeRow key={c.id} challenge={c} />)}
         </div>
       </div>
 
       {/* Weekly challenges */}
       <div>
-        <div className="flex items-center gap-2 mb-3">
-          <TrendingUp className="w-4 h-4 text-amber-400" />
-          <h3 className="font-display font-semibold text-sm text-foreground">Weekly Challenges</h3>
+        <div className="flex items-center gap-2 mb-2">
+          <TrendingUp className="w-3.5 h-3.5 text-amber-400" />
+          <h3 className="font-display font-semibold text-xs text-foreground">Weekly Challenges</h3>
           <span className="text-[11px] text-muted-foreground">— Resets in <span className="text-amber-400 font-mono">{formatCountdown(weekly[0]?.expiresAt ?? "")}</span></span>
         </div>
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           {weekly.map((c) => <ChallengeRow key={c.id} challenge={c} />)}
         </div>
       </div>
@@ -836,31 +1031,31 @@ function EventsTab() {
     return (
       <div
         className={cn(
-          "relative overflow-hidden rounded-lg border p-3.5 transition-all hover:border-border/70",
+          "relative overflow-hidden rounded-lg border p-2.5 transition-all hover:border-primary/20",
           isActive ? "bg-card/30 border-border/40" : "bg-card/20 border-border/30"
         )}
       >
         {/* Live badge */}
         {isActive && (
-          <div className="absolute top-4 right-4 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/20 border border-red-500/40">
-            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-            <span className="text-[11px] font-bold text-red-400 uppercase tracking-wider">Live</span>
+          <div className="absolute top-2.5 right-2.5 flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/20 border border-red-500/40">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+            <span className="text-[10px] font-bold text-red-400 uppercase tracking-wider">Live</span>
           </div>
         )}
         {isUpcoming && (
-          <div className="absolute top-4 right-4 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20">
+          <div className="absolute top-2.5 right-2.5 flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 border border-primary/20">
             <CalendarDays className="w-3 h-3 text-primary" />
-            <span className="text-[11px] font-bold text-primary uppercase tracking-wider">Soon</span>
+            <span className="text-[10px] font-bold text-primary uppercase tracking-wider">Soon</span>
           </div>
         )}
 
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-xl flex-shrink-0">
+        <div className="flex items-start gap-2.5">
+          <div className="w-9 h-9 rounded-md bg-primary/10 border border-primary/20 flex items-center justify-center text-lg flex-shrink-0">
             {event.icon}
           </div>
-          <div className="flex-1 min-w-0 pr-16">
-            <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
-              <h4 className="font-display font-bold text-sm text-foreground">{event.name}</h4>
+          <div className="flex-1 min-w-0 pr-14">
+            <div className="flex items-center gap-1 mb-0.5 flex-wrap">
+              <h4 className="font-display font-bold text-xs text-foreground">{event.name}</h4>
               <span className="text-[11px] px-2 py-0.5 rounded-full bg-card/50 border border-border/30 text-muted-foreground">
                 {event.game}
               </span>
@@ -868,10 +1063,10 @@ function EventsTab() {
                 {event.type}
               </span>
             </div>
-            <p className="text-xs text-muted-foreground leading-relaxed mb-3">{event.description}</p>
+            <p className="text-[11px] text-muted-foreground leading-snug mb-2 line-clamp-2">{event.description}</p>
 
             {/* Reward/prize row */}
-            <div className="flex items-center gap-4 flex-wrap text-xs mb-3">
+            <div className="flex items-center gap-3 flex-wrap text-[11px] mb-2">
               {event.prizePool && (
                 <span className="flex items-center gap-1 font-semibold text-amber-400">
                   <Trophy className="w-3.5 h-3.5" />${event.prizePool.toLocaleString()} prize pool
@@ -894,9 +1089,9 @@ function EventsTab() {
             </div>
 
             {/* Participants + fill bar */}
-            <div className="flex items-center gap-2 mb-3">
-              <Users2 className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-xs text-muted-foreground">
+            <div className="flex items-center gap-2 mb-2">
+              <Users2 className="w-3 h-3 text-muted-foreground" />
+              <span className="text-[11px] text-muted-foreground">
                 {event.participants.toLocaleString()}
                 {event.maxParticipants ? ` / ${event.maxParticipants}` : ""} participants
               </span>
@@ -911,8 +1106,8 @@ function EventsTab() {
             </div>
 
             {/* Countdown */}
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Clock className="w-3.5 h-3.5" />
+            <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+              <Clock className="w-3 h-3" />
               {isActive ? (
                 <span>Ends in <span className="font-mono font-semibold text-amber-400">{endCountdown}</span></span>
               ) : (
@@ -928,16 +1123,16 @@ function EventsTab() {
         )}
 
         {/* Join button */}
-        <div className="mt-4 flex justify-end">
+        <div className="mt-2.5 flex justify-end">
           {event.joined || joinedNow.has(event.id) ? (
-            <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-green-500/15 border border-green-500/30">
-              <CheckCircle2 className="w-4 h-4 text-green-400" />
-              <span className="text-sm font-semibold text-green-400">Joined</span>
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-500/15 border border-green-500/30">
+              <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
+              <span className="text-xs font-semibold text-green-400">Joined</span>
             </div>
           ) : (
             <Button
               size="sm"
-              className="h-9 px-5 font-bold"
+              className="h-8 px-4 text-xs font-bold font-display"
               onClick={() => handleJoin(event.id)}
             >
               {event.entryFee ? `Join — $${event.entryFee}` : "Join Free"}
@@ -950,21 +1145,23 @@ function EventsTab() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div>
-        <h2 className="font-display text-xl font-bold text-foreground">Events</h2>
-        <p className="text-sm text-muted-foreground mt-0.5">Tournaments, special events, and more</p>
+        <h2 className="font-display text-lg font-bold text-foreground tracking-tight">Events</h2>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          High-stakes brackets — entry via USDT where noted. Prize pools update live.
+        </p>
       </div>
 
       {/* Active events */}
       {activeEvents.length > 0 && (
         <div>
-          <div className="flex items-center gap-2 mb-3">
-            <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
-            <h3 className="font-display font-semibold text-sm text-foreground">Live Now</h3>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <h3 className="font-display font-semibold text-xs text-foreground">Live Now</h3>
             <span className="text-[11px] text-muted-foreground">({activeEvents.length} active)</span>
           </div>
-          <div className="space-y-3">
+          <div className="space-y-2">
             {activeEvents.map((e) => <EventCard key={e.id} event={e} />)}
           </div>
         </div>
@@ -973,11 +1170,11 @@ function EventsTab() {
       {/* Upcoming events */}
       {upcomingEvents.length > 0 && (
         <div>
-          <div className="flex items-center gap-2 mb-3">
-            <CalendarDays className="w-4 h-4 text-primary" />
-            <h3 className="font-display font-semibold text-sm text-foreground">Coming Up</h3>
+          <div className="flex items-center gap-2 mb-2">
+            <CalendarDays className="w-3.5 h-3.5 text-primary" />
+            <h3 className="font-display font-semibold text-xs text-foreground">Coming Up</h3>
           </div>
-          <div className="space-y-3">
+          <div className="space-y-2">
             {upcomingEvents.map((e) => <EventCard key={e.id} event={e} />)}
           </div>
         </div>
@@ -1048,8 +1245,8 @@ function DropsTab() {
     return (
       <div
         className={cn(
-          "relative overflow-hidden rounded-xl border transition-all hover:scale-[1.01]",
-          hero ? "p-4" : "p-3.5",
+          "relative overflow-hidden rounded-xl border transition-all hover:scale-[1.005]",
+          hero ? "p-3.5" : "p-2.5",
           isFlash
             ? "bg-gradient-to-br from-purple-900/20 to-card/30 border-purple-500/30"
             : "bg-card/30 border-border/40"
@@ -1059,7 +1256,7 @@ function DropsTab() {
         {/* Tag badge */}
         {drop.tag && (
           <div
-            className="absolute top-4 right-4 px-2.5 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider"
+            className="absolute top-2.5 right-2.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider"
             style={{ background: `${tagColor}22`, color: tagColor, border: `1px solid ${tagColor}44` }}
           >
             {drop.tag}
@@ -1068,32 +1265,32 @@ function DropsTab() {
 
         {/* Discount badge */}
         {drop.discountPercent && (
-          <div className="absolute top-10 right-4 flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 text-xs font-bold">
+          <div className="absolute top-9 right-2.5 flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-bold">
             <Percent className="w-3 h-3" />{drop.discountPercent}% OFF
           </div>
         )}
 
-        <div className={cn("flex gap-3", hero ? "items-center" : "items-start")}>
+        <div className={cn("flex gap-2.5", hero ? "items-center" : "items-start")}>
           <div
             className={cn(
-              "rounded-xl flex items-center justify-center flex-shrink-0",
-              hero ? "w-12 h-12 text-3xl" : "w-10 h-10 text-xl",
+              "rounded-lg flex items-center justify-center flex-shrink-0",
+              hero ? "w-11 h-11 text-2xl" : "w-9 h-9 text-lg",
               isFlash ? "bg-purple-500/15 border border-purple-500/30" : "bg-primary/10 border border-primary/20"
             )}
           >
             {drop.icon}
           </div>
 
-          <div className="flex-1 min-w-0 pr-16">
-            <h4 className={cn("font-display font-bold text-foreground", hero ? "text-xl mb-1" : "text-base mb-0.5")}>
+          <div className="flex-1 min-w-0 pr-14">
+            <h4 className={cn("font-display font-bold text-foreground", hero ? "text-lg mb-0.5" : "text-sm mb-0.5")}>
               {drop.name}
             </h4>
-            <p className="text-xs text-muted-foreground leading-relaxed mb-3">{drop.description}</p>
+            <p className="text-[11px] text-muted-foreground leading-snug mb-2 line-clamp-2">{drop.description}</p>
 
             {/* Highlights */}
-            <ul className="space-y-1 mb-4">
+            <ul className="space-y-0.5 mb-2.5">
               {drop.highlights.map((h, i) => (
-                <li key={i} className="flex items-center gap-2 text-xs text-muted-foreground">
+                <li key={i} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                   <CheckCircle2 className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
                   {h}
                 </li>
@@ -1101,14 +1298,14 @@ function DropsTab() {
             </ul>
 
             {/* Pricing */}
-            <div className="flex items-center gap-3 flex-wrap mb-3">
+            <div className="flex items-center gap-2 flex-wrap mb-2">
               {drop.originalPriceUSDT && (
-                <span className="text-sm text-muted-foreground line-through">
+                <span className="text-xs text-muted-foreground line-through">
                   ${drop.originalPriceUSDT.toFixed(2)}
                 </span>
               )}
               {drop.salePriceUSDT && (
-                <span className={cn("font-bold text-foreground", hero ? "text-xl" : "text-lg")}>
+                <span className={cn("font-bold text-foreground tabular-nums", hero ? "text-lg" : "text-base")}>
                   ${drop.salePriceUSDT.toFixed(2)}
                   <span className="text-xs font-normal text-muted-foreground ml-1">USDT</span>
                 </span>
@@ -1119,7 +1316,7 @@ function DropsTab() {
             </div>
 
             {/* Stock + countdown */}
-            <div className="flex items-center gap-4 text-xs text-muted-foreground mb-4 flex-wrap">
+            <div className="flex items-center gap-3 text-[11px] text-muted-foreground mb-2 flex-wrap">
               {drop.stock !== undefined && (
                 <span className="flex items-center gap-1">
                   <Tag className="w-3 h-3" />{drop.stock} left
@@ -1146,8 +1343,8 @@ function DropsTab() {
             ) : (
               <Button
                 className={cn(
-                  "font-bold transition-all",
-                  hero ? "h-9 px-5 text-xs" : "h-8 px-4 text-[11px]",
+                  "font-bold transition-all font-display",
+                  hero ? "h-8 px-4 text-[11px]" : "h-7 px-3 text-[11px]",
                   isBought && "bg-green-500/20 text-green-400 border-green-500/30",
                   !isBought && drop.salePriceUSDT && "bg-destructive hover:bg-destructive/90 text-destructive-foreground"
                 )}
@@ -1170,21 +1367,23 @@ function DropsTab() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div>
-        <h2 className="font-display text-xl font-bold text-foreground">Hot Drops</h2>
-        <p className="text-sm text-muted-foreground mt-0.5">Limited-time deals, season passes, and flash bonuses</p>
+        <h2 className="font-display text-lg font-bold text-foreground tracking-tight">Hot Drops</h2>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Scarcity-priced bundles — USDT checkout locks price; flash perks apply instantly.
+        </p>
       </div>
 
       {/* Flash deals banner */}
       {flashDeals.length > 0 && (
-        <div className="rounded-xl border border-purple-500/30 bg-gradient-to-r from-purple-900/20 via-card/20 to-card/20 p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Sparkles className="w-4 h-4 text-purple-400" />
-            <h3 className="font-display font-semibold text-sm text-foreground">Flash Bonuses</h3>
+        <div className="rounded-xl border border-purple-500/30 bg-gradient-to-r from-purple-900/20 via-card/20 to-card/20 p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+            <h3 className="font-display font-semibold text-xs text-foreground">Flash Bonuses</h3>
             <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse ml-1" />
           </div>
-          <div className="space-y-3">
+          <div className="space-y-2">
             {flashDeals.map((d) => <DropCard key={d.id} drop={d} />)}
           </div>
         </div>
@@ -1193,9 +1392,9 @@ function DropsTab() {
       {/* Season pass hero */}
       {seasonPass && (
         <div>
-          <div className="flex items-center gap-2 mb-3">
-            <Star className="w-4 h-4 text-amber-400" />
-            <h3 className="font-display font-semibold text-sm text-foreground">Season Pass</h3>
+          <div className="flex items-center gap-2 mb-2">
+            <Star className="w-3.5 h-3.5 text-amber-400" />
+            <h3 className="font-display font-semibold text-xs text-foreground">Season Pass</h3>
           </div>
           <DropCard drop={seasonPass} hero />
         </div>
@@ -1204,11 +1403,11 @@ function DropsTab() {
       {/* Limited bundles */}
       {bundles.length > 0 && (
         <div>
-          <div className="flex items-center gap-2 mb-3">
-            <Package className="w-4 h-4 text-primary" />
-            <h3 className="font-display font-semibold text-sm text-foreground">Limited Bundles</h3>
+          <div className="flex items-center gap-2 mb-2">
+            <Package className="w-3.5 h-3.5 text-primary" />
+            <h3 className="font-display font-semibold text-xs text-foreground">Limited Bundles</h3>
           </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
             {bundles.map((d) => <DropCard key={d.id} drop={d} />)}
           </div>
         </div>
@@ -1225,7 +1424,11 @@ export default function Forge() {
   const [pending, setPending] = useState<PendingPurchase | null>(null);
   const [atTopUpOpen, setAtTopUpOpen] = useState(false);
 
-  function setTab(value: string) { setSearchParams({ tab: value }); }
+  function setTab(value: string) {
+    const next = new URLSearchParams(searchParams);
+    next.set("tab", value);
+    setSearchParams(next);
+  }
   const openConfirm = (p: PendingPurchase) => setPending(p);
   const openAtTopUp = () => setAtTopUpOpen(true);
 
@@ -1234,29 +1437,49 @@ export default function Forge() {
     <PurchaseConfirmDialog pending={pending} onClose={() => setPending(null)} />
     <ArenaTokensTopUpDialog open={atTopUpOpen} onClose={() => setAtTopUpOpen(false)} />
     <div className="min-h-screen bg-background">
-      <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
+      <div className="max-w-6xl mx-auto px-4 py-5 space-y-4">
         {/* Page header */}
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/15 border border-primary/25 flex items-center justify-center">
-            <Flame className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="font-display text-2xl font-bold text-foreground tracking-tight">Forge</h1>
-            <p className="text-sm text-muted-foreground">Your premium Arena marketplace</p>
+        <div className="relative overflow-hidden rounded-xl border border-border/50 bg-gradient-to-br from-card/90 via-background to-primary/[0.06] p-3.5 sm:p-4">
+          <div className="pointer-events-none absolute right-0 top-0 h-24 w-40 bg-primary/10 blur-3xl rounded-full" />
+          <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center shrink-0 shadow-[0_0_20px_hsl(var(--primary)/0.25)]">
+                <Flame className="w-5 h-5 text-primary" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h1 className="font-display text-xl sm:text-2xl font-bold text-foreground tracking-tight">Forge</h1>
+                  <span className="text-[10px] font-display font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border border-arena-gold/35 bg-arena-gold/10 text-arena-gold">
+                    Premium store
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5 max-w-lg">
+                  The Arena treasury — cosmetics, passes, and streak rewards. Same escrow discipline as matchplay.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-1.5 text-[10px] text-muted-foreground sm:justify-end">
+              <span className="rounded-md border border-border/50 bg-card/40 px-2 py-1">Instant AT</span>
+              <span className="rounded-md border border-border/50 bg-card/40 px-2 py-1">USDT secure</span>
+              <span className="rounded-md border border-border/50 bg-card/40 px-2 py-1">Limited runs</span>
+            </div>
           </div>
         </div>
 
+        <ForgeTreasuryStrip />
+
         {/* Tab bar */}
-        <div className="flex items-center gap-1 p-1 bg-card/30 border border-border/40 rounded-xl w-fit">
+        <div className="flex items-center gap-0.5 p-0.5 bg-card/35 border border-border/45 rounded-lg w-full max-w-full overflow-x-auto [scrollbar-width:thin]">
           {TABS.map((t) => (
             <button
               key={t.value}
               onClick={() => setTab(t.value)}
+              type="button"
               className={cn(
-                "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all",
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-display font-semibold whitespace-nowrap shrink-0 transition-all",
                 tab === t.value
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground hover:bg-card/50"
+                  ? "bg-primary text-primary-foreground shadow-[0_0_14px_hsl(var(--primary)/0.35)]"
+                  : "text-muted-foreground hover:text-foreground hover:bg-card/60"
               )}
             >
               {t.icon}
@@ -1266,7 +1489,7 @@ export default function Forge() {
         </div>
 
         {/* Tab content */}
-        <div>
+        <div className="min-h-[40vh]">
           {tab === "shop"       && <ShopTab />}
           {tab === "challenges" && <ChallengesTab />}
           {tab === "events"     && <EventsTab />}
