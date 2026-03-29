@@ -27,6 +27,7 @@ interface WalletState {
 
   // Arena Tokens — platform currency for Forge store (NOT on-chain)
   // DB-ready: GET /api/users/me/at-balance  |  POST /api/forge/purchase deducts AT
+  // Forge USDT→AT quote (live pricing): GET /api/forge/exchange-rate → ForgeExchangeRateQuote in types
   atBalance: number;
 
   // Daily betting safety limit (user-chosen, enforced client + server)

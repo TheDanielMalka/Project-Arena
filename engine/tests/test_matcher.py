@@ -153,13 +153,12 @@ def test_detect_valorant_victory(tmp_path):
     """
     Teal/cyan image in Valorant's VICTORY region -> 'victory'.
 
-    Synthetic image: 400x800, teal BGR (200, 200, 0) placed exactly where
-    _detect_result_valorant crops by default (y 3-25%, x 20-80%).
-    BGR (200,200,0) -> OpenCV HSV H≈90, well inside the teal range (75-100).
+    Synthetic image: 400x800, teal BGR (200, 200, 0) inside the default crop
+    (y 5-55%, x 10-90%). BGR (200,200,0) -> OpenCV HSV H≈90, inside teal (75-105).
     """
     img = np.zeros((400, 800, 3), dtype=np.uint8)
-    # y: int(400*0.03)=12 .. int(400*0.25)=100  |  x: int(800*0.20)=160 .. int(800*0.80)=640
-    img[12:100, 160:640] = (200, 200, 0)   # BGR teal -> HSV H≈90
+    # y: 20..220  |  x: 80..720  (matches _detect_result_valorant default crop)
+    img[20:180, 100:700] = (200, 200, 0)   # BGR teal -> HSV H≈90
     img_path = str(tmp_path / "valorant_victory.png")
     cv2.imwrite(img_path, img)
 
@@ -171,13 +170,12 @@ def test_detect_valorant_victory(tmp_path):
 
 def test_detect_valorant_defeat(tmp_path):
     """
-    Blue-purple image in Valorant's DEFEAT region -> 'defeat'.
+    Red/crimson fill in Valorant's DEFEAT region -> 'defeat'.
 
-    BGR (200, 0, 0) = pure blue -> OpenCV HSV H≈120, inside blue-purple
-    range (110-145) used for Valorant defeat.
+    Matcher uses HSV red bands H 0-8 and H 170-180. BGR (0, 0, 255) is pure red.
     """
     img = np.zeros((400, 800, 3), dtype=np.uint8)
-    img[12:100, 160:640] = (200, 0, 0)    # BGR blue -> HSV H≈120
+    img[20:180, 100:700] = (0, 0, 255)   # BGR red -> HSV H≈0/180
     img_path = str(tmp_path / "valorant_defeat.png")
     cv2.imwrite(img_path, img)
 
@@ -207,11 +205,11 @@ def test_detect_result_defaults_to_cs2(tmp_path):
 def test_detect_valorant_does_not_trigger_on_cs2_green(tmp_path):
     """
     CS2 pure green (BGR 0,255,0 -> HSV H≈60) must NOT be detected as
-    Valorant VICTORY (teal range H 75-100).  The two colour spaces are
+    Valorant VICTORY (teal range H 75-105). The two colour spaces are
     intentionally separated.
     """
     img = np.zeros((400, 800, 3), dtype=np.uint8)
-    img[12:100, 160:640] = (0, 255, 0)    # BGR green -> HSV H≈60, outside teal range
+    img[20:180, 100:700] = (0, 255, 0)    # BGR green -> HSV H≈60, outside teal range
     img_path = str(tmp_path / "cs2_green_in_valorant.png")
     cv2.imwrite(img_path, img)
 

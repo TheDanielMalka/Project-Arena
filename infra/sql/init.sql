@@ -7,8 +7,14 @@ CREATE TYPE match_status   AS ENUM ('waiting','in_progress','completed','cancell
 CREATE TYPE match_type     AS ENUM ('public','custom');
 CREATE TYPE match_mode     AS ENUM ('1v1','2v2','4v4','5v5');
 CREATE TYPE game           AS ENUM ('CS2','Valorant','Fortnite','Apex Legends','PUBG','COD','League of Legends');
-CREATE TYPE tx_type        AS ENUM ('deposit','withdrawal','match_win','match_loss','fee','refund','escrow_lock','escrow_release');
-CREATE TYPE tx_status      AS ENUM ('completed','pending','failed');
+-- TS TransactionType: match_win|match_loss|fee|refund|escrow_lock|escrow_release|at_purchase|at_spend
+-- deposit|withdrawal kept for legacy / on-ramp rows if needed
+CREATE TYPE tx_type        AS ENUM (
+  'deposit','withdrawal',
+  'match_win','match_loss','fee','refund','escrow_lock','escrow_release',
+  'at_purchase','at_spend'
+);
+CREATE TYPE tx_status      AS ENUM ('completed','pending','failed','cancelled');
 CREATE TYPE dispute_status AS ENUM ('open','reviewing','resolved','escalated');
 CREATE TYPE dispute_resolution AS ENUM ('pending','approved','rejected','player_a_wins','player_b_wins','refund','void');
 CREATE TYPE network        AS ENUM ('bsc','solana','ethereum');
@@ -381,9 +387,9 @@ CREATE TABLE forge_items (
     slug        TEXT UNIQUE NOT NULL,
     name        TEXT NOT NULL,
     description TEXT NOT NULL,
-    category    TEXT NOT NULL CHECK (category IN ('avatar','badge','boost','vip','bundle')),
+    category    TEXT NOT NULL CHECK (category IN ('avatar','frame','badge','boost','vip','bundle')),
     rarity      TEXT NOT NULL CHECK (rarity IN ('common','rare','epic','legendary')),
-    icon        TEXT NOT NULL,
+    icon        TEXT NOT NULL,   -- emoji or token: preset:id | bg:id | badge/boost/vip/bundle:… (aligned with UI forgeStore)
     price_at    INTEGER,                   -- NULL = not available for AT
     price_usdt  NUMERIC(10,2),             -- NULL = not available for USDT
     featured    BOOLEAN NOT NULL DEFAULT FALSE,

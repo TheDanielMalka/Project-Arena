@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import {
   User, Shield, Gamepad2, Wallet, Link2, CheckCircle, XCircle,
   Copy, ExternalLink, Edit2, Save, Trophy, TrendingUp, Zap, Smartphone, Monitor, X,
-  Camera, Lock, Upload, Star, Crown, Medal, Gem, Sparkles,
+  Camera, Lock, Upload, Star, Crown, Medal, Gem, Sparkles, Flame,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -19,9 +19,27 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { useUserStore } from "@/stores/userStore";
+import { cn } from "@/lib/utils";
 import { useNotificationStore } from "@/stores/notificationStore";
+import { useForgeStore } from "@/stores/forgeStore";
 import { useToast } from "@/hooks/use-toast";
 import { getXpInfo } from "@/lib/xp";
+import {
+  getAvatarBackground,
+  getAvatarCircleStyle,
+  avatarBackgroundsByTier,
+} from "@/lib/avatarBgs";
+import {
+  FREE_AVATAR_PRESETS,
+  FREE_AVATAR_IDS,
+  EVENT_AVATAR_PRESETS,
+  avatarPresetKey,
+  getAvatarPresetImageUrl,
+  getAvatarImageUrlFromStorage,
+  getPresetId,
+  isPresetAvatar,
+} from "@/lib/avatarPresets";
+import { SEED_ITEMS } from "@/stores/forgeStore";
 
 type GameConnection = {
   name: string;
@@ -48,71 +66,53 @@ const Profile = () => {
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const [pickerMode, setPickerMode]             = useState<"avatar" | "background">("avatar");
   const [selectedAvatar, setSelectedAvatar]     = useState<string>(user?.avatar ?? "initials");
-  const [avatarTab, setAvatarTab]               = useState<"free" | "event" | "premium" | "upload">("free");
-  const [uploadedAvatar, setUploadedAvatar]     = useState<string | null>(user?.avatar?.startsWith("upload:") ? user.avatar.slice(7) : null);
+  const [avatarTab, setAvatarTab]               = useState<"free" | "event" | "premium">("free");
   const [selectedBg, setSelectedBg]             = useState<string>(user?.avatarBg ?? "default");
   const [bgTab, setBgTab]                       = useState<"free" | "event" | "premium">("free");
+  /** Draft inside picker — committed only via Apply */
+  const [draftAvatar, setDraftAvatar]           = useState<string>(user?.avatar ?? "initials");
+  const [draftBg, setDraftBg]                   = useState<string>(user?.avatarBg ?? "default");
 
-  // ── Avatar options ──
-  const FREE_AVATARS   = ["🎮","💀","🔥","⚡","🎯","👾","🐺","🦁","🐉","🤖"];
-  const EVENT_AVATARS  = [
-    { emoji: "🌟", label: "Season 1 Champion", unlocked: false },
-    { emoji: "🎃", label: "Halloween 2025",    unlocked: false },
-    { emoji: "❄️", label: "Winter Cup 2025",   unlocked: false },
-    { emoji: "🏆", label: "Tournament Winner", unlocked: true  },
-  ];
-  const PREMIUM_AVATARS = [
-    { emoji: "👑", label: "King",    price: "$2.99" },
-    { emoji: "💎", label: "Diamond", price: "$1.99" },
-    { emoji: "🦅", label: "Eagle",   price: "$1.99" },
-    { emoji: "🏹", label: "Hunter",  price: "$2.99" },
-  ];
+  useEffect(() => {
+    if (!user) return;
+    setSelectedBg(user.avatarBg ?? "default");
+    setSelectedAvatar(user.avatar ?? "initials");
+  }, [user?.avatarBg, user?.avatar, user]);
 
-  // ── Background options ──
-  type BgDef = { id: string; label: string; border: string; shadow: string; preview: string; pulse?: boolean; locked?: boolean; eventName?: string; price?: string };
-  const BG_FREE: BgDef[] = [
-    { id: "default",  label: "Default", border: "border-primary/50",      shadow: "shadow-[0_0_16px_hsl(355_78%_52%/0.25)]",  preview: "#EF4444" },
-    { id: "blue",     label: "Blue",    border: "border-blue-500/60",      shadow: "shadow-[0_0_16px_rgba(59,130,246,0.35)]",   preview: "#3B82F6" },
-    { id: "purple",   label: "Purple",  border: "border-purple-500/60",    shadow: "shadow-[0_0_16px_rgba(168,85,247,0.35)]",   preview: "#A855F7" },
-    { id: "cyan",     label: "Cyan",    border: "border-cyan-400/60",      shadow: "shadow-[0_0_16px_rgba(34,211,238,0.35)]",   preview: "#22D3EE" },
-    { id: "green",    label: "Green",   border: "border-green-500/60",     shadow: "shadow-[0_0_16px_rgba(34,197,94,0.35)]",    preview: "#22C55E" },
-    { id: "orange",   label: "Orange",  border: "border-orange-500/60",    shadow: "shadow-[0_0_16px_rgba(249,115,22,0.35)]",   preview: "#F97316" },
-  ];
-  const BG_EVENT: BgDef[] = [
-    { id: "fire",     label: "🔥 Fire",     border: "border-orange-500/90", shadow: "shadow-[0_0_24px_rgba(249,115,22,0.7)]",  preview: "#F97316", pulse: true,  locked: true,  eventName: "Summer Blaze 2025" },
-    { id: "ice",      label: "❄️ Ice",      border: "border-cyan-300/90",   shadow: "shadow-[0_0_24px_rgba(125,211,252,0.7)]", preview: "#7DD3FC", pulse: true,  locked: false, eventName: "Winter Cup 2025" },
-    { id: "electric", label: "⚡ Electric", border: "border-yellow-400/90", shadow: "shadow-[0_0_24px_rgba(250,204,21,0.7)]",  preview: "#FACC15", pulse: true,  locked: true,  eventName: "Arena Open S2" },
-    { id: "void",     label: "🌑 Void",     border: "border-violet-600/90", shadow: "shadow-[0_0_24px_rgba(124,58,237,0.7)]",  preview: "#7C3AED", pulse: true,  locked: true,  eventName: "Dark Tournament" },
-  ];
-  const BG_PREMIUM: BgDef[] = [
-    { id: "gold",    label: "👑 Gold",    border: "border-yellow-400/90", shadow: "shadow-[0_0_28px_rgba(234,179,8,0.8)]",    preview: "#EAB308", pulse: true, price: "$1.99" },
-    { id: "rainbow", label: "🌈 Rainbow", border: "border-pink-500/80",   shadow: "shadow-[0_0_24px_rgba(236,72,153,0.6)]",   preview: "#EC4899", pulse: true, price: "$2.99" },
-    { id: "aurora",  label: "🌌 Aurora",  border: "border-emerald-400/80",shadow: "shadow-[0_0_24px_rgba(52,211,153,0.6)]",   preview: "#34D399", pulse: true, price: "$2.99" },
-    { id: "lava",    label: "🌋 Lava",    border: "border-red-600/90",    shadow: "shadow-[0_0_28px_rgba(220,38,38,0.8)]",    preview: "#DC2626", pulse: true, price: "$1.99" },
-  ];
+  useEffect(() => {
+    if (!showAvatarPicker) return;
+    setDraftAvatar(selectedAvatar);
+    setDraftBg(selectedBg);
+  }, [showAvatarPicker]);
 
-  const allBgs = [...BG_FREE, ...BG_EVENT, ...BG_PREMIUM];
-  const getBg = (id: string): BgDef => allBgs.find(b => b.id === id) ?? BG_FREE[0];
+  const forgeAvatarIcons   = new Set(
+    SEED_ITEMS.filter((i) => i.category === "avatar").map((i) => i.icon),
+  );
+  const forgeAvatarItems   = SEED_ITEMS.filter((i) => i.category === "avatar");
+  const forgePurchases     = useForgeStore((s) => s.purchases);
 
-  const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const result = ev.target?.result as string;
-      setUploadedAvatar(result);
-      setSelectedAvatar("upload:" + result);
-      setShowAvatarPicker(false);
-    };
-    reader.readAsDataURL(file);
-  };
+  // DB-ready: unlock flags should come from API/event progress
+  const EVENT_AVATARS = EVENT_AVATAR_PRESETS.map((p) => ({
+    ...p,
+    unlocked: p.id === "gearburst_ace", // sample unlocked for UI; replace with real event unlocks
+  }));
 
   const renderAvatarContent = (avatar: string, size: "sm" | "lg" = "lg") => {
     const textSize  = size === "lg" ? "text-xl" : "text-sm";
     const emojiSize = size === "lg" ? "text-2xl" : "text-base";
-    if (avatar === "initials") return <span className={`font-display ${textSize} font-bold text-primary`}>{username.slice(0,2).toUpperCase()}</span>;
+    if (avatar === "initials") {
+      return (
+        <span
+          className={`font-display ${textSize} font-bold text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)]`}
+        >
+          {username.slice(0, 2).toUpperCase()}
+        </span>
+      );
+    }
     if (avatar.startsWith("upload:")) return <img src={avatar.slice(7)} className="w-full h-full object-cover rounded-full" alt="avatar" />;
-    return <span className={emojiSize}>{avatar}</span>;
+    const presetUrl = getAvatarImageUrlFromStorage(avatar);
+    if (presetUrl) return <img src={presetUrl} className="w-full h-full object-cover rounded-full" alt="" />;
+    return <span className={cn(emojiSize, "drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]")}>{avatar}</span>;
   };
   const [steamId, setSteamId] = useState(user?.steamId ?? "76561198XXXXXXXX");
   const [copiedWallet, setCopiedWallet] = useState(false);
@@ -194,6 +194,60 @@ const Profile = () => {
     setEditMode(false);
     updateProfile({ username, avatar: selectedAvatar, avatarBg: selectedBg });
     addNotification({ type: "system", title: "✅ Profile Updated", message: `Username set to "${username}". Changes saved successfully.` });
+  };
+
+  /** Premium frames require Forge purchase; already-saved premium `committedBg` may still be applied. */
+  const canUseBackgroundId = (bgId: string, committedBg: string) => {
+    const b = getAvatarBackground(bgId);
+    if (b.tier === "free") return true;
+    if (b.tier === "event") return !b.locked;
+    if (b.tier === "premium") {
+      if (committedBg === bgId) return true;
+      // DB-ready: replace with server-owned cosmetics lookup (users_cosmetics)
+      const frameItem = SEED_ITEMS.find((i) => i.category === "frame" && i.icon === `bg:${bgId}`);
+      return !!frameItem && forgePurchases.some((p) => p.itemId === frameItem.id);
+    }
+    return false;
+  };
+
+  const canCommitDraftAvatar = () => {
+    if (draftAvatar === "initials" || draftAvatar.startsWith("upload:")) return true;
+    if (isPresetAvatar(draftAvatar)) {
+      const id = getPresetId(draftAvatar);
+      if (id == null) return false;
+      if (FREE_AVATAR_IDS.has(id)) return true;
+      const evt = EVENT_AVATARS.find((e) => e.id === id);
+      if (evt) return !!evt.unlocked;
+      // Premium presets: allow if already equipped, or purchased in Forge
+      if (selectedAvatar === draftAvatar) return true;
+      const item = SEED_ITEMS.find((i) => i.category === "avatar" && i.icon === draftAvatar);
+      return !!item && forgePurchases.some((p) => p.itemId === item.id);
+    }
+    if (forgeAvatarIcons.has(draftAvatar)) return false;
+    return true;
+  };
+
+  const handleApplyPicker = () => {
+    if (!canUseBackgroundId(draftBg, selectedBg)) {
+      toast({
+        title: "Background locked",
+        description: "Premium frames are purchased in Forge with AT / USDT. Event frames unlock by completing the event.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!canCommitDraftAvatar()) {
+      toast({
+        title: "Avatar locked",
+        description: "That icon is a Forge exclusive — buy it in the Shop tab first.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setSelectedAvatar(draftAvatar);
+    setSelectedBg(draftBg);
+    setShowAvatarPicker(false);
+    toast({ title: "Look locked in", description: "Press Save on your profile to sync everywhere." });
   };
 
   const handleUnlinkGame = (gameName: string) => {
@@ -339,18 +393,28 @@ const Profile = () => {
               {editMode ? (
                 <button
                   onClick={() => { setPickerMode("avatar"); setShowAvatarPicker(true); }}
-                  className={`group w-16 h-16 rounded-full bg-secondary border-2 ${getBg(selectedBg).border} ${getBg(selectedBg).shadow} ${getBg(selectedBg).pulse ? "animate-pulse" : ""} flex items-center justify-center overflow-hidden relative transition-all`}
+                  className={cn(
+                    "group relative flex h-16 w-16 items-center justify-center overflow-hidden rounded-full ring-1 ring-white/15 transition-all",
+                    getAvatarBackground(selectedBg).pulse && "motion-safe:animate-pulse",
+                  )}
+                  style={getAvatarCircleStyle(selectedBg)}
                 >
-                  {renderAvatarContent(selectedAvatar)}
-                  <div className="absolute inset-0 rounded-full bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                  <span className="pointer-events-none absolute inset-0 opacity-[0.14] bg-gradient-to-br from-white/45 to-transparent" />
+                  <span className="relative z-[1] flex h-full w-full items-center justify-center">{renderAvatarContent(selectedAvatar)}</span>
+                  <div className="absolute inset-0 z-[2] rounded-full bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                     <Camera className="h-5 w-5 text-white" />
                   </div>
                 </button>
               ) : (
                 <div
-                  className={`w-16 h-16 rounded-full bg-secondary border-2 ${getBg(selectedBg).border} ${getBg(selectedBg).shadow} ${getBg(selectedBg).pulse ? "animate-pulse" : ""} flex items-center justify-center overflow-hidden relative`}
+                  className={cn(
+                    "relative flex h-16 w-16 items-center justify-center overflow-hidden rounded-full ring-1 ring-white/15",
+                    getAvatarBackground(selectedBg).pulse && "motion-safe:animate-pulse",
+                  )}
+                  style={getAvatarCircleStyle(selectedBg)}
                 >
-                  {renderAvatarContent(selectedAvatar)}
+                  <span className="pointer-events-none absolute inset-0 opacity-[0.14] bg-gradient-to-br from-white/45 to-transparent" />
+                  <span className="relative z-[1] flex h-full w-full items-center justify-center">{renderAvatarContent(selectedAvatar)}</span>
                 </div>
               )}
               <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-primary border-2 border-background flex items-center justify-center">
@@ -732,22 +796,33 @@ const Profile = () => {
 
       {/* ── Avatar Picker Dialog ── */}
       <Dialog open={showAvatarPicker} onOpenChange={setShowAvatarPicker}>
-        <DialogContent className="bg-card border-border max-w-md">
+        <DialogContent className="bg-card border-border max-w-md flex flex-col max-h-[min(90vh,640px)]">
           <DialogHeader>
             <DialogTitle className="font-display flex items-center gap-2">
-              <Camera className="h-4 w-4 text-primary" /> Choose Avatar
+              <Camera className="h-4 w-4 text-primary" /> Identity studio
             </DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
-              Select an avatar, unlock event rewards, or upload your own.
+              Pick a look, then <strong className="text-foreground">Apply</strong> to lock it in. Save profile to sync Arena-wide.
             </DialogDescription>
           </DialogHeader>
 
-          {/* Preview */}
-          <div className="flex justify-center mb-3">
-            <div className={`w-16 h-16 rounded-full bg-secondary border-2 ${getBg(selectedBg).border} ${getBg(selectedBg).shadow} ${getBg(selectedBg).pulse ? "animate-pulse" : ""} flex items-center justify-center overflow-hidden`}>
-              {renderAvatarContent(selectedAvatar)}
+          {/* Preview (draft) */}
+          <div className="flex flex-col items-center gap-1 mb-2 shrink-0">
+            <div
+              className={cn(
+                "relative flex h-[4.5rem] w-[4.5rem] items-center justify-center overflow-hidden rounded-full ring-2 ring-white/20 shadow-[0_0_32px_hsl(var(--primary)/0.25)]",
+                getAvatarBackground(draftBg).pulse && "motion-safe:animate-pulse",
+              )}
+              style={getAvatarCircleStyle(draftBg)}
+            >
+              <span className="pointer-events-none absolute inset-0 opacity-[0.14] bg-gradient-to-br from-white/45 to-transparent" />
+              <span className="pointer-events-none absolute inset-[3px] rounded-full border border-white/10" />
+              <span className="relative z-[1] flex h-full w-full items-center justify-center">{renderAvatarContent(draftAvatar)}</span>
             </div>
+            <span className="text-[9px] font-mono text-muted-foreground">Preview · not saved until Apply</span>
           </div>
+
+          <div className="flex-1 min-h-0 overflow-y-auto pr-0.5 -mr-0.5 space-y-0">
 
           {/* Mode toggle: AVATAR | BACKGROUND */}
           <div className="flex gap-1 mb-3 bg-secondary/60 rounded-lg p-0.5">
@@ -764,12 +839,12 @@ const Profile = () => {
           {/* ── AVATAR MODE sub-tabs ── */}
           {pickerMode === "avatar" && (
             <div className="flex gap-1 mb-3 bg-secondary/40 rounded-lg p-0.5">
-              {(["free","event","premium","upload"] as const).map((tab) => (
+              {(["free","event","premium"] as const).map((tab) => (
                 <button key={tab} onClick={() => setAvatarTab(tab)}
                   className={`flex-1 text-[10px] font-display uppercase tracking-widest py-1.5 rounded-md transition-all ${
                     avatarTab === tab ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
                   }`}>
-                  {tab === "free" ? "Free" : tab === "event" ? "Event" : tab === "premium" ? "Premium" : "Upload"}
+                  {tab === "free" ? "Free" : tab === "event" ? "Event" : "Premium"}
                 </button>
               ))}
             </div>
@@ -790,108 +865,178 @@ const Profile = () => {
           )}
 
           {/* ══ AVATAR CONTENT ══ */}
-          {/* FREE */}
+          {/* FREE — illustrated roster (DiceBear); stores as preset:id */}
           {pickerMode === "avatar" && avatarTab === "free" && (
-            <div className="grid grid-cols-5 gap-2">
-              {/* Initials option */}
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
               <button
-                onClick={() => { setSelectedAvatar("initials"); setShowAvatarPicker(false); }}
-                className={`h-12 rounded-lg border text-[10px] font-display font-bold transition-all ${
-                  selectedAvatar === "initials" ? "border-primary bg-primary/10 text-primary" : "border-border hover:border-primary/40"
-                }`}
+                type="button"
+                onClick={() => { setDraftAvatar("initials"); }}
+                title="Initials"
+                className={cn(
+                  "group relative aspect-square rounded-lg overflow-hidden border transition-all",
+                  "bg-gradient-to-br from-white/[0.08] to-black/70 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]",
+                  draftAvatar === "initials"
+                    ? "border-primary ring-2 ring-primary/40 scale-[1.02]"
+                    : "border-border/70 hover:border-primary/45",
+                )}
               >
-                {username.slice(0,2).toUpperCase()}
+                <span className="absolute inset-0 opacity-40 bg-[radial-gradient(circle_at_30%_20%,hsl(var(--primary)/0.5),transparent_55%)]" />
+                <span className="relative z-[1] flex h-full w-full items-center justify-center font-display text-xs font-bold text-white drop-shadow-[0_0_6px_rgba(0,0,0,0.9)]">
+                  {username.slice(0, 2).toUpperCase()}
+                </span>
               </button>
-              {FREE_AVATARS.map((emoji) => (
-                <button key={emoji}
-                  onClick={() => { setSelectedAvatar(emoji); setShowAvatarPicker(false); }}
-                  className={`h-12 rounded-lg border text-2xl transition-all flex items-center justify-center ${
-                    selectedAvatar === emoji ? "border-primary bg-primary/10" : "border-border hover:border-primary/40 bg-secondary/30"
-                  }`}
-                >
-                  {emoji}
-                </button>
-              ))}
+              {FREE_AVATAR_PRESETS.map((p) => {
+                const key = avatarPresetKey(p.id);
+                const selected = draftAvatar === key;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    title={p.label}
+                    onClick={() => { setDraftAvatar(key); }}
+                    className={cn(
+                      "group relative aspect-square rounded-lg overflow-hidden border transition-all",
+                      "bg-gradient-to-br from-zinc-700/40 via-black/90 to-zinc-950",
+                      "shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_4px_12px_rgba(0,0,0,0.5)]",
+                      selected
+                        ? "border-primary ring-2 ring-primary/45 scale-[1.02]"
+                        : "border-white/10 hover:border-primary/35",
+                    )}
+                  >
+                    <span className="pointer-events-none absolute inset-0 opacity-45 bg-[conic-gradient(from_200deg_at_50%_115%,transparent,hsl(var(--primary)/0.2),transparent)]" />
+                    <span className="pointer-events-none absolute inset-[2px] rounded-md border border-white/5" />
+                    <span className="relative z-[1] flex h-full w-full flex-col items-center justify-end pb-1 pt-0.5 px-0.5">
+                      <img
+                        src={getAvatarPresetImageUrl(p.seed, p.collection ?? "pixel-art")}
+                        alt=""
+                        className="h-[62%] w-[62%] shrink-0 object-cover rounded-full ring-1 ring-black/40 shadow-[0_2px_12px_rgba(0,0,0,0.55)] transition-transform duration-200 group-hover:scale-105"
+                        loading="lazy"
+                        decoding="async"
+                      />
+                      <span className="mt-0.5 w-full truncate text-center text-[7px] font-display font-bold uppercase tracking-tight text-white/90 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]">
+                        {p.label}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           )}
 
           {/* EVENT */}
           {pickerMode === "avatar" && avatarTab === "event" && (
             <div className="grid grid-cols-2 gap-2">
-              {EVENT_AVATARS.map(({ emoji, label, unlocked }) => (
-                <button key={label}
-                  onClick={() => { if (unlocked) { setSelectedAvatar(emoji); setShowAvatarPicker(false); } }}
-                  className={`relative flex items-center gap-3 p-3 rounded-lg border transition-all ${
-                    unlocked ? "border-arena-gold/40 bg-arena-gold/5 hover:bg-arena-gold/10 cursor-pointer" : "border-border bg-secondary/20 cursor-not-allowed opacity-60"
-                  }`}
-                >
-                  <span className="text-2xl">{emoji}</span>
-                  <div className="text-left">
-                    <p className="text-xs font-display font-semibold">{label}</p>
-                    {unlocked
-                      ? <p className="text-[10px] text-arena-gold flex items-center gap-1"><Star className="h-2.5 w-2.5" /> Unlocked</p>
-                      : <p className="text-[10px] text-muted-foreground flex items-center gap-1"><Lock className="h-2.5 w-2.5" /> Complete event</p>
-                    }
-                  </div>
-                </button>
-              ))}
+              {EVENT_AVATARS.map(({ id, label, seed, collection, unlocked }) => {
+                const key = avatarPresetKey(id);
+                const selected = draftAvatar === key;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => { setDraftAvatar(key); }}
+                    className={cn(
+                      "relative flex items-center gap-2.5 rounded-lg border p-2.5 transition-all text-left",
+                      unlocked
+                        ? "border-arena-gold/40 bg-arena-gold/5 hover:bg-arena-gold/10 cursor-pointer"
+                        : "border-border bg-secondary/20 cursor-pointer opacity-70",
+                      selected && unlocked && "ring-2 ring-arena-gold/50",
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "relative flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ring-1 ring-white/10 overflow-hidden",
+                        unlocked
+                          ? "bg-gradient-to-br from-arena-gold/30 to-black/80 border border-arena-gold/35"
+                          : "bg-secondary/40 grayscale",
+                      )}
+                    >
+                      <img
+                        src={getAvatarPresetImageUrl(seed, collection ?? "pixel-art")}
+                        alt=""
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                        decoding="async"
+                      />
+                      {!unlocked && (
+                        <span className="absolute inset-0 flex items-center justify-center bg-black/55">
+                          <Lock className="h-4 w-4 text-white/85" />
+                        </span>
+                      )}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-display font-bold leading-tight">{label}</p>
+                      {unlocked
+                        ? <p className="text-[9px] text-arena-gold flex items-center gap-1 mt-0.5"><Star className="h-2.5 w-2.5 shrink-0" /> Unlocked</p>
+                        : <p className="text-[9px] text-muted-foreground flex items-center gap-1 mt-0.5"><Lock className="h-2.5 w-2.5 shrink-0" /> Event only</p>}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           )}
 
-          {/* PREMIUM */}
+          {/* PREMIUM = Forge shop avatars (AT / USDT) — equip only after purchase (DB-ready) */}
           {pickerMode === "avatar" && avatarTab === "premium" && (
-            <div className="grid grid-cols-2 gap-2">
-              {PREMIUM_AVATARS.map(({ emoji, label, price }) => (
-                <button key={label}
-                  className="relative flex items-center gap-3 p-3 rounded-lg border border-arena-purple/30 bg-arena-purple/5 hover:bg-arena-purple/10 transition-all cursor-pointer"
-                  onClick={() => toast({ title: "Coming Soon", description: "Premium avatars will be available in the shop.", variant: "default" })}
-                >
-                  <span className="text-2xl">{emoji}</span>
-                  <div className="text-left">
-                    <p className="text-xs font-display font-semibold">{label}</p>
-                    <p className="text-[10px] text-arena-purple flex items-center gap-1">
-                      <Crown className="h-2.5 w-2.5" /> {price}
-                    </p>
-                  </div>
-                </button>
-              ))}
+            <div className="space-y-2">
+              <p className="text-[10px] text-muted-foreground font-display uppercase tracking-[0.12em]">
+                Forge portraits · not included in Free tab
+              </p>
+              <div className="grid grid-cols-1 gap-2 max-h-[200px] overflow-y-auto pr-0.5">
+                {forgeAvatarItems.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="flex items-center gap-2.5 rounded-lg border border-arena-purple/35 bg-gradient-to-r from-arena-purple/10 to-transparent p-2 text-left hover:border-arena-purple/50 transition-colors"
+                    onClick={() => {
+                      navigate(`/forge?tab=shop&category=avatar&focus=${encodeURIComponent(item.id)}`);
+                      setShowAvatarPicker(false);
+                      toast({ title: "Forge", description: `Grab “${item.name}” in the Shop with AT or USDT.` });
+                    }}
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-black/50 text-lg ring-1 ring-white/10 border border-arena-purple/30 overflow-hidden">
+                      {getAvatarImageUrlFromStorage(item.icon)
+                        ? <img src={getAvatarImageUrlFromStorage(item.icon)!} className="w-full h-full object-cover" alt="" />
+                        : item.icon}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-display font-bold truncate">{item.name}</p>
+                      <p className="text-[9px] text-muted-foreground mt-0.5">
+                        {item.priceAT != null && <span className="text-primary font-mono">{item.priceAT.toLocaleString()} AT</span>}
+                        {item.priceAT != null && item.priceUSDT != null && " · "}
+                        {item.priceUSDT != null && <span className="text-arena-gold font-mono">${item.priceUSDT.toFixed(2)} USDT</span>}
+                      </p>
+                    </div>
+                    <Flame className="h-3.5 w-3.5 text-arena-purple shrink-0" />
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
-          {/* UPLOAD */}
-          {pickerMode === "avatar" && avatarTab === "upload" && (
-            <div className="flex flex-col items-center gap-3 py-4">
-              <div className="w-14 h-14 rounded-full border-2 border-dashed border-border flex items-center justify-center">
-                <Upload className="h-5 w-5 text-muted-foreground" />
-              </div>
-              <p className="text-xs text-muted-foreground text-center">JPG, PNG or GIF · Max 2MB</p>
-              <label className="cursor-pointer">
-                <span className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-primary/40 text-primary text-xs font-display hover:bg-primary/10 transition-colors">
-                  <Upload className="h-3.5 w-3.5" /> Browse File
-                </span>
-                <input type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
-              </label>
-              {uploadedAvatar && (
-                <button onClick={() => { setSelectedAvatar("upload:" + uploadedAvatar); setShowAvatarPicker(false); }}
-                  className="text-[10px] font-display text-primary hover:underline">
-                  Use last uploaded image
-                </button>
-              )}
-            </div>
-          )}
+          {/* Upload disabled — avatars are preset roster / Forge only */}
 
           {/* ══ BACKGROUND CONTENT ══ */}
           {/* BG FREE */}
           {pickerMode === "background" && bgTab === "free" && (
-            <div className="grid grid-cols-3 gap-2">
-              {BG_FREE.map((bg) => (
-                <button key={bg.id} onClick={() => { setSelectedBg(bg.id); }}
-                  className={`flex items-center gap-2 p-2.5 rounded-lg border transition-all ${
-                    selectedBg === bg.id ? "border-primary bg-primary/10" : "border-border hover:border-primary/30 bg-secondary/20"
-                  }`}
+            <div className="grid grid-cols-7 sm:grid-cols-8 gap-0.5">
+              {avatarBackgroundsByTier("free").map((bg) => (
+                <button
+                  key={bg.id}
+                  type="button"
+                  title={bg.label}
+                  onClick={() => { setDraftBg(bg.id); }}
+                  className={cn(
+                    "relative h-5 w-5 sm:h-6 sm:w-6 rounded overflow-hidden border transition-all shrink-0 justify-self-center",
+                    draftBg === bg.id
+                      ? "border-primary ring-1 ring-primary/50 scale-110 z-[1]"
+                      : "border-border/60 hover:border-primary/35",
+                  )}
                 >
-                  <div className="w-6 h-6 rounded-full border-2 shrink-0" style={{ borderColor: bg.preview, boxShadow: `0 0 8px ${bg.preview}60` }} />
-                  <span className="text-[11px] font-display font-semibold">{bg.label}</span>
+                  <div
+                    className="absolute inset-0"
+                    style={{ background: bg.background, boxShadow: bg.shadowCss, border: bg.borderCss }}
+                  />
+                  <span className="sr-only">{bg.label}</span>
                 </button>
               ))}
             </div>
@@ -899,27 +1044,35 @@ const Profile = () => {
 
           {/* BG EVENT */}
           {pickerMode === "background" && bgTab === "event" && (
-            <div className="grid grid-cols-2 gap-2">
-              {BG_EVENT.map((bg) => (
-                <button key={bg.id}
-                  onClick={() => { if (!bg.locked) setSelectedBg(bg.id); }}
-                  className={`flex items-center gap-3 p-3 rounded-lg border transition-all ${
-                    bg.locked
-                      ? "border-border bg-secondary/20 cursor-not-allowed opacity-60"
-                      : selectedBg === bg.id
-                        ? "border-primary bg-primary/10 cursor-pointer"
-                        : "border-arena-gold/30 bg-arena-gold/5 hover:bg-arena-gold/10 cursor-pointer"
-                  }`}
-                >
-                  <div className={`w-7 h-7 rounded-full border-2 shrink-0 ${bg.pulse ? "animate-pulse" : ""}`}
-                    style={{ borderColor: bg.preview, boxShadow: `0 0 12px ${bg.preview}80` }} />
-                  <div className="text-left min-w-0">
-                    <p className="text-[11px] font-display font-semibold truncate">{bg.label}</p>
-                    {bg.locked
-                      ? <p className="text-[9px] text-muted-foreground flex items-center gap-1"><Lock className="h-2.5 w-2.5" /> {bg.eventName}</p>
-                      : <p className="text-[9px] text-arena-gold flex items-center gap-1"><Star className="h-2.5 w-2.5" /> {bg.eventName}</p>
+            <div className="grid grid-cols-7 sm:grid-cols-8 gap-0.5">
+              {avatarBackgroundsByTier("event").map((bg) => (
+                <button
+                  key={bg.id}
+                  type="button"
+                  title={bg.locked ? `${bg.label} — ${bg.eventName}` : bg.label}
+                  onClick={() => {
+                    setDraftBg(bg.id); // allow preview even if locked; Apply will remain blocked
+                    if (bg.locked) {
+                      toast({ title: "Locked", description: `${bg.label} unlocks via ${bg.eventName ?? "event"}.` });
                     }
-                  </div>
+                  }}
+                  className={cn(
+                    "relative h-5 w-5 sm:h-6 sm:w-6 rounded overflow-hidden border transition-all shrink-0 justify-self-center",
+                    bg.locked && "opacity-45 cursor-not-allowed",
+                    !bg.locked && draftBg === bg.id && "ring-1 ring-arena-gold/50 border-arena-gold/40 scale-110 z-[1]",
+                    !bg.locked && draftBg !== bg.id && "border-border/60 hover:border-arena-gold/35",
+                  )}
+                >
+                  <div
+                    className={cn("absolute inset-0", !bg.locked && bg.pulse && "motion-safe:animate-pulse")}
+                    style={{ background: bg.background, boxShadow: bg.shadowCss, border: bg.borderCss }}
+                  />
+                  {bg.locked && (
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/55 z-[1]">
+                      <Lock className="h-2 w-2 text-white/80" />
+                    </span>
+                  )}
+                  <span className="sr-only">{bg.label}</span>
                 </button>
               ))}
             </div>
@@ -927,24 +1080,59 @@ const Profile = () => {
 
           {/* BG PREMIUM */}
           {pickerMode === "background" && bgTab === "premium" && (
-            <div className="grid grid-cols-2 gap-2">
-              {BG_PREMIUM.map((bg) => (
-                <button key={bg.id}
-                  onClick={() => toast({ title: "Coming Soon", description: "Premium backgrounds will be available in the shop." })}
-                  className="flex items-center gap-3 p-3 rounded-lg border border-arena-purple/30 bg-arena-purple/5 hover:bg-arena-purple/10 transition-all cursor-pointer"
-                >
-                  <div className={`w-7 h-7 rounded-full border-2 shrink-0 animate-pulse`}
-                    style={{ borderColor: bg.preview, boxShadow: `0 0 14px ${bg.preview}90` }} />
-                  <div className="text-left">
-                    <p className="text-[11px] font-display font-semibold">{bg.label}</p>
-                    <p className="text-[9px] text-arena-purple flex items-center gap-1">
-                      <Crown className="h-2.5 w-2.5" /> {bg.price}
-                    </p>
-                  </div>
-                </button>
-              ))}
+            <div className="space-y-2">
+              <p className="text-[10px] text-muted-foreground font-display uppercase tracking-[0.12em]">
+                Vault frames · purchase in Forge (AT / USDT)
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-full h-8 text-[11px] font-display border-arena-purple/30 text-arena-purple hover:bg-arena-purple/10"
+                onClick={() => {
+                  navigate("/forge?tab=shop&category=frame");
+                  setShowAvatarPicker(false);
+                }}
+              >
+                Go to Forge · Frames
+              </Button>
+              <div className="grid grid-cols-7 sm:grid-cols-8 gap-0.5">
+                {avatarBackgroundsByTier("premium").map((bg) => (
+                  <button
+                    key={bg.id}
+                    type="button"
+                    title={`${bg.label} — ${bg.price ?? "Forge"}`}
+                    className="relative h-5 w-5 sm:h-6 sm:w-6 rounded overflow-hidden border border-arena-purple/40 opacity-95 hover:opacity-100 transition-opacity ring-1 ring-arena-purple/20 justify-self-center shrink-0"
+                    onClick={() => {
+                      setDraftBg(bg.id); // allow preview even if not owned
+                      if (!canUseBackgroundId(bg.id, selectedBg)) {
+                        toast({ title: "Premium frame", description: `Preview only — buy “${bg.label}” in Forge to apply.` });
+                      }
+                    }}
+                  >
+                    <div
+                      className="absolute inset-0 motion-safe:animate-pulse"
+                      style={{ background: bg.background, boxShadow: bg.shadowCss, border: bg.borderCss }}
+                    />
+                    <span className="absolute bottom-0 inset-x-0 z-[1] flex items-center justify-center py-px bg-black/75 text-[6px] leading-none font-display font-bold text-arena-gold truncate px-0.5">
+                      {bg.price}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
+
+          </div>
+
+          <DialogFooter className="flex-col-reverse sm:flex-row gap-2 border-t border-border/40 pt-3 mt-1 shrink-0">
+            <Button type="button" variant="outline" className="font-display w-full sm:w-auto" onClick={() => setShowAvatarPicker(false)}>
+              Cancel
+            </Button>
+            <Button type="button" className="font-display w-full sm:w-auto glow-green gap-2" onClick={handleApplyPicker}>
+              <Lock className="h-3.5 w-3.5" /> Apply look
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

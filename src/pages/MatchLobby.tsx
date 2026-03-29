@@ -16,6 +16,7 @@ import {
   Trash2, WifiOff, Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getAvatarImageUrlFromStorage } from "@/lib/avatarPresets";
 import type { MatchStatus, Game, Match, MatchMode } from "@/types";
 import { useClientStore }  from "@/stores/clientStore";
 import { GAME_MODES, getDefaultMode, getTeamSize, getTotalPlayers, isGameActive } from "@/config/gameModes";
@@ -76,6 +77,11 @@ const MiniAvatar = ({ name, avatar, size = 16 }: { name: string; avatar?: string
   const style = { width: size, height: size, background: playerColor(name), fontSize: size * 0.45 };
   if (avatar && avatar.startsWith("upload:")) return (
     <img src={avatar.slice(7)} alt={name} style={{ width: size, height: size }}
+      className="rounded-full object-cover border-2 border-card shrink-0" />
+  );
+  const presetUrl = avatar && avatar !== "initials" ? getAvatarImageUrlFromStorage(avatar) : null;
+  if (presetUrl) return (
+    <img src={presetUrl} alt={name} style={{ width: size, height: size }}
       className="rounded-full object-cover border-2 border-card shrink-0" />
   );
   if (avatar && avatar !== "initials") return (

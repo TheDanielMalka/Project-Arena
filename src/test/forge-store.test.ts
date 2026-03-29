@@ -32,9 +32,9 @@ function resetWallet() {
 // ─── Seed data integrity ───────────────────────────────────────
 
 describe("forgeStore — seed items integrity", () => {
-  it("contains exactly 12 seed items", () => {
+  it("contains exactly 16 seed items", () => {
     const { items } = useForgeStore.getState();
-    expect(items).toHaveLength(12);
+    expect(items).toHaveLength(16);
   });
 
   it("every item has a unique id", () => {
@@ -71,21 +71,22 @@ describe("forgeStore — seed items integrity", () => {
     expect(rarities.has("legendary")).toBe(true);
   });
 
-  it("covers all five categories (avatar, badge, boost, vip, bundle)", () => {
+  it("covers all six categories (avatar, frame, badge, boost, vip, bundle)", () => {
     const { items } = useForgeStore.getState();
     const cats = new Set(items.map((i) => i.category));
     expect(cats.has("avatar")).toBe(true);
+    expect(cats.has("frame")).toBe(true);
     expect(cats.has("badge")).toBe(true);
     expect(cats.has("boost")).toBe(true);
     expect(cats.has("vip")).toBe(true);
     expect(cats.has("bundle")).toBe(true);
   });
 
-  it("exactly one item is featured (Shadow Phoenix)", () => {
+  it("exactly one item is featured (Vermilion Edge)", () => {
     const { items } = useForgeStore.getState();
     const featured = items.filter((i) => i.featured);
     expect(featured).toHaveLength(1);
-    expect(featured[0].name).toBe("Shadow Phoenix");
+    expect(featured[0].name).toBe("Vermilion Edge");
   });
 
   it("featured item is legendary rarity", () => {
@@ -208,7 +209,7 @@ describe("forgeStore — seed drops integrity", () => {
 describe("forgeStore — getItemsByCategory", () => {
   it("returns all items when category is 'all'", () => {
     const items = useForgeStore.getState().getItemsByCategory("all");
-    expect(items).toHaveLength(12);
+    expect(items).toHaveLength(16);
   });
 
   it("returns only avatar items when category is 'avatar'", () => {
@@ -231,10 +232,10 @@ describe("forgeStore — getItemsByCategory", () => {
 // ─── getFeaturedItem ───────────────────────────────────────────
 
 describe("forgeStore — getFeaturedItem", () => {
-  it("returns the featured item (Shadow Phoenix)", () => {
+  it("returns the featured item (Vermilion Edge)", () => {
     const item = useForgeStore.getState().getFeaturedItem();
     expect(item).toBeDefined();
-    expect(item?.name).toBe("Shadow Phoenix");
+    expect(item?.name).toBe("Vermilion Edge");
   });
 });
 
@@ -275,7 +276,7 @@ describe("forgeStore — event selectors", () => {
 describe("forgeStore — purchaseItem with AT", () => {
   beforeEach(resetForge);
 
-  it("succeeds when user has enough AT (Iron Knight costs 200, user has 500)", () => {
+  it("succeeds when user has enough AT (Emerald Samurai costs 200, user has 500)", () => {
     const result = useForgeStore.getState().purchaseItem("item-004", "AT");
     expect(result.success).toBe(true);
   });
@@ -289,12 +290,12 @@ describe("forgeStore — purchaseItem with AT", () => {
     useForgeStore.getState().purchaseItem("item-004", "AT");
     const purchases = useForgeStore.getState().purchases;
     expect(purchases).toHaveLength(1);
-    expect(purchases[0].itemName).toBe("Iron Knight");
+    expect(purchases[0].itemName).toBe("Emerald Samurai");
     expect(purchases[0].currency).toBe("AT");
     expect(purchases[0].amount).toBe(200);
   });
 
-  it("fails when user has insufficient AT (Shadow Phoenix costs 2400, user has 500)", () => {
+  it("fails when user has insufficient AT (Vermilion Edge costs 2400, user has 500)", () => {
     const result = useForgeStore.getState().purchaseItem("item-001", "AT");
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/insufficient at/i);
@@ -342,7 +343,7 @@ describe("forgeStore — purchaseItem with USDT", () => {
     expect(atTx?.token).toBe("USDT");
   });
 
-  it("fails for items that have no USDT price (Iron Knight is AT-only)", () => {
+  it("fails for items that have no USDT price (Emerald Samurai is AT-only)", () => {
     const result = useForgeStore.getState().purchaseItem("item-004", "USDT");
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/not available for usdt/i);
