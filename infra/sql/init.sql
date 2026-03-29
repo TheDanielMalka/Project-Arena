@@ -250,24 +250,64 @@ AS $$
     )
 $$;
 
--- ── Support Tickets (Player Reports) ─────────────────────────
+-- ── Support Tickets (Player Reports + Match Disputes + General Support) ───────
 CREATE TYPE ticket_reason AS ENUM (
     'cheating','harassment','fake_screenshot','disconnect_abuse','other'
 );
 CREATE TYPE ticket_status AS ENUM ('open','investigating','dismissed','resolved');
 
+-- How the ticket was opened — aligns with SupportTicketCategory in src/types/index.ts
+CREATE TYPE support_ticket_category AS ENUM (
+    'player_report',    -- submitted from PlayerCardPopover / Admin Reports tab
+    'match_dispute',    -- submitted from History page "Appeal this match"
+    'general_support'   -- submitted from Settings "Help & Support" / Header help icon
+);
+
+-- Topic when category = general_support — aligns with SupportTopic in src/types/index.ts
+CREATE TYPE support_topic AS ENUM (
+    'account_access',
+    'payments_escrow',
+    'bug_technical',
+    'match_outcome',
+    'feedback',
+    'other'
+);
+
 CREATE TABLE support_tickets (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     reporter_id  UUID REFERENCES users(id) NOT NULL,
-    reported_id  UUID REFERENCES users(id) NOT NULL,
+    -- NULL when category = general_support (ticket goes to platform support queue, not against a user)
+    reported_id  UUID REFERENCES users(id),
     reason       ticket_reason NOT NULL,
     description  TEXT NOT NULL,
     status       ticket_status NOT NULL DEFAULT 'open',
+    -- How the ticket was filed — matches SupportTicketCategory (client sends this field)
+    category     support_ticket_category NOT NULL DEFAULT 'player_report',
+    -- Set when category = match_dispute — links ticket to the disputed match
+    match_id     UUID REFERENCES matches(id),
+    -- Set when category = general_support — narrows the support topic
+    topic        support_topic,
+    -- Client-side data URL until file-upload API exists; server stores S3/CDN URL in prod
+    attachment_url TEXT,
     admin_note   TEXT,
     created_at   TIMESTAMPTZ DEFAULT NOW(),
     updated_at   TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT no_self_report CHECK (reporter_id <> reported_id)
+    -- Only enforce no-self-report when a specific user is reported (general_support has reported_id = NULL)
+    CONSTRAINT no_self_report CHECK (reported_id IS NULL OR reporter_id <> reported_id)
 );
+
+-- Auto-touch updated_at on any admin status / note change
+CREATE OR REPLACE FUNCTION set_support_tickets_updated_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.updated_at := NOW();
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_support_tickets_updated_at
+    BEFORE UPDATE ON support_tickets
+    FOR EACH ROW EXECUTE FUNCTION set_support_tickets_updated_at();
 
 CREATE INDEX idx_tickets_reported ON support_tickets(reported_id);
 CREATE INDEX idx_tickets_reporter ON support_tickets(reporter_id);

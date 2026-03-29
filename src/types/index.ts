@@ -306,8 +306,10 @@ export interface Notification {
 
 // ─── Player Reports / Tickets ─────────────────────────────────
 // DB: support_tickets table
-// TODO: Claude — align API + migrations with ticketCategory, matchId, supportTopic, attachmentDataUrl
-//       (columns e.g. category, match_id FK nullable, support_topic enum, attachment_url text)
+// Columns: id, reporter_id, reported_id (nullable — NULL = platform queue for general_support),
+//          reason, description, status, category, match_id (FK nullable), topic, attachment_url, admin_note,
+//          created_at, updated_at
+// Enums:   ticket_reason, ticket_status, support_ticket_category, support_topic
 
 export type TicketReason =
   | "cheating"

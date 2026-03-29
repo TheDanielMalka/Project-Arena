@@ -123,6 +123,54 @@ describe("reportStore — updateTicketStatus", () => {
   });
 });
 
+describe("reportStore — ticket categories and new fields", () => {
+  it("ticketCategory defaults to 'player_report' when not provided", () => {
+    const ticket = useReportStore.getState().submitReport({
+      reporterId: "u1", reporterName: "A", reportedId: "u2", reportedUsername: "B",
+      reason: "cheating", description: "Obvious aimbot usage throughout the match",
+    });
+    expect(ticket.ticketCategory).toBe("player_report");
+  });
+
+  it("creates a general_support ticket with supportTopic and null-safe reportedId", () => {
+    const ticket = useReportStore.getState().submitReport({
+      reporterId: "u1", reporterName: "A",
+      reportedId: "platform", reportedUsername: "Support queue",
+      reason: "other",
+      description: "I cannot access my account after changing email",
+      ticketCategory: "general_support",
+      supportTopic: "account_access",
+    });
+    expect(ticket.ticketCategory).toBe("general_support");
+    expect(ticket.supportTopic).toBe("account_access");
+    expect(ticket.matchId).toBeUndefined();
+  });
+
+  it("creates a match_dispute ticket with matchId correctly set", () => {
+    const ticket = useReportStore.getState().submitReport({
+      reporterId: "u1", reporterName: "A", reportedId: "u2", reportedUsername: "B",
+      reason: "fake_screenshot",
+      description: "Screenshot score does not match server data at all",
+      ticketCategory: "match_dispute",
+      matchId: "M-test-42",
+    });
+    expect(ticket.ticketCategory).toBe("match_dispute");
+    expect(ticket.matchId).toBe("M-test-42");
+    expect(ticket.supportTopic).toBeUndefined();
+  });
+
+  it("stores attachmentDataUrl when provided", () => {
+    const fakeDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANS";
+    const ticket = useReportStore.getState().submitReport({
+      reporterId: "u1", reporterName: "A", reportedId: "u2", reportedUsername: "B",
+      reason: "fake_screenshot",
+      description: "Here is a screenshot showing the doctored result",
+      attachmentDataUrl: fakeDataUrl,
+    });
+    expect(ticket.attachmentDataUrl).toBe(fakeDataUrl);
+  });
+});
+
 describe("reportStore — getTicketsByReported", () => {
   it("returns only tickets for the specified username", () => {
     const store = useReportStore.getState();
