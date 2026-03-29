@@ -41,7 +41,7 @@ class Player:
     wallet_address: str   # primary key  e.g. "0xAbC...123"
     steam_id:       str   # e.g. "76561198012345678"
     steam_display_name: str   # e.g. "daniel_cs" — the name OCR reads from the scoreboard
-    game:           str   # e.g. "CS2" | "Valorant" | "Fortnite"
+    game:           str   # e.g. "CS2" | "Valorant" (active games in v1)
 
 
 # ── Validation helpers ────────────────────────────────────────────────────────

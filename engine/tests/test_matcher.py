@@ -145,3 +145,98 @@ def test_match_template_logs_elapsed_for_missing_image(caplog):
     assert confidence == 0.0
     assert location is None
     assert "match_template elapsed:" in caplog.text
+
+
+# ── Valorant detect_result tests ─────────────────────────────────────────────
+
+def test_detect_valorant_victory(tmp_path):
+    """
+    Teal/cyan image in Valorant's VICTORY region -> 'victory'.
+
+    Synthetic image: 400x800, teal BGR (200, 200, 0) placed exactly where
+    _detect_result_valorant crops by default (y 3-25%, x 20-80%).
+    BGR (200,200,0) -> OpenCV HSV H≈90, well inside the teal range (75-100).
+    """
+    img = np.zeros((400, 800, 3), dtype=np.uint8)
+    # y: int(400*0.03)=12 .. int(400*0.25)=100  |  x: int(800*0.20)=160 .. int(800*0.80)=640
+    img[12:100, 160:640] = (200, 200, 0)   # BGR teal -> HSV H≈90
+    img_path = str(tmp_path / "valorant_victory.png")
+    cv2.imwrite(img_path, img)
+
+    result, confidence = detect_result(img_path, game="Valorant")
+
+    assert result == "victory"
+    assert confidence > 0
+
+
+def test_detect_valorant_defeat(tmp_path):
+    """
+    Blue-purple image in Valorant's DEFEAT region -> 'defeat'.
+
+    BGR (200, 0, 0) = pure blue -> OpenCV HSV H≈120, inside blue-purple
+    range (110-145) used for Valorant defeat.
+    """
+    img = np.zeros((400, 800, 3), dtype=np.uint8)
+    img[12:100, 160:640] = (200, 0, 0)    # BGR blue -> HSV H≈120
+    img_path = str(tmp_path / "valorant_defeat.png")
+    cv2.imwrite(img_path, img)
+
+    result, confidence = detect_result(img_path, game="Valorant")
+
+    assert result == "defeat"
+    assert confidence > 0
+
+
+def test_detect_result_defaults_to_cs2(tmp_path):
+    """
+    detect_result() with no `game` arg must behave identically to game='CS2'.
+    A green image at the CS2 region must be detected as 'victory'.
+    """
+    img = np.zeros((200, 400, 3), dtype=np.uint8)
+    img[24:34, 136:272] = (0, 255, 0)     # BGR green -> CS2 VICTORY
+    img_path = str(tmp_path / "default_route.png")
+    cv2.imwrite(img_path, img)
+
+    result_default, _ = detect_result(img_path)
+    result_explicit, _ = detect_result(img_path, game="CS2")
+
+    assert result_default == "victory"
+    assert result_default == result_explicit
+
+
+def test_detect_valorant_does_not_trigger_on_cs2_green(tmp_path):
+    """
+    CS2 pure green (BGR 0,255,0 -> HSV H≈60) must NOT be detected as
+    Valorant VICTORY (teal range H 75-100).  The two colour spaces are
+    intentionally separated.
+    """
+    img = np.zeros((400, 800, 3), dtype=np.uint8)
+    img[12:100, 160:640] = (0, 255, 0)    # BGR green -> HSV H≈60, outside teal range
+    img_path = str(tmp_path / "cs2_green_in_valorant.png")
+    cv2.imwrite(img_path, img)
+
+    result, _ = detect_result(img_path, game="Valorant")
+
+    assert result is None
+
+
+def test_detect_cs2_does_not_trigger_on_valorant_teal(tmp_path):
+    """
+    Valorant teal (BGR 200,200,0 -> HSV H≈90) must NOT be detected as
+    CS2 VICTORY (green range H 35-85).  H=90 is above the CS2 ceiling.
+    """
+    img = np.zeros((200, 400, 3), dtype=np.uint8)
+    img[24:34, 136:272] = (200, 200, 0)   # BGR teal -> HSV H≈90, outside CS2 green range
+    img_path = str(tmp_path / "valorant_teal_in_cs2.png")
+    cv2.imwrite(img_path, img)
+
+    result, _ = detect_result(img_path, game="CS2")
+
+    assert result is None
+
+
+def test_detect_valorant_missing_file():
+    """detect_result with game='Valorant' on a missing file returns (None, 0.0)."""
+    result, confidence = detect_result("not_exists.png", game="Valorant")
+    assert result is None
+    assert confidence == 0.0
