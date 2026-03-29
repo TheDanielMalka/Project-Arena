@@ -36,6 +36,8 @@ CREATE TABLE users (
     avatar_initials VARCHAR(4),
     avatar          TEXT DEFAULT 'initials',    -- 'initials' | emoji | 'upload:{dataURL}' | 'preset:{id}' (Identity Studio — src/lib/avatarPresets.ts; optional static /avatars/identity/*)
     avatar_bg       TEXT DEFAULT 'default',     -- bgId from avatarBgs.ts
+    equipped_badge_icon TEXT,                   -- Forge badge:* (e.g. badge:founders); NULL = none — aligns with UserProfile.equippedBadgeIcon
+    forge_unlocked_item_ids TEXT[] NOT NULL DEFAULT '{}',  -- Forge shop item ids owned (catalog ids until UUID API)
     preferred_game  game DEFAULT 'CS2',
     arena_id        VARCHAR(12) UNIQUE,   -- immutable public ID (ARENA-XXXXXX) — set on registration, never changed
     status          user_status DEFAULT 'active',

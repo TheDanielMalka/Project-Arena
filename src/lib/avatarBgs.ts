@@ -146,6 +146,18 @@ export function getAvatarCircleStyle(bgId: string | undefined): CSSProperties {
   };
 }
 
+/** Checkout / Forge preview — same fill as live ring, softer outer glow so the portrait stays visually dominant */
+export function getForgePreviewCircleStyle(bgId: string | undefined): CSSProperties {
+  const b = getAvatarBackground(bgId);
+  const soft = `0 0 10px ${b.accent}24, 0 1px 0 rgba(255,255,255,0.12) inset`;
+  return {
+    background: b.background,
+    border: b.borderCss,
+    boxShadow: `${soft}, inset 0 -8px 20px rgba(0,0,0,0.35)`,
+    borderRadius: 9999,
+  };
+}
+
 export function avatarBackgroundsByTier(tier: AvatarBgTier): AvatarBackgroundDef[] {
   return AVATAR_BACKGROUNDS.filter((b) => b.tier === tier);
 }

@@ -27,6 +27,7 @@ import { getXpInfo } from "@/lib/xp";
 import {
   getAvatarBackground,
   getAvatarCircleStyle,
+  getForgePreviewCircleStyle,
   avatarBackgroundsByTier,
 } from "@/lib/avatarBgs";
 import {
@@ -42,6 +43,7 @@ import {
   identityGridPortraitClassName,
 } from "@/lib/avatarPresets";
 import { SEED_ITEMS } from "@/stores/forgeStore";
+import { renderForgeShopIcon } from "@/lib/forgeItemIcon";
 
 type GameConnection = {
   name: string;
@@ -92,6 +94,9 @@ const Profile = () => {
   );
   const forgeAvatarItems   = SEED_ITEMS.filter((i) => i.category === "avatar");
   const forgePurchases     = useForgeStore((s) => s.purchases);
+  const ownsForgeItem = (itemId: string) =>
+    forgePurchases.some((p) => p.itemId === itemId) ||
+    Boolean(user?.unlockedForgeItemIds?.includes(itemId));
 
   // DB-ready: unlock flags should come from API/event progress
   const sampleEventUnlockedId = "rift_runner";
@@ -206,7 +211,7 @@ const Profile = () => {
       if (committedBg === bgId) return true;
       // DB-ready: replace with server-owned cosmetics lookup (users_cosmetics)
       const frameItem = SEED_ITEMS.find((i) => i.category === "frame" && i.icon === `bg:${bgId}`);
-      return !!frameItem && forgePurchases.some((p) => p.itemId === frameItem.id);
+      return !!frameItem && ownsForgeItem(frameItem.id);
     }
     return false;
   };
@@ -222,7 +227,7 @@ const Profile = () => {
       // Premium presets: allow if already equipped, or purchased in Forge
       if (selectedAvatar === draftAvatar) return true;
       const item = SEED_ITEMS.find((i) => i.category === "avatar" && i.icon === draftAvatar);
-      return !!item && forgePurchases.some((p) => p.itemId === item.id);
+      return !!item && ownsForgeItem(item.id);
     }
     if (forgeAvatarIcons.has(draftAvatar)) return false;
     return true;
@@ -418,9 +423,15 @@ const Profile = () => {
                   <span className="relative z-[1] flex h-full w-full items-center justify-center">{renderAvatarContent(selectedAvatar)}</span>
                 </div>
               )}
-              <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-primary border-2 border-background flex items-center justify-center">
-                <Shield className="h-2.5 w-2.5 text-white" />
-              </div>
+              {user?.equippedBadgeIcon?.startsWith("badge:") ? (
+                <div className="absolute -bottom-0.5 -right-0.5 z-[4] h-[18px] w-[18px] rounded-full overflow-hidden ring-2 ring-background shadow-sm">
+                  {renderForgeShopIcon(user.equippedBadgeIcon, "sm", "pin")}
+                </div>
+              ) : (
+                <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-primary border-2 border-background flex items-center justify-center">
+                  <Shield className="h-2.5 w-2.5 text-white" />
+                </div>
+              )}
             </div>
 
             {/* Name + rank + info */}
@@ -811,14 +822,16 @@ const Profile = () => {
           <div className="flex flex-col items-center gap-1 mb-2 shrink-0">
             <div
               className={cn(
-                "relative flex h-[4.5rem] w-[4.5rem] items-center justify-center overflow-hidden rounded-full ring-2 ring-white/20 shadow-[0_0_32px_hsl(var(--primary)/0.25)]",
+                "relative flex h-[4.5rem] w-[4.5rem] items-center justify-center overflow-hidden rounded-full ring-1 ring-white/15",
                 getAvatarBackground(draftBg).pulse && "motion-safe:animate-pulse",
               )}
-              style={getAvatarCircleStyle(draftBg)}
+              style={getForgePreviewCircleStyle(draftBg)}
             >
               <span className="pointer-events-none absolute inset-0 opacity-[0.14] bg-gradient-to-br from-white/45 to-transparent" />
               <span className="pointer-events-none absolute inset-[3px] rounded-full border border-white/10" />
-              <span className="relative z-[1] flex h-full w-full items-center justify-center">{renderAvatarContent(draftAvatar)}</span>
+              <span className="relative z-[1] flex h-[78%] w-[78%] items-center justify-center overflow-hidden rounded-full bg-black/20">
+                {renderAvatarContent(draftAvatar)}
+              </span>
             </div>
             <span className="text-[9px] font-mono text-muted-foreground">Preview · not saved until Apply</span>
           </div>
@@ -987,42 +1000,72 @@ const Profile = () => {
                 Forge portraits · not included in Free tab
               </p>
               <div className="grid grid-cols-1 gap-2 max-h-[200px] overflow-y-auto pr-0.5">
-                {forgeAvatarItems.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className="flex items-center gap-2.5 rounded-lg border border-arena-purple/35 bg-gradient-to-r from-arena-purple/10 to-transparent p-2 text-left hover:border-arena-purple/50 transition-colors"
-                    onClick={() => {
-                      navigate(`/forge?tab=shop&category=avatar&focus=${encodeURIComponent(item.id)}`);
-                      setShowAvatarPicker(false);
-                      toast({ title: "Forge", description: `Grab “${item.name}” in the Shop with AT or USDT.` });
-                    }}
-                  >
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-black/50 text-lg ring-1 ring-white/10 border border-arena-purple/30 overflow-hidden">
-                      {getAvatarImageUrlFromStorage(item.icon)
-                        ? (
-                          <img
-                            src={getAvatarImageUrlFromStorage(item.icon)!}
-                            className={cn("h-full w-full", identityPortraitCropClassName)}
-                            alt=""
-                            width={80}
-                            height={80}
-                            decoding="async"
-                          />
-                        )
-                        : item.icon}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[11px] font-display font-bold truncate">{item.name}</p>
-                      <p className="text-[9px] text-muted-foreground mt-0.5">
-                        {item.priceAT != null && <span className="text-primary font-mono">{item.priceAT.toLocaleString()} AT</span>}
-                        {item.priceAT != null && item.priceUSDT != null && " · "}
-                        {item.priceUSDT != null && <span className="text-arena-gold font-mono">${item.priceUSDT.toFixed(2)} USDT</span>}
-                      </p>
-                    </div>
-                    <Flame className="h-3.5 w-3.5 text-arena-purple shrink-0" />
-                  </button>
-                ))}
+                {forgeAvatarItems.map((item) => {
+                  const owned = ownsForgeItem(item.id);
+                  const selected = draftAvatar === item.icon;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={cn(
+                        "flex items-center gap-2.5 rounded-lg border p-2 text-left transition-all",
+                        owned
+                          ? "bg-gradient-to-r from-emerald-950/30 to-transparent border-emerald-500/40 hover:border-emerald-400/55"
+                          : "border-arena-purple/35 bg-gradient-to-r from-arena-purple/10 to-transparent hover:border-arena-purple/50",
+                        selected && "ring-2 ring-primary/50 scale-[1.01]",
+                      )}
+                      onClick={() => {
+                        if (owned) {
+                          setDraftAvatar(item.icon);
+                          return;
+                        }
+                        navigate(`/forge?tab=shop&category=avatar&focus=${encodeURIComponent(item.id)}`);
+                        setShowAvatarPicker(false);
+                        toast({ title: "Forge", description: `Grab “${item.name}” in the Shop with AT or USDT.` });
+                      }}
+                    >
+                      <span
+                        className={cn(
+                          "flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-black/50 text-lg ring-1 overflow-hidden",
+                          owned ? "ring-emerald-500/35 border border-emerald-500/25" : "ring-white/10 border border-arena-purple/30",
+                        )}
+                      >
+                        {getAvatarImageUrlFromStorage(item.icon)
+                          ? (
+                            <img
+                              src={getAvatarImageUrlFromStorage(item.icon)!}
+                              className={cn("h-full w-full", identityPortraitCropClassName)}
+                              alt=""
+                              width={80}
+                              height={80}
+                              decoding="async"
+                            />
+                          )
+                          : item.icon}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[11px] font-display font-bold truncate">{item.name}</p>
+                        {owned ? (
+                          <p className="text-[9px] text-emerald-400/95 font-display uppercase tracking-wider mt-0.5 flex items-center gap-1">
+                            <CheckCircle className="h-3 w-3 shrink-0" />
+                            Owned — tap to equip
+                          </p>
+                        ) : (
+                          <p className="text-[9px] text-muted-foreground mt-0.5">
+                            {item.priceAT != null && <span className="text-primary font-mono">{item.priceAT.toLocaleString()} AT</span>}
+                            {item.priceAT != null && item.priceUSDT != null && " · "}
+                            {item.priceUSDT != null && <span className="text-arena-gold font-mono">${item.priceUSDT.toFixed(2)} USDT</span>}
+                          </p>
+                        )}
+                      </div>
+                      {owned ? (
+                        <CheckCircle className="h-4 w-4 text-emerald-400 shrink-0" aria-hidden />
+                      ) : (
+                        <Flame className="h-3.5 w-3.5 text-arena-purple shrink-0" aria-hidden />
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1111,28 +1154,48 @@ const Profile = () => {
                 Go to Forge · Frames
               </Button>
               <div className="grid grid-cols-7 sm:grid-cols-8 gap-0.5">
-                {avatarBackgroundsByTier("premium").map((bg) => (
-                  <button
-                    key={bg.id}
-                    type="button"
-                    title={`${bg.label} — ${bg.price ?? "Forge"}`}
-                    className="relative h-5 w-5 sm:h-6 sm:w-6 rounded overflow-hidden border border-arena-purple/40 opacity-95 hover:opacity-100 transition-opacity ring-1 ring-arena-purple/20 justify-self-center shrink-0"
-                    onClick={() => {
-                      setDraftBg(bg.id); // allow preview even if not owned
-                      if (!canUseBackgroundId(bg.id, selectedBg)) {
-                        toast({ title: "Premium frame", description: `Preview only — buy “${bg.label}” in Forge to apply.` });
+                {avatarBackgroundsByTier("premium").map((bg) => {
+                  const frameItem = SEED_ITEMS.find((i) => i.category === "frame" && i.icon === `bg:${bg.id}`);
+                  const frameOwned = !!frameItem && ownsForgeItem(frameItem.id);
+                  return (
+                    <button
+                      key={bg.id}
+                      type="button"
+                      title={
+                        frameOwned
+                          ? `${bg.label} — owned, tap to preview`
+                          : `${bg.label} — ${bg.price ?? "Forge"}`
                       }
-                    }}
-                  >
-                    <div
-                      className="absolute inset-0 motion-safe:animate-pulse"
-                      style={{ background: bg.background, boxShadow: bg.shadowCss, border: bg.borderCss }}
-                    />
-                    <span className="absolute bottom-0 inset-x-0 z-[1] flex items-center justify-center py-px bg-black/75 text-[6px] leading-none font-display font-bold text-arena-gold truncate px-0.5">
-                      {bg.price}
-                    </span>
-                  </button>
-                ))}
+                      className={cn(
+                        "relative h-5 w-5 sm:h-6 sm:w-6 rounded overflow-hidden border justify-self-center shrink-0 transition-all",
+                        frameOwned
+                          ? "border-emerald-500/45 ring-1 ring-emerald-500/25 opacity-100 hover:border-emerald-400/60"
+                          : "border-arena-purple/40 opacity-95 hover:opacity-100 ring-1 ring-arena-purple/20",
+                        draftBg === bg.id && "ring-2 ring-primary/50 scale-110 z-[1]",
+                      )}
+                      onClick={() => {
+                        setDraftBg(bg.id);
+                        if (!canUseBackgroundId(bg.id, selectedBg)) {
+                          toast({ title: "Premium frame", description: `Preview only — buy “${bg.label}” in Forge to apply.` });
+                        }
+                      }}
+                    >
+                      <div
+                        className="absolute inset-0 motion-safe:animate-pulse"
+                        style={{ background: bg.background, boxShadow: bg.shadowCss, border: bg.borderCss }}
+                      />
+                      {frameOwned ? (
+                        <span className="absolute top-px right-px z-[2] leading-none" title="Owned">
+                          <CheckCircle className="h-2.5 w-2.5 text-emerald-400 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]" />
+                        </span>
+                      ) : (
+                        <span className="absolute bottom-0 inset-x-0 z-[1] flex items-center justify-center py-px bg-black/75 text-[6px] leading-none font-display font-bold text-arena-gold truncate px-0.5">
+                          {bg.price}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}

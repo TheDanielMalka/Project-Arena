@@ -4,7 +4,7 @@
 
 import type { ReactNode } from "react";
 import type { ForgeCategory } from "@/types";
-import { getAvatarBackground, getAvatarCircleStyle } from "@/lib/avatarBgs";
+import { getAvatarBackground, getForgePreviewCircleStyle } from "@/lib/avatarBgs";
 import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
 import { cn } from "@/lib/utils";
 import {
@@ -14,7 +14,7 @@ import type { LucideIcon } from "lucide-react";
 
 type BadgeKey = "founders" | "champions" | "veterans";
 
-/** Hex medallion — same “jewelry” language as Identity Studio portraits (rim light + depth) */
+/** Hex medallion — Identity Studio jewelry language; used for shop tiles (layout "tile") */
 const BADGE_HEX =
   "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)" as const;
 
@@ -128,9 +128,14 @@ function BoostVIPTile({
 }
 
 /** Renders catalog icon: preset:*, bg:*, badge:*, boost:*, vip:*, bundle:*, emoji fallback */
-export function renderForgeShopIcon(icon: string | undefined, sizeHint: "sm" | "md" = "md"): ReactNode {
+export function renderForgeShopIcon(
+  icon: string | undefined,
+  sizeHint: "sm" | "md" = "md",
+  layout: "tile" | "pin" = "tile",
+): ReactNode {
   if (!icon) return "🛒";
   const iconSm = sizeHint === "sm" ? "h-4 w-4" : "h-5 w-5";
+  const pinIcon = sizeHint === "sm" ? "h-[10px] w-[10px]" : "h-3 w-3";
 
   const presetUrl = getAvatarImageUrlFromStorage(icon);
   if (presetUrl) {
@@ -156,7 +161,27 @@ export function renderForgeShopIcon(icon: string | undefined, sizeHint: "sm" | "
   }
   if (icon.startsWith("badge:")) {
     const key = icon.slice(6) as BadgeKey;
-    if (!BADGE_ART[key]) return <span aria-hidden>{icon}</span>;
+    const art = BADGE_ART[key];
+    if (!art) return <span aria-hidden>{icon}</span>;
+    const I = art.Icon;
+    if (layout === "pin") {
+      const pinShell =
+        key === "founders"
+          ? "bg-gradient-to-br from-amber-900/95 to-zinc-950"
+          : key === "champions"
+            ? "bg-gradient-to-br from-violet-900/95 to-zinc-950"
+            : "bg-gradient-to-br from-slate-800/95 to-zinc-950";
+      return (
+        <div
+          className={cn(
+            "h-full w-full rounded-full flex items-center justify-center ring-1 ring-white/25 shadow-[0_1px_3px_rgba(0,0,0,0.6)]",
+            pinShell,
+          )}
+        >
+          <I className={cn(pinIcon, "text-white/95")} strokeWidth={2.4} />
+        </div>
+      );
+    }
     return (
       <div className="h-full w-full rounded-sm overflow-hidden">
         <ForgeBadgeMedallion badgeKey={key} iconSm={iconSm} />
@@ -279,13 +304,13 @@ export function ForgeLookPreview({
     faceAvatar = tryOnIcon;
   }
 
-  const circleStyle = getAvatarCircleStyle(bgId);
+  const circleStyle = getForgePreviewCircleStyle(bgId);
 
   return (
     <div className="flex flex-col items-center gap-1">
       <div
         className={cn(
-          "relative flex items-center justify-center overflow-hidden rounded-full ring-2 ring-white/15",
+          "relative flex items-center justify-center overflow-hidden rounded-full ring-1 ring-white/12",
           dim,
         )}
         style={circleStyle}
@@ -295,8 +320,8 @@ export function ForgeLookPreview({
           <AvatarFace avatar={faceAvatar} username={username} />
         </span>
         {badgeOverlay && tryOnIcon && (
-          <span className="absolute bottom-0 right-0 z-[3] h-8 w-8 overflow-visible drop-shadow-[0_4px_14px_rgba(0,0,0,0.75)] ring-2 ring-black/70 rounded-sm">
-            {renderForgeShopIcon(tryOnIcon, "sm")}
+          <span className="absolute bottom-0 right-0 z-[3] h-[18px] w-[18px] rounded-full overflow-hidden ring-1 ring-black/55 translate-x-[1px] translate-y-[1px]">
+            {renderForgeShopIcon(tryOnIcon, "sm", "pin")}
           </span>
         )}
       </div>

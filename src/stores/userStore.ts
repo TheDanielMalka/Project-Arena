@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { UserProfile } from "@/types";
+import type { UserProfile, ForgeCategory } from "@/types";
 
 interface UserState {
   user: UserProfile | null;
@@ -21,6 +21,8 @@ interface UserState {
   disconnectWallet: () => void;
   // DB-ready: replace with PATCH /api/users/me
   updateProfile: (updates: Partial<UserProfile>) => void;
+  /** DB-ready: POST /api/forge/purchase — merge unlock + apply cosmetic to current user (call after successful checkout) */
+  applyForgePurchase: (payload: { itemId: string; category: ForgeCategory; icon: string }) => void;
   clearLoginGreeting: () => void;
 }
 
@@ -60,6 +62,10 @@ const MOCK_USER: UserProfile = {
 
 const ADMIN_EMAILS = new Set(["admin@arena.gg"]);
 
+function scheduleSyncForgePurchasesToProfile() {
+  void import("@/stores/forgeStore").then((m) => m.syncForgePurchasesToUserProfile());
+}
+
 export const useUserStore = create<UserState>((set) => ({
   user: null,
   isAuthenticated: false,
@@ -75,6 +81,7 @@ export const useUserStore = create<UserState>((set) => ({
       role: ADMIN_EMAILS.has(normalizedEmail) ? "admin" : "user",
     };
     set({ user, isAuthenticated: true, walletConnected: true, showLoginGreeting: true, greetingType: "login" });
+    scheduleSyncForgePurchasesToProfile();
     return true;
   },
 
@@ -91,11 +98,13 @@ export const useUserStore = create<UserState>((set) => ({
       balance: { total: 0, available: 0, inEscrow: 0 },
     };
     set({ user, isAuthenticated: true, walletConnected: false, showLoginGreeting: true, greetingType: "signup" });
+    scheduleSyncForgePurchasesToProfile();
     return true;
   },
 
   loginWithGoogle: () => {
     set({ user: { ...MOCK_USER, role: "user" }, isAuthenticated: true, walletConnected: true, showLoginGreeting: true, greetingType: "google" });
+    scheduleSyncForgePurchasesToProfile();
   },
 
   logout: () => set({ user: null, isAuthenticated: false, walletConnected: false, showLoginGreeting: false, greetingType: null }),
@@ -110,4 +119,20 @@ export const useUserStore = create<UserState>((set) => ({
     set((state) => ({
       user: state.user ? { ...state.user, ...updates } : null,
     })),
+
+  applyForgePurchase: ({ itemId, category, icon }) =>
+    set((state) => {
+      if (!state.user) return state;
+      const prev = state.user.unlockedForgeItemIds ?? [];
+      const unlockedForgeItemIds = prev.includes(itemId) ? prev : [...prev, itemId];
+      const next: UserProfile = { ...state.user, unlockedForgeItemIds };
+      if (category === "avatar" && icon.startsWith("preset:")) {
+        next.avatar = icon;
+      } else if (category === "frame" && icon.startsWith("bg:")) {
+        next.avatarBg = icon.slice(3);
+      } else if (category === "badge" && icon.startsWith("badge:")) {
+        next.equippedBadgeIcon = icon;
+      }
+      return { user: next };
+    }),
 }));

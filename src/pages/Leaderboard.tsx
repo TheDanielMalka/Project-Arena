@@ -800,7 +800,7 @@ const Leaderboard = () => {
                                 player.rank === 1 ? "rgba(234,179,8,0.06)" :
                                 player.rank === 2 ? "rgba(148,163,184,0.04)" :
                                 player.rank === 3 ? "rgba(249,115,22,0.05)" :
-                                "rgba(var(--primary), 0.03)"
+                                "hsl(var(--primary) / 0.03)"
                               } ${player.winRate}%, transparent ${player.winRate}%)`,
                             }}
                           />

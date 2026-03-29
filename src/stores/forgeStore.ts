@@ -1,9 +1,11 @@
 import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
 import type {
   ForgeItem, ForgeChallenge, ForgeEvent, ForgeDrop, ForgePurchase,
   ForgeCategory,
 } from "@/types";
 import { useWalletStore } from "@/stores/walletStore";
+import { useUserStore } from "@/stores/userStore";
 
 // ─── Seed Data ────────────────────────────────────────────────
 // DB-ready: replace with GET /api/forge/items
@@ -94,7 +96,9 @@ interface ForgeState {
   getUpcomingEvents: () => ForgeEvent[];
 }
 
-export const useForgeStore = create<ForgeState>((set, get) => ({
+export const useForgeStore = create<ForgeState>()(
+  persist(
+    (set, get) => ({
   arenaTokens: 500,
   items:      SEED_ITEMS,
   challenges: SEED_CHALLENGES,
@@ -118,6 +122,7 @@ export const useForgeStore = create<ForgeState>((set, get) => ({
       if (get().arenaTokens < item.priceAT) return { success: false, error: `Insufficient AT — need ${item.priceAT} AT` };
       const purchase: ForgePurchase = { id: `pur-${Date.now()}`, itemId, itemName: item.name, currency: "AT", amount: item.priceAT, purchasedAt: new Date().toISOString() };
       set((s) => ({ arenaTokens: s.arenaTokens - item.priceAT!, purchases: [purchase, ...s.purchases] }));
+      useUserStore.getState().applyForgePurchase({ itemId: item.id, category: item.category, icon: item.icon });
       return { success: true };
     }
 
@@ -129,6 +134,7 @@ export const useForgeStore = create<ForgeState>((set, get) => ({
       wallet.addTransaction({ userId: "user-001", type: "at_purchase", amount: -item.priceUSDT, token: "USDT", usdValue: item.priceUSDT, status: "completed", note: `Purchased ${item.name} — Forge` });
       const purchase: ForgePurchase = { id: `pur-${Date.now()}`, itemId, itemName: item.name, currency: "USDT", amount: item.priceUSDT, purchasedAt: new Date().toISOString() };
       set((s) => ({ purchases: [purchase, ...s.purchases] }));
+      useUserStore.getState().applyForgePurchase({ itemId: item.id, category: item.category, icon: item.icon });
       return { success: true };
     }
 
@@ -186,4 +192,23 @@ export const useForgeStore = create<ForgeState>((set, get) => ({
   getWeeklyChallenges:   () => get().challenges.filter((c) => c.type === "weekly"),
   getActiveEvents:       () => get().events.filter((e) => e.status === "active"),
   getUpcomingEvents:     () => get().events.filter((e) => e.status === "upcoming"),
-}));
+}),
+    {
+      name: "arena-forge-storage",
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({ purchases: state.purchases }),
+    }
+  )
+);
+
+/** Re-apply persisted Forge purchases to the logged-in profile (order: oldest → newest so latest cosmetic wins). */
+export function syncForgePurchasesToUserProfile(): void {
+  const { purchases, items } = useForgeStore.getState();
+  const apply = useUserStore.getState().applyForgePurchase;
+  const cosmetic = new Set<ForgeCategory>(["avatar", "frame", "badge"]);
+  for (const p of [...purchases].reverse()) {
+    const item = items.find((i) => i.id === p.itemId);
+    if (!item || !cosmetic.has(item.category)) continue;
+    apply({ itemId: item.id, category: item.category, icon: item.icon });
+  }
+}

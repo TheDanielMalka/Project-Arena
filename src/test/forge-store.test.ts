@@ -1,10 +1,16 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useForgeStore, SEED_ITEMS, SEED_CHALLENGES, SEED_EVENTS, SEED_DROPS } from "@/stores/forgeStore";
 import { useWalletStore } from "@/stores/walletStore";
+import { useUserStore } from "@/stores/userStore";
 
 // ─── Helpers ──────────────────────────────────────────────────
 
 function resetForge() {
+  try {
+    localStorage.removeItem("arena-forge-storage");
+  } catch {
+    /* ignore — non-browser */
+  }
   useForgeStore.setState({
     arenaTokens: 500,
     // spread to get fresh copies of arrays so mutations don't bleed between tests
@@ -322,7 +328,11 @@ describe("forgeStore — purchaseItem with AT", () => {
 // ─── purchaseItem (USDT) ──────────────────────────────────────
 
 describe("forgeStore — purchaseItem with USDT", () => {
-  beforeEach(() => { resetForge(); resetWallet(); });
+  beforeEach(() => {
+    resetForge();
+    resetWallet();
+    useUserStore.getState().logout();
+  });
 
   it("succeeds for Founder's Badge ($9.99 USDT) when wallet has balance", () => {
     const result = useForgeStore.getState().purchaseItem("item-005", "USDT");
@@ -341,6 +351,15 @@ describe("forgeStore — purchaseItem with USDT", () => {
     const atTx = useWalletStore.getState().transactions.find((tx) => tx.type === "at_purchase");
     expect(atTx).toBeDefined();
     expect(atTx?.token).toBe("USDT");
+  });
+
+  it("merges unlock + badge onto logged-in user after USDT purchase", () => {
+    useUserStore.getState().login("player@arena.gg", "pw");
+    const result = useForgeStore.getState().purchaseItem("item-005", "USDT");
+    expect(result.success).toBe(true);
+    const u = useUserStore.getState().user;
+    expect(u?.unlockedForgeItemIds).toContain("item-005");
+    expect(u?.equippedBadgeIcon).toBe("badge:founders");
   });
 
   it("fails for items that have no USDT price (Champion's Seal is AT-only)", () => {
