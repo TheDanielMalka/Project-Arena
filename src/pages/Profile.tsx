@@ -176,7 +176,11 @@ const Profile = () => {
     "MLBB":        { matches: 12, winRate: 58.3, earnings: 0,    kd: 1.6,  rank: "Epic",     streak: 3 },
   };
 
-  const connectedGames = gameConnections.filter(g => g.status === "connected");
+  // Game Stats only shows active games (CS2 & Valorant) — other connected games shown in Connections section only
+  // DB-ready: filter by games.enabled — when a game becomes active, it auto-appears here
+  const connectedGames = gameConnections.filter(
+    g => g.status === "connected" && (g.name === "CS2" || g.name === "Valorant")
+  );
   const [activeGameTab, setActiveGameTab] = useState<string>(connectedGames[0]?.name ?? "CS2");
 
   const addNotification = useNotificationStore((s) => s.addNotification);
