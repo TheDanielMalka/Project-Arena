@@ -633,13 +633,23 @@ const Leaderboard = () => {
       {/* ── TABLE ── */}
       {/* DB-ready: tab change triggers GET /api/leaderboard?game={tab}&range={timeRange} */}
       <Tabs defaultValue="all" className="w-full">
+        {/* DB-ready: tabs driven by games.enabled — Coming Soon games non-selectable until Client supports them */}
         <TabsList className="bg-secondary border border-border h-8 flex-wrap gap-0">
-          {(GAME_TABS as readonly string[]).map((tab) => (
-            <TabsTrigger key={tab} value={tab}
-              className="font-display text-xs data-[state=active]:bg-primary/20 data-[state=active]:text-primary h-6 px-3">
-              {tab === "all" ? "All Games" : tab}
-            </TabsTrigger>
-          ))}
+          {(GAME_TABS as readonly string[]).map((tab) => {
+            const isLive = tab === "all" || tab === "CS2" || tab === "Valorant";
+            return isLive ? (
+              <TabsTrigger key={tab} value={tab}
+                className="font-display text-xs data-[state=active]:bg-primary/20 data-[state=active]:text-primary h-6 px-3">
+                {tab === "all" ? "All Games" : tab}
+              </TabsTrigger>
+            ) : (
+              <div key={tab}
+                className="inline-flex items-center gap-1 h-6 px-3 font-display text-xs text-muted-foreground/40 cursor-not-allowed select-none">
+                {tab}
+                <span className="text-[8px] font-bold tracking-wide text-muted-foreground/30">SOON</span>
+              </div>
+            );
+          })}
         </TabsList>
 
         {(GAME_TABS as readonly string[]).map((tab) => {

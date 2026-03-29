@@ -21,14 +21,16 @@ import { useFriendStore }  from "@/stores/friendStore";
 import { useReportStore }  from "@/stores/reportStore";
 import { usePlayerStore }  from "@/stores/playerStore";
 import { useClientStore }  from "@/stores/clientStore";
-import { GAME_MODES, getDefaultMode, getTeamSize, getTotalPlayers } from "@/config/gameModes";
+import { GAME_MODES, getDefaultMode, getTeamSize, getTotalPlayers, isGameActive } from "@/config/gameModes";
 
 // ─── Game configs ─────────────────────────────────────────────────────────────
-const PC_GAME_CONFIG: Record<string, { logo: string; color: string }> = {
+// comingSoon: true → game visible in dropdowns but non-selectable (greyed, locked)
+// DB-ready: driven by games.enabled in DB when Arena Client adds support
+const PC_GAME_CONFIG: Record<string, { logo: string; color: string; comingSoon?: boolean }> = {
   "CS2":          { logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/730/capsule_sm_120.jpg",     color: "#F97316" },
   "Valorant":     { logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/2181130/capsule_sm_120.jpg", color: "#FF4655" },
-  "Fortnite":     { logo: "https://play-lh.googleusercontent.com/FxJDPDIDJKlG9C8lOxaS041X27A0SrHAa46SGDIpPusAd4IEJihZTyGf-8rTZ_GpF34aeLvULilVuO0cpCJxTg=s120", color: "#38BDF8" },
-  "Apex Legends": { logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/1172470/capsule_sm_120.jpg", color: "#FC4B08" },
+  "Fortnite":     { logo: "https://play-lh.googleusercontent.com/FxJDPDIDJKlG9C8lOxaS041X27A0SrHAa46SGDIpPusAd4IEJihZTyGf-8rTZ_GpF34aeLvULilVuO0cpCJxTg=s120", color: "#38BDF8", comingSoon: true },
+  "Apex Legends": { logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/1172470/capsule_sm_120.jpg", color: "#FC4B08", comingSoon: true },
 };
 const MOBILE_GAME_CONFIG: Record<string, { logo: string; color: string }> = {
   "MLBB":        { logo: "https://play-lh.googleusercontent.com/Op7v9XdsyxjrKImMD5RLyiLRCAHs3DMQFANwfsuMTw1hq0lH4j8tOqD3Fd7zyr4ixmC0xoqqRkQDBjAd46NsFQ=s120", color: "#EF4444" },
@@ -154,13 +156,13 @@ const GameLogo = ({ game, size = 28 }: { game: string; size?: number }) => {
 // ─── GameDropdown ─────────────────────────────────────────────────────────────
 interface GameDropdownProps {
   label: string; icon: React.ElementType;
-  games: Record<string, { logo: string; color: string }>;
+  games: Record<string, { logo: string; color: string; comingSoon?: boolean }>;
   activeGame: string; onSelect: (g: string) => void; comingSoon?: boolean;
 }
 const GameDropdown = ({ label, icon: Icon, games, activeGame, onSelect, comingSoon }: GameDropdownProps) => {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const hasActive = !comingSoon && Object.keys(games).some((g) => g === activeGame);
+  const hasActive = !comingSoon && Object.keys(games).some((g) => g === activeGame && !games[g].comingSoon);
   useEffect(() => {
     const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
     document.addEventListener("mousedown", h);
@@ -176,18 +178,29 @@ const GameDropdown = ({ label, icon: Icon, games, activeGame, onSelect, comingSo
         <ChevronDown className={`h-3 w-3 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
-        <div className="absolute top-full left-0 mt-1 z-50 min-w-[170px] rounded-xl border border-border bg-card shadow-2xl overflow-hidden">
+        <div className="absolute top-full left-0 mt-1 z-50 min-w-[190px] rounded-xl border border-border bg-card shadow-2xl overflow-hidden">
           {comingSoon
             ? <div className="px-4 py-3 text-xs text-muted-foreground text-center">Coming soon</div>
-            : Object.entries(games).map(([name, cfg]) => (
-              <button key={name} onClick={() => { onSelect(name); setOpen(false); }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-secondary/60 transition-colors text-left ${activeGame === name ? "bg-primary/10 text-primary" : "text-foreground"}`}>
-                <img src={cfg.logo} alt={name} className="w-6 h-6 rounded object-cover shrink-0"
-                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
-                <span className="font-medium truncate">{name}</span>
-                {activeGame === name && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-primary" />}
-              </button>
-            ))}
+            : Object.entries(games).map(([name, cfg]) => {
+              const isCS = cfg.comingSoon;
+              return isCS ? (
+                // ── Coming Soon game row — visible but non-selectable ──────────
+                <div key={name} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm cursor-not-allowed opacity-50">
+                  <img src={cfg.logo} alt={name} className="w-6 h-6 rounded object-cover shrink-0 grayscale"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                  <span className="font-medium truncate text-muted-foreground">{name}</span>
+                  <span className="ml-auto text-[9px] font-display font-bold px-1.5 py-0.5 rounded bg-muted text-muted-foreground/70 tracking-wide shrink-0">SOON</span>
+                </div>
+              ) : (
+                <button key={name} onClick={() => { onSelect(name); setOpen(false); }}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-secondary/60 transition-colors text-left ${activeGame === name ? "bg-primary/10 text-primary" : "text-foreground"}`}>
+                  <img src={cfg.logo} alt={name} className="w-6 h-6 rounded object-cover shrink-0"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                  <span className="font-medium truncate">{name}</span>
+                  {activeGame === name && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-primary" />}
+                </button>
+              );
+            })}
         </div>
       )}
     </div>

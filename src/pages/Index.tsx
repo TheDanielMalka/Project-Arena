@@ -6,14 +6,15 @@ import {
 } from "lucide-react";
 
 // ── Game logos (same CDN as rest of app) ──────────────────────────────────────
+// DB-ready: comingSoon driven by games.enabled — flip to false when Client adds support
 const GAMES = [
   { name: "CS2",              logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/730/capsule_sm_120.jpg" },
   { name: "Valorant",         logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/2181130/capsule_sm_120.jpg" },
-  { name: "Fortnite",         logo: "https://play-lh.googleusercontent.com/FxJDPDIDJKlG9C8lOxaS041X27A0SrHAa46SGDIpPusAd4IEJihZTyGf-8rTZ_GpF34aeLvULilVuO0cpCJxTg=s120" },
-  { name: "Apex Legends",     logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/1172470/capsule_sm_120.jpg" },
-  { name: "COD",              logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/1938090/capsule_sm_120.jpg" },
-  { name: "PUBG",             logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/578080/capsule_sm_120.jpg" },
-  { name: "League of Legends",logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/2801460/capsule_sm_120.jpg" },
+  { name: "Fortnite",         logo: "https://play-lh.googleusercontent.com/FxJDPDIDJKlG9C8lOxaS041X27A0SrHAa46SGDIpPusAd4IEJihZTyGf-8rTZ_GpF34aeLvULilVuO0cpCJxTg=s120", comingSoon: true },
+  { name: "Apex Legends",     logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/1172470/capsule_sm_120.jpg",                                                                  comingSoon: true },
+  { name: "COD",              logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/1938090/capsule_sm_120.jpg",                                                                  comingSoon: true },
+  { name: "PUBG",             logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/578080/capsule_sm_120.jpg",                                                                   comingSoon: true },
+  { name: "League of Legends",logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/2801460/capsule_sm_120.jpg",                                                                  comingSoon: true },
 ];
 
 const STATS = [
@@ -190,15 +191,22 @@ const Index = () => {
             {GAMES.map((g) => (
               <div
                 key={g.name}
-                className="flex items-center gap-2.5 px-4 py-2 rounded-lg border border-border bg-secondary/30 hover:border-primary/20 hover:bg-secondary/50 transition-all"
+                className={`relative flex items-center gap-2.5 px-4 py-2 rounded-lg border transition-all ${
+                  g.comingSoon
+                    ? "border-border/30 bg-secondary/15 opacity-50 cursor-default"
+                    : "border-border bg-secondary/30 hover:border-primary/20 hover:bg-secondary/50"
+                }`}
               >
                 <img
                   src={g.logo}
                   alt={g.name}
-                  className="w-6 h-6 rounded object-cover"
+                  className={`w-6 h-6 rounded object-cover ${g.comingSoon ? "grayscale" : ""}`}
                   onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                 />
                 <span className="font-display text-xs tracking-wider text-muted-foreground">{g.name}</span>
+                {g.comingSoon && (
+                  <span className="text-[8px] font-display font-bold tracking-wide text-muted-foreground/50">SOON</span>
+                )}
               </div>
             ))}
           </div>

@@ -472,9 +472,21 @@ const SettingsPage = () => {
                     <SelectTrigger className="h-8 w-36 bg-secondary/60 border-border text-xs">
                       <SelectValue />
                     </SelectTrigger>
+                    {/* DB-ready: options driven by games.enabled — Coming Soon games disabled until Client supports them */}
                     <SelectContent>
-                      {["CS2","Valorant","Fortnite","Apex Legends","COD","PUBG","League of Legends"].map((g) => (
-                        <SelectItem key={g} value={g}>{g}</SelectItem>
+                      {[
+                        { name: "CS2",               active: true  },
+                        { name: "Valorant",           active: true  },
+                        { name: "Fortnite",           active: false },
+                        { name: "Apex Legends",       active: false },
+                        { name: "COD",                active: false },
+                        { name: "PUBG",               active: false },
+                        { name: "League of Legends",  active: false },
+                      ].map(({ name, active }) => (
+                        <SelectItem key={name} value={name} disabled={!active}
+                          className={!active ? "opacity-40 cursor-not-allowed" : ""}>
+                          {name}{!active ? " (Coming Soon)" : ""}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
