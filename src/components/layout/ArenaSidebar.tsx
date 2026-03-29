@@ -11,7 +11,7 @@ import { useInboxStore }   from "@/stores/inboxStore";
 import { useMessageStore } from "@/stores/messageStore";
 import { getXpInfo }       from "@/lib/xp";
 import { getAvatarSidebarStyle } from "@/lib/avatarBgs";
-import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
+import { renderUserAvatarDiscContent } from "@/lib/userAvatarRing";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
@@ -58,17 +58,17 @@ export function ArenaSidebar() {
 
   const xpInfo        = getXpInfo(user?.stats.xp ?? 0);
   const XpIcon        = XP_ICON_MAP[xpInfo.iconName] ?? Medal;
-  const initials      = (user?.username ?? "??").slice(0, 2).toUpperCase();
+  const initialsSource =
+    user?.avatar === "initials" && user.avatarInitials?.trim()
+      ? user.avatarInitials.trim()
+      : (user?.username ?? "??");
 
   const visibleItems = user?.role === "admin"
     ? NAV_ITEMS
     : NAV_ITEMS.filter((i) => i.url !== "/admin");
 
   const renderAvatar = (size = 28) => {
-    const av = user?.avatar ?? "initials";
     const frame = getAvatarSidebarStyle(user?.avatarBg);
-    const presetUrl =
-      av !== "initials" && !av.startsWith("upload:") ? getAvatarImageUrlFromStorage(av) : null;
     return (
       <div
         className="relative shrink-0 overflow-hidden ring-1 ring-white/10"
@@ -87,13 +87,12 @@ export function ArenaSidebar() {
             background: "linear-gradient(135deg, rgba(255,255,255,0.5) 0%, transparent 45%, transparent 100%)",
           }}
         />
-        {av === "initials"
-          ? <span className="relative z-[1]" style={{ fontSize: size * 0.32, fontWeight: 700, color: "#fff", fontFamily: "inherit", textShadow: "0 1px 8px rgba(0,0,0,0.65)" }}>{initials}</span>
-          : av.startsWith("upload:")
-            ? <img src={av.slice(7)} className={cn("relative z-[1] h-full w-full", identityPortraitCropClassName)} alt="" />
-            : presetUrl
-              ? <img src={presetUrl} className={cn("relative z-[1] h-full w-full", identityPortraitCropClassName)} alt="" decoding="async" />
-              : <span className="relative z-[1]" style={{ fontSize: size * 0.48 }}>{av}</span>}
+        {renderUserAvatarDiscContent({
+          avatar: user?.avatar,
+          initialsSource,
+          sizePx: size,
+          mediaRoundedClass: "rounded-md",
+        })}
       </div>
     );
   };

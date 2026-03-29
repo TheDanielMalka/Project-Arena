@@ -13,6 +13,7 @@ interface AppLayoutProps {
 
 export function AppLayout({ children }: AppLayoutProps) {
   const isAuthenticated = useUserStore((s) => s.isAuthenticated);
+  const pruneExpiredShopEntitlements = useUserStore((s) => s.pruneExpiredShopEntitlements);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -20,6 +21,13 @@ export function AppLayout({ children }: AppLayoutProps) {
       navigate("/auth", { replace: true });
     }
   }, [isAuthenticated, navigate]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    pruneExpiredShopEntitlements();
+    const id = window.setInterval(pruneExpiredShopEntitlements, 60_000);
+    return () => window.clearInterval(id);
+  }, [isAuthenticated, pruneExpiredShopEntitlements]);
 
   if (!isAuthenticated) return null;
 

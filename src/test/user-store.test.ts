@@ -86,4 +86,26 @@ describe("userStore", () => {
     useUserStore.getState().updateProfile({ username: "UpdatedName" });
     expect(useUserStore.getState().user?.username).toBe("UpdatedName");
   });
+
+  it("updateProfile persists equippedBadgeIcon (DB users.equipped_badge_icon)", () => {
+    useUserStore.getState().login("player@arena.gg", "pass");
+    useUserStore.getState().updateProfile({ equippedBadgeIcon: "badge:champions" });
+    expect(useUserStore.getState().user?.equippedBadgeIcon).toBe("badge:champions");
+  });
+
+  it("updateProfile can clear equippedBadgeIcon", () => {
+    useUserStore.getState().login("player@arena.gg", "pass");
+    useUserStore.getState().updateProfile({ equippedBadgeIcon: "badge:founders" });
+    useUserStore.getState().updateProfile({ equippedBadgeIcon: undefined });
+    expect(useUserStore.getState().user?.equippedBadgeIcon).toBeUndefined();
+  });
+
+  it("updateProfile deep-merges stats (partial xp patch)", () => {
+    useUserStore.getState().login("player@arena.gg", "pass");
+    const before = useUserStore.getState().user!.stats;
+    useUserStore.getState().updateProfile({ stats: { xp: before.xp + 100 } });
+    const after = useUserStore.getState().user!.stats;
+    expect(after.xp).toBe(before.xp + 100);
+    expect(after.matches).toBe(before.matches);
+  });
 });
