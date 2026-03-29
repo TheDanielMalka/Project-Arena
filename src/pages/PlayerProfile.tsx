@@ -22,7 +22,7 @@ import { useNotificationStore } from "@/stores/notificationStore";
 import { useFriendStore } from "@/stores/friendStore";
 import type { TicketReason } from "@/types";
 import { cn } from "@/lib/utils";
-import { getAvatarImageUrlFromStorage } from "@/lib/avatarPresets";
+import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
 
 // ─── Constants ────────────────────────────────────────────────
 
@@ -359,7 +359,7 @@ export default function PlayerProfile() {
                     ? <img src={player.avatar.slice(7)} className="w-full h-full object-cover" alt="" />
                     : (() => {
                       const u = getAvatarImageUrlFromStorage(player.avatar);
-                      return u ? <img src={u} className="w-full h-full object-cover" alt="" /> : <span className="text-2xl">{player.avatar}</span>;
+                      return u ? <img src={u} className={cn("h-full w-full", identityPortraitCropClassName)} alt="" decoding="async" /> : <span className="text-2xl">{player.avatar}</span>;
                     })()
                   : player.avatarInitials}
               </div>

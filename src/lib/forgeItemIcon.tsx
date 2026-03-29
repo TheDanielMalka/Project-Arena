@@ -5,7 +5,7 @@
 import type { ReactNode } from "react";
 import type { ForgeCategory } from "@/types";
 import { getAvatarBackground, getAvatarCircleStyle } from "@/lib/avatarBgs";
-import { getAvatarImageUrlFromStorage } from "@/lib/avatarPresets";
+import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
 import { cn } from "@/lib/utils";
 import {
   Crown, Gem, Package, Shield, ShieldCheck, Sparkles, Trophy, Zap,
@@ -71,7 +71,7 @@ export function renderForgeShopIcon(icon: string | undefined, sizeHint: "sm" | "
       <img
         src={presetUrl}
         alt=""
-        className="h-full w-full object-cover"
+        className={cn("h-full w-full", identityPortraitCropClassName)}
         decoding="async"
       />
     );
@@ -184,7 +184,8 @@ function AvatarFace({
       <img
         src={url}
         alt=""
-        className="h-full w-full object-cover"
+        className={cn("h-full w-full", identityPortraitCropClassName)}
+        decoding="async"
       />
     );
   }

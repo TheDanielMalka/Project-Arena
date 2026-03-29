@@ -4,6 +4,8 @@ import { useMatchStore } from "@/stores/matchStore";
 import { useUserStore } from "@/stores/userStore";
 import { PlayerPopoverLayer } from "@/components/players/PlayerCardPopover";
 import type { Match } from "@/types";
+import { MatchRosterAvatar } from "@/components/match/MatchRosterAvatar";
+import { slotToProfileUsername } from "@/lib/matchPlayerDisplay";
 
 // Game logos — mirrors Profile.tsx / History.tsx
 const GAME_CONFIG: Record<string, { logo: string; color: string }> = {
@@ -11,12 +13,6 @@ const GAME_CONFIG: Record<string, { logo: string; color: string }> = {
   "Valorant":     { logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/2181130/capsule_sm_120.jpg", color: "#FF4655" },
   "Fortnite":     { logo: "https://play-lh.googleusercontent.com/FxJDPDIDJKlG9C8lOxaS041X27A0SrHAa46SGDIpPusAd4IEJihZTyGf-8rTZ_GpF34aeLvULilVuO0cpCJxTg=s120", color: "#38BDF8" },
   "Apex Legends": { logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/1172470/capsule_sm_120.jpg", color: "#FC4B08" },
-};
-
-// Player avatar color — DB-ready: will be replaced by real avatar field
-const playerColor = (name: string) => {
-  const palette = ["#F97316","#38BDF8","#A855F7","#22C55E","#EAB308","#EC4899","#14B8A6","#F43F5E"];
-  return palette[(name.charCodeAt(0) + name.charCodeAt(name.length - 1)) % palette.length];
 };
 
 const LiveMatchTracker = () => {
@@ -156,11 +152,10 @@ const LiveMatchTracker = () => {
                       onClick={(e) => openPlayer(e, match.players[0])}
                       className="flex items-center gap-1.5 min-w-0 rounded-lg hover:bg-secondary/40 -mx-0.5 px-0.5 py-0.5"
                     >
-                      <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0"
-                        style={{ background: playerColor(match.players[0]) }}>
-                        {match.players[0][0]?.toUpperCase()}
-                      </div>
-                      <span className="text-xs font-display font-medium text-primary truncate max-w-[80px]">{match.players[0]}</span>
+                      <MatchRosterAvatar slotValue={match.players[0]} size={20} className="border-2 border-card" />
+                      <span className="text-xs font-display font-medium text-primary truncate max-w-[80px]">
+                        {slotToProfileUsername(match.players[0], user?.id, user?.username)}
+                      </span>
                     </button>
                   </div>
                   <div className="flex-1 h-1 rounded-full bg-secondary overflow-hidden">
@@ -172,11 +167,10 @@ const LiveMatchTracker = () => {
                       onClick={(e) => openPlayer(e, match.players[1])}
                       className="flex items-center gap-1.5 min-w-0 rounded-lg hover:bg-secondary/40 -mx-0.5 px-0.5 py-0.5"
                     >
-                      <span className="text-xs font-display font-medium text-arena-orange truncate max-w-[80px] text-right">{match.players[1]}</span>
-                      <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0"
-                        style={{ background: playerColor(match.players[1]) }}>
-                        {match.players[1][0]?.toUpperCase()}
-                      </div>
+                      <span className="text-xs font-display font-medium text-arena-orange truncate max-w-[80px] text-right">
+                        {slotToProfileUsername(match.players[1], user?.id, user?.username)}
+                      </span>
+                      <MatchRosterAvatar slotValue={match.players[1]} size={20} className="border-2 border-card" />
                     </button>
                   </div>
                 </div>
@@ -210,11 +204,8 @@ const LiveMatchTracker = () => {
                           onClick={(e) => openPlayer(e, player)}
                           className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-border bg-secondary/40 text-xs hover:border-primary/40 hover:bg-secondary/60 transition-colors"
                         >
-                          <div className="w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white"
-                            style={{ background: playerColor(player) }}>
-                            {player[0]?.toUpperCase()}
-                          </div>
-                          {player}
+                          <MatchRosterAvatar slotValue={player} size={16} className="border border-card" />
+                          {slotToProfileUsername(player, user?.id, user?.username)}
                         </button>
                       )) : (
                         <span className="text-xs text-muted-foreground">No players listed yet</span>

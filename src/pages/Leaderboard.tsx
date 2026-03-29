@@ -24,7 +24,8 @@ import { useReportStore }       from "@/stores/reportStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { getRankTier, RANK_TIERS } from "@/lib/rankTiers";
 import type { TicketReason }    from "@/types";
-import { getAvatarImageUrlFromStorage } from "@/lib/avatarPresets";
+import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
+import { cn } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -304,10 +305,10 @@ function PlayerActionPopover({ player, children }: PlayerActionPopoverProps) {
               <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-display text-sm font-bold overflow-hidden ${avatarBg(player.username)} ${avatarRing(player.winRate)}`}>
                 {player.avatar && player.avatar !== "initials"
                   ? player.avatar.startsWith("upload:")
-                    ? <img src={player.avatar.slice(7)} className="w-full h-full object-cover" alt="" />
+                    ? <img src={player.avatar.slice(7)} className={cn("h-full w-full", identityPortraitCropClassName)} alt="" />
                     : (() => {
                       const u = getAvatarImageUrlFromStorage(player.avatar);
-                      return u ? <img src={u} className="w-full h-full object-cover" alt="" /> : <span className="text-lg">{player.avatar}</span>;
+                      return u ? <img src={u} className={cn("h-full w-full", identityPortraitCropClassName)} alt="" decoding="async" /> : <span className="text-lg">{player.avatar}</span>;
                     })()
                   : player.username.slice(0, 2)}
               </div>
@@ -645,10 +646,10 @@ const Leaderboard = () => {
                   >
                     {player.avatar && player.avatar !== "initials"
                       ? player.avatar.startsWith("upload:")
-                        ? <img src={player.avatar.slice(7)} className="w-full h-full object-cover" alt={player.username} />
+                        ? <img src={player.avatar.slice(7)} className={cn("h-full w-full", identityPortraitCropClassName)} alt={player.username} decoding="async" />
                         : (() => {
                           const u = getAvatarImageUrlFromStorage(player.avatar);
-                          return u ? <img src={u} className="w-full h-full object-cover" alt="" /> : <span className="text-lg">{player.avatar}</span>;
+                          return u ? <img src={u} className={cn("h-full w-full", identityPortraitCropClassName)} alt="" decoding="async" /> : <span className="text-lg">{player.avatar}</span>;
                         })()
                       : player.username.slice(0, 2)
                     }
@@ -834,10 +835,10 @@ const Leaderboard = () => {
                               >
                                 {player.avatar && player.avatar !== "initials"
                                   ? player.avatar.startsWith("upload:")
-                                    ? <img src={player.avatar.slice(7)} className="w-full h-full object-cover" alt={player.username} />
+                                    ? <img src={player.avatar.slice(7)} className={cn("h-full w-full", identityPortraitCropClassName)} alt={player.username} decoding="async" />
                                     : (() => {
                                       const u = getAvatarImageUrlFromStorage(player.avatar);
-                                      return u ? <img src={u} className="w-full h-full object-cover" alt="" /> : <span className="text-sm">{player.avatar}</span>;
+                                      return u ? <img src={u} className={cn("h-full w-full", identityPortraitCropClassName)} alt="" decoding="async" /> : <span className="text-sm">{player.avatar}</span>;
                                     })()
                                   : player.username.slice(0, 2)
                                 }

@@ -19,7 +19,7 @@ import { useUserStore }    from "@/stores/userStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import type { Game, Friendship, InboxMessage } from "@/types";
 import { cn } from "@/lib/utils";
-import { getAvatarImageUrlFromStorage } from "@/lib/avatarPresets";
+import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
 
 // ─── Constants ────────────────────────────────────────────────
 
@@ -841,10 +841,10 @@ export default function Hub() {
                     >
                       {player.avatar && player.avatar !== "initials"
                         ? player.avatar.startsWith("upload:")
-                          ? <img src={player.avatar.slice(7)} className="w-full h-full object-cover" alt="" />
+                          ? <img src={player.avatar.slice(7)} className={cn("h-full w-full", identityPortraitCropClassName)} alt="" />
                           : (() => {
                             const u = getAvatarImageUrlFromStorage(player.avatar);
-                            return u ? <img src={u} className="w-full h-full object-cover" alt="" /> : <span className="text-xs">{player.avatar}</span>;
+                            return u ? <img src={u} className={cn("h-full w-full", identityPortraitCropClassName)} alt="" decoding="async" /> : <span className="text-xs">{player.avatar}</span>;
                           })()
                         : player.avatarInitials}
                     </div>

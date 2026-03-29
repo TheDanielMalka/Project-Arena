@@ -16,7 +16,7 @@ import {
   Trash2, WifiOff, Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getAvatarImageUrlFromStorage } from "@/lib/avatarPresets";
+import { MatchRosterAvatar } from "@/components/match/MatchRosterAvatar";
 import type { MatchStatus, Game, Match, MatchMode } from "@/types";
 import { useClientStore }  from "@/stores/clientStore";
 import { GAME_MODES, getDefaultMode, getTeamSize, getTotalPlayers, isGameActive } from "@/config/gameModes";
@@ -65,35 +65,6 @@ const statusConfig: Record<MatchStatus, { label: string; color: string; icon: Re
   disputed:    { label: "Disputed",  color: "bg-arena-orange/15 text-arena-orange border-arena-orange/30", icon: AlertCircle },
 };
 
-// Player avatar color — deterministic, DB-ready (will be replaced by real avatar)
-const playerColor = (name: string) => {
-  const palette = ["#F97316","#38BDF8","#A855F7","#22C55E","#EAB308","#EC4899","#14B8A6","#F43F5E","#6366F1","#84CC16"];
-  return palette[(name.charCodeAt(0) + name.charCodeAt(name.length - 1)) % palette.length];
-};
-
-// ─── MiniAvatar ───────────────────────────────────────────────────────────────
-// avatar prop: undefined = initials fallback (DB-ready: will accept "emoji" | "upload:{url}" | CDN)
-const MiniAvatar = ({ name, avatar, size = 16 }: { name: string; avatar?: string; size?: number }) => {
-  const style = { width: size, height: size, background: playerColor(name), fontSize: size * 0.45 };
-  if (avatar && avatar.startsWith("upload:")) return (
-    <img src={avatar.slice(7)} alt={name} style={{ width: size, height: size }}
-      className="rounded-full object-cover border-2 border-card shrink-0" />
-  );
-  const presetUrl = avatar && avatar !== "initials" ? getAvatarImageUrlFromStorage(avatar) : null;
-  if (presetUrl) return (
-    <img src={presetUrl} alt={name} style={{ width: size, height: size }}
-      className="rounded-full object-cover border-2 border-card shrink-0" />
-  );
-  if (avatar && avatar !== "initials") return (
-    <span style={{ ...style, fontSize: size * 0.6 }} className="rounded-full flex items-center justify-center border-2 border-card shrink-0">{avatar}</span>
-  );
-  return (
-    <div style={style} className="rounded-full flex items-center justify-center font-bold border-2 border-card text-white shrink-0">
-      {name[0]?.toUpperCase()}
-    </div>
-  );
-};
-
 // ─── AvatarStack — player pile shown inline on match rows ─────────────────────
 const AvatarStack = ({ players, max = 5 }: { players: string[]; max?: number }) => {
   const shown = players.slice(0, max);
@@ -102,7 +73,7 @@ const AvatarStack = ({ players, max = 5 }: { players: string[]; max?: number }) 
     <div className="flex items-center">
       {shown.map((p, i) => (
         <div key={i} style={{ marginLeft: i === 0 ? 0 : -5, zIndex: shown.length - i }}>
-          <MiniAvatar name={p} size={16} />
+          <MatchRosterAvatar slotValue={p} size={16} highlightSelf={false} className="border-2 border-card" />
         </div>
       ))}
       {extra > 0 && (
@@ -129,7 +100,7 @@ const PlayerRow = ({
   const inner = (
     <>
       {isHost && index === 0 ? <Crown className="h-2.5 w-2.5 text-arena-gold shrink-0" /> : <div className="w-2.5 h-2.5 shrink-0" />}
-      <MiniAvatar name={name} size={14} />
+      <MatchRosterAvatar slotValue={name} size={14} highlightSelf={false} className="border-2 border-card" />
       <span className="text-xs truncate">{name}</span>
     </>
   );

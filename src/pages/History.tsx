@@ -7,6 +7,8 @@ import { useMatchStore } from "@/stores/matchStore";
 import { useUserStore } from "@/stores/userStore";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { PlayerPopoverLayer } from "@/components/players/PlayerCardPopover";
+import { MatchRosterAvatar } from "@/components/match/MatchRosterAvatar";
+import { isCurrentUserSlot, slotToProfileUsername } from "@/lib/matchPlayerDisplay";
 import {
   Search, Swords, Inbox, Gamepad2, Users, Trophy,
   ChevronDown, ChevronUp, TrendingUp, DollarSign, Shield,
@@ -112,18 +114,6 @@ const GameLogo = ({ game, size = 32 }: { game: string; size?: number }) => {
     />
   );
 };
-
-const PlayerInitial = ({ name, isYou = false }: { name: string; isYou?: boolean }) => (
-  <div
-    className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border shrink-0 ${
-      isYou
-        ? "border-primary/60 bg-primary/20 text-primary"
-        : "border-border bg-secondary/40 text-muted-foreground"
-    }`}
-  >
-    {name.slice(0, 2).toUpperCase()}
-  </div>
-);
 
 // ── Status config ─────────────────────────────────────────────────────────
 const STATUS_CONFIG: Record<MatchStatus, { label: string; pillClass: string }> = {
@@ -249,16 +239,16 @@ const History = () => {
   const [expandedMatchId, setExpandedMatchId] = useState<string | null>(null);
   const [playerPopover, setPlayerPopover] = useState<{ slotValue: string; rect: DOMRect } | null>(null);
 
-  const MY_ID = "user-001";
+  const myId = user?.id ?? "";
 
   // ── Only user's matches, no waiting ───────────────────────────────────
   const userMatches = matches.filter((m) => {
-    if (m.status === "waiting") return false;
+    if (m.status === "waiting" || !myId) return false;
     return (
-      m.players.includes(MY_ID) ||
-      m.hostId === MY_ID ||
-      (m.teamA ?? []).includes(MY_ID) ||
-      (m.teamB ?? []).includes(MY_ID)
+      m.players.includes(myId) ||
+      m.hostId === myId ||
+      (m.teamA ?? []).includes(myId) ||
+      (m.teamB ?? []).includes(myId)
     );
   });
 
@@ -271,13 +261,13 @@ const History = () => {
 
   // ── Quick stats (scoped to selected time range) ────────────────────────
   const completedMatches = rangedMatches.filter((m) => m.status === "completed");
-  const wins = completedMatches.filter((m) => m.winnerId === MY_ID).length;
-  const losses = completedMatches.filter((m) => m.winnerId && m.winnerId !== MY_ID).length;
+  const wins = completedMatches.filter((m) => m.winnerId === myId).length;
+  const losses = completedMatches.filter((m) => m.winnerId && m.winnerId !== myId).length;
   const totalEarned = completedMatches
-    .filter((m) => m.winnerId === MY_ID)
+    .filter((m) => m.winnerId === myId)
     .reduce((sum, m) => sum + m.betAmount, 0);
   const winRate = completedMatches.length > 0 ? Math.round((wins / completedMatches.length) * 100) : 0;
-  const last10 = completedMatches.slice(-10).map((m) => m.winnerId === MY_ID);
+  const last10 = completedMatches.slice(-10).map((m) => m.winnerId === myId);
 
   // ── Search / game / status filters applied on top of time range ────────
   const filtered = rangedMatches.filter((m) => {
@@ -489,8 +479,8 @@ const History = () => {
       ) : (
         <div className="space-y-3">
           {paged.map((m) => {
-            const isWin  = m.status === "completed" && m.winnerId === MY_ID;
-            const isLoss = m.status === "completed" && !!m.winnerId && m.winnerId !== MY_ID;
+            const isWin  = m.status === "completed" && m.winnerId === myId;
+            const isLoss = m.status === "completed" && !!m.winnerId && m.winnerId !== myId;
             const isLive = m.status === "in_progress";
             const isExpanded = expandedMatchId === m.id;
             const maxPerTeam = m.maxPerTeam ?? Math.max(1, Math.ceil(m.maxPlayers / 2));
@@ -614,13 +604,15 @@ const History = () => {
                           <div className="space-y-1.5">
                             {teamA.map((player, i) => (
                               <div key={`${m.id}-a-${player}-${i}`} className="flex items-center gap-2">
-                                <PlayerInitial name={player} isYou={player === MY_ID} />
+                                <MatchRosterAvatar slotValue={player} size={28} />
                                 <button
                                   type="button"
                                   className="text-xs truncate text-left hover:text-primary hover:underline font-medium rounded-sm focus:outline-none focus-visible:ring-1 focus-visible:ring-primary"
                                   onClick={(e) => openPlayerPopover(e, player)}
                                 >
-                                  {player === MY_ID ? "You" : player}
+                                  {isCurrentUserSlot(player, user?.id, user?.username)
+                                    ? "You"
+                                    : slotToProfileUsername(player, user?.id, user?.username)}
                                 </button>
                               </div>
                             ))}
@@ -642,13 +634,15 @@ const History = () => {
                           <div className="space-y-1.5">
                             {teamB.map((player, i) => (
                               <div key={`${m.id}-b-${player}-${i}`} className="flex items-center gap-2">
-                                <PlayerInitial name={player} isYou={player === MY_ID} />
+                                <MatchRosterAvatar slotValue={player} size={28} />
                                 <button
                                   type="button"
                                   className="text-xs truncate text-left hover:text-primary hover:underline font-medium rounded-sm focus:outline-none focus-visible:ring-1 focus-visible:ring-primary"
                                   onClick={(e) => openPlayerPopover(e, player)}
                                 >
-                                  {player === MY_ID ? "You" : player}
+                                  {isCurrentUserSlot(player, user?.id, user?.username)
+                                    ? "You"
+                                    : slotToProfileUsername(player, user?.id, user?.username)}
                                 </button>
                               </div>
                             ))}
@@ -668,7 +662,9 @@ const History = () => {
                             className="text-foreground font-medium hover:text-primary hover:underline rounded-sm focus:outline-none focus-visible:ring-1 focus-visible:ring-primary"
                             onClick={(e) => openPlayerPopover(e, m.winnerId)}
                           >
-                            {m.winnerId === MY_ID ? "You" : m.winnerId}
+                            {isCurrentUserSlot(m.winnerId, user?.id, user?.username)
+                              ? "You"
+                              : slotToProfileUsername(m.winnerId, user?.id, user?.username)}
                           </button>
                           <span>·</span>
                           <span className="text-arena-gold font-medium">+${m.betAmount}</span>

@@ -38,7 +38,7 @@ export interface UserProfile {
   tier: string;
   verified: boolean;
   avatarInitials: string;
-  avatar?: string;    // "initials" | emoji | "upload:{dataURL}" | "preset:{id}" — DB: stored as text
+  avatar?: string;    // "initials" | emoji | "upload:{dataURL}" | "preset:{id}" — Identity Studio catalog in avatarPresets.ts · DB: users.avatar TEXT
   avatarBg?: string;  // bgId from avatarBgs.ts — DB: stored as text, defaults to "default"
   preferredGame: Game;
   arenaId: ArenaId;     // DB: users.arena_id — immutable public ID (ARENA-XXXXXX)
