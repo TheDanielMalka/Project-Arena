@@ -72,7 +72,7 @@ const playerColor = (name: string) => {
 
 // ─── MiniAvatar ───────────────────────────────────────────────────────────────
 // avatar prop: undefined = initials fallback (DB-ready: will accept "emoji" | "upload:{url}" | CDN)
-const MiniAvatar = ({ name, avatar, size = 20 }: { name: string; avatar?: string; size?: number }) => {
+const MiniAvatar = ({ name, avatar, size = 16 }: { name: string; avatar?: string; size?: number }) => {
   const style = { width: size, height: size, background: playerColor(name), fontSize: size * 0.45 };
   if (avatar && avatar.startsWith("upload:")) return (
     <img src={avatar.slice(7)} alt={name} style={{ width: size, height: size }}
@@ -95,13 +95,13 @@ const AvatarStack = ({ players, max = 5 }: { players: string[]; max?: number }) 
   return (
     <div className="flex items-center">
       {shown.map((p, i) => (
-        <div key={i} style={{ marginLeft: i === 0 ? 0 : -6, zIndex: shown.length - i }}>
-          <MiniAvatar name={p} size={20} />
+        <div key={i} style={{ marginLeft: i === 0 ? 0 : -5, zIndex: shown.length - i }}>
+          <MiniAvatar name={p} size={16} />
         </div>
       ))}
       {extra > 0 && (
-        <div className="w-5 h-5 rounded-full bg-secondary border-2 border-card flex items-center justify-center text-[9px] text-muted-foreground font-bold"
-          style={{ marginLeft: -6 }}>
+        <div className="w-4 h-4 rounded-full bg-secondary border-2 border-card flex items-center justify-center text-[8px] text-muted-foreground font-bold"
+          style={{ marginLeft: -5 }}>
           +{extra}
         </div>
       )}
@@ -122,26 +122,26 @@ const PlayerRow = ({
 }) => {
   const inner = (
     <>
-      {isHost && index === 0 ? <Crown className="h-3 w-3 text-arena-gold shrink-0" /> : <div className="w-3 h-3 shrink-0" />}
-      <MiniAvatar name={name} size={18} />
-      <span className="text-sm truncate">{name}</span>
+      {isHost && index === 0 ? <Crown className="h-2.5 w-2.5 text-arena-gold shrink-0" /> : <div className="w-2.5 h-2.5 shrink-0" />}
+      <MiniAvatar name={name} size={14} />
+      <span className="text-xs truncate">{name}</span>
     </>
   );
   if (onPlayerClick) {
     return (
       <button
-        className="flex items-center gap-2 py-0.5 w-full text-left hover:text-primary transition-colors rounded"
+        className="flex items-center gap-1.5 py-0.5 w-full text-left hover:text-primary transition-colors rounded"
         onClick={(e) => onPlayerClick(name, e.currentTarget.getBoundingClientRect())}
       >
         {inner}
       </button>
     );
   }
-  return <div className="flex items-center gap-2 py-0.5">{inner}</div>;
+  return <div className="flex items-center gap-1.5 py-0.5">{inner}</div>;
 };
 
 // ─── GameLogo ─────────────────────────────────────────────────────────────────
-const GameLogo = ({ game, size = 28 }: { game: string; size?: number }) => {
+const GameLogo = ({ game, size = 22 }: { game: string; size?: number }) => {
   const cfg = ALL_GAME_CONFIG[game];
   if (!cfg) return <Gamepad2 style={{ width: size, height: size }} className="text-muted-foreground" />;
   return (
@@ -580,8 +580,8 @@ const MatchLobby = () => {
                   </div>
                 </div>
                 {/* Match info */}
-                <div className="rounded-xl border border-border bg-secondary/30 p-3 flex items-center gap-3">
-                  <GameLogo game={match.game} size={36} />
+                <div className="rounded-xl border border-border bg-secondary/30 p-3 flex items-center gap-2.5">
+                  <GameLogo game={match.game} size={29} />
                   <div className="min-w-0 flex-1">
                     <p className="font-medium text-sm truncate">{match.host}'s {match.mode}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">
@@ -590,7 +590,7 @@ const MatchLobby = () => {
                       {match.code ? ` · ${match.code}` : ` · #${match.id}`}
                     </p>
                   </div>
-                  <span className="font-display text-xl font-bold text-arena-gold shrink-0">${match.betAmount}</span>
+                  <span className="font-display text-lg font-bold text-arena-gold shrink-0">${match.betAmount}</span>
                 </div>
                 {/* Verification checklist */}
                 <div className="space-y-2">
@@ -667,13 +667,13 @@ const MatchLobby = () => {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
             <div className="w-full max-w-5xl rounded-2xl border border-border bg-card shadow-2xl overflow-hidden">
               {isLive && <div className="h-0.5 w-full bg-gradient-to-r from-arena-cyan via-primary to-arena-purple animate-pulse" />}
-              <div className="p-5 space-y-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <GameLogo game={selectedPublicLobby.game} size={36} />
+              <div className="p-4 space-y-3">
+                <div className="flex items-start justify-between gap-2.5">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <GameLogo game={selectedPublicLobby.game} size={29} />
                     <div className="min-w-0">
                       <p className="text-[10px] text-muted-foreground uppercase tracking-[0.15em]">Lobby Details</p>
-                      <h3 className="font-display text-xl font-bold truncate">{selectedPublicLobby.host}'s Match</h3>
+                      <h3 className="font-display text-lg font-bold truncate">{selectedPublicLobby.host}'s Match</h3>
                       <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
                         <span>{selectedPublicLobby.game}</span><span>•</span>
                         <Hash className="h-3 w-3 inline" /> {selectedPublicLobby.id}
@@ -681,26 +681,26 @@ const MatchLobby = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className="font-display text-2xl font-bold text-arena-gold">${selectedPublicLobby.betAmount}</span>
+                    <span className="font-display text-xl font-bold text-arena-gold">${selectedPublicLobby.betAmount}</span>
                     <button onClick={() => setSelectedPublicLobbyId(null)}
                       className="px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors font-display">
                       Close
                     </button>
                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                   {[
                     { label: "Team A", players: teamA, accent: "primary", border: "border-primary/20", bg: "bg-primary/5", text: "text-primary" },
                     { label: "Team B", players: teamB, accent: "arena-orange", border: "border-arena-orange/20", bg: "bg-arena-orange/5", text: "text-arena-orange" },
                   ].map(({ label, players, border, bg, text }) => (
-                    <div key={label} className={`rounded-xl border ${border} ${bg} p-3`}>
-                      <p className={`text-xs ${text} font-display uppercase tracking-wider mb-2 flex items-center gap-1`}>
+                    <div key={label} className={`rounded-xl border ${border} ${bg} p-2.5`}>
+                      <p className={`text-xs ${text} font-display uppercase tracking-wider mb-1.5 flex items-center gap-1`}>
                         <Shield className="h-3 w-3" /> {label} ({players.length}/{maxPerTeam})
                       </p>
                       <div className="space-y-0.5">
                         {players.map((p, i) => <PlayerRow key={`${p}-${i}`} name={p} isHost={label === "Team A"} index={i} onPlayerClick={(name, rect) => setPlayerPopover({ slotValue: name, rect })} />)}
                         {Array.from({ length: maxPerTeam - players.length }).map((_, i) => (
-                          <p key={i} className="text-sm text-muted-foreground/30 italic pl-5">Empty slot</p>
+                          <p key={i} className="text-xs text-muted-foreground/30 italic pl-5">Empty slot</p>
                         ))}
                       </div>
                     </div>
@@ -988,7 +988,7 @@ const MatchLobby = () => {
                 return (
                   <button key={amount} disabled={depositConfirm !== null}
                     onClick={() => setSelectedBet(selectedBet === amount ? null : amount)}
-                    className={`relative px-5 py-2 rounded-xl border font-display text-base font-bold transition-all ${
+                    className={`relative px-4 py-1.5 rounded-xl border font-display text-sm font-bold transition-all ${
                       selectedBet === amount
                         ? "border-primary bg-primary/15 text-primary shadow-[0_0_18px_rgba(var(--primary-rgb),0.4)]"
                         : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"
@@ -1013,10 +1013,10 @@ const MatchLobby = () => {
 
           {/* Match list */}
           <div className="rounded-2xl border border-border bg-card overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+            <div className="flex items-center justify-between px-3 py-2.5 border-b border-border">
               <div className="flex items-center gap-2">
-                <Swords className="h-4 w-4 text-arena-purple" />
-                <span className="font-display text-sm font-semibold uppercase tracking-wider">Available Matches</span>
+                <Swords className="h-3.5 w-3.5 text-arena-purple" />
+                <span className="font-display text-xs font-semibold uppercase tracking-wider">Available Matches</span>
               </div>
               <span className="text-xs text-muted-foreground">{filteredPublicMatches.length} lobbies</span>
             </div>
@@ -1033,11 +1033,11 @@ const MatchLobby = () => {
 
                 return (
                   <div key={match.id}
-                    className={`relative flex items-center justify-between px-4 py-3.5 cursor-pointer transition-all ${
+                    className={`relative flex items-center justify-between px-3 py-2.5 cursor-pointer transition-all ${
                       dimmed ? "opacity-35 grayscale pointer-events-none" : "hover:bg-secondary/30"
                     }`}
                     style={{
-                      borderLeft: `3px solid ${cfg?.color ?? "#555"}`,
+                      borderLeft: `2px solid ${cfg?.color ?? "#555"}`,
                       ...(glowing ? { boxShadow: `inset 0 0 30px ${cfg?.color ?? "#888"}08` } : {}),
                     }}
                     onClick={() => !dimmed && handleOpenPublicLobby(match.id)}>
@@ -1047,11 +1047,11 @@ const MatchLobby = () => {
                         <Lock className="h-4 w-4 text-muted-foreground" />
                       </div>
                     )}
-                    <div className="flex items-center gap-3 min-w-0">
-                      <GameLogo game={match.game} size={32} />
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <GameLogo game={match.game} size={26} />
                       <div className="min-w-0">
-                        <p className="font-medium text-sm truncate">{match.host}'s Match</p>
-                        <div className="flex items-center gap-2 mt-0.5">
+                        <p className="font-medium text-xs truncate">{match.host}'s Match</p>
+                        <div className="flex items-center gap-1.5 mt-0.5">
                           {/* Mini avatar stack */}
                           <AvatarStack players={match.players} max={5} />
                           <span className="text-xs text-muted-foreground">{match.players.length}/{match.maxPlayers}</span>
@@ -1063,11 +1063,11 @@ const MatchLobby = () => {
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3 shrink-0">
+                    <div className="flex items-center gap-2 shrink-0">
                       <Badge className={`${status.color} border text-xs gap-1`}>
                         <StatusIcon className="h-3 w-3" />{status.label}
                       </Badge>
-                      <span className="font-display text-base font-bold text-arena-gold">${match.betAmount}</span>
+                      <span className="font-display text-sm font-bold text-arena-gold">${match.betAmount}</span>
                       {canJoin ? (
                         <Button size="sm" disabled={depositConfirm !== null || !canPlay}
                           onClick={(e) => { e.stopPropagation(); handleJoinPublic(match.id, match.betAmount); }}
@@ -1085,7 +1085,7 @@ const MatchLobby = () => {
                 );
               })}
               {filteredPublicMatches.length === 0 && (
-                <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                <div className="px-4 py-6 text-center text-sm text-muted-foreground">
                   {selectedBet ? `No open lobbies for $${selectedBet}.` : "No matches available."}
                 </div>
               )}
@@ -1250,7 +1250,7 @@ const MatchLobby = () => {
           </div>
 
           {/* Custom cards */}
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             {filteredCustom.map((match) => {
               const status = statusConfig[match.status];
               const StatusIcon = status.icon;
@@ -1262,15 +1262,15 @@ const MatchLobby = () => {
 
               return (
                 <div key={match.id} className="rounded-2xl border border-border bg-card overflow-hidden"
-                  style={{ borderLeftWidth: "3px", borderLeftColor: cfg?.color ?? "#555" }}>
+                  style={{ borderLeftWidth: "2px", borderLeftColor: cfg?.color ?? "#555" }}>
                   {isLive && <div className="h-0.5 w-full bg-gradient-to-r from-arena-cyan via-primary to-arena-purple animate-pulse" />}
-                  <div className="p-4 space-y-3">
+                  <div className="p-3 space-y-2.5">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <GameLogo game={match.game} size={32} />
+                      <div className="flex items-center gap-2.5">
+                        <GameLogo game={match.game} size={26} />
                         <div>
-                          <p className="font-medium text-sm flex items-center gap-1.5">
-                            <Crown className="h-3.5 w-3.5 text-arena-gold" />
+                          <p className="font-medium text-xs flex items-center gap-1.5">
+                            <Crown className="h-3 w-3 text-arena-gold" />
                             {match.host}'s {match.mode}
                           </p>
                           <p className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
@@ -1279,36 +1279,36 @@ const MatchLobby = () => {
                           </p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5">
                         <Badge className={`${status.color} border text-xs gap-1`}>
                           <StatusIcon className="h-3 w-3" />{status.label}
                         </Badge>
                         <button onClick={() => handleCopyCode(match.code)}
-                          className="flex items-center gap-1 text-xs font-mono bg-secondary px-2 py-1 rounded-lg border border-border hover:border-primary/50 transition-colors">
+                          className="flex items-center gap-1 text-[11px] font-mono bg-secondary px-1.5 py-0.5 rounded-lg border border-border hover:border-primary/50 transition-colors">
                           <Copy className="h-3 w-3" />
                           {copiedCode === match.code ? "Copied!" : match.code}
                         </button>
-                        <span className="font-display text-base font-bold text-arena-gold">${match.betAmount}</span>
+                        <span className="font-display text-sm font-bold text-arena-gold">${match.betAmount}</span>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-2 gap-2.5">
                       {[
                         { label: "Team A", players: match.teamA, full: teamAFull, border: "border-primary/20", bg: "bg-primary/5", text: "text-primary", joinBorder: "border-primary/30", joinText: "text-primary", joinHover: "hover:bg-primary/10", isA: true },
                         { label: "Team B", players: match.teamB, full: teamBFull, border: "border-arena-orange/20", bg: "bg-arena-orange/5", text: "text-arena-orange", joinBorder: "border-arena-orange/30", joinText: "text-arena-orange", joinHover: "hover:bg-arena-orange/10", isA: false },
                       ].map(({ label, players, full, border, bg, text, joinBorder, joinText, joinHover, isA }) => (
-                        <div key={label} className={`rounded-xl border ${border} ${bg} p-3`}>
-                          <p className={`text-xs ${text} font-display uppercase tracking-wider mb-2 flex items-center gap-1`}>
+                        <div key={label} className={`rounded-xl border ${border} ${bg} p-2.5`}>
+                          <p className={`text-xs ${text} font-display uppercase tracking-wider mb-1.5 flex items-center gap-1`}>
                             <Shield className="h-3 w-3" /> {label} ({players.length}/{match.maxPerTeam})
                           </p>
                           <div className="space-y-0.5">
                             {players.map((p, i) => <PlayerRow key={i} name={p} isHost={isA} index={i} onPlayerClick={(name, rect) => setPlayerPopover({ slotValue: name, rect })} />)}
                             {Array.from({ length: match.maxPerTeam - players.length }).map((_, i) => (
-                              <p key={i} className="text-sm text-muted-foreground/30 italic pl-5">Empty slot</p>
+                              <p key={i} className="text-xs text-muted-foreground/30 italic pl-5">Empty slot</p>
                             ))}
                           </div>
                           {canJoin && !full && canPlay && (
                             <button onClick={() => handleJoinCustom(match.id, match.betAmount, isA ? "A" : "B")}
-                              className={`mt-2 w-full flex items-center justify-center gap-1 py-1.5 rounded-lg border ${joinBorder} ${joinText} ${joinHover} transition-colors text-xs font-display`}>
+                              className={`mt-1.5 w-full flex items-center justify-center gap-1 py-1 rounded-lg border ${joinBorder} ${joinText} ${joinHover} transition-colors text-xs font-display`}>
                               <UserPlus className="h-3 w-3" /> Join {label}
                             </button>
                           )}
