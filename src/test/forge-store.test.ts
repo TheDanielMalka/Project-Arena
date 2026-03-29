@@ -276,14 +276,14 @@ describe("forgeStore — event selectors", () => {
 describe("forgeStore — purchaseItem with AT", () => {
   beforeEach(resetForge);
 
-  it("succeeds when user has enough AT (Emerald Samurai costs 200, user has 500)", () => {
+  it("succeeds when user has enough AT (Emerald Samurai costs 320, user has 500)", () => {
     const result = useForgeStore.getState().purchaseItem("item-004", "AT");
     expect(result.success).toBe(true);
   });
 
   it("deducts correct AT amount after successful purchase", () => {
-    useForgeStore.getState().purchaseItem("item-004", "AT"); // -200 AT
-    expect(useForgeStore.getState().arenaTokens).toBe(300);
+    useForgeStore.getState().purchaseItem("item-004", "AT"); // -320 AT
+    expect(useForgeStore.getState().arenaTokens).toBe(180);
   });
 
   it("records purchase in purchases array", () => {
@@ -292,10 +292,10 @@ describe("forgeStore — purchaseItem with AT", () => {
     expect(purchases).toHaveLength(1);
     expect(purchases[0].itemName).toBe("Emerald Samurai");
     expect(purchases[0].currency).toBe("AT");
-    expect(purchases[0].amount).toBe(200);
+    expect(purchases[0].amount).toBe(320);
   });
 
-  it("fails when user has insufficient AT (Vermilion Edge costs 2400, user has 500)", () => {
+  it("fails when user has insufficient AT (Vermilion Edge costs 3200, user has 500)", () => {
     const result = useForgeStore.getState().purchaseItem("item-001", "AT");
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/insufficient at/i);
@@ -343,8 +343,8 @@ describe("forgeStore — purchaseItem with USDT", () => {
     expect(atTx?.token).toBe("USDT");
   });
 
-  it("fails for items that have no USDT price (Emerald Samurai is AT-only)", () => {
-    const result = useForgeStore.getState().purchaseItem("item-004", "USDT");
+  it("fails for items that have no USDT price (Champion's Seal is AT-only)", () => {
+    const result = useForgeStore.getState().purchaseItem("item-006", "USDT");
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/not available for usdt/i);
   });

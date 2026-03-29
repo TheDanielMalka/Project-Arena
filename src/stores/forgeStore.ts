@@ -10,10 +10,10 @@ import { useWalletStore } from "@/stores/walletStore";
 // USDT→AT display/checkout quote: GET /api/forge/exchange-rate (see ForgeExchangeRateQuote)
 export const SEED_ITEMS: ForgeItem[] = [
   // Premium anime-leaning portraits (stored as `preset:{id}` in users.avatar after purchase)
-  { id: "item-001", name: "Vermilion Edge",  category: "avatar", rarity: "legendary", icon: "preset:vermilion_edge", priceAT: 2400, description: "A radiant duelist — forged for clutch rounds.", featured: true, limited: true, stock: 47, expiresAt: "2026-03-30T00:00:00Z", ownedBy: 23 },
-  { id: "item-002", name: "Titan Shifter",   category: "avatar", rarity: "epic",      icon: "preset:titan_shifter", priceAT: 1200, description: "Unstoppable pressure. Zero fear.", ownedBy: 156 },
-  { id: "item-003", name: "Arcane Emperor",  category: "avatar", rarity: "rare",      icon: "preset:arcane_emperor",priceAT: 600,  description: "Command the arena with arcane authority.", ownedBy: 489 },
-  { id: "item-004", name: "Emerald Samurai", category: "avatar", rarity: "common",    icon: "preset:emerald_samurai",priceAT: 200,  description: "Clean cuts. Cleaner wins.", ownedBy: 1240 },
+  { id: "item-001", name: "Vermilion Edge",  category: "avatar", rarity: "legendary", icon: "preset:vermilion_edge", priceAT: 3200, priceUSDT: 24.99, description: "Identity Studio legendary — radiant duelist portrait for clutch rounds.", featured: true, limited: true, stock: 47, expiresAt: "2026-03-30T00:00:00Z", ownedBy: 23 },
+  { id: "item-002", name: "Titan Shifter",   category: "avatar", rarity: "epic",      icon: "preset:titan_shifter", priceAT: 1899, priceUSDT: 14.99, description: "Heavyweight pressure — semi-realistic forged bust.", ownedBy: 156 },
+  { id: "item-003", name: "Arcane Emperor",  category: "avatar", rarity: "rare",      icon: "preset:arcane_emperor", priceAT: 849, priceUSDT: 6.99, description: "Arcane command — premium painted portrait.", ownedBy: 489 },
+  { id: "item-004", name: "Emerald Samurai", category: "avatar", rarity: "common",    icon: "preset:emerald_samurai", priceAT: 320, priceUSDT: 2.99, description: "Clean edge starter look — Identity Studio line.", ownedBy: 1240 },
 
   // Premium frames (stored as users.avatarBg id after purchase)
   // icon uses `bg:{id}` and is rendered as a mini frame tile in the UI.

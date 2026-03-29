@@ -81,6 +81,7 @@ const SEED_PLAYERS: PublicPlayerProfile[] = [
   {
     id: "user-003", arenaId: "ARENA-SK0003",
     username: "ShadowKill3r", avatarInitials: "SK",
+    avatar: "preset:green_blade",
     rank: "Diamond I", tier: "Diamond", preferredGame: "CS2",
     memberSince: "December 2025", status: "active",
     stats: { matches: 134, wins: 95, losses: 39, winRate: 70.9, totalEarnings: 3180 },
@@ -95,6 +96,7 @@ const SEED_PLAYERS: PublicPlayerProfile[] = [
   {
     id: "U-288", arenaId: "ARENA-BF0005",
     username: "BlazeFury", avatarInitials: "BF",
+    avatar: "preset:ember_valkyrie",
     rank: "Gold III", tier: "Gold", preferredGame: "Valorant",
     memberSince: "January 2026", status: "banned", leaderboardRank: 4,
     stats: { matches: 31, wins: 14, losses: 17, winRate: 45.2, totalEarnings: 180 },
@@ -123,6 +125,7 @@ const SEED_PLAYERS: PublicPlayerProfile[] = [
   {
     id: "user-008", arenaId: "ARENA-CW0009",
     username: "CyberWolf", avatarInitials: "CW",
+    avatar: "preset:steel_fury",
     rank: "Gold II", tier: "Gold", preferredGame: "Valorant",
     memberSince: "February 2026", status: "active",
     stats: { matches: 156, wins: 76, losses: 80, winRate: 48.7, totalEarnings: 1120 },
@@ -137,6 +140,7 @@ const SEED_PLAYERS: PublicPlayerProfile[] = [
   {
     id: "user-010", arenaId: "ARENA-NH0011",
     username: "NightHawk", avatarInitials: "NH",
+    avatar: "preset:void_archon",
     rank: "Platinum II", tier: "Platinum", preferredGame: "CS2",
     memberSince: "December 2025", status: "active",
     stats: { matches: 110, wins: 66, losses: 44, winRate: 60.0, totalEarnings: 1640 },

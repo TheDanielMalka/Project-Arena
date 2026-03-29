@@ -4,6 +4,7 @@ import { useMatchStore } from "@/stores/matchStore";
 import { useUserStore } from "@/stores/userStore";
 import { PlayerPopoverLayer } from "@/components/players/PlayerCardPopover";
 import { slotToProfileUsername } from "@/lib/matchPlayerDisplay";
+import { MatchRosterAvatar } from "@/components/match/MatchRosterAvatar";
 import { Swords, Inbox, Gamepad2, Clock } from "lucide-react";
 
 // ── Game logos — mirrors Profile.tsx / History.tsx ──────────────────────────
@@ -28,8 +29,6 @@ const fmtDate = (iso: string): string => {
   return `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })} · ${time}`;
 };
 
-const MY_ID = "user-001"; // DB-ready: will be replaced by auth session userId
-
 interface RecentMatchesProps {
   showViewAll?: boolean;
   limit?: number;
@@ -42,13 +41,15 @@ export function RecentMatches({ showViewAll = true, limit = 5 }: RecentMatchesPr
   const [playerPopover, setPlayerPopover] = useState<{ slotValue: string; rect: DOMRect } | null>(null);
 
   // Filter to current user's matches only, exclude waiting
+  const myId = user?.id ?? "";
   const recentMatches = matches
     .filter(m =>
+      myId &&
       m.status !== "waiting" &&
-      (m.players.includes(MY_ID) ||
-       m.hostId === MY_ID ||
-       (m.teamA ?? []).includes(MY_ID) ||
-       (m.teamB ?? []).includes(MY_ID))
+      (m.players.includes(myId) ||
+       m.hostId === myId ||
+       (m.teamA ?? []).includes(myId) ||
+       (m.teamB ?? []).includes(myId))
     )
     .slice(0, limit);
 
@@ -97,8 +98,8 @@ export function RecentMatches({ showViewAll = true, limit = 5 }: RecentMatchesPr
         <div className="divide-y divide-border/40">
           {recentMatches.map((m) => {
             const isLive = m.status === "in_progress";
-            const isWin  = m.status === "completed" && m.winnerId === MY_ID;
-            const isLoss = m.status === "completed" && !!m.winnerId && m.winnerId !== MY_ID;
+            const isWin  = m.status === "completed" && m.winnerId === myId;
+            const isLoss = m.status === "completed" && !!m.winnerId && m.winnerId !== myId;
             const cfg = GAME_CONFIG[m.game];
 
             const borderColor = isWin ? "#22C55E" : isLoss ? "#EF4444" : isLive ? "#38BDF8" : "#6B7280";
@@ -115,10 +116,10 @@ export function RecentMatches({ showViewAll = true, limit = 5 }: RecentMatchesPr
             const oppSlot =
               m.type === "custom"
                 ? m.host
-                : m.hostId === MY_ID
-                  ? (m.players.find((p) => p !== MY_ID) ??
+                : m.hostId === myId
+                  ? (m.players.find((p) => p !== myId) ??
                       m.teamB?.[0] ??
-                      m.teamA?.find((p) => p !== MY_ID) ??
+                      m.teamA?.find((p) => p !== myId) ??
                       "Opponent")
                   : m.host;
             const oppDisplay = slotToProfileUsername(oppSlot, user?.id, user?.username);
@@ -129,6 +130,8 @@ export function RecentMatches({ showViewAll = true, limit = 5 }: RecentMatchesPr
                 style={{ borderLeft: `3px solid ${borderColor}` }}
                 onClick={() => navigate("/history")}>
                 {isLive && <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-arena-cyan/40 to-transparent" />}
+
+                <MatchRosterAvatar slotValue={oppSlot} size={36} className="border-2 border-card" />
 
                 {/* Game logo */}
                 {cfg ? (

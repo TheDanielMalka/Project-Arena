@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { usePlayerStore } from "@/stores/playerStore";
+import { getPresetById } from "@/lib/avatarPresets";
 
 // ─── playerStore — data integrity & API-readiness ──────────────
 //
@@ -100,6 +101,16 @@ describe("playerStore — seed data integrity", () => {
     expect(tiers.has("Diamond")).toBe(true);
     expect(tiers.has("Platinum")).toBe(true);
     expect(tiers.has("Silver")).toBe(true);
+  });
+
+  it("seed preset avatars reference valid Identity Studio ids", () => {
+    const { players } = usePlayerStore.getState();
+    for (const p of players) {
+      if (!p.avatar || p.avatar === "initials") continue;
+      expect(p.avatar.startsWith("preset:")).toBe(true);
+      const id = p.avatar.slice(7);
+      expect(getPresetById(id)).toBeDefined();
+    }
   });
 
   it("covers only active preferred games (CS2, Valorant — Coming Soon games not in seed)", () => {

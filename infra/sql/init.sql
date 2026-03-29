@@ -34,7 +34,7 @@ CREATE TABLE users (
     tier            VARCHAR(20) DEFAULT 'Bronze',
     verified        BOOLEAN DEFAULT FALSE,
     avatar_initials VARCHAR(4),
-    avatar          TEXT DEFAULT 'initials',    -- 'initials' | emoji | 'upload:{dataURL}'
+    avatar          TEXT DEFAULT 'initials',    -- 'initials' | emoji | 'upload:{dataURL}' | 'preset:{id}' (Identity Studio — src/lib/avatarPresets.ts; optional static /avatars/identity/*)
     avatar_bg       TEXT DEFAULT 'default',     -- bgId from avatarBgs.ts
     preferred_game  game DEFAULT 'CS2',
     arena_id        VARCHAR(12) UNIQUE,   -- immutable public ID (ARENA-XXXXXX) — set on registration, never changed
@@ -389,7 +389,7 @@ CREATE TABLE forge_items (
     description TEXT NOT NULL,
     category    TEXT NOT NULL CHECK (category IN ('avatar','frame','badge','boost','vip','bundle')),
     rarity      TEXT NOT NULL CHECK (rarity IN ('common','rare','epic','legendary')),
-    icon        TEXT NOT NULL,   -- emoji or token: preset:id | bg:id | badge/boost/vip/bundle:… (aligned with UI forgeStore)
+    icon        TEXT NOT NULL,   -- preset:id = Identity Studio (avatarPresets.ts); also bg:/badge:/boost:/vip:/bundle:
     price_at    INTEGER,                   -- NULL = not available for AT
     price_usdt  NUMERIC(10,2),             -- NULL = not available for USDT
     featured    BOOLEAN NOT NULL DEFAULT FALSE,

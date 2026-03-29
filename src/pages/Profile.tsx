@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import {
   User, Shield, Gamepad2, Wallet, Link2, CheckCircle, XCircle,
   Copy, ExternalLink, Edit2, Save, Trophy, TrendingUp, Zap, Smartphone, Monitor, X,
-  Camera, Lock, Upload, Star, Crown, Medal, Gem, Sparkles, Flame,
+  Camera, Lock, Upload, Crown, Medal, Gem, Sparkles, Flame,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -34,10 +34,12 @@ import {
   FREE_AVATAR_IDS,
   EVENT_AVATAR_PRESETS,
   avatarPresetKey,
-  getAvatarPresetImageUrl,
+  getPortraitUrlForPreset,
   getAvatarImageUrlFromStorage,
   getPresetId,
   isPresetAvatar,
+  identityPortraitCropClassName,
+  identityGridPortraitClassName,
 } from "@/lib/avatarPresets";
 import { SEED_ITEMS } from "@/stores/forgeStore";
 
@@ -92,10 +94,7 @@ const Profile = () => {
   const forgePurchases     = useForgeStore((s) => s.purchases);
 
   // DB-ready: unlock flags should come from API/event progress
-  const EVENT_AVATARS = EVENT_AVATAR_PRESETS.map((p) => ({
-    ...p,
-    unlocked: p.id === "gearburst_ace", // sample unlocked for UI; replace with real event unlocks
-  }));
+  const sampleEventUnlockedId = "rift_runner";
 
   const renderAvatarContent = (avatar: string, size: "sm" | "lg" = "lg") => {
     const textSize  = size === "lg" ? "text-xl" : "text-sm";
@@ -109,9 +108,11 @@ const Profile = () => {
         </span>
       );
     }
-    if (avatar.startsWith("upload:")) return <img src={avatar.slice(7)} className="w-full h-full object-cover rounded-full" alt="avatar" />;
+    if (avatar.startsWith("upload:"))
+      return <img src={avatar.slice(7)} className={cn("w-full h-full rounded-full", identityPortraitCropClassName)} alt="avatar" />;
     const presetUrl = getAvatarImageUrlFromStorage(avatar);
-    if (presetUrl) return <img src={presetUrl} className="w-full h-full object-cover rounded-full" alt="" />;
+    if (presetUrl)
+      return <img src={presetUrl} className={cn("w-full h-full rounded-full", identityPortraitCropClassName)} alt="" decoding="async" />;
     return <span className={cn(emojiSize, "drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]")}>{avatar}</span>;
   };
   const [steamId, setSteamId] = useState(user?.steamId ?? "76561198XXXXXXXX");
@@ -216,8 +217,8 @@ const Profile = () => {
       const id = getPresetId(draftAvatar);
       if (id == null) return false;
       if (FREE_AVATAR_IDS.has(id)) return true;
-      const evt = EVENT_AVATARS.find((e) => e.id === id);
-      if (evt) return !!evt.unlocked;
+      const evt = EVENT_AVATAR_PRESETS.find((e) => e.id === id);
+      if (evt) return id === sampleEventUnlockedId;
       // Premium presets: allow if already equipped, or purchased in Forge
       if (selectedAvatar === draftAvatar) return true;
       const item = SEED_ITEMS.find((i) => i.category === "avatar" && i.icon === draftAvatar);
@@ -865,7 +866,7 @@ const Profile = () => {
           )}
 
           {/* ══ AVATAR CONTENT ══ */}
-          {/* FREE — illustrated roster (DiceBear); stores as preset:id */}
+          {/* FREE — Identity Studio portraits; stores as preset:id */}
           {pickerMode === "avatar" && avatarTab === "free" && (
             <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
               <button
@@ -907,9 +908,11 @@ const Profile = () => {
                     <span className="pointer-events-none absolute inset-[2px] rounded-md border border-white/5" />
                     <span className="relative z-[1] flex h-full w-full flex-col items-center justify-end pb-1 pt-0.5 px-0.5">
                       <img
-                        src={getAvatarPresetImageUrl(p.seed, p.collection ?? "pixel-art")}
+                        src={getPortraitUrlForPreset(p)}
                         alt=""
-                        className="h-[62%] w-[62%] shrink-0 object-cover rounded-full ring-1 ring-black/40 shadow-[0_2px_12px_rgba(0,0,0,0.55)] transition-transform duration-200 group-hover:scale-105"
+                        className={identityGridPortraitClassName(true)}
+                        width={96}
+                        height={96}
                         loading="lazy"
                         decoding="async"
                       />
@@ -925,50 +928,52 @@ const Profile = () => {
 
           {/* EVENT */}
           {pickerMode === "avatar" && avatarTab === "event" && (
-            <div className="grid grid-cols-2 gap-2">
-              {EVENT_AVATARS.map(({ id, label, seed, collection, unlocked }) => {
-                const key = avatarPresetKey(id);
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+              {EVENT_AVATAR_PRESETS.map((p) => {
+                const unlocked = p.id === sampleEventUnlockedId;
+                const key = avatarPresetKey(p.id);
                 const selected = draftAvatar === key;
                 return (
                   <button
-                    key={id}
+                    key={p.id}
                     type="button"
+                    title={p.label}
                     onClick={() => { setDraftAvatar(key); }}
                     className={cn(
-                      "relative flex items-center gap-2.5 rounded-lg border p-2.5 transition-all text-left",
+                      "group relative aspect-square rounded-lg overflow-hidden border transition-all text-left",
+                      "bg-gradient-to-br from-arena-gold/15 via-black/90 to-zinc-950",
+                      "shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_4px_12px_rgba(0,0,0,0.5)]",
                       unlocked
-                        ? "border-arena-gold/40 bg-arena-gold/5 hover:bg-arena-gold/10 cursor-pointer"
-                        : "border-border bg-secondary/20 cursor-pointer opacity-70",
-                      selected && unlocked && "ring-2 ring-arena-gold/50",
+                        ? "border-arena-gold/45 hover:border-arena-gold/60"
+                        : "border-white/10 opacity-80 hover:opacity-95",
+                      selected && unlocked && "ring-2 ring-arena-gold/50 scale-[1.02]",
+                      selected && !unlocked && "ring-2 ring-muted-foreground/40",
                     )}
                   >
-                    <span
-                      className={cn(
-                        "relative flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ring-1 ring-white/10 overflow-hidden",
-                        unlocked
-                          ? "bg-gradient-to-br from-arena-gold/30 to-black/80 border border-arena-gold/35"
-                          : "bg-secondary/40 grayscale",
-                      )}
-                    >
+                    {!unlocked && (
+                      <span className="absolute inset-0 z-[2] flex items-center justify-center bg-black/50">
+                        <Lock className="h-4 w-4 text-white/90" />
+                      </span>
+                    )}
+                    <span className="pointer-events-none absolute inset-0 opacity-35 bg-[conic-gradient(from_200deg_at_50%_115%,transparent,rgba(212,175,55,0.25),transparent)]" />
+                    <span className="pointer-events-none absolute inset-[2px] rounded-md border border-white/5" />
+                    <span className="relative z-[1] flex h-full w-full flex-col items-center justify-end pb-1 pt-0.5 px-0.5">
                       <img
-                        src={getAvatarPresetImageUrl(seed, collection ?? "pixel-art")}
+                        src={getPortraitUrlForPreset(p)}
                         alt=""
-                        className="h-full w-full object-cover"
+                        className={identityGridPortraitClassName(unlocked)}
+                        width={96}
+                        height={96}
                         loading="lazy"
                         decoding="async"
                       />
-                      {!unlocked && (
-                        <span className="absolute inset-0 flex items-center justify-center bg-black/55">
-                          <Lock className="h-4 w-4 text-white/85" />
-                        </span>
-                      )}
+                      <span className="mt-0.5 w-full truncate text-center text-[7px] font-display font-bold uppercase tracking-tight text-white/90 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]">
+                        {p.label}
+                      </span>
+                      <span className="text-[6px] text-arena-gold/90 font-display uppercase tracking-wider">
+                        {unlocked ? "Unlocked" : "Event"}
+                      </span>
                     </span>
-                    <div className="min-w-0">
-                      <p className="text-[11px] font-display font-bold leading-tight">{label}</p>
-                      {unlocked
-                        ? <p className="text-[9px] text-arena-gold flex items-center gap-1 mt-0.5"><Star className="h-2.5 w-2.5 shrink-0" /> Unlocked</p>
-                        : <p className="text-[9px] text-muted-foreground flex items-center gap-1 mt-0.5"><Lock className="h-2.5 w-2.5 shrink-0" /> Event only</p>}
-                    </div>
                   </button>
                 );
               })}
@@ -995,7 +1000,16 @@ const Profile = () => {
                   >
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-black/50 text-lg ring-1 ring-white/10 border border-arena-purple/30 overflow-hidden">
                       {getAvatarImageUrlFromStorage(item.icon)
-                        ? <img src={getAvatarImageUrlFromStorage(item.icon)!} className="w-full h-full object-cover" alt="" />
+                        ? (
+                          <img
+                            src={getAvatarImageUrlFromStorage(item.icon)!}
+                            className={cn("h-full w-full", identityPortraitCropClassName)}
+                            alt=""
+                            width={80}
+                            height={80}
+                            decoding="async"
+                          />
+                        )
                         : item.icon}
                     </span>
                     <div className="min-w-0 flex-1">

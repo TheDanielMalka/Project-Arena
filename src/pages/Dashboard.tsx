@@ -11,7 +11,8 @@ import { useMatchStore } from "@/stores/matchStore";
 import { Swords, Wallet, History, TrendingUp, Radio, Gift, Medal, Shield, Trophy, Gem, Sparkles, Crown, X, type LucideIcon } from "lucide-react";
 import { getXpInfo } from "@/lib/xp";
 import { getAvatarSidebarStyle } from "@/lib/avatarBgs";
-import { getAvatarImageUrlFromStorage } from "@/lib/avatarPresets";
+import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
+import { cn } from "@/lib/utils";
 
 const XP_ICON_MAP: Record<string, LucideIcon> = {
   Medal, Shield, Trophy, Gem, Sparkles, Crown,
@@ -61,9 +62,11 @@ const Dashboard = () => {
   const renderAvatar = (size: number) => {
     const av = user?.avatar ?? "initials";
     if (av === "initials") return <span className="font-display font-bold text-white" style={{ fontSize: size * 0.4 }}>{initials}</span>;
-    if (av.startsWith("upload:")) return <img src={av.slice(7)} className="w-full h-full object-cover rounded-2xl" alt="avatar" />;
+    if (av.startsWith("upload:"))
+      return <img src={av.slice(7)} className={cn("h-full w-full rounded-2xl", identityPortraitCropClassName)} alt="avatar" />;
     const presetUrl = getAvatarImageUrlFromStorage(av);
-    if (presetUrl) return <img src={presetUrl} className="w-full h-full object-cover rounded-2xl" alt="" />;
+    if (presetUrl)
+      return <img src={presetUrl} className={cn("h-full w-full rounded-2xl", identityPortraitCropClassName)} alt="" decoding="async" />;
     return <span style={{ fontSize: size * 0.45 }}>{av}</span>;
   };
 
