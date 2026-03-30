@@ -264,8 +264,23 @@ const MatchLobby = () => {
     return { maxPerTeam, teamA: match.players.slice(0, maxPerTeam), teamB: match.players.slice(maxPerTeam, maxPerTeam * 2) };
   };
 
+  /** Same rules as Join buttons — blocks programmatic / race paths until client is ready (DB/client_sessions alignment). */
+  const guardCanPlay = useCallback((): boolean => {
+    if (useClientStore.getState().canPlay()) return true;
+    useNotificationStore.getState().addNotification({
+      type: "system",
+      title: "Arena Client required",
+      message:
+        clientStatus === "connected"
+          ? "Wait until the desktop client finishes starting, then try again."
+          : "Download and run the Arena desktop client before joining a match.",
+    });
+    return false;
+  }, [clientStatus]);
+
   const handleJoinPublic = (matchId: string, betAmount?: number) => {
     if (!user) return;
+    if (!guardCanPlay()) return;
     const bet = betAmount ?? selectedBet;
     if (!bet) return;
     setSelectedBet(bet);
@@ -277,12 +292,14 @@ const MatchLobby = () => {
   };
   const handleOpenPublicLobby = (matchId: string) => setSelectedPublicLobbyId(matchId);
   const handleJoinCustom = (matchId: string, bet: number, team?: "A" | "B") => {
+    if (!guardCanPlay()) return;
     setPasswordPrompt({ matchId, bet, team }); setPasswordInput(""); setPasswordError(false); setShowPassword(false);
   };
   const handlePasswordSubmit = () => {
     if (!passwordPrompt) return;
     const match = customMatches.find(m => m.id === passwordPrompt.matchId);
     if (match && passwordInput === match.password) {
+      if (!guardCanPlay()) return;
       setPasswordPrompt(null); setPasswordInput("");
       setDepositConfirm({ match, team: passwordPrompt.team });
       setDepositStep("idle");
@@ -290,6 +307,7 @@ const MatchLobby = () => {
   };
   const handleDepositConfirm = () => {
     if (!depositConfirm || !user) return;
+    if (!guardCanPlay()) return;
     setDepositStep("verifying");
     // Simulates contract pre-check (wallet + identity + amount).
     // DB-ready: replace with wagmi readContract / balanceOf check in Issue #Frontend-Wallet
@@ -297,6 +315,7 @@ const MatchLobby = () => {
   };
   const handleDepositFinal = () => {
     if (!depositConfirm || !user) return;
+    if (!guardCanPlay()) return;
     const { match, team } = depositConfirm;
     // DB-ready: replace with wagmi writeContract(joinMatch, { value: stakePerPlayer }) in Issue #Frontend-Wallet
     lockEscrow(match.betAmount, match.id);
@@ -469,8 +488,8 @@ const MatchLobby = () => {
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
               {clientStatus === "disconnected"
-                ? "Download and run the Arena desktop client to join matches. You can browse lobbies and view stats without it."
-                : "Arena Client is starting up. Match joining will be available shortly."}
+                ? "Download and run the Arena desktop client to join matches. You can browse lobbies and view stats without it. Ranked play and escrow settlement expect a live client synced with the engine."
+                : "Arena Client is starting up. Match joining will be available shortly — the lobby badge updates faster when the capture stack becomes ready."}
             </p>
           </div>
           {clientStatus === "disconnected" && (

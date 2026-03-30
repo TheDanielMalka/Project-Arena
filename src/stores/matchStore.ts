@@ -134,7 +134,13 @@ export const useMatchStore = create<MatchState>((set, get) => ({
     set((state) => ({
       matches: state.matches.map((m) =>
         m.id === matchId
-          ? { ...m, status, winnerId, ...(status === "in_progress" ? { startedAt: new Date().toISOString() } : {}), ...(status === "completed" ? { endedAt: new Date().toISOString() } : {}) }
+          ? {
+              ...m,
+              status,
+              ...(winnerId !== undefined ? { winnerId } : {}),
+              ...(status === "in_progress" ? { startedAt: new Date().toISOString() } : {}),
+              ...(status === "completed" ? { endedAt: new Date().toISOString() } : {}),
+            }
           : m
       ),
     }));

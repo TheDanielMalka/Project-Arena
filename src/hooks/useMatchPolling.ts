@@ -9,7 +9,9 @@ import { useEffect, useRef, useCallback } from "react";
 import { useMatchStore } from "@/stores/matchStore";
 import { useWalletStore } from "@/stores/walletStore";
 import { useNotificationStore } from "@/stores/notificationStore";
+import { useUserStore } from "@/stores/userStore";
 import { getMatchStatus, isEngineOnline } from "@/lib/engine-api";
+import { resolveUserWonFromEngineWinner } from "@/lib/match-engine-sync";
 import type { MatchStatus } from "@/types";
 
 interface UseMatchPollingOptions {
@@ -38,6 +40,7 @@ export function useMatchPolling({
   const updateMatchStatus = useMatchStore((s) => s.updateMatchStatus);
   const releaseEscrow = useWalletStore((s) => s.releaseEscrow);
   const addNotification = useNotificationStore((s) => s.addNotification);
+  const user = useUserStore((s) => s.user);
 
   const pollMatches = useCallback(async () => {
     // Check engine connectivity (only once per session)
@@ -66,23 +69,33 @@ export function useMatchPolling({
 
         // If status changed — update everything
         if (newStatus !== match.status) {
-          updateMatchStatus(match.id, newStatus);
+          updateMatchStatus(
+            match.id,
+            newStatus,
+            newStatus === "completed" ? engineStatus.winnerId : undefined,
+          );
 
           if (newStatus === "completed") {
-            // Release escrow based on result
-            // Engine determines winner, frontend updates wallet
-            const won = true; // TODO: compare winnerId with current user
-            releaseEscrow(match.betAmount, match.id, won);
-
-            addNotification({
-              type: "match_result",
-              title: won ? "🏆 Victory!" : "❌ Defeat",
-              message: `Match ${match.id} completed. ${
-                won
-                  ? `You won $${match.betAmount * 2}!`
-                  : `You lost $${match.betAmount}.`
-              }`,
-            });
+            // CONTRACT-ready: releaseEscrow only when engine supplies winner_id (or user logged in for comparison)
+            const outcome = resolveUserWonFromEngineWinner(engineStatus.winnerId, user);
+            if (outcome === null) {
+              addNotification({
+                type: "match_result",
+                title: "Match completed",
+                message: `Match ${match.id} finished. Winner not synced from engine yet — escrow release waits for API/on-chain confirmation.`,
+              });
+            } else {
+              releaseEscrow(match.betAmount, match.id, outcome);
+              addNotification({
+                type: "match_result",
+                title: outcome ? "🏆 Victory!" : "❌ Defeat",
+                message: `Match ${match.id} completed. ${
+                  outcome
+                    ? `You won $${match.betAmount * 2}!`
+                    : `You lost $${match.betAmount}.`
+                }`,
+              });
+            }
           }
 
           if (newStatus === "disputed") {
@@ -97,7 +110,7 @@ export function useMatchPolling({
         console.warn(`[Arena] Failed to poll match ${match.id}:`, err);
       }
     }
-  }, [matches, matchIds, updateMatchStatus, releaseEscrow, addNotification]);
+  }, [matches, matchIds, user, updateMatchStatus, releaseEscrow, addNotification]);
 
   useEffect(() => {
     if (!enabled) return;

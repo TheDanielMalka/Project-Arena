@@ -153,6 +153,14 @@ describe("matchStore", () => {
     expect(match.startedAt).toBeDefined();
   });
 
+  it("updateMatchStatus without winnerId does not clear existing winnerId", () => {
+    useMatchStore.getState().updateMatchStatus("h11", "completed", "WinnerX");
+    useMatchStore.getState().updateMatchStatus("h11", "in_progress");
+    const match = useMatchStore.getState().matches.find((m) => m.id === "h11")!;
+    expect(match.status).toBe("in_progress");
+    expect(match.winnerId).toBe("WinnerX");
+  });
+
   // ── getMatchByCode ────────────────────────────────────────────────────────
 
   it("getMatchByCode returns correct match", () => {
