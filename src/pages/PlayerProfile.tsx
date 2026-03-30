@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -19,7 +19,7 @@ import { usePlayerStore } from "@/stores/playerStore";
 import { useReportStore } from "@/stores/reportStore";
 import { useUserStore } from "@/stores/userStore";
 import { useNotificationStore } from "@/stores/notificationStore";
-import { useFriendStore } from "@/stores/friendStore";
+import { ignoredRefMatchesContext, useFriendStore } from "@/stores/friendStore";
 import type { TicketReason } from "@/types";
 import { cn } from "@/lib/utils";
 import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
@@ -276,14 +276,29 @@ export default function PlayerProfile() {
   const sendFriendRequest = useFriendStore((s) => s.sendFriendRequest);
   const friendships       = useFriendStore((s) => s.friendships);
   const declineRequest    = useFriendStore((s) => s.declineRequest);
-  const blockPlayer       = useFriendStore((s) => s.blockPlayer);
-  const isIgnored         = useFriendStore((s) => s.isIgnored);
-  const unignoreUser      = useFriendStore((s) => s.unignoreUser);
-  const addNotif          = useNotificationStore((s) => s.addNotification);
+  const blockPlayer        = useFriendStore((s) => s.blockPlayer);
+  const ignoredUsers       = useFriendStore((s) => s.ignoredUsers);
+  const unignoreForRoster  = useFriendStore((s) => s.unignoreForRoster);
+  const addNotif           = useNotificationStore((s) => s.addNotification);
   const [reportOpen, setReportOpen] = useState(false);
   const [frModalOpen, setFrModalOpen] = useState(false);
 
   const player = getPlayerByUsername(username ?? "");
+
+  const profileIgnoreCtx = useMemo(() => {
+    if (!player) return null;
+    return {
+      canonicalUserId: player.id,
+      displayUsername: player.username,
+      rosterSlot: username ?? player.username,
+      profileId: player.id,
+    };
+  }, [player, username]);
+
+  const profileIgnored = useMemo(() => {
+    if (!profileIgnoreCtx) return false;
+    return ignoredUsers.some((u) => ignoredRefMatchesContext(profileIgnoreCtx, u));
+  }, [ignoredUsers, profileIgnoreCtx]);
 
   if (!player) {
     return (
@@ -388,12 +403,12 @@ export default function PlayerProfile() {
                 )}
               </div>
               {!isSelf && currentUser && (
-                isIgnored(player.id) ? (
+                profileIgnored ? (
                   <button
                     type="button"
                     title="Unignore player"
                     onClick={() => {
-                      unignoreUser(player.id);
+                      if (profileIgnoreCtx) unignoreForRoster(profileIgnoreCtx);
                       addNotif({
                         type: "system",
                         title: "Unignored",
@@ -410,7 +425,12 @@ export default function PlayerProfile() {
                     title="Ignore player"
                     onClick={() => {
                       if (!currentUser) return;
-                      blockPlayer({ myId: currentUser.id, targetUserId: player.id, targetUsername: player.username });
+                      blockPlayer({
+                        myId: currentUser.id,
+                        targetUserId: player.id,
+                        targetUsername: player.username,
+                        rosterSlot: username ?? player.username,
+                      });
                     }}
                     className="mt-0.5 h-8 w-8 rounded-lg border border-destructive/25 flex items-center justify-center text-destructive/80 hover:bg-destructive/10 transition-colors shrink-0"
                   >
@@ -514,13 +534,13 @@ export default function PlayerProfile() {
                 );
               })()}
               {currentUser && !isSelf && (
-                isIgnored(player.id) ? (
+                profileIgnored ? (
                   <Button
                     variant="outline"
                     size="sm"
                     className="border-border/50 text-muted-foreground gap-1.5"
                     onClick={() => {
-                      unignoreUser(player.id);
+                      if (profileIgnoreCtx) unignoreForRoster(profileIgnoreCtx);
                       addNotif({
                         type: "system",
                         title: "Unignored",
@@ -535,7 +555,14 @@ export default function PlayerProfile() {
                     variant="outline"
                     size="sm"
                     className="border-destructive/30 text-destructive hover:bg-destructive/10 gap-1.5"
-                    onClick={() => blockPlayer({ myId: currentUser.id, targetUserId: player.id, targetUsername: player.username })}
+                    onClick={() =>
+                      blockPlayer({
+                        myId: currentUser.id,
+                        targetUserId: player.id,
+                        targetUsername: player.username,
+                        rosterSlot: username ?? player.username,
+                      })
+                    }
                   >
                     <Ban className="h-3.5 w-3.5" /> Ignore
                   </Button>

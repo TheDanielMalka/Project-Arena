@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { useFriendStore } from "@/stores/friendStore";
+import { ignoredRefMatchesContext, useFriendStore } from "@/stores/friendStore";
 
 beforeEach(() => {
   useFriendStore.setState({ friendships: [], ignoredUsers: [] });
@@ -144,6 +144,39 @@ describe("friendStore — derived selectors", () => {
     expect(useFriendStore.getState().getRelationship("user-002")).toBe("accepted");
     expect(useFriendStore.getState().getRelationship("user-003")).toBe("pending");
     expect(useFriendStore.getState().getRelationship("user-999")).toBeNull();
+  });
+});
+
+describe("friendStore — isIgnored / unignoreUser (id + username)", () => {
+  it("isIgnored matches by display username when canonical id differs", () => {
+    useFriendStore.setState({
+      ignoredUsers: [{ userId: "legacy-wrong-id", username: "NightHawk" }],
+    });
+    expect(useFriendStore.getState().isIgnored("user-010", "NightHawk")).toBe(true);
+    expect(useFriendStore.getState().isIgnored("user-010")).toBe(false);
+  });
+
+  it("unignoreUser removes row matching userId or display username", () => {
+    useFriendStore.setState({
+      ignoredUsers: [{ userId: "legacy-wrong-id", username: "NightHawk" }],
+    });
+    useFriendStore.getState().unignoreUser("user-010", "NightHawk");
+    expect(useFriendStore.getState().ignoredUsers).toHaveLength(0);
+  });
+
+  it("legacy synthetic id + raw id username matches roster opened by display name", () => {
+    useFriendStore.setState({
+      ignoredUsers: [{ userId: "u-user010", username: "user-010" }],
+    });
+    const ctx = {
+      canonicalUserId: "user-010",
+      displayUsername: "NightHawk",
+      rosterSlot: "NightHawk",
+      profileId: "user-010",
+    };
+    expect(ignoredRefMatchesContext(ctx, { userId: "u-user010", username: "user-010" })).toBe(true);
+    useFriendStore.getState().unignoreForRoster(ctx);
+    expect(useFriendStore.getState().ignoredUsers).toHaveLength(0);
   });
 });
 

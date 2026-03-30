@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { StatsCards } from "@/components/dashboard/StatsCards";
 import { WinLossChart } from "@/components/dashboard/WinLossChart";
@@ -8,11 +8,12 @@ import { DailyChallenges } from "@/components/dashboard/DailyChallenges";
 import LiveMatchTracker from "@/components/match/LiveMatchTracker";
 import { useUserStore } from "@/stores/userStore";
 import { useMatchStore } from "@/stores/matchStore";
-import { Swords, Wallet, History, TrendingUp, Radio, Gift, Medal, Shield, Trophy, Gem, Sparkles, Crown, X, type LucideIcon } from "lucide-react";
+import { Swords, Wallet, History, TrendingUp, Radio, Gift, Medal, Shield, Trophy, Gem, Sparkles, Crown, X, Download, type LucideIcon } from "lucide-react";
 import { getXpInfo } from "@/lib/xp";
 import { getAvatarSidebarStyle } from "@/lib/avatarBgs";
 import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
 import { cn } from "@/lib/utils";
+import { hasPendingClientSetup, clearPendingClientSetup } from "@/lib/localArenaPrefs";
 
 const XP_ICON_MAP: Record<string, LucideIcon> = {
   Medal, Shield, Trophy, Gem, Sparkles, Crown,
@@ -26,6 +27,11 @@ const Dashboard = () => {
   // ── Login greeting banner ─────────────────────────────────────────────────
   const [bannerVisible, setBannerVisible] = useState(false);
   const [bannerOut, setBannerOut] = useState(false);
+  const [showClientSetupBanner, setShowClientSetupBanner] = useState(false);
+
+  useEffect(() => {
+    setShowClientSetupBanner(hasPendingClientSetup());
+  }, []);
 
   useEffect(() => {
     if (!showLoginGreeting) return;
@@ -98,6 +104,45 @@ const Dashboard = () => {
             {/* dismiss */}
             <button onClick={dismissBanner} className="flex-shrink-0 p-1 rounded-lg hover:bg-muted/50 transition-colors">
               <X className="w-3.5 h-3.5 text-muted-foreground" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Post-signup: install desktop client (local flag until DB onboarding exists) ── */}
+      {showClientSetupBanner && (
+        <div className="rounded-2xl border border-arena-cyan/35 bg-arena-cyan/5 p-4 flex flex-col sm:flex-row sm:items-center gap-4">
+          <div className="flex-1 min-w-0 space-y-1">
+            <p className="font-display text-sm font-bold text-arena-cyan tracking-wide">Next: Arena Client</p>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Install the desktop app to join staked matches. It verifies capture on your PC and talks to the engine—your
+              browser alone isn&apos;t enough for ranked play.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 shrink-0">
+            <a
+              href="https://arena.gg/download-client"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary/15 border border-primary/40 text-primary font-display text-xs font-semibold hover:bg-primary/25 transition-colors"
+            >
+              <Download className="h-3.5 w-3.5" /> Download
+            </a>
+            <Link
+              to="/client"
+              className="inline-flex items-center px-3 py-2 rounded-xl border border-border bg-secondary/50 text-foreground font-display text-xs font-semibold hover:border-primary/30 transition-colors"
+            >
+              Why &amp; how
+            </Link>
+            <button
+              type="button"
+              onClick={() => {
+                clearPendingClientSetup();
+                setShowClientSetupBanner(false);
+              }}
+              className="px-3 py-2 rounded-xl text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Dismiss
             </button>
           </div>
         </div>

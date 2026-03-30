@@ -1,7 +1,7 @@
 import { useState } from "react";
 import {
   LayoutDashboard, Swords, History, User, ShieldAlert, Wallet, Trophy,
-  Settings2, Medal, Shield, Gem, Sparkles, Crown, Users2,
+  Settings2, Medal, Shield, Gem, Sparkles, Crown, Users2, Monitor,
   LogOut, Mail, ChevronUp, Flame, type LucideIcon,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
@@ -28,6 +28,7 @@ const XP_ICON_MAP: Record<string, LucideIcon> = {
 const NAV_ITEMS = [
   { title: "Dashboard",     url: "/dashboard",  icon: LayoutDashboard },
   { title: "Match Lobby",   url: "/lobby",       icon: Swords          },
+  { title: "Arena Client",  url: "/client",      icon: Monitor         },
   { title: "Match History", url: "/history",     icon: History         },
   { title: "Profile",       url: "/profile",     icon: User            },
   { title: "Leaderboard",   url: "/leaderboard", icon: Trophy          },

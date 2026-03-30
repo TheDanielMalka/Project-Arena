@@ -13,6 +13,7 @@ function loginAs(role: "user" | "admin" = "user") {
 
 describe("Dashboard page", () => {
   beforeEach(() => {
+    localStorage.clear();
     useUserStore.getState().logout();
     loginAs("user");
     vi.useFakeTimers();
@@ -20,6 +21,7 @@ describe("Dashboard page", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    localStorage.clear();
   });
 
   it("renders Command Center hero section", () => {
@@ -69,6 +71,7 @@ describe("Dashboard page", () => {
     render(<MemoryRouter><Dashboard /></MemoryRouter>);
 
     expect(screen.getByText(/welcome to arena/i)).toBeInTheDocument();
+    expect(screen.getByText(/next: arena client/i)).toBeInTheDocument();
   });
 
   it("does not show greeting banner when already cleared", () => {

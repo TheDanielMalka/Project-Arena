@@ -11,7 +11,7 @@ import {
   AlertCircle, ChevronRight, Wallet, Gamepad2, User,
   Eye, EyeOff, CheckCircle2, SlidersHorizontal, ShieldAlert, Check, X,
   Smartphone, Copy, RefreshCw, KeyRound, ShieldCheck, ShieldOff, Mail,
-  Ticket,
+  Ticket, Monitor,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -23,6 +23,8 @@ import { useWalletStore } from "@/stores/walletStore";
 import { cn } from "@/lib/utils";
 import { PASSWORD_RULES, isPasswordValid } from "@/lib/passwordValidation";
 import { SupportTicketDialog } from "@/components/support/SupportTicketDialog";
+import { useClientStore } from "@/stores/clientStore";
+import { clearArenaLocalPreferences } from "@/lib/localArenaPrefs";
 
 // ─── Nav sections ──────────────────────────────────────────────
 const SECTIONS = [
@@ -61,6 +63,8 @@ const SectionTitle = ({ icon: Icon, label, color }: { icon: React.ElementType; l
 const SettingsPage = () => {
   const { toast } = useToast();
   const { user, greetingType } = useUserStore();
+  const clientStatusLabel = useClientStore((s) => s.statusLabel);
+  const clientVersion = useClientStore((s) => s.version);
   const [searchParams, setSearchParams] = useSearchParams();
   // Google users cannot change email — managed by Google OAuth
   const isGoogleAccount = greetingType === "google";
@@ -483,6 +487,42 @@ const SettingsPage = () => {
           {/* ── GAME ── */}
           {active === "game" && (
             <div>
+              <div className="mb-6 rounded-xl border border-primary/25 bg-primary/5 p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Monitor className="h-4 w-4 text-primary shrink-0" />
+                  <h2 className="font-display text-sm font-bold uppercase tracking-widest text-muted-foreground">Arena Client</h2>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Same status as the header and Match Lobby. Install the desktop app so staked matches can verify capture on your PC.
+                </p>
+                <p className="text-xs font-mono text-foreground">
+                  {clientStatusLabel()}
+                  {clientVersion ? ` · v${clientVersion}` : ""}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" className="text-xs h-8" asChild>
+                    <Link to="/client">Why &amp; download</Link>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs h-8 text-muted-foreground"
+                    type="button"
+                    onClick={() => {
+                      const { clearedKeys } = clearArenaLocalPreferences();
+                      toast({
+                        title: "Local data cleared",
+                        description:
+                          clearedKeys.length > 0
+                            ? `Removed: ${clearedKeys.join(", ")}`
+                            : "No Arena local keys were set.",
+                      });
+                    }}
+                  >
+                    Clear local onboarding flags
+                  </Button>
+                </div>
+              </div>
               <SectionTitle icon={Gamepad2} label="Game Preferences" color="text-primary" />
               <div className="space-y-1">
                 <SettingRow label="Default Game" desc="Pre-selected when creating a match">
@@ -501,8 +541,17 @@ const SettingsPage = () => {
                         { name: "PUBG",               active: false },
                         { name: "League of Legends",  active: false },
                       ].map(({ name, active }) => (
-                        <SelectItem key={name} value={name} disabled={!active}
-                          className={!active ? "opacity-40 cursor-not-allowed" : ""}>
+                        <SelectItem
+                          key={name}
+                          value={name}
+                          disabled={!active}
+                          title={
+                            !active
+                              ? "Ranked play when Arena Client and engine support this title."
+                              : undefined
+                          }
+                          className={!active ? "opacity-40 cursor-not-allowed" : ""}
+                        >
                           {name}{!active ? " (Coming Soon)" : ""}
                         </SelectItem>
                       ))}

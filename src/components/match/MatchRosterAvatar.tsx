@@ -1,6 +1,6 @@
 import { useUserStore } from "@/stores/userStore";
 import { usePlayerStore } from "@/stores/playerStore";
-import { isCurrentUserSlot, slotToProfileUsername } from "@/lib/matchPlayerDisplay";
+import { isCurrentUserSlot, resolveRosterProfile, slotToProfileUsername } from "@/lib/matchPlayerDisplay";
 import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
 import { cn } from "@/lib/utils";
 
@@ -38,9 +38,7 @@ export function MatchRosterAvatar({
 
   const isYou = isCurrentUserSlot(slotValue, user?.id, user?.username);
   const displayKey = slotToProfileUsername(slotValue, user?.id, user?.username);
-  const profile =
-    catalog.find((p) => p.id === slotValue) ??
-    catalog.find((p) => p.username.toLowerCase() === displayKey.toLowerCase());
+  const profile = resolveRosterProfile(slotValue, user?.id, user?.username, catalog);
 
   const avatar = isYou ? user?.avatar : profile?.avatar;
   const initials = isYou

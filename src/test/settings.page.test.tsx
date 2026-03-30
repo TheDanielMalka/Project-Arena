@@ -48,4 +48,11 @@ describe("Settings page", () => {
     render(<MemoryRouter><Settings /></MemoryRouter>);
     expect(screen.getByRole("button", { name: /help & ticket/i })).toBeInTheDocument();
   });
+
+  it("shows Arena Client block in Game section", () => {
+    render(<MemoryRouter><Settings /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: /^game$/i }));
+    expect(screen.getByText(/arena client/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /why & download/i })).toBeInTheDocument();
+  });
 });
