@@ -118,7 +118,7 @@ class VisionEngine:
         agents: list[str] = []
         if game == "Valorant":
             pairs = extract_agent_player_pairs(image_path, invert=True,
-                                               game="Valorant")
+                                               game="Valorant", result=result)
             if pairs:
                 # Re-derive index-aligned lists from the paired result so
                 # VisionEngineOutput.players[i] always matches .agents[i].
