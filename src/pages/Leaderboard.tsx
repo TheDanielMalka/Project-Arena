@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -18,7 +18,7 @@ import {
   ExternalLink, Send, CheckCircle2, Ban,
 } from "lucide-react";
 import { useUserStore }         from "@/stores/userStore";
-import { useFriendStore }       from "@/stores/friendStore";
+import { ignoredRefMatchesContext, useFriendStore } from "@/stores/friendStore";
 import { useMessageStore }      from "@/stores/messageStore";
 import { useReportStore }       from "@/stores/reportStore";
 import { useNotificationStore } from "@/stores/notificationStore";
@@ -179,9 +179,9 @@ function PlayerActionPopover({ player, children }: PlayerActionPopoverProps) {
   const sendFriendRequest = useFriendStore((s) => s.sendFriendRequest);
   const friendships  = useFriendStore((s) => s.friendships);
   const declineRequest = useFriendStore((s) => s.declineRequest);
-  const blockPlayer    = useFriendStore((s) => s.blockPlayer);
-  const isIgnored      = useFriendStore((s) => s.isIgnored);
-  const unignoreUser   = useFriendStore((s) => s.unignoreUser);
+  const blockPlayer       = useFriendStore((s) => s.blockPlayer);
+  const ignoredUsers      = useFriendStore((s) => s.ignoredUsers);
+  const unignoreForRoster = useFriendStore((s) => s.unignoreForRoster);
   const sendMessage  = useMessageStore((s) => s.sendMessage);
   const submitReport = useReportStore((s) => s.submitReport);
   const addNotif     = useNotificationStore((s) => s.addNotification);
@@ -199,6 +199,20 @@ function PlayerActionPopover({ player, children }: PlayerActionPopoverProps) {
   const isSelf = currentUser?.username === player.username;
   const rel    = getRelationship(player.id);
   const tier   = getRankTier(player.rank);
+
+  const playerIgnoreCtx = useMemo(
+    () => ({
+      canonicalUserId: player.id,
+      displayUsername: player.username,
+      rosterSlot: player.username,
+      profileId: player.id,
+    }),
+    [player.id, player.username]
+  );
+  const playerIgnored = useMemo(
+    () => ignoredUsers.some((u) => ignoredRefMatchesContext(playerIgnoreCtx, u)),
+    [ignoredUsers, playerIgnoreCtx]
+  );
 
   const resetPopover = () => {
     setTab("actions");
@@ -242,12 +256,17 @@ function PlayerActionPopover({ player, children }: PlayerActionPopoverProps) {
 
   const handleBlockFromPopover = () => {
     if (!currentUser) return;
-    blockPlayer({ myId: currentUser.id, targetUserId: player.id, targetUsername: player.username });
+    blockPlayer({
+      myId: currentUser.id,
+      targetUserId: player.id,
+      targetUsername: player.username,
+      rosterSlot: player.username,
+    });
     setOpen(false);
   };
 
   const handleUnignoreFromPopover = () => {
-    unignoreUser(player.id);
+    unignoreForRoster(playerIgnoreCtx);
     addNotif({ type: "system", title: "Unignored", message: `You can interact with ${player.username} again.` });
     setOpen(false);
   };
@@ -324,7 +343,7 @@ function PlayerActionPopover({ player, children }: PlayerActionPopoverProps) {
                 )}
               </div>
               {!isSelf && currentUser && (
-                isIgnored(player.id) ? (
+                playerIgnored ? (
                   <button
                     type="button"
                     title="Unignore player"
@@ -421,7 +440,7 @@ function PlayerActionPopover({ player, children }: PlayerActionPopoverProps) {
                     </button>
                   )}
 
-                  {isIgnored(player.id) ? (
+                  {playerIgnored ? (
                     <button
                       type="button"
                       className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-left hover:bg-secondary/60 text-muted-foreground transition-colors"
@@ -483,7 +502,7 @@ function PlayerActionPopover({ player, children }: PlayerActionPopoverProps) {
                       className="text-xs text-muted-foreground hover:text-foreground transition-colors py-1.5 px-1"
                       onClick={() => setTab("actions")}
                     >← Back</button>
-                    {rel !== "accepted" && rel !== "pending" && !isIgnored(player.id) && (
+                    {rel !== "accepted" && rel !== "pending" && !playerIgnored && (
                       <Button
                         type="button"
                         size="sm"
@@ -494,7 +513,7 @@ function PlayerActionPopover({ player, children }: PlayerActionPopoverProps) {
                         <UserPlus className="h-3 w-3" /> Add Friend
                       </Button>
                     )}
-                    {isIgnored(player.id) ? (
+                    {playerIgnored ? (
                       <Button
                         type="button"
                         size="sm"

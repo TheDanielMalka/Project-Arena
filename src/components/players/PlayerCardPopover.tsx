@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   LogOut,
@@ -12,11 +12,23 @@ import {
 } from "lucide-react";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { useUserStore } from "@/stores/userStore";
-import { useFriendStore } from "@/stores/friendStore";
+import { ignoredRefMatchesContext, useFriendStore } from "@/stores/friendStore";
 import { useReportStore } from "@/stores/reportStore";
 import { usePlayerStore } from "@/stores/playerStore";
 import type { TicketReason } from "@/types";
-import { isCurrentUserSlot, slotToProfileUsername } from "@/lib/matchPlayerDisplay";
+import {
+  isCurrentUserSlot,
+  resolveRosterProfile,
+  rosterDisplayUsername,
+  syntheticUserIdFromDisplayKey,
+} from "@/lib/matchPlayerDisplay";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 // Mini-profile card when clicking a player in lobby / history / recent matches
 // DB-ready: GET /api/players/:username — POST /api/friends — POST /api/reports
@@ -36,19 +48,22 @@ export function PlayerCardPopover({
   const navigate = useNavigate();
   const { user } = useUserStore();
   const { players } = usePlayerStore();
-  const { friendships, sendFriendRequest, isIgnored, blockPlayer, unignoreUser } = useFriendStore();
+  const ignoredUsers = useFriendStore((s) => s.ignoredUsers);
+  const friendships = useFriendStore((s) => s.friendships);
+  const sendFriendRequest = useFriendStore((s) => s.sendFriendRequest);
+  const blockPlayer = useFriendStore((s) => s.blockPlayer);
+  const unignoreForRoster = useFriendStore((s) => s.unignoreForRoster);
   const { submitReport } = useReportStore();
 
-  const username = slotToProfileUsername(slotValue, user?.id, user?.username);
   const isOwnSlot = isCurrentUserSlot(slotValue, user?.id, user?.username);
+  const profile = resolveRosterProfile(slotValue, user?.id, user?.username, players);
+  const username = rosterDisplayUsername(slotValue, user?.id, user?.username, players);
 
   const [reportStep, setReportStep] = useState<"idle" | "form" | "done">("idle");
   const [reportReason, setReportReason] = useState<TicketReason>("cheating");
   const [reportDesc, setReportDesc] = useState("");
 
-  const profile = players.find((p) => p.username === username);
-
-  const targetId = profile?.id ?? `u-${username.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+  const targetId = profile?.id ?? syntheticUserIdFromDisplayKey(username);
   const targetArenaId = profile?.arenaId ?? `ARENA-${username.slice(0, 2).toUpperCase()}`;
   const targetInitials = profile?.avatarInitials ?? username.slice(0, 2).toUpperCase();
   const targetRank = profile?.rank ?? "—";
@@ -115,18 +130,36 @@ export function PlayerCardPopover({
 
   const handleBlockPlayer = () => {
     if (!user) return;
-    blockPlayer({ myId: user.id, targetUserId: targetId, targetUsername: username });
-    onClose();
+    blockPlayer({
+      myId: user.id,
+      targetUserId: targetId,
+      targetUsername: username,
+      rosterSlot: slotValue,
+    });
   };
 
+  const rosterIgnoreCtx = useMemo(
+    () => ({
+      canonicalUserId: targetId,
+      displayUsername: username,
+      rosterSlot: slotValue,
+      profileId: profile?.id,
+    }),
+    [targetId, username, slotValue, profile?.id]
+  );
+
+  const targetIgnored = useMemo(
+    () => ignoredUsers.some((u) => ignoredRefMatchesContext(rosterIgnoreCtx, u)),
+    [ignoredUsers, rosterIgnoreCtx]
+  );
+
   const handleUnignore = () => {
-    unignoreUser(targetId);
+    unignoreForRoster(rosterIgnoreCtx);
     useNotificationStore.getState().addNotification({
       type: "system",
       title: "Unignored",
       message: `You can interact with ${username} again.`,
     });
-    onClose();
   };
 
   return (
@@ -137,7 +170,7 @@ export function PlayerCardPopover({
             {username.slice(0, 2).toUpperCase()}
           </div>
           {!isOwnSlot && user && (
-            isIgnored(targetId) ? (
+            targetIgnored ? (
               <button
                 type="button"
                 title="Unignore"
@@ -199,7 +232,7 @@ export function PlayerCardPopover({
               <div className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground">
                 <Clock className="h-3 w-3" /> Request Sent
               </div>
-            ) : isIgnored(targetId) ? (
+            ) : targetIgnored ? (
               <div className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground">
                 <Ban className="h-3 w-3" /> Ignored
               </div>
@@ -225,7 +258,7 @@ export function PlayerCardPopover({
               {/* DB-ready: deep-link ?user=username to open DM thread */}
             </button>
 
-            {!isIgnored(targetId) && (
+            {!targetIgnored && (
               <button
                 type="button"
                 className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-destructive/80 hover:bg-destructive/10 rounded-lg transition-colors"
@@ -247,17 +280,28 @@ export function PlayerCardPopover({
 
             {reportStep === "form" && (
               <div className="space-y-1.5 pt-1">
-                <select
+                <Select
                   value={reportReason}
-                  onChange={(e) => setReportReason(e.target.value as TicketReason)}
-                  className="w-full text-[10px] rounded-md border border-border/50 bg-secondary/50 px-2 py-1"
+                  onValueChange={(v) => setReportReason(v as TicketReason)}
                 >
-                  {(Object.entries(REASON_LABELS) as [TicketReason, string][]).map(([k, v]) => (
-                    <option key={k} value={k}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger className="h-8 min-h-8 py-1 text-[10px] border-border/50 bg-secondary/60 text-foreground ring-offset-card focus:ring-2 focus:ring-primary/35 focus:ring-offset-0">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent
+                    position="popper"
+                    className="z-[80] max-h-48 border-border/60 bg-card text-foreground shadow-2xl [&_[data-highlighted]]:!bg-primary/18 [&_[data-highlighted]]:!text-foreground"
+                  >
+                    {(Object.entries(REASON_LABELS) as [TicketReason, string][]).map(([k, v]) => (
+                      <SelectItem
+                        key={k}
+                        value={k}
+                        className="text-[10px] py-1.5 focus:bg-primary/15 focus:text-foreground data-[state=checked]:bg-primary/12"
+                      >
+                        {v}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 <textarea
                   value={reportDesc}
                   onChange={(e) => setReportDesc(e.target.value)}

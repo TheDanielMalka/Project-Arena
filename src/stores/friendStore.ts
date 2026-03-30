@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Friendship, FriendshipStatus } from "@/types";
+import { syntheticUserIdFromDisplayKey } from "@/lib/matchPlayerDisplay";
 import { useNotificationStore } from "@/stores/notificationStore";
 
 // ─── Seed Data ────────────────────────────────────────────────
@@ -78,6 +79,36 @@ export interface IgnoredUserRef {
   username: string;
 }
 
+/** Match ignore rows when roster stores user id, username, or legacy synthetic ids (client-only until API is canonical). */
+export interface IgnoreRosterContext {
+  canonicalUserId: string;
+  displayUsername: string;
+  /** Raw roster cell from match UI (id or username). */
+  rosterSlot: string;
+  profileId?: string;
+}
+
+function idEquals(a: string, b: string): boolean {
+  return a === b || a.toLowerCase() === b.toLowerCase();
+}
+
+export function ignoredRefMatchesContext(ctx: IgnoreRosterContext, u: IgnoredUserRef): boolean {
+  const ids = [ctx.canonicalUserId, ctx.rosterSlot, ctx.profileId].filter(Boolean) as string[];
+  for (const id of ids) {
+    if (idEquals(u.userId, id)) return true;
+  }
+  const un = u.username.toLowerCase();
+  if (un === ctx.displayUsername.toLowerCase()) return true;
+  if (un === ctx.rosterSlot.toLowerCase()) return true;
+
+  const synFromCanonical = syntheticUserIdFromDisplayKey(ctx.canonicalUserId);
+  const synFromRoster = syntheticUserIdFromDisplayKey(ctx.rosterSlot);
+  const synFromDisplay = syntheticUserIdFromDisplayKey(ctx.displayUsername);
+  if (u.userId === synFromCanonical || u.userId === synFromRoster || u.userId === synFromDisplay) return true;
+
+  return false;
+}
+
 interface FriendState {
   friendships: Friendship[];
   ignoredUsers: IgnoredUserRef[];
@@ -89,10 +120,13 @@ interface FriendState {
   isFriend:           (friendId: string)    => boolean;
   hasPendingWith:     (friendId: string)    => boolean;
   getRelationship:    (friendId: string)    => FriendshipStatus | null;
-  isIgnored:          (userId: string)       => boolean;
+  /** Match by canonical userId and/or display username (roster id vs username slots must both resolve). */
+  isIgnored:          (userId: string, displayUsername?: string) => boolean;
+  isIgnoredForRoster: (ctx: IgnoreRosterContext) => boolean;
+  unignoreForRoster:  (ctx: IgnoreRosterContext) => void;
 
   ignoreUser:   (ref: IgnoredUserRef) => void;
-  unignoreUser: (userId: string)       => void;
+  unignoreUser: (userId: string, displayUsername?: string) => void;
 
   /**
    * Drop pending + accepted links with target and add to ignore list.
@@ -102,6 +136,8 @@ interface FriendState {
     myId: string;
     targetUserId: string;
     targetUsername: string;
+    /** Raw roster slot when blocking from match UI — aligns legacy ids with canonical profile. */
+    rosterSlot?: string;
     /** Skip default toast when the UI shows its own confirmation. */
     quiet?: boolean;
   }) => void;
@@ -147,7 +183,12 @@ export const useFriendStore = create<FriendState>((set, get) => ({
       (f) =>
         f.status === "pending" &&
         f.receiverId === myId &&
-        !get().ignoredUsers.some((u) => u.userId === f.initiatorId)
+        !get().isIgnoredForRoster({
+          canonicalUserId: f.initiatorId,
+          displayUsername: f.friendUsername,
+          rosterSlot: f.initiatorId,
+          profileId: f.initiatorId,
+        })
     ),
 
   getPendingSent: (myId) =>
@@ -170,28 +211,54 @@ export const useFriendStore = create<FriendState>((set, get) => ({
     return f ? f.status : null;
   },
 
-  isIgnored: (userId) => get().ignoredUsers.some((u) => u.userId === userId),
+  isIgnored: (userId, displayUsername) =>
+    get().isIgnoredForRoster({
+      canonicalUserId: userId,
+      displayUsername: displayUsername ?? userId,
+      rosterSlot: userId,
+      profileId: userId,
+    }),
+
+  isIgnoredForRoster: (ctx) => get().ignoredUsers.some((u) => ignoredRefMatchesContext(ctx, u)),
+
+  unignoreForRoster: (ctx) =>
+    set((s) => ({
+      ignoredUsers: s.ignoredUsers.filter((u) => !ignoredRefMatchesContext(ctx, u)),
+    })),
 
   ignoreUser: (ref) =>
-    set((s) =>
-      s.ignoredUsers.some((u) => u.userId === ref.userId)
-        ? s
-        : { ignoredUsers: [...s.ignoredUsers, ref] }
-    ),
+    set((s) => {
+      const ctx: IgnoreRosterContext = {
+        canonicalUserId: ref.userId,
+        displayUsername: ref.username,
+        rosterSlot: ref.userId,
+        profileId: ref.userId,
+      };
+      if (s.ignoredUsers.some((u) => ignoredRefMatchesContext(ctx, u))) return s;
+      return { ignoredUsers: [...s.ignoredUsers, ref] };
+    }),
 
-  unignoreUser: (userId) =>
-    set((s) => ({ ignoredUsers: s.ignoredUsers.filter((u) => u.userId !== userId) })),
+  unignoreUser: (userId, displayUsername) =>
+    get().unignoreForRoster({
+      canonicalUserId: userId,
+      displayUsername: displayUsername ?? userId,
+      rosterSlot: userId,
+      profileId: userId,
+    }),
 
-  blockPlayer: ({ myId, targetUserId, targetUsername, quiet }) => {
+  blockPlayer: ({ myId, targetUserId, targetUsername, rosterSlot, quiet }) => {
     if (targetUserId === myId) return;
     set((s) => {
-      const friendships = s.friendships.filter((f) => {
-        if (f.status === "accepted" && f.friendId === targetUserId) return false;
-        if (f.status === "pending" && f.receiverId === myId && f.initiatorId === targetUserId) return false;
-        if (f.status === "pending" && f.initiatorId === myId && f.receiverId === targetUserId) return false;
-        return true;
-      });
-      const ignoredUsers = s.ignoredUsers.some((u) => u.userId === targetUserId)
+      const blockCtx: IgnoreRosterContext = {
+        canonicalUserId: targetUserId,
+        displayUsername: targetUsername,
+        rosterSlot: rosterSlot ?? targetUserId,
+        profileId: targetUserId,
+      };
+      const friendships = s.friendships.filter(
+        (f) => !ignoredRefMatchesContext(blockCtx, { userId: f.friendId, username: f.friendUsername })
+      );
+      const ignoredUsers = s.ignoredUsers.some((u) => ignoredRefMatchesContext(blockCtx, u))
         ? s.ignoredUsers
         : [...s.ignoredUsers, { userId: targetUserId, username: targetUsername }];
       return { friendships, ignoredUsers };
@@ -206,7 +273,13 @@ export const useFriendStore = create<FriendState>((set, get) => ({
   },
 
   sendFriendRequest: (params) => {
-    if (get().ignoredUsers.some((u) => u.userId === params.targetId)) {
+    const reqCtx: IgnoreRosterContext = {
+      canonicalUserId: params.targetId,
+      displayUsername: params.targetUsername,
+      rosterSlot: params.targetId,
+      profileId: params.targetId,
+    };
+    if (get().ignoredUsers.some((u) => ignoredRefMatchesContext(reqCtx, u))) {
       useNotificationStore.getState().addNotification({
         type: "system",
         title: "Cannot send request",
