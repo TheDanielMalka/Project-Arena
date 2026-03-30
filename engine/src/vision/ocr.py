@@ -39,21 +39,42 @@ NAME_ROW_Y = 0.85
 NAME_ROW_H = 0.06
 
 # Valorant: end-screen layout
-#   |  agent name  |  (small text above the card, ~42-50 % down)
-#   |  PLAYER NAME |  (large white text inside the card, ~50-61 % down)
-#   |  KDA / score |  (stats below)
 #
-#   Score numbers sit in the top corners: "13"  (left)  "11"  (right)
-VAL_AGENT_ROW_Y  = 0.42   # start of agent-name row
-VAL_AGENT_ROW_H  = 0.09   # height of agent-name row
-VAL_PLAYER_ROW_Y = 0.50   # start of player-username row
-VAL_PLAYER_ROW_H = 0.11   # height of player-username row
-VAL_SCORE_LEFT_X = 0.04   # left score number (x start)
-VAL_SCORE_LEFT_W = 0.14   # left score number (x width)
-VAL_SCORE_RIGHT_X = 0.82  # right score number (x start)
-VAL_SCORE_RIGHT_W = 0.14  # right score number (x width)
-VAL_SCORE_Y      = 0.02   # score row (y start)
-VAL_SCORE_H      = 0.13   # score row (y height)
+#   ┌─────────────────────────────────────────────────────────────────────────┐
+#   │  "13"  (left corner y 2-15%)          "11" (right corner y 2-15%)      │
+#   │                    *** VICTORY ***  /  *** DEFEAT ***                   │
+#   │                    (large text, y ≈ 5-35%)                              │
+#   ├──────────┬──────────┬──────────┬──────────┬──────────┤                  │
+#   │BRIMSTONE │  SAGE    │  JETT    │  OMEN    │ PHOENIX  │  ← agent/title  │
+#   │  DOMA    │ TSACK    │ BOASTER  │ MISTIC   │ PLAYER   │  ← player name  │
+#   │  KDA     │  KDA     │  KDA     │  KDA     │  KDA     │                  │
+#   └──────────┴──────────┴──────────┴──────────┴──────────┘                  │
+#
+#   VICTORY cards: agent name (e.g. BRIMSTONE) sits above the player username.
+#   DEFEAT  cards: performance title (BLOODHOUND / CLUTCH KING …) replaces the
+#                  agent label — same y-position, different content.
+#
+#   Calibrated from real 1200×675 (16:9) screenshots.  Relative fractions scale
+#   correctly to all standard 16:9 and 16:10 resolutions.
+#
+VAL_AGENT_ROW_Y   = 0.42   # top of agent-name / title row
+VAL_AGENT_ROW_H   = 0.09   # height of that row
+VAL_PLAYER_ROW_Y  = 0.50   # top of player-username row
+VAL_PLAYER_ROW_H  = 0.11   # height of that row
+
+# 5 equal player-card columns (x 2 % – 96 % of screen width)
+VAL_SLOT_X_START  = 0.02
+VAL_SLOT_X_END    = 0.96
+VAL_NUM_SLOTS     = 5
+VAL_SLOT_W        = (VAL_SLOT_X_END - VAL_SLOT_X_START) / VAL_NUM_SLOTS   # ≈ 0.188
+
+# Score corners
+VAL_SCORE_LEFT_X  = 0.04
+VAL_SCORE_LEFT_W  = 0.14
+VAL_SCORE_RIGHT_X = 0.82
+VAL_SCORE_RIGHT_W = 0.14
+VAL_SCORE_Y       = 0.02
+VAL_SCORE_H       = 0.13
 
 
 # ── Tesseract setup ───────────────────────────────────────────────────────────
@@ -385,6 +406,118 @@ def extract_agents(image_path: str, region=None, invert=True) -> list[str]:
     return agents
 
 
+# ── Valorant: per-slot agent + player pair extraction ─────────────────────────
+
+def _clean_ocr_word(raw: str, min_len: int = 2, allow_slash: bool = False) -> str:
+    """Strip noise characters from a single OCR token."""
+    pattern = r"[^a-zA-Z0-9_\-\s/]" if allow_slash else r"[^a-zA-Z0-9_\-\s]"
+    cleaned = re.sub(pattern, "", raw).strip("-_ ")
+    return cleaned
+
+
+def _ocr_slot(img: np.ndarray, row_y: float, row_h: float,
+              slot_x: float, slot_w: float, invert: bool,
+              psm: int = 7) -> str:
+    """
+    Run Tesseract on a single player-card row × column intersection.
+
+    Args:
+        img    : full end-screen image (BGR).
+        row_y  : relative y start of the text row (0-1).
+        row_h  : relative height of the text row (0-1).
+        slot_x : relative x start of this player slot (0-1).
+        slot_w : relative width of one slot (0-1).
+        invert : True → invert before threshold (white-text-on-dark).
+        psm    : Tesseract page-segmentation mode (7 = single line).
+
+    Returns:
+        Cleaned OCR string, or "" on failure.
+    """
+    h, w = img.shape[:2]
+    y1 = int(h * row_y)
+    y2 = int(h * (row_y + row_h))
+    x1 = int(w * slot_x)
+    x2 = int(w * (slot_x + slot_w))
+    crop = img[y1:y2, x1:x2]
+    if crop.size == 0:
+        return ""
+    processed = preprocess_image(crop, invert=invert)
+    raw = pytesseract.image_to_string(processed,
+                                      config=f"--psm {psm}").strip()
+    return raw
+
+
+def _extract_player_agent_pairs_valorant(
+        image_path: str,
+        invert: bool = True,
+) -> list[dict[str, str]]:
+    """
+    Extract (agent_name, player_name) pairs from a Valorant end-screen by
+    splitting the scoreboard into 5 equal player-card columns and running
+    OCR independently on each column's agent row and player-name row.
+
+    This per-slot approach guarantees that players[i] and agents[i] in the
+    returned list always correspond to the same player — unlike reading the
+    full row in one pass, which can lose alignment when OCR skips a word.
+
+    On VICTORY screens the "agent row" contains the actual agent name
+    (BRIMSTONE, JETT …).  On DEFEAT screens it contains a performance title
+    (BLOODHOUND, CLUTCH KING …).  Both are returned as-is; the caller can
+    decide whether the value represents an agent name or a title.
+
+    Returns:
+        List of up to 5 dicts: [{"agent": str, "player": str}, …]
+        Slots where both fields are empty are omitted from the result.
+
+    TODO: validate agent strings against KNOWN_VALORANT_AGENTS once the
+          agent roster is stored in the DB.
+    """
+    logger.info("[Valorant] extracting per-slot agent+player pairs")
+
+    if not os.path.exists(image_path):
+        logger.error(f"[Valorant] image not found: {image_path}")
+        return []
+
+    img = cv2.imread(image_path)
+    pairs: list[dict[str, str]] = []
+
+    for i in range(VAL_NUM_SLOTS):
+        sx = VAL_SLOT_X_START + i * VAL_SLOT_W
+
+        # ── Agent / title row (small caps above the card) ────────────────────
+        raw_agent = _ocr_slot(img,
+                               row_y=VAL_AGENT_ROW_Y,  row_h=VAL_AGENT_ROW_H,
+                               slot_x=sx,              slot_w=VAL_SLOT_W,
+                               invert=invert,          psm=7)
+        agent = " ".join(
+            _clean_ocr_word(tok, min_len=2, allow_slash=True)
+            for tok in raw_agent.split()
+            if _clean_ocr_word(tok, min_len=2, allow_slash=True)
+               and not tok.strip().isdigit()
+        )
+
+        # ── Player username row ───────────────────────────────────────────────
+        raw_player = _ocr_slot(img,
+                                row_y=VAL_PLAYER_ROW_Y, row_h=VAL_PLAYER_ROW_H,
+                                slot_x=sx,              slot_w=VAL_SLOT_W,
+                                invert=invert,           psm=7)
+        # Player names: alphanumeric + underscore/hyphen only (no slash)
+        player = " ".join(
+            _clean_ocr_word(tok, min_len=2, allow_slash=False)
+            for tok in raw_player.split()
+            if _clean_ocr_word(tok, min_len=2, allow_slash=False)
+               and not tok.strip().isdigit()
+        )
+
+        logger.debug(f"[Valorant] slot {i}: agent={agent!r}  player={player!r}")
+
+        if agent or player:
+            pairs.append({"agent": agent, "player": player})
+
+    logger.info(f"[Valorant] extracted {len(pairs)} agent+player pairs")
+    return pairs
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def extract_player_names(image_path: str, region=None, invert=True,
@@ -436,6 +569,36 @@ def extract_score(image_path: str, region=None, invert=True,
 
     # Default -> CS2
     return _extract_score_cs2(image_path, region, invert)
+
+
+def extract_agent_player_pairs(image_path: str,
+                               invert: bool = True,
+                               game: str = "Valorant") -> list[dict[str, str]]:
+    """
+    Return per-player (agent, player) pairs from a Valorant end-screen.
+
+    Each element is a dict {"agent": str, "player": str} where:
+      - "agent"  is the agent name (VICTORY) or performance title (DEFEAT).
+      - "player" is the in-game username.
+
+    The i-th element of this list corresponds to the i-th element of the
+    players[] and agents[] lists in VisionEngineOutput, so callers can always
+    rely on index alignment.
+
+    Args:
+        image_path : path to the end-screen screenshot.
+        invert     : True → white-text-on-dark preprocessing (Valorant default).
+        game       : currently only "Valorant" is supported; returns [] for CS2.
+
+    Returns:
+        List of up to 5 dicts, or [] for non-Valorant games / errors.
+
+    TODO: wire game validation against DB match record once match API is live.
+    """
+    if game != "Valorant":
+        logger.debug(f"extract_agent_player_pairs: game={game} — only Valorant supported")
+        return []
+    return _extract_player_agent_pairs_valorant(image_path, invert=invert)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 from src.vision.matcher import detect_result, match_template
-from src.vision.ocr import extract_player_names, extract_score, extract_agents
+from src.vision.ocr import (extract_player_names, extract_score, extract_agents,
+                             extract_agent_player_pairs)
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -110,10 +111,22 @@ class VisionEngine:
         # 3. Round score
         score = extract_score(image_path, invert=invert_ocr, game=game)
 
-        # 4. Agent names — Valorant only (always white text → invert=True)
+        # 4. Agent names — Valorant only (always white text → invert=True).
+        #    Per-slot extraction guarantees players[i] ↔ agents[i] alignment:
+        #    each of the 5 card columns is OCR'd independently so a missed
+        #    word in one card never shifts the index of subsequent cards.
         agents: list[str] = []
         if game == "Valorant":
-            agents = extract_agents(image_path, invert=True) or []
+            pairs = extract_agent_player_pairs(image_path, invert=True,
+                                               game="Valorant")
+            if pairs:
+                # Re-derive index-aligned lists from the paired result so
+                # VisionEngineOutput.players[i] always matches .agents[i].
+                players = [p["player"] for p in pairs]
+                agents  = [p["agent"]  for p in pairs]
+            else:
+                # Fallback: use the full-row extractor if per-slot fails
+                agents = extract_agents(image_path, invert=True) or []
 
         # 5. Optional template matching (anti-cheat layer; game-agnostic)
         template_matched = None
