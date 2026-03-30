@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { UserProfile, UserProfilePatch, ForgeCategory, ShopEntitlement } from "@/types";
+import { setPendingClientSetupAfterSignup } from "@/lib/localArenaPrefs";
 
 interface UserState {
   user: UserProfile | null;
@@ -129,6 +130,7 @@ export const useUserStore = create<UserState>((set) => ({
       balance: { total: 0, available: 0, inEscrow: 0 },
     };
     set({ user, isAuthenticated: true, walletConnected: false, showLoginGreeting: true, greetingType: "signup" });
+    setPendingClientSetupAfterSignup();
     scheduleSyncForgePurchasesToProfile();
     return true;
   },

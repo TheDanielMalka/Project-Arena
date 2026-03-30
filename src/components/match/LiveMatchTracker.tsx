@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { Radio, Clock, Users, Zap, ChevronDown, ChevronUp, Shield, Gamepad2 } from "lucide-react";
 import { useMatchStore } from "@/stores/matchStore";
 import { useUserStore } from "@/stores/userStore";
@@ -61,10 +62,16 @@ const LiveMatchTracker = () => {
 
   if (liveMatches.length === 0) {
     return (
-      <div className="rounded-2xl border border-border bg-card px-4 py-8 flex flex-col items-center text-center">
-        <Radio className="h-7 w-7 text-muted-foreground/30 mb-3 animate-pulse" />
+      <div className="rounded-2xl border border-border bg-card px-4 py-8 flex flex-col items-center text-center space-y-2">
+        <Radio className="h-7 w-7 text-muted-foreground/30 mb-1 animate-pulse" />
         <p className="text-sm text-muted-foreground font-display">No live matches right now</p>
-        <p className="text-xs text-muted-foreground/50 mt-1">Active matches will appear here in real-time</p>
+        <p className="text-xs text-muted-foreground/50 max-w-xs leading-relaxed">
+          Open the{" "}
+          <Link to="/lobby" className="text-primary hover:underline">Match Lobby</Link>
+          {" "}to join or create. When you play for stakes, keep the{" "}
+          <Link to="/client" className="text-primary hover:underline">Arena Client</Link>{" "}
+          running so results can verify.
+        </p>
       </div>
     );
   }

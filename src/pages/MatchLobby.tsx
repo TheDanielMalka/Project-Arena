@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { useUserStore } from "@/stores/userStore";
 import { useMatchStore } from "@/stores/matchStore";
@@ -161,7 +162,11 @@ const GameDropdown = ({ label, icon: Icon, games, activeGame, onSelect, comingSo
               const isCS = cfg.comingSoon;
               return isCS ? (
                 // ── Coming Soon game row — visible but non-selectable ──────────
-                <div key={name} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm cursor-not-allowed opacity-50">
+                <div
+                  key={name}
+                  title="Coming soon: Arena Client support and engine calibration for this title."
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm cursor-not-allowed opacity-50"
+                >
                   <img src={cfg.logo} alt={name} className="w-6 h-6 rounded object-cover shrink-0 grayscale"
                     onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
                   <span className="font-medium truncate text-muted-foreground">{name}</span>
@@ -1065,8 +1070,15 @@ const MatchLobby = () => {
                 );
               })}
               {filteredPublicMatches.length === 0 && (
-                <div className="px-4 py-6 text-center text-sm text-muted-foreground">
-                  {selectedBet ? `No open lobbies for $${selectedBet}.` : "No matches available."}
+                <div className="px-4 py-8 text-center space-y-3">
+                  <Swords className="h-8 w-8 mx-auto text-muted-foreground/25" />
+                  <p className="text-sm text-muted-foreground">
+                    {selectedBet ? `No open lobbies for $${selectedBet}.` : "No public lobbies right now."}
+                  </p>
+                  <p className="text-xs text-muted-foreground/70 max-w-xs mx-auto leading-relaxed">
+                    Create a room or check back soon. Staked play needs the{" "}
+                    <Link to="/client" className="text-primary hover:underline">Arena Client</Link> running.
+                  </p>
                 </div>
               )}
             </div>
@@ -1300,8 +1312,16 @@ const MatchLobby = () => {
               );
             })}
             {filteredCustom.length === 0 && (
-              <div className="rounded-2xl border border-border bg-card/50 px-4 py-8 text-center text-sm text-muted-foreground">
-                No custom matches found{selectedGame ? ` for ${selectedGame}` : ""}.
+              <div className="rounded-2xl border border-border bg-card/50 px-4 py-8 text-center space-y-2">
+                <Hash className="h-7 w-7 mx-auto text-muted-foreground/25" />
+                <p className="text-sm text-muted-foreground">
+                  No custom matches found{selectedGame ? ` for ${selectedGame}` : ""}.
+                </p>
+                <p className="text-xs text-muted-foreground/70">
+                  Host one with a code, or{" "}
+                  <Link to="/client" className="text-primary hover:underline">set up the Arena Client</Link>{" "}
+                  before you lock a stake.
+                </p>
               </div>
             )}
           </div>

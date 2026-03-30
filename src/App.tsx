@@ -10,6 +10,7 @@ import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
 import MatchLobby from "./pages/MatchLobby";
+import ArenaClientPage from "./pages/ArenaClient";
 import History from "./pages/History";
 import Profile from "./pages/Profile";
 import Admin from "./pages/Admin";
@@ -50,6 +51,7 @@ const App = () => (
           <Route path="/auth" element={<Auth />} />
           <Route path="/dashboard" element={<AppLayout><Dashboard /></AppLayout>} />
           <Route path="/lobby" element={<AppLayout><MatchLobby /></AppLayout>} />
+          <Route path="/client" element={<AppLayout><ArenaClientPage /></AppLayout>} />
           <Route path="/history" element={<AppLayout><History /></AppLayout>} />
           <Route path="/profile" element={<AppLayout><Profile /></AppLayout>} />
           <Route path="/wallet" element={<AppLayout><WalletPage /></AppLayout>} />
