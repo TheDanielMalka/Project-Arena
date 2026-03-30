@@ -364,9 +364,9 @@ const Index = () => {
                 <Button
                   size="lg"
                   className="glow-green font-display tracking-wider"
-                  onClick={() => alert("Coming soon! Build with: cd client && python build.py")}
+                  onClick={() => navigate("/client")}
                 >
-                  <Download className="mr-2 h-4 w-4" /> Download for Windows
+                  <Download className="mr-2 h-4 w-4" /> Arena Client setup
                 </Button>
                 <p className="text-[11px] text-muted-foreground/40 font-mono">
                   Windows 10+ · v1.0.0 · Open Source

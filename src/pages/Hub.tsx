@@ -1280,7 +1280,7 @@ export default function Hub() {
                   </p>
                 </div>
                 <div className="px-5 py-4 border-t border-border/50 shrink-0 flex flex-wrap gap-2 items-center">
-                  {user && activePanel.msg.senderId !== user.id && !isIgnoredUser(activePanel.msg.senderId) &&
+                  {user && activePanel.msg.senderId !== user.id && !isIgnoredUser(activePanel.msg.senderId, activePanel.msg.senderName) &&
                     getRelationship(activePanel.msg.senderId) !== "accepted" &&
                     getRelationship(activePanel.msg.senderId) !== "pending" && (
                     <Button
@@ -1304,13 +1304,13 @@ export default function Hub() {
                     <Send className="h-3.5 w-3.5" /> Reply
                   </Button>
                   {user && activePanel.msg.senderId !== user.id && (
-                    isIgnoredUser(activePanel.msg.senderId) ? (
+                    isIgnoredUser(activePanel.msg.senderId, activePanel.msg.senderName) ? (
                       <Button
                         size="sm"
                         variant="ghost"
                         className="text-xs text-muted-foreground"
                         onClick={() => {
-                          unignoreUser(activePanel.msg.senderId);
+                          unignoreUser(activePanel.msg.senderId, activePanel.msg.senderName);
                           addNotif({
                             type: "system",
                             title: "Unignored",
