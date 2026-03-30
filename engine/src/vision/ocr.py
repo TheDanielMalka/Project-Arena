@@ -518,10 +518,12 @@ def _extract_player_agent_pairs_valorant(
                                    row_y=VAL_AGENT_ROW_Y, row_h=VAL_AGENT_ROW_H,
                                    slot_x=sx,             slot_w=VAL_SLOT_W,
                                    invert=invert,         psm=7)
+            # min_len=3: all real agent names are ≥4 chars (JETT, SAGE, OMEN…)
+            # This filters 1-2 char noise fragments ("jo", "i", "y") at low res.
             agent = " ".join(
-                _clean_ocr_word(tok, min_len=2, allow_slash=True)
+                _clean_ocr_word(tok, min_len=3, allow_slash=True)
                 for tok in raw_agent.split()
-                if _clean_ocr_word(tok, min_len=2, allow_slash=True)
+                if _clean_ocr_word(tok, min_len=3, allow_slash=True)
                    and not tok.strip().isdigit()
             )
 
