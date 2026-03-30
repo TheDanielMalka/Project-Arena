@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -50,11 +50,12 @@ export function BuyArenaTokensModal({ open, onClose }: BuyArenaTokensModalProps)
   const [showPw, setShowPw]       = useState(false);
   const [pwError, setPwError]     = useState("");
   const [purchasedAt, setPurchasedAt] = useState(0);
+  const processingTimerRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
 
-  // Reset state when modal opens/closes
+  // Reset state when modal opens/closes (clear timeout on unmount / reopen so Vitest teardown never hits setState)
   useEffect(() => {
     if (!open) {
-      setTimeout(() => {
+      const t = globalThis.setTimeout(() => {
         setStep("select");
         setSelectedAt(1_000);
         setCustomAt("");
@@ -64,8 +65,18 @@ export function BuyArenaTokensModal({ open, onClose }: BuyArenaTokensModalProps)
         setPwError("");
         setPurchasedAt(0);
       }, 300);
+      return () => globalThis.clearTimeout(t);
     }
   }, [open]);
+
+  useEffect(() => {
+    return () => {
+      if (processingTimerRef.current != null) {
+        globalThis.clearTimeout(processingTimerRef.current);
+        processingTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Derived values
   const atAmount     = isCustom ? (parseInt(customAt) || 0) : selectedAt;
@@ -101,7 +112,8 @@ export function BuyArenaTokensModal({ open, onClose }: BuyArenaTokensModalProps)
     //           → POST /api/wallet/buy-at { atAmount, usdtCost: totalCost }
     //           → server: wagmi USDT.transfer(PLATFORM_WALLET, totalCost)
     //           → confirmed: DB UPDATE users SET at_balance += atAmount
-    setTimeout(() => {
+    processingTimerRef.current = globalThis.setTimeout(() => {
+      processingTimerRef.current = null;
       const tx = buyArenaTokens(atAmount, totalCost);
       if (tx) {
         // Also sync into forgeStore's AT balance

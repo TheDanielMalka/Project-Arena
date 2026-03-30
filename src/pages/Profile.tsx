@@ -73,6 +73,7 @@ const Profile = () => {
   const [avatarTab, setAvatarTab]               = useState<"free" | "event" | "premium">("free");
   const [selectedBg, setSelectedBg]             = useState<string>(user?.avatarBg ?? "default");
   const [bgTab, setBgTab]                       = useState<"free" | "event" | "premium">("free");
+  const [badgeTab, setBadgeTab]                 = useState<"free" | "event" | "premium">("free");
   const [selectedEquippedBadge, setSelectedEquippedBadge] = useState<string | undefined>(user?.equippedBadgeIcon);
   /** Draft inside picker — committed only via Apply */
   const [draftAvatar, setDraftAvatar]           = useState<string>(user?.avatar ?? "initials");
@@ -98,10 +99,16 @@ const Profile = () => {
   );
   const forgeAvatarItems   = SEED_ITEMS.filter((i) => i.category === "avatar");
   const forgeBadgeItems    = SEED_ITEMS.filter((i) => i.category === "badge");
+  const forgeBadgeItemsForTab = forgeBadgeItems.filter((i) => (i.badgeShelf ?? "premium") === badgeTab);
   const forgePurchases     = useForgeStore((s) => s.purchases);
-  const ownsForgeItem = (itemId: string) =>
-    forgePurchases.some((p) => p.itemId === itemId) ||
-    Boolean(user?.unlockedForgeItemIds?.includes(itemId));
+  const ownsForgeItem = (itemId: string) => {
+    const seed = SEED_ITEMS.find((x) => x.id === itemId);
+    if (seed?.freeBadge) return true;
+    return (
+      forgePurchases.some((p) => p.itemId === itemId) ||
+      Boolean(user?.unlockedForgeItemIds?.includes(itemId))
+    );
+  };
 
   // DB-ready: unlock flags should come from API/event progress
   const sampleEventUnlockedId = "rift_runner";
@@ -856,7 +863,7 @@ const Profile = () => {
                 {renderAvatarContent(draftAvatar)}
               </span>
               {draftEquippedBadge?.startsWith("badge:") && (
-                <span className="absolute bottom-0.5 right-0.5 z-[4] h-[15px] w-[15px] overflow-hidden">
+                <span className="absolute bottom-0.5 right-0.5 z-[4] h-[18px] w-[18px] overflow-hidden rounded-full ring-2 ring-background shadow-sm">
                   {renderForgeShopIcon(draftEquippedBadge, "sm", "pin")}
                 </span>
               )}
@@ -912,6 +919,24 @@ const Profile = () => {
                   className={`flex-1 text-[10px] font-display uppercase tracking-widest py-1.5 rounded-md transition-all ${
                     bgTab === tab ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
                   }`}>
+                  {tab === "free" ? "Free" : tab === "event" ? "Event" : "Premium"}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {pickerMode === "badge" && (
+            <div className="flex gap-1 mb-3 bg-secondary/40 rounded-lg p-0.5">
+              {(["free", "event", "premium"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setBadgeTab(tab)}
+                  className={cn(
+                    "flex-1 text-[10px] font-display uppercase tracking-widest py-1.5 rounded-md transition-all",
+                    badgeTab === tab ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
                   {tab === "free" ? "Free" : tab === "event" ? "Event" : "Premium"}
                 </button>
               ))}
@@ -1272,7 +1297,7 @@ const Profile = () => {
                 <span className="block text-[9px] text-muted-foreground mt-0.5">No badge pin on your ring</span>
               </button>
               <div className="grid grid-cols-1 gap-2 max-h-[220px] overflow-y-auto pr-0.5">
-                {forgeBadgeItems.map((item) => {
+                {forgeBadgeItemsForTab.map((item) => {
                   const owned = ownsForgeItem(item.id);
                   const selected = draftEquippedBadge === item.icon;
                   return (
@@ -1312,13 +1337,17 @@ const Profile = () => {
                         {owned ? (
                           <p className="text-[9px] text-emerald-400/95 font-display uppercase tracking-wider mt-0.5 flex items-center gap-1">
                             <CheckCircle className="h-3 w-3 shrink-0" />
-                            Owned — tap to equip on ring
+                            {item.freeBadge ? "Free — tap to equip on ring" : "Owned — tap to equip on ring"}
                           </p>
                         ) : (
                           <p className="text-[9px] text-muted-foreground mt-0.5">
-                            {item.priceAT != null && <span className="text-primary font-mono">{item.priceAT.toLocaleString()} AT</span>}
-                            {item.priceAT != null && item.priceUSDT != null && " · "}
-                            {item.priceUSDT != null && <span className="text-arena-gold font-mono">${item.priceUSDT.toFixed(2)} USDT</span>}
+                            {item.priceAT != null && item.priceAT > 0 && (
+                              <span className="text-primary font-mono">{item.priceAT.toLocaleString()} AT</span>
+                            )}
+                            {item.priceAT != null && item.priceAT > 0 && item.priceUSDT != null && " · "}
+                            {item.priceUSDT != null && (
+                              <span className="text-arena-gold font-mono">${item.priceUSDT.toFixed(2)} USDT</span>
+                            )}
                           </p>
                         )}
                       </div>

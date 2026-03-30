@@ -23,9 +23,19 @@ export const SEED_ITEMS: ForgeItem[] = [
   { id: "frame-002", name: "Chroma Luxe Frame",     category: "frame", rarity: "epic", icon: "bg:rainbow", priceUSDT: 2.99, description: "Prismatic chroma — flex worthy.", ownedBy: 34 },
   { id: "frame-003", name: "Northern Pulse Frame",  category: "frame", rarity: "epic", icon: "bg:aurora",  priceUSDT: 2.99, description: "Aurora pulse — clean and cold.", ownedBy: 21 },
   { id: "frame-004", name: "Magma Elite Frame",     category: "frame", rarity: "rare", icon: "bg:lava",    priceUSDT: 1.99, description: "Molten heat — loud but classy.", ownedBy: 55 },
-  { id: "item-005", name: "Founder's Badge", category: "badge", rarity: "legendary", icon: "badge:founders", priceUSDT: 9.99, description: "Hall medallion — molten gold, obsidian depth, cinematic rim. Identity Studio tier flex on your ring.", limited: true, stock: 100, ownedBy: 89 },
-  { id: "item-006", name: "Champion's Seal", category: "badge", rarity: "epic",      icon: "badge:champions", priceAT: 900, description: "Amethyst-forged seal for ladder killers — violet arc glow, trophy etching, pro-client polish.", ownedBy: 234 },
-  { id: "item-007", name: "Veteran's Mark",  category: "badge", rarity: "rare",      icon: "badge:veterans", priceAT: 400, description: "Battle-worn steel crest with arena-cyan bevel — quiet prestige, forged-metal clarity.", ownedBy: 678 },
+  { id: "badge-free-01", name: "Arena Ring Sigil", category: "badge", rarity: "common", icon: "badge:arena_ring", priceAT: 0, description: "Default Arena ring crest — clean gold bezel, starter Identity Studio pin.", freeBadge: true, badgeShelf: "free", ownedBy: 128_400 },
+  { id: "badge-free-02", name: "Sun God Crest", category: "badge", rarity: "common", icon: "badge:sun_god", priceAT: 0, description: "Radiant solar plate — warm metallics for a regal ring accent.", freeBadge: true, badgeShelf: "free", ownedBy: 94_200 },
+  { id: "badge-free-03", name: "Neon Hunter Mark", category: "badge", rarity: "common", icon: "badge:neon_hunter", priceAT: 0, description: "Phoenix-flame sigil — high-energy accent without touching the portrait edge.", freeBadge: true, badgeShelf: "free", ownedBy: 81_050 },
+  { id: "badge-ev-01", name: "Shadow Ronin", category: "badge", rarity: "epic", icon: "badge:shadow_ronin", priceAT: 1100, description: "Blade-bound oni crest — violet steel, event-limited forge line.", badgeShelf: "event", ownedBy: 412 },
+  { id: "badge-ev-02", name: "Black Mage", category: "badge", rarity: "rare", icon: "badge:black_mage", priceAT: 720, description: "Serpent-root grove seal — quiet menace on the ring.", badgeShelf: "event", ownedBy: 633 },
+  { id: "badge-ev-03", name: "Desert Prince", category: "badge", rarity: "rare", icon: "badge:desert_prince", priceAT: 680, description: "Rune-lit codex — scholar-king vibe for ladder grinders.", badgeShelf: "event", ownedBy: 540 },
+  { id: "badge-ev-04", name: "Storm Swordsman", category: "badge", rarity: "epic", icon: "badge:storm_swordsman", priceAT: 980, description: "Coiled storm drake — teal ice peaks, premium event flex.", badgeShelf: "event", ownedBy: 298 },
+  { id: "badge-pr-01", name: "Crimson Core", category: "badge", rarity: "epic", icon: "badge:crimson_core", priceAT: 1250, description: "Molten heart reactor — forged premium pin, Identity Studio line.", badgeShelf: "premium", ownedBy: 156 },
+  { id: "badge-pr-02", name: "Void Warden", category: "badge", rarity: "legendary", icon: "badge:void_warden", priceAT: 2100, priceUSDT: 16.99, description: "Obsidian warden plate — void-edge glow for top earners.", badgeShelf: "premium", limited: true, stock: 80, ownedBy: 44 },
+  { id: "badge-pr-03", name: "Iron Command", category: "badge", rarity: "rare", icon: "badge:iron_command", priceAT: 640, description: "Command stripe insignia — tactical steel for consistent grinders.", badgeShelf: "premium", ownedBy: 890 },
+  { id: "item-005", name: "Founder's Badge", category: "badge", rarity: "legendary", icon: "badge:founders", priceUSDT: 9.99, description: "Hall medallion — molten gold, obsidian depth, cinematic rim. Identity Studio tier flex on your ring.", limited: true, stock: 100, ownedBy: 89, badgeShelf: "premium" },
+  { id: "item-006", name: "Champion's Seal", category: "badge", rarity: "epic",      icon: "badge:champions", priceAT: 900, description: "Amethyst-forged seal for ladder killers — violet arc glow, trophy etching, pro-client polish.", ownedBy: 234, badgeShelf: "premium" },
+  { id: "item-007", name: "Veteran's Mark",  category: "badge", rarity: "rare",      icon: "badge:veterans", priceAT: 400, description: "Battle-worn steel crest with arena-cyan bevel — quiet prestige, forged-metal clarity.", ownedBy: 678, badgeShelf: "premium" },
   { id: "item-008", name: "Double XP (24h)", category: "boost", rarity: "common",    icon: "boost:xp", priceAT: 150, description: "Earn 2× XP on all matches for 24 hours." },
   { id: "item-009", name: "Win Shield",      category: "boost", rarity: "rare",      icon: "boost:shield", priceAT: 500, description: "Protect your win streak — one loss won't count." },
   { id: "item-010", name: "VIP Pass (30d)",  category: "vip",   rarity: "epic",      icon: "vip:month", priceAT: 3000, priceUSDT: 14.99, description: "Priority matchmaking, 5% cashback, exclusive VIP badge." },
@@ -120,9 +130,10 @@ export const useForgeStore = create<ForgeState>()(
   purchaseItem: (itemId, currency) => {
     const item = get().items.find((i) => i.id === itemId);
     if (!item) return { success: false, error: "Item not found" };
+    if (item.freeBadge) return { success: false, error: "Starter badge — already in your locker" };
 
     if (currency === "AT") {
-      if (!item.priceAT) return { success: false, error: "Not available for AT" };
+      if (item.priceAT == null || item.priceAT <= 0) return { success: false, error: "Not available for AT" };
       if (get().arenaTokens < item.priceAT) return { success: false, error: `Insufficient AT — need ${item.priceAT} AT` };
       const purchase: ForgePurchase = { id: `pur-${Date.now()}`, itemId, itemName: item.name, currency: "AT", amount: item.priceAT, purchasedAt: new Date().toISOString() };
       set((s) => ({ arenaTokens: s.arenaTokens - item.priceAT!, purchases: [purchase, ...s.purchases] }));

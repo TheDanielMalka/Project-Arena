@@ -635,7 +635,7 @@ function ShopTab() {
   const filteredItems = useMemo(() => {
     const byCategory =
       category === "all" ? items : items.filter((i) => i.category === category);
-    return byCategory.filter((i) => !i.featured);
+    return byCategory.filter((i) => !i.featured && !(i.category === "badge" && i.freeBadge));
   }, [category, items]);
 
   function handleBuy(itemId: string, currency: "AT" | "USDT") {
