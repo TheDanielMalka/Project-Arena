@@ -5,7 +5,7 @@
  * Auth:       Bearer token from VITE_ENGINE_API_TOKEN (optional in dev)
  *
  * Endpoints used (all served by the Arena Engine desktop process):
- *   GET  /health            → EngineHealth        (poll every 30s)
+ *   GET  /health            → EngineHealth        (poll ~15s default + burst on focus)
  *   GET  /ready             → { ready: boolean }  (poll every 10s when connected)
  *   GET  /match/:id/status  → EngineMatchStatus   (poll during active match)
  *
@@ -28,9 +28,11 @@
  */
 
 export interface EngineHealth {
-  status:   "ok" | "offline" | "error";
-  version?: string;
-  uptime?:  number;
+  status:       "ok" | "offline" | "error";
+  db?:          "connected" | "disconnected";   // sourced from GET /health
+  environment?: string;                          // "development" | "production" | ...
+  version?:     string;
+  uptime?:      number;
 }
 
 export interface EngineReadiness {
@@ -79,12 +81,20 @@ async function safeFetch<T>(path: string, timeoutMs = 5000): Promise<T | null> {
  * If this returns offline/null, the client is not running.
  */
 export async function getEngineHealth(): Promise<EngineHealth> {
-  const data = await safeFetch<{ status?: string; version?: string; uptime?: number }>("/health");
+  const data = await safeFetch<{
+    status?:      string;
+    db?:          string;
+    environment?: string;
+    version?:     string;
+    uptime?:      number;
+  }>("/health");
   if (!data) return { status: "offline" };
   return {
-    status:  data.status === "ok" ? "ok" : "error",
-    version: data.version,
-    uptime:  data.uptime,
+    status:      data.status === "ok" ? "ok" : "error",
+    db:          data.db === "connected" ? "connected" : data.db === "disconnected" ? "disconnected" : undefined,
+    environment: data.environment,
+    version:     data.version,
+    uptime:      data.uptime,
   };
 }
 

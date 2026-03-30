@@ -5,8 +5,9 @@
  * All components read status from clientStore — this hook is the only poller.
  *
  * Poll intervals:
- *   30s  — health check (default, configurable)
+ *   15s  — health check (default, configurable; faster sync than legacy 30s)
  *   10s  — when status is "connected" (faster to detect when capture becomes ready)
+ *   Burst — on hook mount + tab focus, runs extra checks so badge updates quickly after client starts.
  *
  * WS-ready: when WebSocket is connected this hook can be replaced with
  *   a WS listener that calls clientStore.setStatus() directly on "client:*" events.
@@ -17,7 +18,9 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { getEngineHealth, type EngineHealth } from "@/lib/engine-api";
 import { useClientStore } from "@/stores/clientStore";
 
-export function useEngineStatus(pollInterval = 30_000) {
+const BURST_DELAYS_MS = [0, 1_500, 4_000] as const;
+
+export function useEngineStatus(pollInterval = 15_000) {
   const syncFromHealth = useClientStore((s) => s.syncFromHealth);
   const clientStatus   = useClientStore((s) => s.status);
   const [health, setHealth] = useState<EngineHealth | null>(null);
@@ -33,6 +36,24 @@ export function useEngineStatus(pollInterval = 30_000) {
       syncFromHealth(null);
     }
   }, [syncFromHealth]);
+
+  // Burst after mount so "client just started" reflects in UI within seconds, not one full interval.
+  useEffect(() => {
+    const timers = BURST_DELAYS_MS.map((ms) =>
+      window.setTimeout(() => {
+        void check();
+      }, ms),
+    );
+    return () => timers.forEach((t) => window.clearTimeout(t));
+  }, [check]);
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void check();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [check]);
 
   useEffect(() => {
     // Poll faster when "connected" to detect when capture subsystem becomes ready

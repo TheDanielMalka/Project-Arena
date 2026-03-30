@@ -90,9 +90,23 @@ class HealthResponse(BaseModel):
     environment: str
 
 
+class ReadinessResponse(BaseModel):
+    """
+    Response returned by GET /ready.
+
+    DB-ready: maps to client_sessions.status = 'ready' | 'connected'.
+    When WebSocket is live this becomes a push event instead of a poll.
+    """
+    ready: bool
+    reason: str = ""     # human-readable when ready=False
+
+
 class ValidationResponse(BaseModel):
     """
     Response returned by POST /validate/screenshot.
+
+    Fields match CLAUDE.md naming contract exactly:
+      result, confidence, accepted, game, players, agents, score
 
     TODO:
     - persist this as a match_evidence row in DB once schema is ready
@@ -102,6 +116,7 @@ class ValidationResponse(BaseModel):
     game: str                            # "CS2" | "Valorant"
     result: str | None
     confidence: float
+    accepted: bool                       # True when result is non-None AND confidence >= threshold
     players: list[str]
     agents: list[str] = []              # Valorant agent names; [] for CS2
     score: str | None
@@ -123,6 +138,30 @@ async def health():
         return {"status": "ok", "db": "connected", "environment": ENVIRONMENT or "development"}
     except Exception:
         return {"status": "ok", "db": "disconnected", "environment": ENVIRONMENT or "development"}
+
+
+@app.get("/ready", response_model=ReadinessResponse)
+async def ready():
+    """
+    Secondary readiness check — confirms the capture subsystem is operational.
+
+    Returns ready=True when:
+      - The engine HTTP server is running (implied by responding)
+      - The screenshot directory is accessible for writing
+
+    DB-ready: will additionally check client_sessions.status once DB is wired.
+    WS-ready: replace polling with a "client:ready" WebSocket push event.
+    """
+    try:
+        os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+        # Quick write-access probe
+        probe = os.path.join(SCREENSHOT_DIR, ".ready_probe")
+        with open(probe, "w") as f:
+            f.write("")
+        os.remove(probe)
+        return ReadinessResponse(ready=True)
+    except Exception as exc:
+        return ReadinessResponse(ready=False, reason=f"Capture dir not writable: {exc}")
 
 
 @app.post("/capture", response_model=CaptureResponse)
@@ -194,6 +233,7 @@ async def validate_screenshot(
         game=game,
         result=output.result,
         confidence=output.confidence,
+        accepted=output.accepted,
         players=output.players,
         agents=output.agents,
         score=output.score,
@@ -375,16 +415,25 @@ async def match_status(match_id: str):
     """
     Check match validation status from DB.
 
-    TODO: return full match record once schema is finalised.
+    Returns status + winner_id so the frontend can trigger escrow release
+    without guessing.  winner_id is null until the engine writes a confirmed
+    result — callers must treat null as "not yet decided".
+
+    DB-ready: SELECT status, winner_id FROM matches WHERE id = :mid
+    CONTRACT-ready: winner_id → escrow.release(winner_id)
     """
     try:
         with SessionLocal() as session:
             row = session.execute(
-                text("SELECT status FROM matches WHERE id = :mid"),
+                text("SELECT status, winner_id FROM matches WHERE id = :mid"),
                 {"mid": match_id},
             ).fetchone()
             if row:
-                return {"match_id": match_id, "status": row[0]}
+                return {
+                    "match_id":  match_id,
+                    "status":    row[0],
+                    "winner_id": row[1],   # None until match is completed
+                }
     except Exception:
         pass
-    return {"match_id": match_id, "status": "pending"}
+    return {"match_id": match_id, "status": "pending", "winner_id": None}
