@@ -89,21 +89,31 @@ def _detect_result_cs2(image_path: str, region=None):
 def _detect_result_valorant(image_path: str, region=None):
     """
     Valorant end-screen result detection.
-    Calibrated from real VICTORY and DEFEAT screenshots.
+    Calibrated from real VICTORY and DEFEAT screenshots (1200×675 reference).
 
     VICTORY : teal/cyan-green background — HSV H 75-105
-              Large "VICTORY" text + background glow fills the upper screen.
+              The large "VICTORY" text + full-screen teal glow is unmistakable.
+              Teal covers ~40-60 % of the detection crop, threshold > 20 %.
 
-    DEFEAT  : red/crimson background     — HSV H 0-8 | H 170-180
-              Red wraps around in OpenCV HSV so two masks are OR-ed.
-              "DEFEAT" text and background are both bright crimson.
+    DEFEAT  : dark crimson/maroon background — HSV H 0-15 | H 165-180
+              Critical calibration note: the Valorant DEFEAT screen is DARK.
+              Background V ≈ 25-80 (much lower than "bright red").  The old
+              V ≥ 60 threshold only caught the bright "DEFEAT" text (~5 % of
+              crop) and reliably missed the background, causing false negatives.
+              Fix: V ≥ 25 catches the full dark crimson area (≈ 35-55 %).
 
     Default crop: y 5-55%, x 10-90% of the frame.
       - Captures the coloured background + large text.
       - Excludes top-corner score numbers (x 0-8%, x 92-100%).
       - Excludes dark player-card area below 55%.
+
+    Cross-game safety: this function is only called when game="Valorant"
+    so the expanded H/V ranges for DEFEAT do not risk CS2 false positives.
     """
     img = cv2.imread(image_path)
+    if img is None:
+        logger.error(f"[Valorant] image file not found: {image_path}")
+        return None, 0.0
 
     if region:
         x, y, w, h = region
@@ -117,14 +127,16 @@ def _detect_result_valorant(image_path: str, region=None):
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
     total_pixels = hsv.shape[0] * hsv.shape[1]
 
-    # VICTORY: teal/cyan-green — confirmed from real Valorant VICTORY screenshot
+    # VICTORY: teal/cyan-green — calibrated from real VICTORY screenshot.
+    # H 75-105 covers the Valorant brand teal (peak ≈ H 88-92 in OpenCV).
     teal_mask = cv2.inRange(hsv, (75, 60, 60), (105, 255, 255))
-    teal_pct = np.sum(teal_mask > 0) / total_pixels * 100
+    teal_pct  = np.sum(teal_mask > 0) / total_pixels * 100
 
-    # DEFEAT: red/crimson — confirmed from real Valorant DEFEAT screenshot.
-    # Red wraps around in OpenCV HSV: check both H 0-8 AND H 170-180.
-    red_mask1 = cv2.inRange(hsv, (0,   60, 60), (8,   255, 255))
-    red_mask2 = cv2.inRange(hsv, (170, 60, 60), (180, 255, 255))
+    # DEFEAT: red/crimson — calibrated from real DEFEAT screenshot.
+    # V ≥ 25 (not 60) catches the dark maroon background that fills most of
+    # the screen; H broadened to 0-15 / 165-180 to cover full crimson range.
+    red_mask1 = cv2.inRange(hsv, (0,   50, 25), (15,  255, 255))
+    red_mask2 = cv2.inRange(hsv, (165, 50, 25), (180, 255, 255))
     red_pct   = np.sum((red_mask1 | red_mask2) > 0) / total_pixels * 100
 
     logger.debug(f"[Valorant] teal: {teal_pct:.1f}%, red: {red_pct:.1f}%")
@@ -270,8 +282,8 @@ if __name__ == "__main__":
 
     # Valorant quick-test
     for path in [
-        "src/vision/templates/valorant/valorant_1920x1080_victory.png",
-        "src/vision/templates/valorant/valorant_1920x1080_defeat.png",
+        "templates/valorant/valorant_1920x1080_victory.png",
+        "templates/valorant/valorant_1920x1080_defeat.png",
     ]:
         result, confidence = detect_result(path, game="Valorant")
         print(f"[Valorant] {path} -> result={result}, confidence={confidence}")
