@@ -11,9 +11,9 @@ import { Input } from "@/components/ui/input";
 import {
   Swords, Clock, Users, Lock, Gamepad2, CheckCircle,
   Search, Copy, UserPlus, Crown, Shield, Hash, KeyRound, Eye, EyeOff,
-  AlertCircle, ChevronDown, Monitor, Smartphone, Zap, TrendingUp,
+  AlertCircle, ChevronDown, Monitor, MonitorPlay, Smartphone, Zap, TrendingUp,
   Wallet, Loader2, ScanLine, LogOut, AlertTriangle, Timer,
-  Trash2, WifiOff, Download,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MatchRosterAvatar } from "@/components/match/MatchRosterAvatar";
@@ -21,6 +21,7 @@ import type { MatchStatus, Game, Match, MatchMode } from "@/types";
 import { useClientStore }  from "@/stores/clientStore";
 import { GAME_MODES, getDefaultMode, getTeamSize, getTotalPlayers, isGameActive } from "@/config/gameModes";
 import { PlayerPopoverLayer } from "@/components/players/PlayerCardPopover";
+import { ClientReadinessStrip } from "@/components/match/ClientReadinessStrip";
 
 // ─── Game configs ─────────────────────────────────────────────────────────────
 // comingSoon: true → game visible in dropdowns but non-selectable (greyed, locked)
@@ -225,6 +226,8 @@ const MatchLobby = () => {
   const { lockEscrow, cancelEscrow } = useWalletStore();
   const canPlay      = useClientStore((s) => s.canPlay());
   const clientStatus = useClientStore((s) => s.status);
+  const clientVersion = useClientStore((s) => s.version);
+  const clientStatusLabel = useClientStore((s) => s.statusLabel);
   const markInMatch  = useClientStore((s) => s.markInMatch);
   const markIdle     = useClientStore((s) => s.markIdle);
   useMatchPolling({ interval: 5000 });
@@ -478,32 +481,8 @@ const MatchLobby = () => {
         </div>
       </div>
 
-      {/* ── Client Status Banner ── */}
-      {!canPlay && clientStatus !== "checking" && (
-        <div className="rounded-xl border border-arena-gold/30 bg-arena-gold/5 px-4 py-3 flex items-center gap-3">
-          <WifiOff className="h-4 w-4 text-arena-gold shrink-0" />
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-display font-semibold text-arena-gold">
-              {clientStatus === "disconnected" ? "Arena Client Required" : "Client Starting…"}
-            </p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {clientStatus === "disconnected"
-                ? "Download and run the Arena desktop client to join matches. You can browse lobbies and view stats without it. Ranked play and escrow settlement expect a live client synced with the engine."
-                : "Arena Client is starting up. Match joining will be available shortly — the lobby badge updates faster when the capture stack becomes ready."}
-            </p>
-          </div>
-          {clientStatus === "disconnected" && (
-            <a
-              href="https://arena.gg/download-client"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-arena-gold/15 border border-arena-gold/30 text-arena-gold text-xs font-display hover:bg-arena-gold/25 transition-colors"
-            >
-              <Download className="h-3 w-3" /> Download
-            </a>
-          )}
-        </div>
-      )}
+      {/* ── Client + engine readiness (health poll, manual refresh, explainer) ── */}
+      <ClientReadinessStrip />
 
       {/* ── Live Activity Ticker ── */}
       <LiveTicker matches={matches} />
@@ -556,6 +535,11 @@ const MatchLobby = () => {
         const isVerifying  = depositStep === "verifying";
         const isConfirmed  = depositStep === "confirmed";
         const checks: { icon: React.ElementType; label: string; detail: string }[] = [
+          {
+            icon: MonitorPlay,
+            label: "Arena Client",
+            detail: `${clientStatusLabel()}${clientVersion ? ` · v${clientVersion}` : ""}`,
+          },
           { icon: Wallet,      label: "Wallet connected",          detail: "0x•••••••" },
           { icon: ScanLine,    label: `${idp.field} verified`,     detail: idp.name    },
           { icon: CheckCircle, label: "Bet amount confirmed",      detail: `$${match.betAmount}` },
