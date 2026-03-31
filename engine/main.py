@@ -9,9 +9,12 @@ from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+import jwt as _jwt
+
 from src.config import DATABASE_URL, ENVIRONMENT
 from src.vision.capture import capture_screen, crop_roi
 from src.vision.engine import VisionEngine, VisionEngineConfig
+import src.auth as auth
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DB_URL = DATABASE_URL or "postgresql://arena_admin:arena_secret_change_me@arena-db:5432/arena"
@@ -54,12 +57,53 @@ app = FastAPI(
 
 
 # ── Auth dependency ───────────────────────────────────────────────────────────
-async def verify_token(authorization: str = Header(...)):
+async def verify_token(authorization: str = Header(...)) -> dict:
+    """Decode and validate a JWT Bearer token. Returns the decoded payload."""
     if not authorization.startswith("Bearer "):
         raise HTTPException(401, "Invalid token format")
     token = authorization.removeprefix("Bearer ")
-    # TODO: validate JWT from your auth system
-    return token
+    try:
+        return auth.decode_token(token)
+    except _jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Token expired")
+    except _jwt.InvalidTokenError:
+        raise HTTPException(401, "Invalid token")
+
+
+# ── Auth models ───────────────────────────────────────────────────────────────
+
+class RegisterRequest(BaseModel):
+    username: str
+    email: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    identifier: str   # email OR username
+    password: str
+
+
+class AuthResponse(BaseModel):
+    # DB-ready: user_id maps to users.id (UUID)
+    access_token: str
+    token_type: str = "bearer"
+    user_id: str
+    username: str
+    email: str
+    arena_id: str | None = None
+
+
+class UserProfile(BaseModel):
+    # DB-ready: joins users + user_stats
+    user_id: str
+    username: str
+    email: str
+    arena_id: str | None = None
+    rank: str | None = None
+    wallet_address: str | None = None
+    xp: int = 0
+    wins: int = 0
+    losses: int = 0
 
 
 # ── Request / Response models ─────────────────────────────────────────────────
@@ -439,3 +483,144 @@ async def match_status(match_id: str):
     except Exception:
         pass
     return {"match_id": match_id, "status": "pending", "winner_id": None}
+
+
+# ── Auth routes ───────────────────────────────────────────────────────────────
+
+@app.post("/auth/register", response_model=AuthResponse, status_code=201)
+async def register(req: RegisterRequest):
+    """
+    Register a new Arena user.
+
+    Creates rows in: users, user_stats, user_balances, user_roles.
+    DB-ready: all inserts use the users table from infra/sql/init.sql.
+    """
+    try:
+        with SessionLocal() as session:
+            # ── Duplicate check ───────────────────────────────────────
+            existing = session.execute(
+                text("SELECT id FROM users WHERE email = :e OR username = :u"),
+                {"e": req.email, "u": req.username},
+            ).fetchone()
+            if existing:
+                raise HTTPException(409, "Email or username already registered")
+
+            # ── Create user ───────────────────────────────────────────
+            pw_hash = auth.hash_password(req.password)
+            arena_id = auth.generate_arena_id()
+            row = session.execute(
+                text(
+                    "INSERT INTO users (username, email, password_hash, arena_id) "
+                    "VALUES (:u, :e, :h, :a) "
+                    "RETURNING id, username, email, arena_id"
+                ),
+                {"u": req.username, "e": req.email, "h": pw_hash, "a": arena_id},
+            ).fetchone()
+
+            user_id = str(row[0])
+
+            # ── Seed companion rows ───────────────────────────────────
+            session.execute(
+                text("INSERT INTO user_stats (user_id) VALUES (:uid)"),
+                {"uid": user_id},
+            )
+            session.execute(
+                text("INSERT INTO user_balances (user_id) VALUES (:uid)"),
+                {"uid": user_id},
+            )
+            session.execute(
+                text("INSERT INTO user_roles (user_id, role) VALUES (:uid, 'user')"),
+                {"uid": user_id},
+            )
+            session.commit()
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("register error: %s", exc)
+        raise HTTPException(500, "Registration failed")
+
+    token = auth.issue_token(user_id, req.email)
+    return AuthResponse(
+        access_token=token,
+        user_id=user_id,
+        username=req.username,
+        email=req.email,
+        arena_id=arena_id,
+    )
+
+
+@app.post("/auth/login", response_model=AuthResponse)
+async def login(req: LoginRequest):
+    """
+    Login with email OR username + password.
+
+    DB-ready: SELECT from users table; verifies bcrypt hash.
+    """
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT id, username, email, password_hash, arena_id "
+                    "FROM users "
+                    "WHERE email = :id OR username = :id"
+                ),
+                {"id": req.identifier},
+            ).fetchone()
+    except Exception as exc:
+        logger.error("login db error: %s", exc)
+        raise HTTPException(500, "Login failed")
+
+    if not row or not auth.verify_password(req.password, row[3]):
+        raise HTTPException(401, "Invalid credentials")
+
+    user_id = str(row[0])
+    token = auth.issue_token(user_id, row[2])
+    return AuthResponse(
+        access_token=token,
+        user_id=user_id,
+        username=row[1],
+        email=row[2],
+        arena_id=row[4],
+    )
+
+
+@app.get("/auth/me", response_model=UserProfile)
+async def me(payload: dict = Depends(verify_token)):
+    """
+    Return the authenticated user's profile from DB.
+
+    DB-ready: joins users + user_stats.
+    """
+    user_id: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT u.id, u.username, u.email, u.arena_id, "
+                    "       u.rank, u.wallet_address, "
+                    "       COALESCE(s.xp, 0), COALESCE(s.wins, 0), COALESCE(s.losses, 0) "
+                    "FROM users u "
+                    "LEFT JOIN user_stats s ON s.user_id = u.id "
+                    "WHERE u.id = :uid"
+                ),
+                {"uid": user_id},
+            ).fetchone()
+    except Exception as exc:
+        logger.error("me db error: %s", exc)
+        raise HTTPException(500, "Profile fetch failed")
+
+    if not row:
+        raise HTTPException(404, "User not found")
+
+    return UserProfile(
+        user_id=str(row[0]),
+        username=row[1],
+        email=row[2],
+        arena_id=row[3],
+        rank=row[4],
+        wallet_address=row[5],
+        xp=int(row[6]),
+        wins=int(row[7]),
+        losses=int(row[8]),
+    )

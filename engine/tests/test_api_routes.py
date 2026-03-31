@@ -13,11 +13,19 @@ from __future__ import annotations
 
 import io
 import os
+import uuid
 import pytest
 from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from main import app
+import src.auth as auth
+
+# Valid JWT for routes that require authentication in tests.
+# Uses a real token so verify_token passes without mocking it.
+_TEST_USER_ID = str(uuid.uuid4())
+_TEST_TOKEN = auth.issue_token(_TEST_USER_ID, "test@arena.gg")
+_AUTH_HEADER = {"Authorization": f"Bearer {_TEST_TOKEN}"}
 
 client = TestClient(app)
 
@@ -138,7 +146,7 @@ class TestValidationResponseAccepted:
             resp = client.post(
                 "/validate/screenshot?match_id=TEST-001&game=Valorant",
                 files={"file": ("teal.png", io.BytesIO(teal_png), "image/png")},
-                headers={"Authorization": "Bearer test_token"},
+                headers=_AUTH_HEADER,
             )
         assert resp.status_code == 200
         data = resp.json()
@@ -151,7 +159,7 @@ class TestValidationResponseAccepted:
             resp = client.post(
                 "/validate/screenshot?match_id=TEST-002&game=Valorant",
                 files={"file": ("teal.png", io.BytesIO(teal_png), "image/png")},
-                headers={"Authorization": "Bearer test_token"},
+                headers=_AUTH_HEADER,
             )
         data = resp.json()
         # Solid teal gives very high confidence (≥0.80) — accepted must be True
@@ -164,7 +172,7 @@ class TestValidationResponseAccepted:
             resp = client.post(
                 "/validate/screenshot?match_id=TEST-003&game=Valorant",
                 files={"file": ("grey.png", io.BytesIO(grey_png), "image/png")},
-                headers={"Authorization": "Bearer test_token"},
+                headers=_AUTH_HEADER,
             )
         data = resp.json()
         if data["result"] is None:
@@ -181,7 +189,7 @@ class TestValidationResponseAccepted:
             resp = client.post(
                 "/validate/screenshot?match_id=TEST-004&game=Valorant",
                 files={"file": ("teal.png", io.BytesIO(teal_png), "image/png")},
-                headers={"Authorization": "Bearer test_token"},
+                headers=_AUTH_HEADER,
             )
         data = resp.json()
         # json.loads always maps true/false → Python bool, never numpy.bool_
@@ -195,7 +203,7 @@ class TestValidationResponseAccepted:
             resp = client.post(
                 "/validate/screenshot?match_id=TEST-005&game=CS2",
                 files={"file": ("grey.png", io.BytesIO(grey_png), "image/png")},
-                headers={"Authorization": "Bearer test_token"},
+                headers=_AUTH_HEADER,
             )
         data = resp.json()
         required = {"match_id", "game", "result", "confidence", "accepted",
