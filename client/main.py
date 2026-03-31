@@ -560,70 +560,81 @@ class MatchMonitor:
 
 
 # ── Icon Rendering ─────────────────────────────────────────────────────────────
-def _draw_arena_icon(size: int = 128, state: str = "idle") -> Image.Image:
+def _draw_arena_icon(size: int = 64, state: str = "idle") -> Image.Image:
     """
-    Arena 'A' tray icon — BLACK background, RED 'A'.
-    Matches Arena website palette (hsl 355 78% 52% = #E42535).
+    Arena 'A' tray icon.
+    Drawn at 4× resolution then downscaled for smooth anti-aliasing at small sizes.
 
     States:
-      active → red ring + red A    (monitoring ON)
-      match  → gold ring + gold A  (match in progress)
-      error  → red dim ring        (engine offline)
-      idle   → gray ring + gray A  (monitoring OFF)
+      active → red 'A'   (monitoring ON)
+      match  → gold 'A'  (match in progress)
+      error  → dim red   (engine offline)
+      idle   → gray 'A'  (monitoring OFF)
+
+    Background is transparent so Windows tray colour shows through cleanly.
+    A small filled circle behind the glyph ensures the 'A' is always legible.
     """
     colors = {
-        "active": (BRAND["accent_pil"], BRAND["accent_pil"]),
-        "match":  (BRAND["match_pil"],  BRAND["match_pil"]),
-        "error":  (BRAND["error_pil"],  BRAND["idle_pil"]),
-        "idle":   (BRAND["idle_pil"],   BRAND["idle_pil"]),
+        "active": BRAND["accent_pil"],
+        "match":  BRAND["match_pil"],
+        "error":  (180, 30, 40, 200),
+        "idle":   BRAND["idle_pil"],
     }
-    ring_color, glyph_color = colors.get(state, colors["idle"])
+    glyph_color = colors.get(state, colors["idle"])
 
-    img  = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    # Draw at 4× then downscale → smooth edges at any size
+    draw_size = size * 4
+    img  = Image.new("RGBA", (draw_size, draw_size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # Black circle background
-    draw.ellipse([2, 2, size - 2, size - 2], fill=BRAND["bg_pil"])
-    # Colored ring
-    lw_ring = max(4, size // 28)
-    draw.ellipse([2, 2, size - 2, size - 2], outline=ring_color, width=lw_ring)
+    s = draw_size
+    cx = s // 2
 
-    # Arena 'A' glyph
-    lw  = max(6, size // 18)
-    cx  = size // 2
-    pad = int(size * 0.14)
+    # Dark pill background — just behind the glyph area, not full square
+    pad_bg = int(s * 0.08)
+    draw.ellipse([pad_bg, pad_bg, s - pad_bg, s - pad_bg],
+                 fill=(15, 15, 15, 230))
 
-    top  = (cx,         pad)
-    bl   = (pad,        size - pad)
-    br   = (size - pad, size - pad)
-    cb_y = int(size * 0.52)
-    ins  = int(size * 0.25)
-    cb_l = (ins,        cb_y)
-    cb_r = (size - ins, cb_y)
+    # Thin ring
+    lw_ring = max(2, s // 40)
+    draw.ellipse([pad_bg, pad_bg, s - pad_bg, s - pad_bg],
+                 outline=glyph_color, width=lw_ring)
+
+    # 'A' glyph — thick, bold, centred
+    lw  = max(8, s // 12)
+    pad = int(s * 0.18)
+
+    top  = (cx,          int(s * 0.12))
+    bl   = (int(s * 0.1), int(s * 0.88))
+    br   = (int(s * 0.9), int(s * 0.88))
+    cb_y = int(s * 0.55)
+    ins  = int(s * 0.28)
+    cb_l = (ins,     cb_y)
+    cb_r = (s - ins, cb_y)
 
     draw.line([top, bl],    fill=glyph_color, width=lw)
     draw.line([top, br],    fill=glyph_color, width=lw)
-    draw.line([cb_l, cb_r], fill=glyph_color, width=lw)
+    draw.line([cb_l, cb_r], fill=glyph_color, width=max(6, s // 16))
 
-    # Status dot — bottom-right
-    dot_r = max(8, size // 10)
-    dx = size - dot_r - int(size * 0.04)
-    dy = size - dot_r - int(size * 0.04)
-    draw.ellipse([dx - dot_r, dy - dot_r, dx + dot_r, dy + dot_r], fill=ring_color)
-
-    return img
+    # Downscale with LANCZOS for smooth anti-aliasing
+    return img.resize((size, size), Image.LANCZOS)
 
 
 def generate_ico_file(path: str):
-    """Save multi-resolution ICO (16→256 px)."""
+    """
+    Save a Windows-compatible ICO for the window titlebar/taskbar.
+    PIL's ICO writer only stores one size reliably; we save 32×32 which
+    Windows scales for titlebar use. The tray icon uses PIL RGBA directly.
+    """
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    sizes  = [16, 24, 32, 48, 64, 128, 256]
-    frames = [_draw_arena_icon(s, state="active").resize((s, s), Image.LANCZOS)
-              for s in sizes]
-    frames[0].save(path, format="ICO",
-                   sizes=[(s, s) for s in sizes],
-                   append_images=frames[1:])
-    logger.info(f"ICO saved: {path}")
+    # Draw at 256, composite onto dark bg, save as 32x32 ICO
+    # (PIL multi-size ICO is unreliable; single 32px ICO works on all Windows)
+    rgba = _draw_arena_icon(256, state="active")
+    bg   = Image.new("RGBA", (256, 256), (15, 15, 15, 255))
+    bg.paste(rgba, mask=rgba.split()[3])
+    icon = bg.resize((32, 32), Image.LANCZOS).convert("RGBA")
+    icon.save(path, format="ICO")
+    logger.info(f"ICO saved: {path} ({os.path.getsize(path)} bytes)")
 
 
 # ── Client Window ──────────────────────────────────────────────────────────────
@@ -1246,7 +1257,7 @@ class ArenaTray:
         menu = Menu(
             MenuItem("Arena Client", None, enabled=False),
             Menu.SEPARATOR,
-            MenuItem("Open Arena",    self._on_open),
+            MenuItem("Open Arena",    self._on_open, default=True),
             Menu.SEPARATOR,
             MenuItem("Monitoring", self._toggle_monitoring,
                      checked=lambda item: self._monitoring_enabled),
