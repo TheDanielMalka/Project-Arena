@@ -4,7 +4,8 @@ import {
   Download, Monitor, ShieldCheck, Radio, ArrowRight, RefreshCw,
 } from "lucide-react";
 import { useClientStore } from "@/stores/clientStore";
-import { getEngineHealth } from "@/lib/engine-api";
+import { useUserStore } from "@/stores/userStore";
+import { getClientStatus } from "@/lib/engine-api";
 import { useCallback, useState } from "react";
 
 /**
@@ -12,22 +13,23 @@ import { useCallback, useState } from "react";
  * No new API — uses clientStore + optional manual health ping.
  */
 const ArenaClientPage = () => {
-  const statusLabel = useClientStore((s) => s.statusLabel);
-  const version = useClientStore((s) => s.version);
-  const canPlay = useClientStore((s) => s.canPlay());
-  const syncFromHealth = useClientStore((s) => s.syncFromHealth);
-  const [busy, setBusy] = useState(false);
+  const statusLabel          = useClientStore((s) => s.statusLabel);
+  const version              = useClientStore((s) => s.version);
+  const canPlay              = useClientStore((s) => s.canPlay());
+  const syncFromClientStatus = useClientStore((s) => s.syncFromClientStatus);
+  const walletAddress        = useUserStore((s) => s.user?.walletAddress);
+  const [busy, setBusy]      = useState(false);
 
+  // Phase 4: manual recheck uses canonical GET /client/status, not GET /health.
   const recheck = useCallback(async () => {
     setBusy(true);
     try {
-      syncFromHealth(await getEngineHealth());
-    } catch {
-      syncFromHealth(null);
+      const data = await getClientStatus(walletAddress);
+      syncFromClientStatus(data);
     } finally {
       setBusy(false);
     }
-  }, [syncFromHealth]);
+  }, [syncFromClientStatus, walletAddress]);
 
   return (
     <div className="space-y-8 max-w-3xl">
