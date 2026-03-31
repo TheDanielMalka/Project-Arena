@@ -5,3 +5,19 @@ dist
 .env
 engine/__pycache__
 engine/*.pyc
+# Python venvs — symlinks on Windows cause Docker build context errors
+venv/
+winvenv/
+.venv/
+*/.venv/
+*/venv/
+client/.venv/
+client/venv/
+engine/.venv/
+engine/venv/
+client/__pycache__/
+client/dist/
+# Test artifacts
+screenshots/
+evidence/
+logs/

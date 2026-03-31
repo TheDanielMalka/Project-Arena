@@ -1,0 +1,15 @@
+# Python venvs — symlinks on Windows cause Docker build context errors
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Editor
+.vscode/
+.idea/
