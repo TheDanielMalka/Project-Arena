@@ -243,12 +243,16 @@ class AuthManager:
         save_config(self._config)
         logger.info("Auth cleared")
 
-    def login(self, engine: "EngineClient", identifier: str, password: str) -> str | None:
+    def login(self, engine: "EngineClient", identifier: str, password: str,
+              session_id: str | None = None) -> str | None:
         """
-        Phase 3: POST /auth/login with {identifier, password}.
+        POST /auth/login with {identifier, password}.
         identifier = email OR username — backend accepts both.
         Returns None on success, error string on failure.
-        DB-ready: validates against users table (email or username field).
+
+        Phase 5: after successful login, calls engine.bind_session() with the
+        install's stable session_id so the website's GET /client/status returns
+        user_id for this machine.
         """
         result = engine.login(identifier, password)
         if result and result.get("token"):
@@ -262,16 +266,26 @@ class AuthManager:
                 xp=result.get("xp"),
                 avatar_url=result.get("avatar_url"),
             )
+            # Phase 5: bind session so website can detect this client immediately
+            if session_id:
+                engine.bind_session(result["token"], session_id)
             return None  # success
         if result and result.get("detail"):
             return result["detail"]
-        return "Login endpoint not available yet — Phase 3"
+        return "Login failed — check Engine connection"
 
-    def logout(self):
+    def logout(self, engine: "EngineClient | None" = None):
+        """
+        Phase 5: tell engine to disconnect sessions before clearing local state.
+        engine param is optional for backward compat (e.g. ArenaTray shutdown).
+        """
+        token = self._config.get("auth_token", "")
+        if engine and token:
+            engine.logout_from_engine(token)
         self.clear()
 
     def refresh(self, engine: "EngineClient") -> bool:
-        """Phase 3: POST /auth/refresh. Stub: no-op."""
+        """Phase 6: POST /auth/refresh. Stub: no-op."""
         return True
 
 
@@ -382,65 +396,107 @@ class EngineClient:
 
     def login(self, identifier: str, password: str) -> dict | None:
         """
-        Phase 3: POST /auth/login → {token, user_id, username, email,
-                                      wallet_address, rank, xp, avatar_url}
+        POST /auth/login → {access_token, token_type, user_id, username, email, arena_id}
         identifier = email OR username — backend accepts both.
-        DB-ready: validates against users table.
+        Returns normalised dict with key 'token' for AuthManager.set_token().
+        Returns {'detail': '...'} on 401/403, None on network error.
         """
-        # Phase 3:
-        # try:
-        #     r = self.client.post(f"{self.base_url}/auth/login",
-        #                          json={"identifier": identifier, "password": password},
-        #                          timeout=10)
-        #     return r.json()
-        # except Exception as e:
-        #     logger.error(f"Login failed: {e}")
-        return None
+        try:
+            r = self.client.post(
+                f"{self.base_url}/auth/login",
+                json={"identifier": identifier, "password": password},
+                timeout=10,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                # Normalise access_token → token so AuthManager.set_token() works
+                return {
+                    "token":    data.get("access_token"),
+                    "user_id":  data.get("user_id"),
+                    "username": data.get("username"),
+                    "email":    data.get("email"),
+                    "arena_id": data.get("arena_id"),
+                }
+            try:
+                detail = r.json().get("detail", "Invalid credentials")
+            except Exception:
+                detail = f"Login failed ({r.status_code})"
+            return {"detail": detail}
+        except Exception as e:
+            logger.error(f"Login failed: {e}")
+            return None
 
     def get_profile(self, token: str) -> dict | None:
         """
-        Phase 3: GET /user/profile
-        DB-ready: users + user_stats tables.
+        GET /auth/me → {user_id, username, email, arena_id, rank, wallet_address, xp, wins, losses}
+        Used by _poll_profile_sync() to keep rank/XP fresh every 60s.
         """
-        # Phase 3:
-        # try:
-        #     r = self.client.get(f"{self.base_url}/user/profile",
-        #                         headers={"Authorization": f"Bearer {token}"}, timeout=5)
-        #     if r.status_code == 200: return r.json()
-        # except Exception as e:
-        #     logger.error(f"Profile fetch: {e}")
+        try:
+            r = self.client.get(
+                f"{self.base_url}/auth/me",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=5,
+            )
+            if r.status_code == 200:
+                return r.json()
+        except Exception as e:
+            logger.error(f"Profile fetch: {e}")
         return None
+
+    def bind_session(self, token: str, session_id: str) -> bool:
+        """
+        POST /client/bind — links this install's session_id to the authenticated user.
+        Called automatically after login so GET /client/status returns user_id.
+        Non-fatal: bind failure is logged but does not block the UI.
+        """
+        try:
+            r = self.client.post(
+                f"{self.base_url}/client/bind",
+                json={"session_id": session_id},
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=5,
+            )
+            if r.status_code == 200:
+                logger.info("Session bound to user")
+                return True
+            logger.warning(f"Bind session returned {r.status_code}")
+        except Exception as e:
+            logger.debug(f"Bind session failed (non-fatal): {e}")
+        return False
+
+    def logout_from_engine(self, token: str) -> None:
+        """
+        POST /auth/logout — tells engine to disconnect client_sessions for this user.
+        Best-effort: network failure is silent (local clear still happens).
+        """
+        try:
+            self.client.post(
+                f"{self.base_url}/auth/logout",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=5,
+            )
+            logger.info("Engine logout OK")
+        except Exception as e:
+            logger.debug(f"Engine logout failed (non-fatal): {e}")
 
     def get_active_events(self, token: str) -> list[dict]:
         """
-        Phase 3: GET /events/active → [{id, name, description, xp_reward, claimed, ends_at}]
+        Phase 6: GET /events/active → [{id, name, description, xp_reward, claimed, ends_at}]
         DB-ready: events + event_claims tables.
         """
-        # Phase 3:
-        # try:
-        #     r = self.client.get(f"{self.base_url}/events/active",
-        #                         headers={"Authorization": f"Bearer {token}"}, timeout=5)
-        #     if r.status_code == 200: return r.json().get("events", [])
-        # except Exception as e:
-        #     logger.error(f"Events fetch: {e}")
+        # Phase 6 stub:
         return []
 
     def claim_event(self, event_id: str, token: str) -> bool:
         """
-        Phase 3: POST /events/{event_id}/claim
+        Phase 6: POST /events/{event_id}/claim
         DB-ready: inserts event_claims row, updates user_stats.xp.
         """
-        # Phase 3:
-        # try:
-        #     r = self.client.post(f"{self.base_url}/events/{event_id}/claim",
-        #                          headers={"Authorization": f"Bearer {token}"}, timeout=5)
-        #     return r.status_code == 200
-        # except Exception as e:
-        #     logger.error(f"Claim failed: {e}")
+        # Phase 6 stub:
         return False
 
     def check_version(self, client_version: str) -> dict | None:
-        """Phase 4: GET /version. Stub."""
+        """Phase 6: GET /version. Stub."""
         return None
 
 
@@ -839,7 +895,9 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             login_btn.configure(state="disabled", text="Signing in…")
 
             def _thread():
-                error = auth.login(monitor.engine, ident, pwd)
+                # Phase 5: pass session_id so bind_session() is called on success
+                error = auth.login(monitor.engine, ident, pwd,
+                                   session_id=monitor._session_id)
                 def _after():
                     login_btn.configure(state="normal", text="Sign In")
                     if error:
@@ -937,7 +995,8 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         xp_bar.pack(fill="x", pady=(0, 10))
 
         def _do_logout():
-            auth.logout()
+            # Phase 5: tell engine to disconnect sessions before clearing local state
+            auth.logout(engine=monitor.engine)
             monitor.engine.token = ""
             win.after(0, _rebuild_identity)
 
@@ -1219,12 +1278,12 @@ class ArenaTray:
             self.monitor.stop()
             self._monitoring_enabled = False
             icon.icon = _draw_arena_icon(128, state="idle")
-            icon.notify("Arena Client", "Monitoring OFF")
+            icon.notify("Arena Client", "Client Offline — monitoring stopped")
         else:
             self.monitor.start()
             self._monitoring_enabled = True
             icon.icon = _draw_arena_icon(128, state="active")
-            icon.notify("Arena Client", "Monitoring ON")
+            icon.notify("Arena Client", "Client Ready — monitoring started")
 
     def _on_open(self, icon, item):
         win = _window_instance
@@ -1234,10 +1293,20 @@ class ArenaTray:
 
     def _on_status(self, icon, item):
         health = self.monitor.engine.health()
+        game   = detect_running_game()
         if health and health.get("status") == "ok":
-            icon.notify("Engine", f"Connected · DB: {health.get('db', 'ok')}")
+            # Status language matches website: "Client Ready" / "In CS2" / "In Match"
+            if self.monitor.current_match_id:
+                client_state = "In Match"
+            elif game:
+                client_state = f"In {game}"
+            elif self._monitoring_enabled:
+                client_state = "Client Ready"
+            else:
+                client_state = "Client Offline"
+            icon.notify("Arena Client", f"{client_state} · Engine connected")
         else:
-            icon.notify("Engine", "Offline or unreachable")
+            icon.notify("Arena Client", "Engine offline or unreachable")
 
     def _shutdown(self):
         logger.info("Shutting down…")
