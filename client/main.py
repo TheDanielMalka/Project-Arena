@@ -678,6 +678,11 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     win.protocol("WM_DELETE_WINDOW", _on_close)
 
+    # ── Shared actions (must be defined before any nested fn that references them)
+    def _open_website():
+        import webbrowser
+        webbrowser.open("https://arena.gg")
+
     # ── Helpers ───────────────────────────────────────────────────────────────
     def _card(parent, title: str) -> ctk.CTkFrame:
         outer = ctk.CTkFrame(parent, fg_color=BRAND["bg_card"], corner_radius=10)
@@ -1046,10 +1051,6 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     btn_row = ctk.CTkFrame(footer, fg_color="transparent")
     btn_row.pack(expand=True)
-
-    def _open_website():
-        import webbrowser
-        webbrowser.open("https://arena.gg")
 
     def _check_engine_btn():
         threading.Thread(target=_do_engine_check, daemon=True).start()
