@@ -584,3 +584,88 @@ CREATE INDEX IF NOT EXISTS idx_matches_expires_at
 --   UPDATE matches SET status='cancelled', ended_at=NOW()
 --   WHERE status='waiting' AND expires_at < NOW();
 --   -- Then for each cancelled match: trigger MatchRefunded logic above
+
+-- ── Client Sessions ───────────────────────────────────────────────────────────
+-- One row per connected Arena desktop client instance.
+-- The engine's POST /client/heartbeat UPSERTs this row every HEARTBEAT_INTERVAL.
+-- The web UI reads GET /client/status to show the connection badge.
+--
+-- Phase 3 (auth): add user_id FK once JWT auth is wired.
+-- Phase 4 (sync): web UI polls this table directly via REST; WS pushes on change.
+--
+CREATE TYPE client_status AS ENUM ('idle', 'in_game', 'in_match', 'disconnected');
+
+CREATE TABLE client_sessions (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- DB-ready (Phase 3): add FK → users(id) once auth is live
+    -- user_id      UUID REFERENCES users(id) ON DELETE CASCADE,
+    wallet_address  VARCHAR(100) NOT NULL,
+    status          client_status NOT NULL DEFAULT 'idle',
+    game            game,                          -- NULL when idle; 'CS2' | 'Valorant' when active
+    client_version  VARCHAR(20) NOT NULL DEFAULT 'unknown',
+    session_token   TEXT,                          -- Phase 3: signed JWT issued on client login
+    match_id        UUID REFERENCES matches(id),   -- NULL unless status = 'in_match'
+    last_heartbeat  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    connected_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    disconnected_at TIMESTAMPTZ                    -- set when client sends disconnect or heartbeat times out
+);
+
+-- Only one active session per wallet at a time; older rows kept for audit trail.
+CREATE UNIQUE INDEX idx_client_sessions_wallet_active
+    ON client_sessions(wallet_address)
+    WHERE disconnected_at IS NULL;
+
+CREATE INDEX idx_client_sessions_wallet    ON client_sessions(wallet_address, last_heartbeat DESC);
+CREATE INDEX idx_client_sessions_match     ON client_sessions(match_id) WHERE match_id IS NOT NULL;
+CREATE INDEX idx_client_sessions_heartbeat ON client_sessions(last_heartbeat);
+
+-- Auto-disconnect sessions whose heartbeat has not been received for >60s.
+-- Called by the engine's background task (or a DB CRON job).
+CREATE OR REPLACE FUNCTION expire_stale_client_sessions()
+RETURNS INTEGER LANGUAGE plpgsql AS $$
+DECLARE
+    affected INTEGER;
+BEGIN
+    UPDATE client_sessions
+    SET    status = 'disconnected',
+           disconnected_at = NOW()
+    WHERE  disconnected_at IS NULL
+      AND  last_heartbeat < NOW() - INTERVAL '60 seconds';
+    GET DIAGNOSTICS affected = ROW_COUNT;
+    RETURN affected;
+END;
+$$;
+
+
+-- ── Match Evidence ─────────────────────────────────────────────────────────────
+-- Stores every validated screenshot submission from the Arena desktop client.
+-- One row per POST /validate/screenshot that returns accepted=true.
+-- Used as the audit trail for disputes and escrow release decisions.
+--
+-- Phase 3: add submitter_id FK once auth is live.
+-- Phase 4: wire to StateMachine consensus — require N matching evidence rows
+--          before marking match as 'completed' and releasing escrow.
+--
+CREATE TYPE evidence_result AS ENUM ('victory', 'defeat');
+
+CREATE TABLE match_evidence (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    match_id         UUID REFERENCES matches(id) ON DELETE CASCADE NOT NULL,
+    -- DB-ready (Phase 3): add FK → users(id) once auth is live
+    -- submitter_id  UUID REFERENCES users(id),
+    wallet_address   VARCHAR(100),                    -- who submitted (pre-auth)
+    game             game NOT NULL,
+    result           evidence_result NOT NULL,        -- 'victory' | 'defeat'
+    confidence       NUMERIC(4,3) NOT NULL,           -- 0.000 – 1.000
+    accepted         BOOLEAN NOT NULL DEFAULT FALSE,  -- TRUE when confidence >= threshold
+    players          TEXT[] NOT NULL DEFAULT '{}',    -- OCR-detected player names
+    agents           TEXT[] NOT NULL DEFAULT '{}',    -- Valorant agent names; empty for CS2
+    score            VARCHAR(10),                     -- e.g. '13-11'; NULL if not detected
+    screenshot_path  TEXT NOT NULL,                   -- engine-local path under SCREENSHOT_DIR
+    evidence_path    TEXT,                            -- engine-local path under EVIDENCE_DIR
+    submitted_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_evidence_match   ON match_evidence(match_id, submitted_at DESC);
+CREATE INDEX idx_evidence_wallet  ON match_evidence(wallet_address);
+CREATE INDEX idx_evidence_result  ON match_evidence(match_id, result, accepted);

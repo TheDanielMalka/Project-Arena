@@ -384,21 +384,23 @@ async def client_active_match(wallet_address: str):
     The desktop client polls this every few seconds while monitoring.
     When a match_id is returned the client starts uploading screenshots.
 
-    DB-ready: SELECT id FROM matches
-              WHERE (player1_wallet = :w OR player2_wallet = :w)
-                AND status = 'active'
-              ORDER BY created_at DESC LIMIT 1
-    CONTRACT-ready: active match = escrow is locked; client should capture
-                    and upload until match transitions to 'completed'.
+    Lookup strategy: join match_players (wallet_address) → matches (status).
+    'in_progress' = escrow is locked and the game is live.
+
+    DB-ready: matches JOIN match_players ON mp.wallet_address = :w
+              WHERE m.status = 'in_progress'
+    CONTRACT-ready: active match = escrow locked; client captures & uploads
+                    until match transitions to 'completed'.
     """
     try:
         with SessionLocal() as session:
             row = session.execute(
                 text(
-                    "SELECT id FROM matches "
-                    "WHERE (player1_wallet = :w OR player2_wallet = :w) "
-                    "AND status = 'active' "
-                    "ORDER BY created_at DESC LIMIT 1"
+                    "SELECT m.id FROM matches m "
+                    "JOIN match_players mp ON mp.match_id = m.id "
+                    "WHERE mp.wallet_address = :w "
+                    "  AND m.status = 'in_progress' "
+                    "ORDER BY m.created_at DESC LIMIT 1"
                 ),
                 {"w": wallet_address},
             ).fetchone()
