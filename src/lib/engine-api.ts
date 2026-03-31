@@ -35,6 +35,23 @@ export interface EngineHealth {
   uptime?:      number;
 }
 
+/**
+ * Canonical client status shape — matches GET /client/status response exactly.
+ * Phase 4 contract: UI gates Join / Escrow / Match on online && version_ok.
+ */
+export interface ClientStatusResponse {
+  online:         boolean;
+  status:         "disconnected" | "idle" | "in_game" | "in_match";
+  session_id:     string | null;
+  user_id:        string | null;
+  wallet_address: string;
+  match_id:       string | null;
+  version:        string | null;
+  version_ok:     boolean;
+  last_seen:      string;
+  game:           string | null;
+}
+
 export interface EngineReadiness {
   ready:   boolean;
   reason?: string;   // human-readable if not ready, e.g. "capture device not found"
@@ -111,6 +128,40 @@ export async function getEngineReadiness(): Promise<EngineReadiness> {
 
 export async function isEngineOnline(): Promise<boolean> {
   return (await getEngineHealth()).status === "ok";
+}
+
+/**
+ * GET /client/status
+ * Phase 4: canonical status check — used by the website to gate Join/Escrow/Match.
+ *
+ * Pass ONE of:
+ *   walletAddress — direct lookup (desktop client / when wallet is known)
+ *   token         — Bearer JWT (website: backend resolves user_id → wallet_address)
+ *
+ * Returns null on network error (treat as disconnected).
+ */
+export async function getClientStatus(
+  walletAddress?: string,
+  token?: string,
+): Promise<ClientStatusResponse | null> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 5000);
+
+    const headers: HeadersInit = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const url = walletAddress
+      ? `${ENGINE_BASE}/client/status?wallet_address=${encodeURIComponent(walletAddress)}`
+      : `${ENGINE_BASE}/client/status`;
+
+    const res = await fetch(url, { signal: controller.signal, headers });
+    clearTimeout(tid);
+    if (!res.ok) return null;
+    return (await res.json()) as ClientStatusResponse;
+  } catch {
+    return null;
+  }
 }
 
 /**

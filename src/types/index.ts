@@ -291,6 +291,11 @@ export interface ClientSession {
   uptime?: number;            // seconds — DB: client_sessions.uptime
   lastCheckedAt?: string;     // ISO — DB: client_sessions.last_heartbeat_at
   matchId?: string;           // set when status = 'in_match' — DB: client_sessions.active_match_id
+  // Phase 4: fields from GET /client/status canonical response
+  sessionId?: string;         // DB: client_sessions.id (UUID)
+  versionOk?: boolean;        // true when version >= MIN_CLIENT_VERSION
+  bindUserId?: string;        // DB: client_sessions.user_id — set after POST /client/bind
+  game?: string;              // "CS2" | "Valorant" | null
 }
 
 export interface Notification {

@@ -4,7 +4,7 @@ import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File
+from fastapi import FastAPI, HTTPException, Depends, Header, Query, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -434,14 +434,62 @@ async def client_heartbeat(payload: HeartbeatRequest):
 
 
 @app.get("/client/status", response_model=ClientStatusResponse)
-async def client_status(wallet_address: str):
+async def client_status(
+    wallet_address: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
+):
     """
     Canonical client status endpoint — single source of truth for UI gating.
 
+    Accepts either:
+      • ?wallet_address=0x...        — desktop client / direct lookup
+      • Authorization: Bearer <jwt>  — website: resolved to user_id → wallet_address via DB
+
     Priority: DB row (has user_id, authoritative) → in-memory fallback.
     UI rule: allow Join/Escrow/Match only when
-      online=True AND user_id IS NOT NULL AND version_ok=True AND status matches.
+      online=True AND version_ok=True AND status matches requirement.
     """
+    resolved_wallet = wallet_address
+
+    # ── Resolve wallet from JWT when wallet_address not provided ──────────────
+    if not resolved_wallet and authorization and authorization.startswith("Bearer "):
+        try:
+            payload = auth.decode_token(authorization.removeprefix("Bearer "))
+            uid = payload.get("sub")
+            if uid:
+                try:
+                    with SessionLocal() as session:
+                        row = session.execute(
+                            text(
+                                "SELECT wallet_address FROM client_sessions "
+                                "WHERE user_id = :uid AND disconnected_at IS NULL "
+                                "ORDER BY last_heartbeat DESC LIMIT 1"
+                            ),
+                            {"uid": uid},
+                        ).fetchone()
+                    if row:
+                        resolved_wallet = row[0]
+                    else:
+                        # Authenticated user has no active bound session yet
+                        return ClientStatusResponse(
+                            online=False, status="disconnected",
+                            session_id=None, user_id=uid,
+                            wallet_address="", match_id=None,
+                            version=None, version_ok=False,
+                            last_seen="", game=None,
+                        )
+                except Exception as exc:
+                    logger.debug("client_status JWT wallet lookup failed: %s", exc)
+        except Exception:
+            pass  # Invalid/expired token — fall through to 422
+
+    if not resolved_wallet:
+        raise HTTPException(
+            status_code=422,
+            detail="wallet_address query param or Authorization header required",
+        )
+
+    # ── DB-first lookup ───────────────────────────────────────────────────────
     db_row = None
     try:
         with SessionLocal() as session:
@@ -453,7 +501,7 @@ async def client_status(wallet_address: str):
                     "WHERE wallet_address = :w AND disconnected_at IS NULL "
                     "ORDER BY last_heartbeat DESC LIMIT 1"
                 ),
-                {"w": wallet_address},
+                {"w": resolved_wallet},
             ).fetchone()
     except Exception as exc:
         logger.debug("client_status DB read skipped: %s", exc)
@@ -479,9 +527,9 @@ async def client_status(wallet_address: str):
             game=db_row[3],
         )
 
-    # ── Fallback: in-memory ───────────────────────────────────
+    # ── Fallback: in-memory ───────────────────────────────────────────────────
     with _client_store_lock:
-        record = _client_statuses.get(wallet_address)
+        record = _client_statuses.get(resolved_wallet)
 
     if record is None:
         return ClientStatusResponse(
@@ -489,7 +537,7 @@ async def client_status(wallet_address: str):
             status="disconnected",
             session_id=None,
             user_id=None,
-            wallet_address=wallet_address,
+            wallet_address=resolved_wallet,
             match_id=None,
             version=None,
             version_ok=False,
