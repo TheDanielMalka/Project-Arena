@@ -10,10 +10,17 @@ display a "Client Connected" badge, and auto-detect an active match_id.
 from __future__ import annotations
 
 import time
+import uuid
 import pytest
+from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
+import src.auth as auth
 from main import app, _client_statuses, _client_store_lock
+
+# Real JWT for routes that call Depends(verify_token)
+_TEST_USER_ID = str(uuid.uuid4())
+_AUTH_HEADER = {"Authorization": f"Bearer {auth.issue_token(_TEST_USER_ID, 'test@arena.gg')}"}
 
 
 @pytest.fixture(autouse=True)
@@ -154,13 +161,34 @@ class TestClientStatus:
         assert data["match_id"] == "M-555"
         assert data["game"] == "Valorant"
 
-    def test_status_returns_client_version(self):
+    def test_status_returns_version(self):
         client.post("/client/heartbeat", json={
             "wallet_address": "0xVER",
             "client_version": "2.3.1",
         })
         resp = client.get("/client/status", params={"wallet_address": "0xVER"})
-        assert resp.json()["client_version"] == "2.3.1"
+        assert resp.json()["version"] == "2.3.1"
+
+    def test_status_version_ok_true_for_current_version(self):
+        client.post("/client/heartbeat", json={
+            "wallet_address": "0xVOK",
+            "client_version": "1.0.0",
+        })
+        resp = client.get("/client/status", params={"wallet_address": "0xVOK"})
+        assert resp.json()["version_ok"] is True
+
+    def test_status_version_ok_false_for_old_version(self):
+        client.post("/client/heartbeat", json={
+            "wallet_address": "0xVOLD",
+            "client_version": "0.9.0",
+        })
+        resp = client.get("/client/status", params={"wallet_address": "0xVOLD"})
+        assert resp.json()["version_ok"] is False
+
+    def test_status_user_id_none_before_bind(self):
+        client.post("/client/heartbeat", json={"wallet_address": "0xUID"})
+        resp = client.get("/client/status", params={"wallet_address": "0xUID"})
+        assert resp.json()["user_id"] is None
 
     def test_status_wallet_address_echoed(self):
         resp = client.get("/client/status", params={"wallet_address": "0xECHO"})
@@ -246,3 +274,149 @@ class TestClientActiveMatch:
         r2 = client.get("/client/match", params={"wallet_address": "0xBBB"})
         assert r1.json()["wallet_address"] == "0xAAA"
         assert r2.json()["wallet_address"] == "0xBBB"
+
+
+# ── POST /client/bind ─────────────────────────────────────────────────────────
+
+def _make_session_mock(fetchone_return=None):
+    session = MagicMock()
+    session.execute.return_value.fetchone.return_value = fetchone_return
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=session)
+    ctx.__exit__ = MagicMock(return_value=False)
+    return ctx, session
+
+
+class TestClientBind:
+    FAKE_SESSION_ID = str(uuid.uuid4())
+
+    def test_bind_success(self):
+        # Pre-seed in-memory with this session
+        with _client_store_lock:
+            _client_statuses["0xBIND"] = {
+                "wallet_address": "0xBIND",
+                "session_id": self.FAKE_SESSION_ID,
+                "status": "idle",
+                "user_id": None,
+            }
+        # DB returns row with no existing user_id
+        ctx, _ = _make_session_mock(fetchone_return=(self.FAKE_SESSION_ID, None))
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/client/bind",
+                json={"session_id": self.FAKE_SESSION_ID},
+                headers=_AUTH_HEADER,
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["bound"] is True
+        assert data["user_id"] == _TEST_USER_ID
+        assert data["session_id"] == self.FAKE_SESSION_ID
+
+    def test_bind_updates_in_memory_user_id(self):
+        sid = str(uuid.uuid4())
+        with _client_store_lock:
+            _client_statuses["0xBIND2"] = {
+                "wallet_address": "0xBIND2",
+                "session_id": sid,
+                "status": "idle",
+                "user_id": None,
+            }
+        ctx, _ = _make_session_mock(fetchone_return=(sid, None))
+        with patch("main.SessionLocal", return_value=ctx):
+            client.post("/client/bind", json={"session_id": sid}, headers=_AUTH_HEADER)
+
+        with _client_store_lock:
+            record = _client_statuses.get("0xBIND2")
+        assert record is not None
+        assert record["user_id"] == _TEST_USER_ID
+
+    def test_bind_without_token_returns_422(self):
+        resp = client.post("/client/bind", json={"session_id": self.FAKE_SESSION_ID})
+        assert resp.status_code == 422
+
+    def test_bind_invalid_token_returns_401(self):
+        resp = client.post(
+            "/client/bind",
+            json={"session_id": self.FAKE_SESSION_ID},
+            headers={"Authorization": "Bearer badtoken"},
+        )
+        assert resp.status_code == 401
+
+    def test_bind_session_not_found_returns_404(self):
+        ctx, _ = _make_session_mock(fetchone_return=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/client/bind",
+                json={"session_id": str(uuid.uuid4())},
+                headers=_AUTH_HEADER,
+            )
+        assert resp.status_code == 404
+
+    def test_bind_already_bound_to_different_user_returns_403(self):
+        other_user = str(uuid.uuid4())
+        ctx, _ = _make_session_mock(
+            fetchone_return=(self.FAKE_SESSION_ID, other_user)
+        )
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/client/bind",
+                json={"session_id": self.FAKE_SESSION_ID},
+                headers=_AUTH_HEADER,
+            )
+        assert resp.status_code == 403
+
+    def test_bind_same_user_rebind_is_allowed(self):
+        """Binding the same user again to the same session is idempotent."""
+        ctx, _ = _make_session_mock(
+            fetchone_return=(self.FAKE_SESSION_ID, _TEST_USER_ID)
+        )
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/client/bind",
+                json={"session_id": self.FAKE_SESSION_ID},
+                headers=_AUTH_HEADER,
+            )
+        assert resp.status_code == 200
+
+
+# ── POST /auth/logout ─────────────────────────────────────────────────────────
+
+class TestAuthLogout:
+
+    def test_logout_returns_200(self):
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=MagicMock())
+        ctx.__exit__ = MagicMock(return_value=False)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post("/auth/logout", headers=_AUTH_HEADER)
+        assert resp.status_code == 200
+        assert resp.json()["logged_out"] is True
+
+    def test_logout_clears_in_memory_session(self):
+        """After logout, in-memory record for this user is removed."""
+        with _client_store_lock:
+            _client_statuses["0xLOGOUT"] = {
+                "wallet_address": "0xLOGOUT",
+                "status": "idle",
+                "user_id": _TEST_USER_ID,
+            }
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=MagicMock())
+        ctx.__exit__ = MagicMock(return_value=False)
+        with patch("main.SessionLocal", return_value=ctx):
+            client.post("/auth/logout", headers=_AUTH_HEADER)
+
+        with _client_store_lock:
+            assert "0xLOGOUT" not in _client_statuses
+
+    def test_logout_without_token_returns_422(self):
+        resp = client.post("/auth/logout")
+        assert resp.status_code == 422
+
+    def test_logout_invalid_token_returns_401(self):
+        resp = client.post(
+            "/auth/logout",
+            headers={"Authorization": "Bearer faketoken"},
+        )
+        assert resp.status_code == 401

@@ -37,6 +37,9 @@ SCREENSHOT_INTERVAL = int(os.getenv("SCREENSHOT_INTERVAL", "5"))
 CLIENT_VERSION        = os.getenv("CLIENT_VERSION", "0.1.0")
 PROCESS_POLL_INTERVAL = int(os.getenv("PROCESS_POLL_INTERVAL", "3"))   # seconds between process scans
 HEARTBEAT_INTERVAL    = int(os.getenv("HEARTBEAT_INTERVAL", "15"))     # seconds between API pings
+# Minimum client version accepted as "version_ok=True" in GET /client/status.
+# Bump this when a breaking engine ↔ client protocol change ships.
+MIN_CLIENT_VERSION    = os.getenv("MIN_CLIENT_VERSION", "1.0.0")
 
 REQUIRED_VARS = [
     "DATABASE_URL",

@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 import jwt as _jwt
 
-from src.config import DATABASE_URL, ENVIRONMENT
+from src.config import DATABASE_URL, ENVIRONMENT, MIN_CLIENT_VERSION
 from src.vision.capture import capture_screen, crop_roi
 from src.vision.engine import VisionEngine, VisionEngineConfig
 import src.auth as auth
@@ -319,6 +319,18 @@ _client_statuses: dict[str, dict] = {}   # wallet_address → latest heartbeat p
 _CLIENT_TIMEOUT_SECONDS = 30
 
 
+def _version_ok(ver: str | None) -> bool:
+    """Return True if *ver* meets the minimum client version requirement."""
+    if not ver or ver == "unknown":
+        return False
+    try:
+        def _t(v: str) -> tuple:
+            return tuple(int(x) for x in v.split(".")[:3])
+        return _t(ver) >= _t(MIN_CLIENT_VERSION)
+    except Exception:
+        return False
+
+
 class HeartbeatRequest(BaseModel):
     """
     Payload sent by the desktop client every HEARTBEAT_INTERVAL seconds.
@@ -337,18 +349,25 @@ class HeartbeatRequest(BaseModel):
 
 class ClientStatusResponse(BaseModel):
     """
-    Response for GET /client/status.
-
-    DB-ready: sourced from client_sessions table once available.
+    Canonical client status — Phase 4 contract.
+    This is the single endpoint UI uses to gate Join / Escrow / Match actions.
+    DB-ready: sourced from client_sessions table.
     """
+    online: bool                   # True if last heartbeat < _CLIENT_TIMEOUT_SECONDS ago
+    status: str                    # "disconnected"|"idle"|"in_game"|"in_match"
+    session_id: str | None         # UUID from client config.json
+    user_id: str | None            # FK → users.id; set via POST /client/bind
     wallet_address: str
-    status: str
-    game: str | None
-    session_id: str | None
     match_id: str | None
-    client_version: str
-    last_seen: str          # ISO-8601 UTC timestamp; empty string when never seen
-    online: bool            # True if last heartbeat arrived < _CLIENT_TIMEOUT_SECONDS ago
+    version: str | None            # client_version string
+    version_ok: bool               # True if version >= MIN_CLIENT_VERSION
+    last_seen: str                 # ISO-8601 UTC; "" when never seen
+    game: str | None
+
+
+class BindRequest(BaseModel):
+    """POST /client/bind payload — links a client session to an authenticated user."""
+    session_id: str
 
 
 @app.post("/client/heartbeat", status_code=200)
@@ -356,48 +375,126 @@ async def client_heartbeat(payload: HeartbeatRequest):
     """
     Receive a liveness heartbeat from the Arena desktop client.
 
-    The desktop client calls this every HEARTBEAT_INTERVAL seconds so the
-    web UI can show a "Client Connected" badge.
-
-    DB-ready: UPSERT INTO client_sessions
-              (wallet_address, status, game, session_id, match_id,
-               client_version, last_heartbeat)
-              ON CONFLICT (wallet_address) DO UPDATE SET ...
+    Always updates the in-memory store (fast, test-safe).
+    Also UPSERT into client_sessions when session_id is provided.
     """
-    record = {
-        **payload.model_dump(),
-        "last_seen": datetime.now(timezone.utc).isoformat(),
-    }
+    now_iso = datetime.now(timezone.utc).isoformat()
+    record = {**payload.model_dump(), "last_seen": now_iso}
+
+    # ── In-memory update (always) ─────────────────────────────
     with _client_store_lock:
+        # Preserve user_id from a previous bind if present
+        existing = _client_statuses.get(payload.wallet_address, {})
+        record["user_id"] = existing.get("user_id")
         _client_statuses[payload.wallet_address] = record
+
+    # ── DB UPSERT (best-effort, only when session_id is present) ─
+    if payload.session_id:
+        try:
+            with SessionLocal() as session:
+                # Disconnect any OTHER active sessions for this wallet
+                session.execute(
+                    text(
+                        "UPDATE client_sessions "
+                        "SET status = 'disconnected', disconnected_at = NOW() "
+                        "WHERE wallet_address = :w "
+                        "  AND id != :sid "
+                        "  AND disconnected_at IS NULL"
+                    ),
+                    {"w": payload.wallet_address, "sid": payload.session_id},
+                )
+                # Upsert current session
+                session.execute(
+                    text(
+                        "INSERT INTO client_sessions "
+                        "  (id, wallet_address, status, game, client_version, match_id, last_heartbeat) "
+                        "VALUES (:sid, :w, :s, :g, :v, :m, NOW()) "
+                        "ON CONFLICT (id) DO UPDATE SET "
+                        "  status         = EXCLUDED.status, "
+                        "  game           = EXCLUDED.game, "
+                        "  client_version = EXCLUDED.client_version, "
+                        "  match_id       = EXCLUDED.match_id, "
+                        "  last_heartbeat = NOW(), "
+                        "  disconnected_at = NULL"
+                    ),
+                    {
+                        "sid": payload.session_id,
+                        "w":   payload.wallet_address,
+                        "s":   payload.status,
+                        "g":   payload.game,
+                        "v":   payload.client_version,
+                        "m":   payload.match_id,
+                    },
+                )
+                session.commit()
+        except Exception as exc:
+            logger.debug("heartbeat DB write skipped: %s", exc)
+
     return {"accepted": True}
 
 
 @app.get("/client/status", response_model=ClientStatusResponse)
 async def client_status(wallet_address: str):
     """
-    Return the latest known status for a desktop client identified by wallet.
+    Canonical client status endpoint — single source of truth for UI gating.
 
-    Used by the web UI to display the Arena Client connection badge and
-    surface the active game / match to the player dashboard.
-
-    DB-ready: SELECT * FROM client_sessions
-              WHERE wallet_address = :w
-              ORDER BY last_heartbeat DESC LIMIT 1
+    Priority: DB row (has user_id, authoritative) → in-memory fallback.
+    UI rule: allow Join/Escrow/Match only when
+      online=True AND user_id IS NOT NULL AND version_ok=True AND status matches.
     """
+    db_row = None
+    try:
+        with SessionLocal() as session:
+            db_row = session.execute(
+                text(
+                    "SELECT id, wallet_address, status, game, client_version, "
+                    "       match_id, last_heartbeat, user_id "
+                    "FROM client_sessions "
+                    "WHERE wallet_address = :w AND disconnected_at IS NULL "
+                    "ORDER BY last_heartbeat DESC LIMIT 1"
+                ),
+                {"w": wallet_address},
+            ).fetchone()
+    except Exception as exc:
+        logger.debug("client_status DB read skipped: %s", exc)
+
+    if db_row:
+        last_seen_str = db_row[6].isoformat() if db_row[6] else ""
+        try:
+            elapsed = (datetime.now(timezone.utc) - db_row[6]).total_seconds()
+            online = elapsed < _CLIENT_TIMEOUT_SECONDS
+        except Exception:
+            online = False
+        ver = db_row[4]
+        return ClientStatusResponse(
+            online=online,
+            status=db_row[2],
+            session_id=str(db_row[0]),
+            user_id=str(db_row[7]) if db_row[7] else None,
+            wallet_address=db_row[1],
+            match_id=str(db_row[5]) if db_row[5] else None,
+            version=ver,
+            version_ok=_version_ok(ver),
+            last_seen=last_seen_str,
+            game=db_row[3],
+        )
+
+    # ── Fallback: in-memory ───────────────────────────────────
     with _client_store_lock:
         record = _client_statuses.get(wallet_address)
 
     if record is None:
         return ClientStatusResponse(
-            wallet_address=wallet_address,
-            status="disconnected",
-            game=None,
-            session_id=None,
-            match_id=None,
-            client_version="unknown",
-            last_seen="",
             online=False,
+            status="disconnected",
+            session_id=None,
+            user_id=None,
+            wallet_address=wallet_address,
+            match_id=None,
+            version=None,
+            version_ok=False,
+            last_seen="",
+            game=None,
         )
 
     last_seen_str = record.get("last_seen", "")
@@ -408,15 +505,18 @@ async def client_status(wallet_address: str):
     except (ValueError, TypeError):
         online = False
 
+    ver = record.get("client_version")
     return ClientStatusResponse(
-        wallet_address=record["wallet_address"],
-        status=record.get("status", "idle"),
-        game=record.get("game"),
-        session_id=record.get("session_id"),
-        match_id=record.get("match_id"),
-        client_version=record.get("client_version", "unknown"),
-        last_seen=last_seen_str,
         online=online,
+        status=record.get("status", "idle"),
+        session_id=record.get("session_id"),
+        user_id=record.get("user_id"),
+        wallet_address=record["wallet_address"],
+        match_id=record.get("match_id"),
+        version=ver,
+        version_ok=_version_ok(ver),
+        last_seen=last_seen_str,
+        game=record.get("game"),
     )
 
 
@@ -624,3 +724,99 @@ async def me(payload: dict = Depends(verify_token)):
         wins=int(row[7]),
         losses=int(row[8]),
     )
+
+
+@app.post("/auth/logout", status_code=200)
+async def logout(payload: dict = Depends(verify_token)):
+    """
+    Logout — invalidates the client session for the authenticated user.
+
+    JWTs are stateless, so true invalidation requires a blocklist (Phase 6).
+    For now: marks all active client_sessions for this user as disconnected.
+    The client should discard its stored token on receipt of 200.
+    """
+    user_id: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            session.execute(
+                text(
+                    "UPDATE client_sessions "
+                    "SET status = 'disconnected', disconnected_at = NOW() "
+                    "WHERE user_id = :uid AND disconnected_at IS NULL"
+                ),
+                {"uid": user_id},
+            )
+            session.commit()
+    except Exception as exc:
+        logger.debug("logout DB update skipped: %s", exc)
+
+    # Clean in-memory records for this user
+    with _client_store_lock:
+        to_clear = [
+            w for w, r in _client_statuses.items()
+            if r.get("user_id") == user_id
+        ]
+        for w in to_clear:
+            _client_statuses.pop(w, None)
+
+    return {"logged_out": True}
+
+
+@app.post("/client/bind", status_code=200)
+async def client_bind(req: BindRequest, payload: dict = Depends(verify_token)):
+    """
+    Bind a desktop client session to an authenticated user.
+
+    Called by the website after login when it detects a client is online.
+    Writes user_id into client_sessions so GET /client/status returns user_id.
+
+    Flow:
+      1. User logs in on website → receives JWT
+      2. Website calls GET /client/status → gets session_id
+      3. Website calls POST /client/bind {session_id} + Bearer <token>
+      4. Engine writes user_id → client_sessions row
+    """
+    user_id: str = payload["sub"]
+    session_id: str = req.session_id
+
+    # ── DB write ──────────────────────────────────────────────
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT id, user_id FROM client_sessions "
+                    "WHERE id = :sid AND disconnected_at IS NULL"
+                ),
+                {"sid": session_id},
+            ).fetchone()
+
+            if not row:
+                raise HTTPException(404, "Session not found or already disconnected")
+
+            existing_user = str(row[1]) if row[1] else None
+            if existing_user and existing_user != user_id:
+                raise HTTPException(403, "Session already bound to a different user")
+
+            session.execute(
+                text(
+                    "UPDATE client_sessions SET user_id = :uid "
+                    "WHERE id = :sid"
+                ),
+                {"uid": user_id, "sid": session_id},
+            )
+            session.commit()
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("client_bind error: %s", exc)
+        raise HTTPException(500, "Bind failed")
+
+    # ── Mirror into in-memory ────────────────────────────────
+    with _client_store_lock:
+        for record in _client_statuses.values():
+            if record.get("session_id") == session_id:
+                record["user_id"] = user_id
+                break
+
+    return {"bound": True, "user_id": user_id, "session_id": session_id}

@@ -596,14 +596,12 @@ CREATE INDEX IF NOT EXISTS idx_matches_expires_at
 CREATE TYPE client_status AS ENUM ('idle', 'in_game', 'in_match', 'disconnected');
 
 CREATE TABLE client_sessions (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    -- DB-ready (Phase 3): add FK → users(id) once auth is live
-    -- user_id      UUID REFERENCES users(id) ON DELETE CASCADE,
+    id              UUID PRIMARY KEY,              -- set by client (session_id from config.json)
+    user_id         UUID REFERENCES users(id) ON DELETE CASCADE,  -- set via POST /client/bind
     wallet_address  VARCHAR(100) NOT NULL,
     status          client_status NOT NULL DEFAULT 'idle',
     game            game,                          -- NULL when idle; 'CS2' | 'Valorant' when active
     client_version  VARCHAR(20) NOT NULL DEFAULT 'unknown',
-    session_token   TEXT,                          -- Phase 3: signed JWT issued on client login
     match_id        UUID REFERENCES matches(id),   -- NULL unless status = 'in_match'
     last_heartbeat  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     connected_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
