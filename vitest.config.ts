@@ -12,6 +12,7 @@ export default defineConfig({
     globals: true,
     setupFiles: [path.resolve(projectRoot, "src/test/setup.ts")],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    pool: "forks",
   },
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },
