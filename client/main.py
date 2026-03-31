@@ -84,7 +84,8 @@ else:
 CONFIG_FILE = os.path.join(_BASE_DIR, "config.json")
 
 DEFAULT_CONFIG = {
-    "engine_url":          "http://localhost:8000",
+    "engine_url":          "http://localhost:8001",
+    "frontend_url":        "http://localhost:3000",
     "auth_token":          "",
     "screenshot_interval": 5,
     "monitor":             1,
@@ -683,7 +684,8 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     # ── All shared actions defined first — before any closure references them ─
     def _open_website():
         import webbrowser
-        webbrowser.open("https://arena.gg")
+        url = config.get("frontend_url", "http://localhost:3000")
+        webbrowser.open(url)
 
     def _quit_app():
         monitor.stop()
