@@ -1,11 +1,14 @@
 """
 Tests for engine client routes:
   POST /client/heartbeat
-  GET  /client/status
+  GET  /client/status          (wallet_address param + JWT auth header)
   GET  /client/match
 
 These routes allow the Arena desktop client to announce its presence,
 display a "Client Connected" badge, and auto-detect an active match_id.
+
+Phase 4: GET /client/status also accepts Authorization: Bearer <jwt>
+         so the website can query by user identity instead of wallet address.
 """
 from __future__ import annotations
 
@@ -420,3 +423,121 @@ class TestAuthLogout:
             headers={"Authorization": "Bearer faketoken"},
         )
         assert resp.status_code == 401
+
+
+# ── GET /client/status — Phase 4: JWT auth path ───────────────────────────────
+
+class TestClientStatusByAuth:
+    """
+    Phase 4: GET /client/status can be called with Authorization: Bearer <jwt>
+    instead of ?wallet_address=. The engine resolves user_id → wallet_address
+    via client_sessions and returns the canonical status shape.
+    """
+
+    def test_status_no_params_returns_422(self):
+        """Neither wallet_address nor Authorization → 422."""
+        resp = client.get("/client/status")
+        assert resp.status_code == 422
+
+    def test_status_invalid_token_no_wallet_returns_422(self):
+        """Invalid token + no wallet_address → 422 (graceful degradation)."""
+        resp = client.get(
+            "/client/status",
+            headers={"Authorization": "Bearer badtoken"},
+        )
+        assert resp.status_code == 422
+
+    def test_status_wallet_param_still_works(self):
+        """Backward compat: wallet_address param works as before."""
+        resp = client.get("/client/status", params={"wallet_address": "0xCOMPAT"})
+        assert resp.status_code == 200
+        assert resp.json()["wallet_address"] == "0xCOMPAT"
+        assert resp.json()["online"] is False
+
+    def test_status_by_jwt_no_session_returns_disconnected(self):
+        """
+        Valid JWT, but no client_session bound to that user_id in DB.
+        Engine should return online=False, status=disconnected gracefully.
+        """
+        ctx, _ = _make_session_mock(fetchone_return=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get(
+                "/client/status",
+                headers=_AUTH_HEADER,
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["online"] is False
+        assert data["status"] == "disconnected"
+        assert data["user_id"] == _TEST_USER_ID
+
+    def test_status_by_jwt_with_bound_session_returns_wallet(self):
+        """
+        Valid JWT + active session bound → engine resolves wallet_address
+        and performs the normal status lookup.
+        """
+        fake_wallet = "0xBOUND_WALLET"
+
+        # First mock: JWT lookup returns the wallet_address row
+        # Second mock: wallet-based status lookup
+        ctx_jwt = MagicMock()
+        session_jwt = MagicMock()
+        session_jwt.execute.return_value.fetchone.side_effect = [
+            (fake_wallet,),   # JWT → wallet lookup
+            None,             # wallet → client_sessions lookup (falls to in-memory)
+        ]
+        ctx_jwt.__enter__ = MagicMock(return_value=session_jwt)
+        ctx_jwt.__exit__ = MagicMock(return_value=False)
+
+        # Pre-seed in-memory with the wallet
+        with _client_store_lock:
+            _client_statuses[fake_wallet] = {
+                "wallet_address": fake_wallet,
+                "status": "idle",
+                "game": "CS2",
+                "session_id": "sess-jwt-01",
+                "match_id": None,
+                "client_version": "1.0.0",
+                "last_seen": __import__("datetime").datetime.now(
+                    __import__("datetime").timezone.utc
+                ).isoformat(),
+                "user_id": _TEST_USER_ID,
+            }
+
+        with patch("main.SessionLocal", return_value=ctx_jwt):
+            resp = client.get(
+                "/client/status",
+                headers=_AUTH_HEADER,
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["online"] is True
+        assert data["wallet_address"] == fake_wallet
+        assert data["version_ok"] is True
+
+    def test_status_by_jwt_expired_token_returns_422(self):
+        """Expired JWT + no wallet_address → 422."""
+        import src.auth as _auth
+        import time
+        old_issue = _auth.issue_token
+
+        # Monkey-patch to issue a token that's already expired
+        def _expired_token(user_id, email):
+            import jwt
+            payload = {
+                "sub": user_id,
+                "email": email,
+                "exp": int(time.time()) - 1,  # already expired
+            }
+            return jwt.encode(payload, _auth._JWT_SECRET, algorithm=_auth._JWT_ALGORITHM)
+
+        _auth.issue_token = _expired_token
+        expired = _auth.issue_token(_TEST_USER_ID, "test@arena.gg")
+        _auth.issue_token = old_issue
+
+        resp = client.get(
+            "/client/status",
+            headers={"Authorization": f"Bearer {expired}"},
+        )
+        assert resp.status_code == 422

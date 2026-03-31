@@ -30,7 +30,7 @@
 
 import { create } from "zustand";
 import type { ClientStatus, ClientSession } from "@/types";
-import type { EngineHealth } from "@/lib/engine-api";
+import type { EngineHealth, ClientStatusResponse } from "@/lib/engine-api";
 
 interface ClientState extends ClientSession {
   // ── Actions ──────────────────────────────────────────────────────────────
@@ -55,6 +55,21 @@ interface ClientState extends ClientSession {
    * HTTP polling never downgrades "in_match" to "ready" — only the WS event does.
    */
   syncFromHealth: (health: EngineHealth | null) => void;
+
+  /**
+   * Phase 4: called by useEngineStatus after every GET /client/status poll.
+   * This is the authoritative sync — replaces syncFromHealth as the primary
+   * source of truth for canPlay() and UI gating.
+   *
+   * Mapping (backend status → frontend ClientStatus):
+   *   online=false                       → "disconnected"
+   *   online=true + status="idle"        → "ready"   (client up, no game running)
+   *   online=true + status="in_game"     → "ready"   (game running, can start match)
+   *   online=true + status="in_match"    → "in_match" (match capture active)
+   *
+   * canPlay() = online && version_ok (stored as versionOk on ClientSession)
+   */
+  syncFromClientStatus: (data: ClientStatusResponse | null) => void;
 
   /**
    * Called when a match goes in_progress (countdown=0) to mark client busy.
@@ -92,6 +107,11 @@ export const useClientStore = create<ClientState>((set, get) => ({
   uptime:        undefined,
   lastCheckedAt: undefined,
   matchId:       undefined,
+  // Phase 4 fields
+  sessionId:     undefined,
+  versionOk:     false,
+  bindUserId:    undefined,
+  game:          undefined,
 
   // ── Actions ────────────────────────────────────────────────────────────
 
@@ -124,6 +144,41 @@ export const useClientStore = create<ClientState>((set, get) => ({
     }));
   },
 
+  syncFromClientStatus: (data) => {
+    const now = new Date().toISOString();
+    if (!data || !data.online) {
+      set({
+        status:        "disconnected",
+        version:       undefined,
+        versionOk:     false,
+        sessionId:     data?.session_id ?? undefined,
+        bindUserId:    data?.user_id    ?? undefined,
+        game:          undefined,
+        lastCheckedAt: now,
+      });
+      return;
+    }
+    // Map backend status → frontend ClientStatus
+    let mapped: ClientStatus;
+    switch (data.status) {
+      case "in_match":   mapped = "in_match"; break;
+      case "idle":
+      case "in_game":
+      default:           mapped = "ready";    break;
+    }
+    // Never downgrade "in_match" via polling (match capture must not be interrupted)
+    set((s) => ({
+      status:        s.status === "in_match" && mapped !== "in_match" ? "in_match" : mapped,
+      version:       data.version       ?? s.version,
+      versionOk:     data.version_ok,
+      sessionId:     data.session_id    ?? undefined,
+      bindUserId:    data.user_id       ?? undefined,
+      matchId:       data.match_id      ?? s.matchId,
+      game:          data.game          ?? undefined,
+      lastCheckedAt: now,
+    }));
+  },
+
   markInMatch: (matchId) =>
     set({ status: "in_match", matchId, lastCheckedAt: new Date().toISOString() }),
 
@@ -133,16 +188,18 @@ export const useClientStore = create<ClientState>((set, get) => ({
   // ── Computed ──────────────────────────────────────────────────────────
 
   canPlay: () => {
-    const s = get().status;
-    return s === "ready" || s === "in_match";
+    const { status, versionOk } = get();
+    // Phase 4: must be online (ready/in_match) AND version_ok
+    return (status === "ready" || status === "in_match") && (versionOk ?? false);
   },
 
   statusLabel: () => {
-    switch (get().status) {
+    const { status, game } = get() as ClientState;
+    switch (status) {
       case "checking":     return "Checking…";
       case "disconnected": return "Client Offline";
       case "connected":    return "Client Starting…";
-      case "ready":        return "Client Ready";
+      case "ready":        return game ? `In ${game}` : "Client Ready";
       case "in_match":     return "In Match";
     }
   },

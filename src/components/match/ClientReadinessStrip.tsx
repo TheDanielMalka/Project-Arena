@@ -15,7 +15,8 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { useClientStore } from "@/stores/clientStore";
-import { getEngineHealth } from "@/lib/engine-api";
+import { useUserStore } from "@/stores/userStore";
+import { getClientStatus } from "@/lib/engine-api";
 
 function StepRow({
   ok,
@@ -46,33 +47,39 @@ function StepRow({
 }
 
 /**
- * Lobby helper: explains client/engine readiness, manual refresh (GET /health),
- * and why the desktop client exists. Uses only clientStore + engine-api — Docker-ready.
+ * Lobby helper: explains client/engine readiness, manual refresh (GET /client/status),
+ * and why the desktop client exists.
+ *
+ * Phase 4: recheck() uses the canonical GET /client/status endpoint (via getClientStatus)
+ * so the strip stays in sync with the same source of truth as canPlay().
  */
 export function ClientReadinessStrip() {
-  const clientStatus = useClientStore((s) => s.status);
-  const version = useClientStore((s) => s.version);
-  const canPlay = useClientStore((s) => s.canPlay());
-  const statusLabelFn = useClientStore((s) => s.statusLabel);
-  const syncFromHealth = useClientStore((s) => s.syncFromHealth);
-  const [busy, setBusy] = useState(false);
+  const clientStatus      = useClientStore((s) => s.status);
+  const version           = useClientStore((s) => s.version);
+  const canPlay           = useClientStore((s) => s.canPlay());
+  const statusLabelFn     = useClientStore((s) => s.statusLabel);
+  const syncFromClientStatus = useClientStore((s) => s.syncFromClientStatus);
+  const walletAddress     = useUserStore((s) => s.user?.walletAddress);
+  const [busy, setBusy]   = useState(false);
+  // Tracks whether the engine API responded at all (non-null = API is up)
+  const [engineApiUp, setEngineApiUp] = useState<boolean | null>(null);
 
   const recheck = useCallback(async () => {
     setBusy(true);
     try {
-      const h = await getEngineHealth();
-      syncFromHealth(h);
-    } catch {
-      syncFromHealth(null);
+      const data = await getClientStatus(walletAddress);
+      setEngineApiUp(data !== null);
+      syncFromClientStatus(data);
     } finally {
       setBusy(false);
     }
-  }, [syncFromHealth]);
+  }, [syncFromClientStatus, walletAddress]);
 
-  const isChecking = clientStatus === "checking";
+  const isChecking    = clientStatus === "checking";
   const isDisconnected = clientStatus === "disconnected";
-  const engineReachable = clientStatus !== "disconnected" && clientStatus !== "checking";
-  const captureReady = clientStatus === "ready" || clientStatus === "in_match";
+  // Engine API is reachable if we got any response (even online=false) or status moved past checking/disconnected
+  const engineReachable = engineApiUp === true || (clientStatus !== "disconnected" && clientStatus !== "checking");
+  const captureReady  = clientStatus === "ready" || clientStatus === "in_match";
 
   const showSuccessSlim = canPlay && !isChecking;
 

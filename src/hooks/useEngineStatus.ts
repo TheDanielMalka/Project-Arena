@@ -1,52 +1,78 @@
 /**
  * ARENA — Engine Connection Status Hook
  *
- * Polls the local Engine API for health and syncs results into clientStore.
- * All components read status from clientStore — this hook is the only poller.
+ * Phase 4: polls GET /client/status (canonical endpoint) to sync clientStore.
+ * Replaces the legacy GET /health → syncFromHealth() path as the primary gate.
+ *
+ * Two parallel checks:
+ *   1. getClientStatus(walletAddress)  → syncFromClientStatus() — gates canPlay()
+ *   2. getEngineHealth()               → syncFromHealth()       — gates engine dot in header
  *
  * Poll intervals:
- *   15s  — health check (default, configurable; faster sync than legacy 30s)
- *   10s  — when status is "connected" (faster to detect when capture becomes ready)
- *   Burst — on hook mount + tab focus, runs extra checks so badge updates quickly after client starts.
+ *   15s  — default
+ *   10s  — when status is "connected" (detect capture readiness faster)
+ *   Burst — on mount [0ms, 1.5s, 4s] + on tab focus
  *
- * WS-ready: when WebSocket is connected this hook can be replaced with
- *   a WS listener that calls clientStore.setStatus() directly on "client:*" events.
- *   The HTTP polling stays as fallback if WS is not available.
+ * WS-ready: replace polling with WS "client:*" events → setStatus() directly.
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { getEngineHealth, type EngineHealth } from "@/lib/engine-api";
+import { getEngineHealth, getClientStatus, type EngineHealth } from "@/lib/engine-api";
 import { useClientStore } from "@/stores/clientStore";
+import { useUserStore } from "@/stores/userStore";
 
 const BURST_DELAYS_MS = [0, 1_500, 4_000] as const;
 
 export function useEngineStatus(pollInterval = 15_000) {
-  const syncFromHealth = useClientStore((s) => s.syncFromHealth);
-  const clientStatus   = useClientStore((s) => s.status);
+  const syncFromHealth        = useClientStore((s) => s.syncFromHealth);
+  const syncFromClientStatus  = useClientStore((s) => s.syncFromClientStatus);
+  const clientStatus          = useClientStore((s) => s.status);
+  const walletAddress         = useUserStore((s) => s.user?.walletAddress);
+  const isAuthenticated       = useUserStore((s) => s.isAuthenticated);
+
   const [health, setHealth] = useState<EngineHealth | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const check = useCallback(async () => {
+    // ── Primary: GET /client/status (Phase 4) ────────────────────────────
+    // Only poll when user is authenticated and has a wallet address.
+    // This is the authoritative gate for canPlay().
+    if (isAuthenticated && walletAddress) {
+      const statusData = await getClientStatus(walletAddress);
+      syncFromClientStatus(statusData);
+    } else {
+      // Not logged in → client is definitely not ready
+      syncFromClientStatus(null);
+    }
+
+    // ── Secondary: GET /health — engine dot in header ─────────────────────
+    // Runs independently so the header can show engine connectivity regardless
+    // of whether a user is logged in.
     try {
       const h = await getEngineHealth();
       setHealth(h);
-      syncFromHealth(h);
+      // Only apply syncFromHealth if we are NOT using the new client/status path
+      // (to avoid overwriting the authoritative syncFromClientStatus result).
+      if (!isAuthenticated || !walletAddress) {
+        syncFromHealth(h);
+      }
     } catch {
       setHealth(null);
-      syncFromHealth(null);
+      if (!isAuthenticated || !walletAddress) {
+        syncFromHealth(null);
+      }
     }
-  }, [syncFromHealth]);
+  }, [syncFromHealth, syncFromClientStatus, walletAddress, isAuthenticated]);
 
-  // Burst after mount so "client just started" reflects in UI within seconds, not one full interval.
+  // Burst after mount — badge updates quickly after client starts.
   useEffect(() => {
     const timers = BURST_DELAYS_MS.map((ms) =>
-      window.setTimeout(() => {
-        void check();
-      }, ms),
+      window.setTimeout(() => { void check(); }, ms),
     );
     return () => timers.forEach((t) => window.clearTimeout(t));
   }, [check]);
 
+  // Re-check on tab focus (user may have just started the client)
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState === "visible") void check();
@@ -55,10 +81,9 @@ export function useEngineStatus(pollInterval = 15_000) {
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [check]);
 
+  // Interval polling — faster when status is "connected"
   useEffect(() => {
-    // Poll faster when "connected" to detect when capture subsystem becomes ready
     const interval = clientStatus === "connected" ? 10_000 : pollInterval;
-
     check();
     if (intervalRef.current) clearInterval(intervalRef.current);
     intervalRef.current = setInterval(check, interval);
