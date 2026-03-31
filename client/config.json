@@ -7,5 +7,14 @@
   "minimize_to_tray": true,
   "game": "AUTO",
   "screenshot_dir": "screenshots",
-  "log_dir": "logs"
+  "log_dir": "logs",
+  "wallet_address": "unknown",
+  "client_version": "1.0.0",
+  "user_id": null,
+  "username": null,
+  "email": null,
+  "rank": null,
+  "xp": 0,
+  "avatar_url": null,
+  "session_id": null
 }

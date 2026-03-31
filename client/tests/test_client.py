@@ -16,6 +16,7 @@ import pytest
 CLIENT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(CLIENT_ROOT))
 
+import main as client_main
 from main import (
     DEFAULT_CONFIG,
     GAME_INTERVALS,
@@ -27,6 +28,18 @@ from main import (
     load_config,
     save_config,
 )
+
+@pytest.fixture(autouse=True)
+def isolate_config_file(tmp_path, monkeypatch):
+    """
+    Ensure tests never read/write the repo's tracked client/config.json.
+    Some code paths (e.g. MatchMonitor session_id creation) persist to CONFIG_FILE.
+    """
+    cfg_file = tmp_path / "config.json"
+    monkeypatch.setattr(client_main, "CONFIG_FILE", str(cfg_file))
+    # Seed a valid config file for code paths that expect it to exist.
+    cfg_file.write_text(json.dumps(DEFAULT_CONFIG, indent=2))
+    yield
 
 
 # ══════════════════════════════════════════════════════════════
