@@ -5,8 +5,6 @@ captures screenshots, and sends them to the Engine API for OCR processing.
 
 Active games (v1):  CS2, Valorant
 Coming Soon:        Fortnite, Apex Legends, PUBG, COD, League of Legends
-                    → process names kept as comments below as infrastructure.
-                      Uncomment and add to ACTIVE_GAME_PROCESSES when supported.
 
 NOTE: All vision/OCR processing happens SERVER-SIDE.
 The client only captures screenshots and uploads them.
@@ -33,7 +31,7 @@ from pystray import MenuItem, Menu
 
 CLIENT_VERSION = "1.0.0"
 
-# ── Brand design tokens (keep in sync with Arena website) ────────────────────
+# ── Brand design tokens (keep in sync with Arena website) ─────────────────────
 BRAND = {
     "bg":          "#0C0C12",
     "bg_card":     "#13131A",
@@ -45,6 +43,7 @@ BRAND = {
     "border":      "#2A2A3A",
     "error":       "#FF4444",
     "warning":     "#FFB800",
+    "rank_gold":   "#FFD700",
     # PIL tuples for icon drawing
     "accent_pil":  (0, 230, 118, 255),
     "idle_pil":    (70, 70, 90, 255),
@@ -53,7 +52,7 @@ BRAND = {
     "bg_pil":      (12, 12, 18, 255),
 }
 
-# ── Per-game capture intervals (seconds) ─────────────────────────────────────
+# ── Per-game capture intervals (seconds) ──────────────────────────────────────
 GAME_INTERVALS = {
     "AUTO":     5,
     "CS2":      3,
@@ -66,7 +65,7 @@ GAME_INTERVALS = {
     # "League of Legends":  8,
 }
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# ── Config ─────────────────────────────────────────────────────────────────────
 if getattr(sys, "frozen", False):
     _BASE_DIR = os.path.dirname(sys.executable)
 else:
@@ -87,10 +86,13 @@ DEFAULT_CONFIG = {
     # DB-ready: synced from user account after login
     "wallet_address":      "unknown",
     "client_version":      CLIENT_VERSION,
-    # Phase 3 auth fields — populated on login
+    # Phase 3: populated on login from /auth/login response
     "user_id":             None,
     "username":            None,
-    # Phase 4: stable UUID persisted across restarts; sent in every heartbeat
+    "rank":                None,
+    "xp":                  0,
+    "avatar_url":          None,
+    # Phase 4: stable UUID persisted per-install; sent in every heartbeat
     "session_id":          None,
 }
 
@@ -110,11 +112,8 @@ def save_config(config: dict):
 
 def get_or_create_session_id(config: dict) -> str:
     """
-    Return the persisted session UUID for this installation.
-    Creates and saves a new one if not present.
-
-    Phase 4-ready: sent in every heartbeat so the engine can link
-    multiple heartbeats from the same install to one client_sessions row.
+    Return the stable install UUID. Created once, persisted forever.
+    Phase 4: links all heartbeats from this machine to one client_sessions row.
     """
     existing = config.get("session_id")
     if existing:
@@ -127,21 +126,23 @@ def get_or_create_session_id(config: dict) -> str:
 
 def check_version_compat(engine_client: "EngineClient") -> bool:
     """
-    Phase 4-ready: compare CLIENT_VERSION against engine's /version endpoint.
-    Returns True (always compatible) until the endpoint exists.
+    Phase 4: GET /version → compare CLIENT_VERSION against min_version.
+    Stub: always compatible until endpoint exists.
     """
-    # Phase 4: result = engine_client.check_version(CLIENT_VERSION)
+    # Phase 4:
+    # result = engine_client.check_version(CLIENT_VERSION)
+    # if result and result.get("min_version"):
+    #     return CLIENT_VERSION >= result["min_version"]
     return True
 
 
-# ── Logging ───────────────────────────────────────────────────────────────────
+# ── Logging ────────────────────────────────────────────────────────────────────
 config = load_config()
 os.makedirs(config["log_dir"], exist_ok=True)
 os.makedirs(config["screenshot_dir"], exist_ok=True)
 
 logger = logging.getLogger("arena.client")
 logger.setLevel(logging.DEBUG)
-
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 console_handler = logging.StreamHandler()
@@ -150,8 +151,7 @@ console_handler.setFormatter(formatter)
 
 file_handler = RotatingFileHandler(
     os.path.join(config["log_dir"], "client.log"),
-    maxBytes=1_000_000,
-    backupCount=5,
+    maxBytes=1_000_000, backupCount=5,
 )
 file_handler.setLevel(logging.DEBUG)
 file_handler.setFormatter(formatter)
@@ -160,25 +160,22 @@ logger.addHandler(console_handler)
 logger.addHandler(file_handler)
 
 
-# ── Auth Manager ──────────────────────────────────────────────────────────────
+# ── Auth Manager ───────────────────────────────────────────────────────────────
 class AuthManager:
     """
-    Manages Bearer token auth for the Arena desktop client.
+    Bearer-token auth for the Arena desktop client.
 
-    Desktop client uses Bearer tokens (not httpOnly cookies — those are for
-    the web UI).  Tokens are stored in config.json and sent with every
-    authenticated request via EngineClient.
+    Desktop client = Bearer tokens stored locally.
+    Website = httpOnly cookies (different flow, same backend users table).
 
-    Phase 3-ready:
-      - login() / logout() / refresh() stubs are here for Phase 3 wiring
-      - Once /auth/login exists on the engine, replace the stubs with real calls
-      - wallet_address / user_id / username are synced from the server on login
+    Phase 3-ready: login() / logout() / refresh() call real engine endpoints
+    once /auth/login, /auth/logout, /auth/refresh exist.
     """
 
     def __init__(self, config: dict):
         self._config = config
 
-    # ── Read-only properties ──────────────────────────────────────────────────
+    # ── Properties ────────────────────────────────────────────────────────────
 
     @property
     def is_authenticated(self) -> bool:
@@ -200,62 +197,81 @@ class AuthManager:
     def wallet_address(self) -> str:
         return self._config.get("wallet_address", "unknown")
 
+    @property
+    def rank(self) -> str | None:
+        return self._config.get("rank")
+
+    @property
+    def xp(self) -> int:
+        return int(self._config.get("xp") or 0)
+
+    @property
+    def avatar_url(self) -> str | None:
+        return self._config.get("avatar_url")
+
     # ── Mutations ─────────────────────────────────────────────────────────────
 
     def set_token(self, token: str, user_id: str | None = None,
-                  username: str | None = None, wallet_address: str | None = None):
-        """Persist token and identity fields after successful login."""
+                  username: str | None = None, wallet_address: str | None = None,
+                  rank: str | None = None, xp: int | None = None,
+                  avatar_url: str | None = None):
+        """Persist token + identity fields after successful login."""
         self._config["auth_token"] = token
-        if user_id:
-            self._config["user_id"] = user_id
-        if username:
-            self._config["username"] = username
-        if wallet_address:
-            self._config["wallet_address"] = wallet_address
+        if user_id        is not None: self._config["user_id"]        = user_id
+        if username       is not None: self._config["username"]       = username
+        if wallet_address is not None: self._config["wallet_address"] = wallet_address
+        if rank           is not None: self._config["rank"]           = rank
+        if xp             is not None: self._config["xp"]             = xp
+        if avatar_url     is not None: self._config["avatar_url"]     = avatar_url
         save_config(self._config)
-        logger.info("Auth token saved")
+        logger.info(f"Logged in as {username or user_id}")
 
     def clear(self):
-        """Wipe all auth state (logout)."""
-        self._config["auth_token"] = ""
-        self._config["user_id"] = None
-        self._config["username"] = None
+        """Wipe all auth state."""
+        for k in ("auth_token", "user_id", "username", "rank", "avatar_url"):
+            self._config[k] = "" if k == "auth_token" else None
+        self._config["xp"]             = 0
         self._config["wallet_address"] = "unknown"
         save_config(self._config)
-        logger.info("Auth cleared")
+        logger.info("Auth cleared (logged out)")
 
     # ── Phase 3 stubs ─────────────────────────────────────────────────────────
 
-    def login(self, engine_client: "EngineClient", username: str, password: str) -> bool:
+    def login(self, engine: "EngineClient", username: str, password: str) -> str | None:
         """
-        Phase 3: POST /auth/login → receive Bearer token → call set_token().
-        Returns True on success, False on failure.
-
-        Stub: always returns False until the endpoint is implemented.
+        Phase 3: POST /auth/login → Bearer token.
+        Returns None + error string on failure, or None + None on success
+        (use is_authenticated to confirm).
+        Stub: always returns 'Engine not connected yet'.
         """
-        # Phase 3:
-        # result = engine_client.login(username, password)
-        # if result and result.get("token"):
-        #     self.set_token(result["token"], result.get("user_id"),
-        #                    result.get("username"), result.get("wallet_address"))
-        #     return True
-        return False
+        result = engine.login(username, password)
+        if result and result.get("token"):
+            self.set_token(
+                token=result["token"],
+                user_id=result.get("user_id"),
+                username=result.get("username", username),
+                wallet_address=result.get("wallet_address"),
+                rank=result.get("rank"),
+                xp=result.get("xp"),
+                avatar_url=result.get("avatar_url"),
+            )
+            return None           # success
+        # Return engine error message or default
+        if result and result.get("detail"):
+            return result["detail"]
+        return "Login endpoint not available yet — Phase 3"
 
     def logout(self):
-        """Phase 3: POST /auth/logout → clear local token."""
         self.clear()
 
-    def refresh(self, engine_client: "EngineClient") -> bool:
-        """
-        Phase 3: POST /auth/refresh → update access_token.
-        Stub: returns True (no-op) until the endpoint exists.
-        """
+    def refresh(self, engine: "EngineClient") -> bool:
+        """Phase 3: POST /auth/refresh. Stub: no-op."""
         return True
 
 
-# ── Screenshot Capture ────────────────────────────────────────────────────────
-def capture_screenshot(output_dir: str, monitor_num: int = 1, game_name: str | None = None) -> str | None:
-    """Capture a screenshot using mss and save as PNG."""
+# ── Screenshot Capture ─────────────────────────────────────────────────────────
+def capture_screenshot(output_dir: str, monitor_num: int = 1,
+                       game_name: str | None = None) -> str | None:
     try:
         os.makedirs(output_dir, exist_ok=True)
         with mss.mss() as sct:
@@ -263,17 +279,14 @@ def capture_screenshot(output_dir: str, monitor_num: int = 1, game_name: str | N
             if monitor_num >= len(monitors):
                 monitor_num = 1
             monitor = monitors[monitor_num]
-
             screenshot = sct.grab(monitor)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            if game_name:
-                safe_game_name = game_name.replace(" ", "_")
-                filename = f"{safe_game_name}_{timestamp}.png"
-            else:
-                filename = f"capture_{timestamp}.png"
+            timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename   = (
+                f"{game_name.replace(' ', '_')}_{timestamp}.png"
+                if game_name else f"capture_{timestamp}.png"
+            )
             filepath = os.path.join(output_dir, filename)
             mss.tools.to_png(screenshot.rgb, screenshot.size, output=filepath)
-
             logger.debug(f"Screenshot saved: {filepath}")
             return filepath
     except Exception as e:
@@ -281,35 +294,33 @@ def capture_screenshot(output_dir: str, monitor_num: int = 1, game_name: str | N
         return None
 
 
-# ── Game Detection ────────────────────────────────────────────────────────────
+# ── Game Detection ─────────────────────────────────────────────────────────────
 ACTIVE_GAME_PROCESSES: dict[str, list[str]] = {
     "CS2":      ["cs2.exe", "csgo.exe"],
     "Valorant": ["VALORANT-Win64-Shipping.exe"],
-    # "Fortnite":           ["FortniteClient-Win64-Shipping.exe"],  # Coming Soon
-    # "Apex Legends":       ["r5apex.exe"],                         # Coming Soon
-    # "PUBG":               ["TslGame.exe"],                        # Coming Soon
-    # "COD":                ["cod.exe", "BlackOpsColdWar.exe"],     # Coming Soon
-    # "League of Legends":  ["League of Legends.exe"],              # Coming Soon
+    # "Fortnite":           ["FortniteClient-Win64-Shipping.exe"],
+    # "Apex Legends":       ["r5apex.exe"],
+    # "PUBG":               ["TslGame.exe"],
+    # "COD":                ["cod.exe", "BlackOpsColdWar.exe"],
+    # "League of Legends":  ["League of Legends.exe"],
 }
 
 
 def is_game_running(game: str = "CS2") -> bool:
-    """Check if the target game process is running."""
     try:
         import psutil
-        target = ACTIVE_GAME_PROCESSES.get(game, [])
+        target = [p.lower() for p in ACTIVE_GAME_PROCESSES.get(game, [])]
         for proc in psutil.process_iter(["name"]):
-            if proc.info["name"] and proc.info["name"].lower() in [p.lower() for p in target]:
+            if proc.info["name"] and proc.info["name"].lower() in target:
                 return True
     except ImportError:
-        logger.warning("psutil not installed - skipping game detection")
+        logger.warning("psutil not installed")
     except Exception as e:
-        logger.error(f"Error checking game process: {e}")
+        logger.error(f"Game check error: {e}")
     return False
 
 
 def detect_running_game() -> str | None:
-    """Auto-detect which active game is currently running."""
     try:
         import psutil
         for game, procs in ACTIVE_GAME_PROCESSES.items():
@@ -318,44 +329,38 @@ def detect_running_game() -> str | None:
                 if proc.info["name"] and proc.info["name"].lower() in names:
                     return game
     except Exception as e:
-        logger.error(f"Error detecting game: {e}")
+        logger.error(f"Game detect error: {e}")
     return None
 
 
-# ── Engine API Client ─────────────────────────────────────────────────────────
+# ── Engine API Client ──────────────────────────────────────────────────────────
 class EngineClient:
     def __init__(self, base_url: str, token: str):
         self.base_url = base_url.rstrip("/")
-        self.token = token
-        self.client = httpx.Client(timeout=30)
+        self.token    = token
+        self.client   = httpx.Client(timeout=30)
 
     def health(self) -> dict | None:
         try:
-            r = self.client.get(f"{self.base_url}/health")
+            r = self.client.get(f"{self.base_url}/health", timeout=4)
             return r.json()
-        except Exception as e:
-            logger.error(f"Engine health check failed: {e}")
+        except Exception:
             return None
 
     def get_active_match(self, wallet_address: str) -> str | None:
-        """
-        Poll GET /client/match — returns match_id or None.
-        DB-ready: engine queries matches table once available.
-        """
+        """GET /client/match — DB-ready: queries matches + match_players."""
         try:
             r = self.client.get(
                 f"{self.base_url}/client/match",
-                params={"wallet_address": wallet_address},
-                timeout=5,
+                params={"wallet_address": wallet_address}, timeout=5,
             )
             if r.status_code == 200:
                 return r.json().get("match_id")
         except Exception as e:
-            logger.debug(f"Active match poll failed (non-fatal): {e}")
+            logger.debug(f"Active match poll failed: {e}")
         return None
 
     def upload_screenshot(self, match_id: str, filepath: str) -> dict | None:
-        """Upload screenshot to Engine for server-side OCR processing."""
         try:
             with open(filepath, "rb") as f:
                 r = self.client.post(
@@ -366,57 +371,94 @@ class EngineClient:
                 )
             if r.status_code == 200:
                 return r.json()
-            logger.error(f"Upload failed: {r.status_code} - {r.text}")
+            logger.error(f"Upload failed: {r.status_code}")
         except Exception as e:
-            logger.error(f"Failed to upload screenshot: {e}")
+            logger.error(f"Upload error: {e}")
         return None
 
     def login(self, username: str, password: str) -> dict | None:
         """
-        Phase 3: POST /auth/login → {"token": "...", "user_id": "...", "username": "...", "wallet_address": "..."}
-        Stub: returns None until endpoint exists.
+        Phase 3: POST /auth/login
+        Returns {token, user_id, username, wallet_address, rank, xp, avatar_url}
+        or {detail: "error message"} on failure.
+        DB-ready: validates against users table, creates auth_sessions row.
         """
         # Phase 3:
         # try:
         #     r = self.client.post(f"{self.base_url}/auth/login",
-        #                          json={"username": username, "password": password})
-        #     if r.status_code == 200:
-        #         return r.json()
+        #                          json={"username": username, "password": password},
+        #                          timeout=10)
+        #     return r.json()
         # except Exception as e:
-        #     logger.error(f"Login failed: {e}")
+        #     logger.error(f"Login request failed: {e}")
         return None
+
+    def get_profile(self, token: str) -> dict | None:
+        """
+        Phase 3: GET /user/profile
+        Returns {user_id, username, wallet_address, rank, xp, avatar_url, badge}.
+        DB-ready: queries users + user_stats tables.
+        """
+        # Phase 3:
+        # try:
+        #     r = self.client.get(f"{self.base_url}/user/profile",
+        #                         headers={"Authorization": f"Bearer {token}"}, timeout=5)
+        #     if r.status_code == 200: return r.json()
+        # except Exception as e:
+        #     logger.error(f"Profile fetch failed: {e}")
+        return None
+
+    def get_active_events(self, token: str) -> list[dict]:
+        """
+        Phase 3: GET /events/active
+        Returns [{id, name, description, xp_reward, claimed, ends_at}].
+        DB-ready: queries events + event_claims tables.
+        """
+        # Phase 3:
+        # try:
+        #     r = self.client.get(f"{self.base_url}/events/active",
+        #                         headers={"Authorization": f"Bearer {token}"}, timeout=5)
+        #     if r.status_code == 200: return r.json().get("events", [])
+        # except Exception as e:
+        #     logger.error(f"Events fetch failed: {e}")
+        return []
+
+    def claim_event(self, event_id: str, token: str) -> bool:
+        """
+        Phase 3: POST /events/{event_id}/claim
+        DB-ready: inserts into event_claims, updates user xp in user_stats.
+        """
+        # Phase 3:
+        # try:
+        #     r = self.client.post(f"{self.base_url}/events/{event_id}/claim",
+        #                          headers={"Authorization": f"Bearer {token}"}, timeout=5)
+        #     return r.status_code == 200
+        # except Exception as e:
+        #     logger.error(f"Claim failed: {e}")
+        return False
 
     def check_version(self, client_version: str) -> dict | None:
-        """
-        Phase 4: GET /version → {"min_version": "...", "latest": "..."}
-        Stub: returns None until endpoint exists.
-        """
+        """Phase 4: GET /version → {min_version, latest}. Stub."""
         return None
 
 
-# ── Match Monitor ─────────────────────────────────────────────────────────────
+# ── Match Monitor ──────────────────────────────────────────────────────────────
 class MatchMonitor:
-    """
-    Core monitoring loop:
-    1. Detect if a supported game is running
-    2. Capture screenshots at game-specific interval
-    3. Upload to Engine API for server-side OCR
-    4. Send heartbeat every _HEARTBEAT_INTERVAL seconds
-    """
+    """Core monitoring loop: detect game → capture → upload → heartbeat."""
 
-    _HEARTBEAT_INTERVAL = 15  # keep < engine _CLIENT_TIMEOUT_SECONDS (30s)
+    _HEARTBEAT_INTERVAL = 15   # must be < engine _CLIENT_TIMEOUT_SECONDS (30s)
 
     def __init__(self, config: dict):
-        self.config = config
-        self.engine = EngineClient(config["engine_url"], config["auth_token"])
-        self.running = False
-        self.monitoring = False
+        self.config            = config
+        self.engine            = EngineClient(config["engine_url"], config["auth_token"])
+        self.running           = False
+        self.monitoring        = False
         self.current_match_id: str | None = None
-        self._thread: threading.Thread | None = None
+        self._thread:           threading.Thread | None = None
         self._heartbeat_thread: threading.Thread | None = None
-        self._capture_count = 0
-        self._heartbeat_stop = threading.Event()
-        self._session_id = get_or_create_session_id(config)
+        self._capture_count    = 0
+        self._heartbeat_stop   = threading.Event()
+        self._session_id       = get_or_create_session_id(config)
 
     def start(self):
         if self.running:
@@ -426,8 +468,7 @@ class MatchMonitor:
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
         self._heartbeat_thread = threading.Thread(
-            target=self._heartbeat_loop, daemon=True, name="ArenaHeartbeat"
-        )
+            target=self._heartbeat_loop, daemon=True, name="ArenaHeartbeat")
         self._heartbeat_thread.start()
         logger.info("Match monitor started")
 
@@ -444,204 +485,173 @@ class MatchMonitor:
         while self.running:
             try:
                 game = detect_running_game()
-
                 if not game:
-                    base = self.config.get("screenshot_interval", 5)
-                    time.sleep(base + random.uniform(-0.5, 0.5))
+                    time.sleep(self.config.get("screenshot_interval", 5))
                     continue
 
                 if is_game_running(game):
                     if not self.monitoring:
-                        logger.info(f"{game} detected - starting capture")
+                        logger.info(f"{game} detected — starting capture")
                         self.monitoring = True
 
                     if not self.current_match_id:
                         wallet = self.config.get("wallet_address", "unknown")
-                        match_id_from_engine = self.engine.get_active_match(wallet)
-                        if match_id_from_engine:
-                            self.set_match_id(match_id_from_engine)
-                            logger.info(f"Active match auto-detected: {match_id_from_engine}")
+                        mid = self.engine.get_active_match(wallet)
+                        if mid:
+                            self.set_match_id(mid)
 
-                    game_output_dir = os.path.join(
-                        self.config["screenshot_dir"],
-                        game.replace(" ", "_"),
-                    )
-
+                    game_dir = os.path.join(
+                        self.config["screenshot_dir"], game.replace(" ", "_"))
                     filepath = capture_screenshot(
-                        output_dir=game_output_dir,
+                        output_dir=game_dir,
                         monitor_num=self.config.get("monitor", 1),
                         game_name=game,
                     )
-
                     if filepath:
                         self._capture_count += 1
-                        logger.info(f"Capture #{self._capture_count}: {os.path.basename(filepath)}")
-
                         if self.current_match_id:
-                            result = self.engine.upload_screenshot(self.current_match_id, filepath)
+                            result = self.engine.upload_screenshot(
+                                self.current_match_id, filepath)
                             if result:
-                                logger.info(f"Engine response: {result}")
-                                try:
-                                    os.remove(filepath)
-                                except OSError:
-                                    pass
-                            else:
-                                logger.warning("Engine rejected or offline")
+                                logger.info(f"Engine: {result}")
+                                try: os.remove(filepath)
+                                except OSError: pass
                         else:
-                            logger.debug("No active match ID - screenshot saved locally")
+                            logger.debug("No match ID — screenshot saved locally")
                 else:
                     if self.monitoring:
-                        logger.info(f"{game} closed - pausing capture")
+                        logger.info(f"{game} closed — pausing")
                         self.monitoring = False
                         self.current_match_id = None
 
             except Exception as e:
                 logger.error(f"Monitor loop error: {e}")
 
-            active_game = detect_running_game()
-            base = GAME_INTERVALS.get(active_game, self.config.get("screenshot_interval", 5))
+            active = detect_running_game()
+            base = GAME_INTERVALS.get(active, self.config.get("screenshot_interval", 5))
             time.sleep(base + random.uniform(-0.5, 0.5))
 
     def _heartbeat_loop(self):
-        logger.debug(f"Heartbeat loop started (interval={self._HEARTBEAT_INTERVAL}s)")
         while not self._heartbeat_stop.wait(timeout=self._HEARTBEAT_INTERVAL):
             self._send_heartbeat()
-        logger.debug("Heartbeat loop stopped")
 
     def _send_heartbeat(self):
-        """POST /client/heartbeat — tells the engine (and web UI) this client is online."""
         try:
-            game = detect_running_game()
+            game   = detect_running_game()
             status = (
                 "in_match" if self.current_match_id
                 else ("in_game" if game else "idle")
             )
             payload = {
-                "wallet_address":  self.config.get("wallet_address", "unknown"),
-                "client_version":  self.config.get("client_version", CLIENT_VERSION),
-                "status":          status,
-                "game":            game,
-                # Phase 4-ready: stable UUID ties heartbeats to one client_sessions row
-                "session_id":      self._session_id,
-                "match_id":        self.current_match_id,
+                "wallet_address": self.config.get("wallet_address", "unknown"),
+                "client_version": self.config.get("client_version", CLIENT_VERSION),
+                "status":         status,
+                "game":           game,
+                "session_id":     self._session_id,   # Phase 4: client_sessions FK
+                "match_id":       self.current_match_id,
             }
             resp = self.engine.client.post(
-                f"{self.engine.base_url}/client/heartbeat",
-                json=payload,
-                timeout=5,
-            )
+                f"{self.engine.base_url}/client/heartbeat", json=payload, timeout=5)
             if resp.status_code == 200:
-                logger.debug(f"Heartbeat OK | status={status} | game={game}")
+                logger.debug(f"Heartbeat OK | {status} | {game}")
             else:
-                logger.warning(f"Heartbeat rejected: {resp.status_code}")
+                logger.warning(f"Heartbeat {resp.status_code}")
         except Exception as e:
             logger.debug(f"Heartbeat error (non-fatal): {e}")
 
     def set_match_id(self, match_id: str):
         self.current_match_id = match_id
-        logger.info(f"Active match set: {match_id}")
+        logger.info(f"Active match: {match_id}")
 
 
-# ── Icon Rendering ────────────────────────────────────────────────────────────
-def _draw_arena_icon(size: int = 128, active: bool = True,
-                     state: str = "idle") -> Image.Image:
+# ── Icon Rendering ─────────────────────────────────────────────────────────────
+def _draw_arena_icon(size: int = 128, state: str = "idle") -> Image.Image:
     """
-    Draw the Arena 'A' tray icon.
-
-    state:
-      "active"  — green ring + green A  (monitoring ON, no game)
-      "match"   — amber ring + amber A  (match in progress)
-      "error"   — red ring + dim A      (engine unreachable)
-      "idle"    — gray ring + gray A    (monitoring OFF)
+    Arena 'A' tray icon. States:
+      active → green ring + green A  (monitoring ON)
+      match  → amber ring + amber A  (match in progress)
+      error  → red ring + gray A     (engine offline)
+      idle   → gray ring + gray A    (monitoring OFF)
     """
-    state_colors = {
+    colors = {
         "active": (BRAND["accent_pil"], BRAND["accent_pil"]),
         "match":  (BRAND["match_pil"],  BRAND["match_pil"]),
         "error":  (BRAND["error_pil"],  BRAND["idle_pil"]),
         "idle":   (BRAND["idle_pil"],   BRAND["idle_pil"]),
     }
-    ring_color, glyph_color = state_colors.get(state, state_colors["idle"])
+    ring_color, glyph_color = colors.get(state, colors["idle"])
 
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    img  = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # Circular background
+    # Background circle
     draw.ellipse([2, 2, size - 2, size - 2], fill=BRAND["bg_pil"])
     # Colored ring
-    draw.ellipse([2, 2, size - 2, size - 2], outline=ring_color, width=max(4, size // 28))
+    lw_ring = max(4, size // 28)
+    draw.ellipse([2, 2, size - 2, size - 2], outline=ring_color, width=lw_ring)
 
-    # Stylized "A" glyph
+    # 'A' glyph
     lw  = max(6, size // 18)
     cx  = size // 2
     pad = int(size * 0.14)
 
-    top  = (cx, pad)
-    bl   = (pad, size - pad)
+    top  = (cx,         pad)
+    bl   = (pad,        size - pad)
     br   = (size - pad, size - pad)
-    # Crossbar at 52% height gives a balanced look at all sizes
-    cb_y = int(size * 0.52)
-    inset = int(size * 0.25)
-    cb_l = (inset, cb_y)
-    cb_r = (size - inset, cb_y)
+    cb_y = int(size * 0.52)                  # crossbar at 52% height
+    ins  = int(size * 0.25)
+    cb_l = (ins,        cb_y)
+    cb_r = (size - ins, cb_y)
 
     draw.line([top, bl],    fill=glyph_color, width=lw)
     draw.line([top, br],    fill=glyph_color, width=lw)
     draw.line([cb_l, cb_r], fill=glyph_color, width=lw)
 
-    # Status dot — bottom-right corner
+    # Status dot (bottom-right)
     dot_r = max(8, size // 10)
-    dot_x = size - dot_r - int(size * 0.04)
-    dot_y = size - dot_r - int(size * 0.04)
-    draw.ellipse([dot_x - dot_r, dot_y - dot_r, dot_x + dot_r, dot_y + dot_r],
-                 fill=ring_color)
+    dx = size - dot_r - int(size * 0.04)
+    dy = size - dot_r - int(size * 0.04)
+    draw.ellipse([dx - dot_r, dy - dot_r, dx + dot_r, dy + dot_r], fill=ring_color)
 
     return img
 
 
-def generate_ico_file(path: str = "assets/arena_icon.ico"):
-    """
-    Generate a multi-resolution ICO file for use as the exe and tray icon.
-    Sizes: 16, 24, 32, 48, 64, 128, 256 px — all in one .ico container.
-    """
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    sizes = [16, 24, 32, 48, 64, 128, 256]
+def generate_ico_file(path: str):
+    """Save multi-resolution ICO (16→256 px) for exe + tray icon."""
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    sizes  = [16, 24, 32, 48, 64, 128, 256]
     frames = [_draw_arena_icon(s, state="active").resize((s, s), Image.LANCZOS)
               for s in sizes]
-    # PIL saves all frames as a single multi-size ICO when sizes= is specified
-    frames[0].save(
-        path,
-        format="ICO",
-        sizes=[(s, s) for s in sizes],
-        append_images=frames[1:],
-    )
-    logger.info(f"ICO saved: {path} ({sizes}px)")
+    frames[0].save(path, format="ICO",
+                   sizes=[(s, s) for s in sizes],
+                   append_images=frames[1:])
+    logger.info(f"ICO saved: {path}")
 
 
-# ── Client Window (customtkinter) ─────────────────────────────────────────────
+# ── Client Window ──────────────────────────────────────────────────────────────
+# Global reference so tray can show/hide the window safely from its thread.
+_window_instance = None
+
+
 def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
-                         config: dict) -> None:
+                         config: dict, ico_path: str | None = None) -> None:
     """
-    Build and show the Arena Client window using customtkinter.
-    Must be called from the main thread (tkinter requirement on Windows).
+    Build and run the Arena Client window.
+    MUST be called from the main thread (tkinter/Windows requirement).
 
-    Layout:
-      ┌─────────────────────────────┐
-      │  ARENA  [badge]             │ ← header
-      ├─────────────────────────────┤
-      │  Engine status card         │
-      │  Identity card (login/out)  │
-      │  Game status card           │
-      │  Monitoring toggle          │
-      ├─────────────────────────────┤
-      │  [Check Engine] [Website]   │ ← footer
-      │  [Quit]                     │
-      └─────────────────────────────┘
+    Thread safety rule: ALL widget updates go through win.after(ms, fn).
+    Never call .configure() on a widget from a background thread.
+
+    Tab structure:
+      Overview — Engine status, Identity (login form / profile), Game + Monitoring
+      Events   — Active events with Claim XP (Phase 3)
     """
+    global _window_instance
+
     try:
         import customtkinter as ctk
     except ImportError:
-        logger.error("customtkinter not installed — window unavailable. "
-                     "Run: pip install customtkinter")
+        logger.error("customtkinter not installed. Run: pip install customtkinter")
         return
 
     ctk.set_appearance_mode("dark")
@@ -649,286 +659,536 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     win = ctk.CTk()
     win.title("Arena Client")
-    win.geometry("360x520")
+    win.geometry("380x580")
     win.resizable(False, False)
     win.configure(fg_color=BRAND["bg"])
-    win.attributes("-topmost", False)
 
-    # ── Close → hide to tray (don't destroy) ─────────────────────────────────
+    # Set window icon
+    if ico_path and os.path.exists(ico_path):
+        try:
+            win.iconbitmap(ico_path)
+        except Exception:
+            pass
+
+    _window_instance = win
+
+    # Close = hide to tray, keep mainloop alive
     def _on_close():
         win.withdraw()
 
     win.protocol("WM_DELETE_WINDOW", _on_close)
 
-    # ── Header ────────────────────────────────────────────────────────────────
-    header = ctk.CTkFrame(win, fg_color=BRAND["bg_card"], corner_radius=0, height=56)
-    header.pack(fill="x")
-    header.pack_propagate(False)
-
-    ctk.CTkLabel(
-        header, text="ARENA", font=ctk.CTkFont(size=20, weight="bold"),
-        text_color=BRAND["accent"],
-    ).pack(side="left", padx=16, pady=14)
-
-    version_label = ctk.CTkLabel(
-        header, text=f"v{CLIENT_VERSION}",
-        font=ctk.CTkFont(size=11),
-        text_color=BRAND["text_muted"],
-    )
-    version_label.pack(side="right", padx=16, pady=14)
-
-    # ── Scrollable body ───────────────────────────────────────────────────────
-    body = ctk.CTkScrollableFrame(win, fg_color=BRAND["bg"], corner_radius=0)
-    body.pack(fill="both", expand=True, padx=0, pady=0)
-
+    # ── Helpers ───────────────────────────────────────────────────────────────
     def _card(parent, title: str) -> ctk.CTkFrame:
         outer = ctk.CTkFrame(parent, fg_color=BRAND["bg_card"], corner_radius=10)
-        outer.pack(fill="x", padx=14, pady=(10, 0))
-        ctk.CTkLabel(
-            outer, text=title.upper(),
-            font=ctk.CTkFont(size=10, weight="bold"),
-            text_color=BRAND["text_muted"],
-        ).pack(anchor="w", padx=14, pady=(10, 2))
+        outer.pack(fill="x", padx=12, pady=(8, 0))
+        ctk.CTkLabel(outer, text=title.upper(),
+                     font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color=BRAND["text_muted"]).pack(anchor="w", padx=14, pady=(10, 2))
         return outer
 
-    def _dot(parent, color: str = BRAND["text_muted"]) -> ctk.CTkLabel:
+    def _dot_label(parent, color: str = BRAND["text_muted"]) -> ctk.CTkLabel:
         return ctk.CTkLabel(parent, text="●", text_color=color,
                             font=ctk.CTkFont(size=10))
 
-    # ── Engine status card ────────────────────────────────────────────────────
-    eng_card = _card(body, "Engine")
-    eng_row  = ctk.CTkFrame(eng_card, fg_color="transparent")
-    eng_row.pack(fill="x", padx=14, pady=(0, 12))
+    # ── Header ────────────────────────────────────────────────────────────────
+    header = ctk.CTkFrame(win, fg_color=BRAND["bg_card"], corner_radius=0, height=54)
+    header.pack(fill="x")
+    header.pack_propagate(False)
 
-    eng_dot   = _dot(eng_row, BRAND["text_muted"])
+    ctk.CTkLabel(header, text="ARENA",
+                 font=ctk.CTkFont(size=20, weight="bold"),
+                 text_color=BRAND["accent"]).pack(side="left", padx=16, pady=14)
+
+    # Engine status dot in header (live — updated via win.after)
+    hdr_dot = ctk.CTkLabel(header, text="●", text_color=BRAND["text_muted"],
+                            font=ctk.CTkFont(size=10))
+    hdr_dot.pack(side="right", padx=6, pady=14)
+    hdr_eng  = ctk.CTkLabel(header, text="Engine",
+                             font=ctk.CTkFont(size=11),
+                             text_color=BRAND["text_muted"])
+    hdr_eng.pack(side="right", pady=14)
+
+    ctk.CTkLabel(header, text=f"v{CLIENT_VERSION}",
+                 font=ctk.CTkFont(size=11),
+                 text_color=BRAND["text_muted"]).pack(side="right", padx=16, pady=14)
+
+    # ── Tab view ──────────────────────────────────────────────────────────────
+    tabview = ctk.CTkTabview(win, fg_color=BRAND["bg"], corner_radius=0,
+                              segmented_button_fg_color=BRAND["bg_card"],
+                              segmented_button_selected_color=BRAND["accent"],
+                              segmented_button_selected_hover_color=BRAND["accent_dark"],
+                              segmented_button_unselected_color=BRAND["bg_card"],
+                              segmented_button_unselected_hover_color=BRAND["bg_hover"],
+                              text_color=BRAND["text"],
+                              text_color_disabled=BRAND["text_muted"])
+    tabview.pack(fill="both", expand=True)
+    tabview.add("Overview")
+    tabview.add("Events")
+
+    tab_overview = tabview.tab("Overview")
+    tab_events   = tabview.tab("Events")
+
+    # ── OVERVIEW TAB ──────────────────────────────────────────────────────────
+
+    # Scrollable body inside overview
+    ov_body = ctk.CTkScrollableFrame(tab_overview, fg_color=BRAND["bg"], corner_radius=0)
+    ov_body.pack(fill="both", expand=True)
+
+    # ── Engine card ───────────────────────────────────────────────────────────
+    eng_card = _card(ov_body, "Engine")
+    eng_row  = ctk.CTkFrame(eng_card, fg_color="transparent")
+    eng_row.pack(fill="x", padx=14, pady=(0, 10))
+
+    eng_dot   = _dot_label(eng_row, BRAND["text_muted"])
     eng_dot.pack(side="left")
     eng_label = ctk.CTkLabel(eng_row, text="Checking…",
-                             font=ctk.CTkFont(size=13),
-                             text_color=BRAND["text"])
+                              font=ctk.CTkFont(size=13), text_color=BRAND["text"])
     eng_label.pack(side="left", padx=(6, 0))
 
-    def _refresh_engine_status():
-        health = monitor.engine.health()
-        if health and health.get("status") == "ok":
-            db_status = health.get("db", "?")
-            eng_label.configure(text=f"Connected  ·  DB: {db_status}",
-                                 text_color=BRAND["text"])
-            eng_dot.configure(text_color=BRAND["accent"])
-        else:
-            eng_label.configure(text="Engine offline", text_color=BRAND["text_muted"])
-            eng_dot.configure(text_color=BRAND["error"])
-
-    threading.Thread(target=_refresh_engine_status, daemon=True).start()
-
     # ── Identity card ─────────────────────────────────────────────────────────
-    id_card = _card(body, "Identity")
+    id_card = _card(ov_body, "Identity")
+    # Inner frame rebuilt on login/logout
+    id_inner_ref: list[ctk.CTkFrame] = []
 
-    def _build_identity_content():
-        for w in id_card.winfo_children():
-            if isinstance(w, ctk.CTkFrame) and w != id_card:
-                w.destroy()
+    def _rebuild_identity():
+        """Rebuild identity card content. Must be called from main thread."""
+        for w in id_inner_ref:
+            try: w.destroy()
+            except Exception: pass
+        id_inner_ref.clear()
 
-        id_inner = ctk.CTkFrame(id_card, fg_color="transparent")
-        id_inner.pack(fill="x", padx=14, pady=(0, 12))
+        inner = ctk.CTkFrame(id_card, fg_color="transparent")
+        inner.pack(fill="x", padx=14, pady=(0, 12))
+        id_inner_ref.append(inner)
 
         if auth.is_authenticated:
-            display = auth.username or auth.wallet_address
-            ctk.CTkLabel(id_inner, text=display,
-                          font=ctk.CTkFont(size=13, weight="bold"),
-                          text_color=BRAND["accent"]).pack(anchor="w")
-            if auth.wallet_address and auth.wallet_address != "unknown":
-                short_wallet = f"{auth.wallet_address[:6]}…{auth.wallet_address[-4:]}"
-                ctk.CTkLabel(id_inner, text=short_wallet,
-                              font=ctk.CTkFont(size=11),
-                              text_color=BRAND["text_muted"]).pack(anchor="w")
-            ctk.CTkButton(
-                id_inner, text="Disconnect", height=30, corner_radius=6,
-                fg_color=BRAND["bg_hover"], hover_color=BRAND["border"],
-                text_color=BRAND["text_muted"], font=ctk.CTkFont(size=12),
-                command=_do_logout,
-            ).pack(anchor="w", pady=(8, 0))
+            _build_profile_view(inner)
         else:
-            ctk.CTkLabel(id_inner, text="Not connected",
-                          font=ctk.CTkFont(size=13),
-                          text_color=BRAND["text_muted"]).pack(anchor="w")
-            ctk.CTkLabel(
-                id_inner,
-                text="Log in on arena.gg to link your account",
-                font=ctk.CTkFont(size=11),
-                text_color=BRAND["text_muted"],
-                wraplength=290,
-            ).pack(anchor="w", pady=(4, 0))
-            # Phase 3: replace this label with a login form / OAuth button
-            ctk.CTkButton(
-                id_inner, text="Open Website", height=30, corner_radius=6,
-                fg_color=BRAND["accent"], hover_color=BRAND["accent_dark"],
-                text_color=BRAND["bg"], font=ctk.CTkFont(size=12, weight="bold"),
-                command=_open_website,
-            ).pack(anchor="w", pady=(8, 0))
+            _build_login_form(inner)
 
-    def _do_logout():
-        auth.logout()
-        config["auth_token"] = ""
-        monitor.engine.token = ""
-        _build_identity_content()
+    def _build_login_form(parent: ctk.CTkFrame):
+        """Username + password form. Phase 3: calls /auth/login."""
+        ctk.CTkLabel(parent, text="Sign in to Arena",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=BRAND["text"]).pack(anchor="w", pady=(0, 8))
 
-    _build_identity_content()
+        user_entry = ctk.CTkEntry(parent, placeholder_text="Username",
+                                   height=34, corner_radius=6,
+                                   fg_color=BRAND["bg_hover"],
+                                   border_color=BRAND["border"],
+                                   text_color=BRAND["text"],
+                                   font=ctk.CTkFont(size=13))
+        user_entry.pack(fill="x", pady=(0, 6))
+
+        pass_entry = ctk.CTkEntry(parent, placeholder_text="Password", show="*",
+                                   height=34, corner_radius=6,
+                                   fg_color=BRAND["bg_hover"],
+                                   border_color=BRAND["border"],
+                                   text_color=BRAND["text"],
+                                   font=ctk.CTkFont(size=13))
+        pass_entry.pack(fill="x", pady=(0, 6))
+
+        err_label = ctk.CTkLabel(parent, text="",
+                                  font=ctk.CTkFont(size=11),
+                                  text_color=BRAND["error"])
+        err_label.pack(anchor="w")
+
+        def _do_login():
+            uname = user_entry.get().strip()
+            pwd   = pass_entry.get()
+            if not uname or not pwd:
+                err_label.configure(text="Please enter username and password")
+                return
+            err_label.configure(text="Signing in…", text_color=BRAND["text_muted"])
+            login_btn.configure(state="disabled")
+
+            def _login_thread():
+                error = auth.login(monitor.engine, uname, pwd)
+                # Update UI on main thread
+                def _after():
+                    login_btn.configure(state="normal")
+                    if error:
+                        err_label.configure(text=error, text_color=BRAND["error"])
+                    else:
+                        monitor.engine.token = auth.access_token or ""
+                        _rebuild_identity()
+                win.after(0, _after)
+
+            threading.Thread(target=_login_thread, daemon=True).start()
+
+        login_btn = ctk.CTkButton(parent, text="Sign In", height=34, corner_radius=6,
+                                   fg_color=BRAND["accent"],
+                                   hover_color=BRAND["accent_dark"],
+                                   text_color=BRAND["bg"],
+                                   font=ctk.CTkFont(size=13, weight="bold"),
+                                   command=_do_login)
+        login_btn.pack(fill="x", pady=(4, 0))
+
+        # Bind Enter key
+        pass_entry.bind("<Return>", lambda e: _do_login())
+
+        sep = ctk.CTkLabel(parent, text="──── or ────",
+                            font=ctk.CTkFont(size=10),
+                            text_color=BRAND["text_muted"])
+        sep.pack(pady=(8, 4))
+
+        ctk.CTkButton(parent, text="Open Arena Website", height=30, corner_radius=6,
+                       fg_color=BRAND["bg_hover"], hover_color=BRAND["border"],
+                       text_color=BRAND["text_muted"], font=ctk.CTkFont(size=12),
+                       command=_open_website).pack(fill="x")
+
+    def _build_profile_view(parent: ctk.CTkFrame):
+        """Profile display after auth. Phase 3: avatar, rank, XP synced from API."""
+        # Avatar circle with initials
+        uname   = auth.username or "?"
+        initial = uname[0].upper()
+        avatar_size = 48
+
+        avatar_img = Image.new("RGBA", (avatar_size, avatar_size), (0, 0, 0, 0))
+        ad = ImageDraw.Draw(avatar_img)
+        ad.ellipse([0, 0, avatar_size, avatar_size], fill=(0, 230, 118, 40))
+        ad.ellipse([0, 0, avatar_size, avatar_size], outline=BRAND["accent_pil"], width=2)
+        ctk_avatar = ctk.CTkImage(light_image=avatar_img, dark_image=avatar_img,
+                                   size=(avatar_size, avatar_size))
+
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill="x", pady=(0, 8))
+
+        ctk.CTkLabel(row, image=ctk_avatar, text=initial,
+                     font=ctk.CTkFont(size=18, weight="bold"),
+                     text_color=BRAND["accent"]).pack(side="left")
+
+        info = ctk.CTkFrame(row, fg_color="transparent")
+        info.pack(side="left", padx=(10, 0))
+
+        ctk.CTkLabel(info, text=uname,
+                     font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=BRAND["accent"]).pack(anchor="w")
+
+        # Wallet address (shortened)
+        wallet = auth.wallet_address
+        if wallet and wallet != "unknown":
+            short = f"{wallet[:6]}…{wallet[-4:]}"
+            ctk.CTkLabel(info, text=short,
+                         font=ctk.CTkFont(size=11),
+                         text_color=BRAND["text_muted"]).pack(anchor="w")
+
+        # Rank badge (Phase 3: from profile API)
+        rank = auth.rank
+        rank_text = rank if rank else "Unranked"
+        rank_color = BRAND["rank_gold"] if rank else BRAND["text_muted"]
+        ctk.CTkLabel(info, text=f"Rank: {rank_text}",
+                     font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color=rank_color).pack(anchor="w")
+
+        # XP bar (Phase 3: from profile API)
+        xp = auth.xp
+        ctk.CTkLabel(parent, text=f"XP: {xp:,}",
+                     font=ctk.CTkFont(size=11),
+                     text_color=BRAND["text_muted"]).pack(anchor="w", pady=(0, 6))
+        # DB-ready: replace 1.0 with xp / xp_to_next_level once API returns it
+        ctk.CTkProgressBar(parent, height=6, corner_radius=3,
+                            progress_color=BRAND["accent"],
+                            fg_color=BRAND["bg_hover"]).set(0.0)  # Phase 3: real value
+
+        def _do_logout():
+            auth.logout()
+            monitor.engine.token = ""
+            win.after(0, _rebuild_identity)
+
+        ctk.CTkButton(parent, text="Disconnect", height=30, corner_radius=6,
+                       fg_color=BRAND["bg_hover"], hover_color=BRAND["border"],
+                       text_color=BRAND["text_muted"], font=ctk.CTkFont(size=12),
+                       command=_do_logout).pack(anchor="w", pady=(10, 0))
+
+    _rebuild_identity()
 
     # ── Game status card ──────────────────────────────────────────────────────
-    game_card = _card(body, "Game Status")
-    game_row  = ctk.CTkFrame(game_card, fg_color="transparent")
-    game_row.pack(fill="x", padx=14, pady=(0, 12))
+    game_card  = _card(ov_body, "Game Status")
+    game_row   = ctk.CTkFrame(game_card, fg_color="transparent")
+    game_row.pack(fill="x", padx=14, pady=(0, 4))
 
-    game_dot   = _dot(game_row, BRAND["text_muted"])
+    game_dot   = _dot_label(game_row, BRAND["text_muted"])
     game_dot.pack(side="left")
     game_label = ctk.CTkLabel(game_row, text="No game detected",
-                               font=ctk.CTkFont(size=13),
-                               text_color=BRAND["text"])
+                               font=ctk.CTkFont(size=13), text_color=BRAND["text"])
     game_label.pack(side="left", padx=(6, 0))
 
     match_label = ctk.CTkLabel(game_card, text="",
-                                font=ctk.CTkFont(size=11),
-                                text_color=BRAND["text_muted"])
-    match_label.pack(anchor="w", padx=14, pady=(0, 8))
-
-    def _poll_game_status():
-        while True:
-            try:
-                game = detect_running_game()
-                if game:
-                    game_label.configure(text=game, text_color=BRAND["text"])
-                    game_dot.configure(text_color=BRAND["accent"])
-                else:
-                    game_label.configure(text="No game detected",
-                                          text_color=BRAND["text_muted"])
-                    game_dot.configure(text_color=BRAND["text_muted"])
-
-                if monitor.current_match_id:
-                    short_id = monitor.current_match_id[:8]
-                    match_label.configure(text=f"Match #{short_id}…",
-                                           text_color=BRAND["match_pil"][:3])
-                else:
-                    match_label.configure(text="")
-            except Exception:
-                pass
-            time.sleep(4)
-
-    threading.Thread(target=_poll_game_status, daemon=True).start()
+                                font=ctk.CTkFont(size=11), text_color=BRAND["warning"])
+    match_label.pack(anchor="w", padx=14, pady=(0, 10))
 
     # ── Monitoring toggle ─────────────────────────────────────────────────────
-    mon_card = _card(body, "Monitoring")
-    mon_row  = ctk.CTkFrame(mon_card, fg_color="transparent")
+    mon_card  = _card(ov_body, "Monitoring")
+    mon_row   = ctk.CTkFrame(mon_card, fg_color="transparent")
     mon_row.pack(fill="x", padx=14, pady=(0, 12))
 
     mon_var = ctk.BooleanVar(value=monitor.running)
 
-    mon_status_label = ctk.CTkLabel(
-        mon_row, text="ON" if monitor.running else "OFF",
-        font=ctk.CTkFont(size=12, weight="bold"),
-        text_color=BRAND["accent"] if monitor.running else BRAND["text_muted"],
-        width=36,
-    )
-    mon_status_label.pack(side="left")
+    mon_lbl = ctk.CTkLabel(mon_row,
+                            text="ON" if monitor.running else "OFF",
+                            font=ctk.CTkFont(size=12, weight="bold"),
+                            text_color=BRAND["accent"] if monitor.running else BRAND["text_muted"],
+                            width=36)
+    mon_lbl.pack(side="left")
 
     def _on_toggle():
         if mon_var.get():
             monitor.start()
-            mon_status_label.configure(text="ON", text_color=BRAND["accent"])
+            mon_lbl.configure(text="ON", text_color=BRAND["accent"])
         else:
             monitor.stop()
-            mon_status_label.configure(text="OFF", text_color=BRAND["text_muted"])
+            mon_lbl.configure(text="OFF", text_color=BRAND["text_muted"])
 
-    ctk.CTkSwitch(
-        mon_row,
-        text="Capture & upload screenshots",
-        variable=mon_var,
-        onvalue=True, offvalue=False,
-        command=_on_toggle,
-        font=ctk.CTkFont(size=12),
-        text_color=BRAND["text"],
-        button_color=BRAND["accent"],
-        button_hover_color=BRAND["accent_dark"],
-        progress_color=BRAND["accent_dark"],
-    ).pack(side="left", padx=(8, 0))
+    ctk.CTkSwitch(mon_row, text="Capture & upload screenshots",
+                   variable=mon_var, onvalue=True, offvalue=False,
+                   command=_on_toggle,
+                   font=ctk.CTkFont(size=12), text_color=BRAND["text"],
+                   button_color=BRAND["accent"],
+                   button_hover_color=BRAND["accent_dark"],
+                   progress_color=BRAND["accent_dark"]).pack(side="left", padx=(8, 0))
 
-    # ── Footer buttons ────────────────────────────────────────────────────────
-    footer = ctk.CTkFrame(win, fg_color=BRAND["bg_card"], corner_radius=0, height=70)
+    # Spacing at bottom of overview
+    ctk.CTkLabel(ov_body, text="", height=8).pack()
+
+    # ── EVENTS TAB ────────────────────────────────────────────────────────────
+    ev_body = ctk.CTkScrollableFrame(tab_events, fg_color=BRAND["bg"], corner_radius=0)
+    ev_body.pack(fill="both", expand=True)
+
+    ev_placeholder = ctk.CTkLabel(ev_body, text="",
+                                   font=ctk.CTkFont(size=13),
+                                   text_color=BRAND["text_muted"],
+                                   wraplength=300)
+    ev_placeholder.pack(pady=30)
+
+    ev_list_frame = ctk.CTkFrame(ev_body, fg_color="transparent")
+    ev_list_frame.pack(fill="x", padx=12)
+
+    def _render_events(events: list[dict]):
+        """Render event rows. Called on main thread via win.after."""
+        for w in ev_list_frame.winfo_children():
+            try: w.destroy()
+            except Exception: pass
+
+        if not auth.is_authenticated:
+            ev_placeholder.configure(text="Sign in on the Overview tab to see active events.")
+            return
+
+        ev_placeholder.configure(text="")
+
+        if not events:
+            ctk.CTkLabel(ev_list_frame, text="No active events right now.",
+                          font=ctk.CTkFont(size=13),
+                          text_color=BRAND["text_muted"]).pack(pady=20)
+            return
+
+        for ev in events:
+            row = ctk.CTkFrame(ev_list_frame, fg_color=BRAND["bg_card"], corner_radius=8)
+            row.pack(fill="x", pady=(0, 8))
+
+            ctk.CTkLabel(row, text=ev.get("name", "Event"),
+                          font=ctk.CTkFont(size=13, weight="bold"),
+                          text_color=BRAND["text"]).pack(anchor="w", padx=12, pady=(10, 0))
+
+            desc = ev.get("description", "")
+            if desc:
+                ctk.CTkLabel(row, text=desc,
+                              font=ctk.CTkFont(size=11), text_color=BRAND["text_muted"],
+                              wraplength=300).pack(anchor="w", padx=12)
+
+            btn_row = ctk.CTkFrame(row, fg_color="transparent")
+            btn_row.pack(fill="x", padx=12, pady=(6, 10))
+
+            xp_reward = ev.get("xp_reward", 0)
+            claimed   = ev.get("claimed", False)
+            ev_id     = ev.get("id", "")
+
+            xp_lbl = ctk.CTkLabel(btn_row, text=f"+{xp_reward} XP",
+                                   font=ctk.CTkFont(size=12, weight="bold"),
+                                   text_color=BRAND["accent"])
+            xp_lbl.pack(side="left")
+
+            claim_btn = ctk.CTkButton(
+                btn_row, text="Claimed" if claimed else "Claim XP",
+                height=28, width=90, corner_radius=6,
+                fg_color=BRAND["bg_hover"] if claimed else BRAND["accent"],
+                hover_color=BRAND["border"] if claimed else BRAND["accent_dark"],
+                text_color=BRAND["text_muted"] if claimed else BRAND["bg"],
+                font=ctk.CTkFont(size=12, weight="bold"),
+                state="disabled" if claimed else "normal",
+            )
+            claim_btn.pack(side="right")
+
+            def _make_claim_handler(eid: str, btn: ctk.CTkButton):
+                def _claim():
+                    btn.configure(state="disabled", text="Claiming…")
+                    def _do():
+                        ok = monitor.engine.claim_event(eid, auth.access_token or "")
+                        def _after():
+                            if ok:
+                                btn.configure(text="Claimed",
+                                               fg_color=BRAND["bg_hover"],
+                                               text_color=BRAND["text_muted"])
+                            else:
+                                btn.configure(state="normal", text="Claim XP")
+                        win.after(0, _after)
+                    threading.Thread(target=_do, daemon=True).start()
+                return _claim
+
+            if not claimed:
+                claim_btn.configure(command=_make_claim_handler(ev_id, claim_btn))
+
+    # ── Footer ─────────────────────────────────────────────────────────────────
+    footer = ctk.CTkFrame(win, fg_color=BRAND["bg_card"], corner_radius=0, height=62)
     footer.pack(fill="x", side="bottom")
     footer.pack_propagate(False)
 
     btn_row = ctk.CTkFrame(footer, fg_color="transparent")
     btn_row.pack(expand=True)
 
-    def _check_engine():
-        threading.Thread(target=_refresh_engine_status, daemon=True).start()
-
     def _open_website():
         import webbrowser
         webbrowser.open("https://arena.gg")
+
+    def _check_engine_btn():
+        threading.Thread(target=_do_engine_check, daemon=True).start()
 
     def _quit_app():
         monitor.stop()
         win.destroy()
         os._exit(0)
 
-    ctk.CTkButton(
-        btn_row, text="Check Engine", width=100, height=32, corner_radius=6,
-        fg_color=BRAND["bg_hover"], hover_color=BRAND["border"],
-        text_color=BRAND["text"], font=ctk.CTkFont(size=12),
-        command=_check_engine,
-    ).pack(side="left", padx=4, pady=12)
+    ctk.CTkButton(btn_row, text="Check Engine", width=104, height=32, corner_radius=6,
+                   fg_color=BRAND["bg_hover"], hover_color=BRAND["border"],
+                   text_color=BRAND["text"], font=ctk.CTkFont(size=12),
+                   command=_check_engine_btn).pack(side="left", padx=4, pady=12)
 
-    ctk.CTkButton(
-        btn_row, text="Open Website", width=100, height=32, corner_radius=6,
-        fg_color=BRAND["bg_hover"], hover_color=BRAND["border"],
-        text_color=BRAND["text"], font=ctk.CTkFont(size=12),
-        command=_open_website,
-    ).pack(side="left", padx=4, pady=12)
+    ctk.CTkButton(btn_row, text="Website", width=80, height=32, corner_radius=6,
+                   fg_color=BRAND["bg_hover"], hover_color=BRAND["border"],
+                   text_color=BRAND["text"], font=ctk.CTkFont(size=12),
+                   command=_open_website).pack(side="left", padx=4, pady=12)
 
-    ctk.CTkButton(
-        btn_row, text="Quit", width=70, height=32, corner_radius=6,
-        fg_color=BRAND["error"], hover_color="#CC3333",
-        text_color=BRAND["text"], font=ctk.CTkFont(size=12),
-        command=_quit_app,
-    ).pack(side="left", padx=4, pady=12)
+    ctk.CTkButton(btn_row, text="Quit", width=62, height=32, corner_radius=6,
+                   fg_color=BRAND["error"], hover_color="#CC3333",
+                   text_color=BRAND["text"], font=ctk.CTkFont(size=12),
+                   command=_quit_app).pack(side="left", padx=4, pady=12)
+
+    # ── Thread-safe polls via win.after() ─────────────────────────────────────
+    # ALL widget updates happen here — never from background threads directly.
+
+    def _do_engine_check():
+        """Run in background thread, push result to main thread via win.after."""
+        health = monitor.engine.health()
+        def _apply():
+            if health and health.get("status") == "ok":
+                db = health.get("db", "?")
+                eng_label.configure(text=f"Connected  ·  DB: {db}",
+                                     text_color=BRAND["text"])
+                eng_dot.configure(text_color=BRAND["accent"])
+                hdr_dot.configure(text_color=BRAND["accent"])
+                hdr_eng.configure(text_color=BRAND["accent"])
+            else:
+                eng_label.configure(text="Engine offline",
+                                     text_color=BRAND["text_muted"])
+                eng_dot.configure(text_color=BRAND["error"])
+                hdr_dot.configure(text_color=BRAND["error"])
+                hdr_eng.configure(text_color=BRAND["text_muted"])
+        win.after(0, _apply)
+
+    def _poll_engine():
+        """Poll engine health every 10 s."""
+        threading.Thread(target=_do_engine_check, daemon=True).start()
+        win.after(10_000, _poll_engine)
+
+    def _poll_game():
+        """Poll game state every 3 s — update game card."""
+        game = detect_running_game()
+        if game:
+            game_label.configure(text=game, text_color=BRAND["text"])
+            game_dot.configure(text_color=BRAND["accent"])
+        else:
+            game_label.configure(text="No game detected", text_color=BRAND["text_muted"])
+            game_dot.configure(text_color=BRAND["text_muted"])
+
+        if monitor.current_match_id:
+            short = monitor.current_match_id[:8]
+            match_label.configure(text=f"Match #{short}…")
+        else:
+            match_label.configure(text="")
+
+        win.after(3_000, _poll_game)
+
+    def _poll_events():
+        """
+        Refresh events tab every 30 s.
+        Phase 3: real data from GET /events/active.
+        """
+        if auth.is_authenticated:
+            token  = auth.access_token or ""
+            def _fetch():
+                events = monitor.engine.get_active_events(token)
+                win.after(0, lambda: _render_events(events))
+            threading.Thread(target=_fetch, daemon=True).start()
+        else:
+            _render_events([])
+        win.after(30_000, _poll_events)
+
+    def _poll_profile_sync():
+        """
+        Phase 3: after login, sync latest rank/XP from /user/profile every 60 s.
+        Rebuilds identity card if data changed.
+        """
+        if auth.is_authenticated:
+            token = auth.access_token or ""
+            def _fetch():
+                profile = monitor.engine.get_profile(token)
+                if profile:
+                    changed = False
+                    if profile.get("rank")   != auth.rank: changed = True
+                    if profile.get("xp")     != auth.xp:   changed = True
+                    if changed:
+                        auth.set_token(
+                            token=token,
+                            rank=profile.get("rank"),
+                            xp=profile.get("xp"),
+                            avatar_url=profile.get("avatar_url"),
+                        )
+                        win.after(0, _rebuild_identity)
+            threading.Thread(target=_fetch, daemon=True).start()
+        win.after(60_000, _poll_profile_sync)
+
+    # Start all polls
+    win.after(500,    _poll_engine)       # first engine check after 0.5 s
+    win.after(1_000,  _poll_game)
+    win.after(2_000,  _poll_events)
+    win.after(60_000, _poll_profile_sync)
 
     win.mainloop()
 
 
-# ── System Tray ───────────────────────────────────────────────────────────────
+# ── System Tray ────────────────────────────────────────────────────────────────
 class ArenaTray:
     """
-    System tray entry point.
-
     Architecture (Windows):
-      - pystray runs in a background thread via icon.run_detached()
-      - customtkinter ClientWindow owns the main thread (tkinter requirement)
-      - Clicking "Open Arena" in tray menu shows/raises the window
-
-    Phase 4-ready: version compat check wired here before window opens.
+      pystray.run_detached() → background thread (tray icon + menu)
+      tkinter mainloop       → main thread (window)
+      win.withdraw/deiconify → hide/show window safely from tray callbacks
     """
 
     def __init__(self):
-        self.config    = load_config()
-        self.auth      = AuthManager(self.config)
-        self.monitor   = MatchMonitor(self.config)
+        self.config  = load_config()
+        self.auth    = AuthManager(self.config)
+        self.monitor = MatchMonitor(self.config)
         self.icon: pystray.Icon | None = None
         self._monitoring_enabled = False
-        self._selected_game = self.config.get("game", "AUTO")
-        self._window_open  = False
+        self._selected_game      = self.config.get("game", "AUTO")
 
-    # ── Icon state helpers ────────────────────────────────────────────────────
     def _icon_state(self) -> str:
-        if self.monitor.current_match_id:
-            return "match"
-        if self._monitoring_enabled:
-            return "active"
+        if self.monitor.current_match_id: return "match"
+        if self._monitoring_enabled:       return "active"
         return "idle"
 
-    def _get_icon_image(self) -> Image.Image:
-        return _draw_arena_icon(128, state=self._icon_state())
-
-    # ── Game selection ────────────────────────────────────────────────────────
     def _set_game(self, game: str):
         self._selected_game = game
         interval = GAME_INTERVALS.get(game, 5)
@@ -937,22 +1197,14 @@ class ArenaTray:
         self.monitor.config["game"] = game
         self.monitor.config["screenshot_interval"] = interval
         save_config(self.config)
-        logger.info(f"Game set to {game}, interval={interval}s")
-        if self.icon:
-            self.icon.update_menu()
+        if self.icon: self.icon.update_menu()
 
     def _make_game_item(self, game: str) -> MenuItem:
         label = f"{game}  ({GAME_INTERVALS[game]}s)" if game != "AUTO" else "AUTO (detect)"
-
-        def _action(icon, item):
-            self._set_game(game)
-
-        def _checked(item):
-            return self._selected_game == game
-
+        def _action(icon, item): self._set_game(game)
+        def _checked(item):      return self._selected_game == game
         return MenuItem(label, _action, checked=_checked)
 
-    # ── Monitoring toggle ─────────────────────────────────────────────────────
     def _toggle_monitoring(self, icon, item):
         if self._monitoring_enabled:
             self.monitor.stop()
@@ -965,42 +1217,37 @@ class ArenaTray:
             icon.icon = _draw_arena_icon(128, state="active")
             icon.notify("Arena Client", "Monitoring ON")
 
-    # ── Open window ───────────────────────────────────────────────────────────
     def _on_open(self, icon, item):
-        """Open (or raise) the Arena Client window."""
-        # Window must be built/shown from the main thread.
-        # Signal the main thread loop to build it.
-        self._window_requested = True
+        """Show/raise window from tray. Safe: uses win.after via deiconify."""
+        win = _window_instance
+        if win:
+            try:
+                win.after(0, lambda: (win.deiconify(), win.lift(), win.focus()))
+            except Exception:
+                pass
 
-    # ── Status check ─────────────────────────────────────────────────────────
     def _on_status(self, icon, item):
         health = self.monitor.engine.health()
         if health and health.get("status") == "ok":
-            icon.notify("Engine Status", f"Connected · DB: {health.get('db', 'ok')}")
+            icon.notify("Engine", f"Connected · DB: {health.get('db', 'ok')}")
         else:
-            icon.notify("Engine Status", "Engine offline or unreachable")
+            icon.notify("Engine", "Offline or unreachable")
 
-    # ── Quit ─────────────────────────────────────────────────────────────────
     def _shutdown(self):
-        logger.info("Arena Client shutting down…")
+        logger.info("Shutting down…")
         self.monitor.stop()
         if self.icon:
-            try:
-                self.icon.stop()
-            except Exception:
-                pass
+            try: self.icon.stop()
+            except Exception: pass
         os._exit(0)
 
     def _on_quit(self, icon, item):
         self._shutdown()
 
-    # ── Run ───────────────────────────────────────────────────────────────────
-    def run(self):
+    def run(self, ico_path: str | None = None):
         self._monitoring_enabled = bool(self.config.get("auto_start", False))
-        self._selected_game = self.config.get("game", "AUTO")
-        self._window_requested = False
+        self._selected_game      = self.config.get("game", "AUTO")
 
-        # Phase 4: version compat check before anything else
         check_version_compat(self.monitor.engine)
 
         menu = Menu(
@@ -1008,21 +1255,12 @@ class ArenaTray:
             Menu.SEPARATOR,
             MenuItem("Open Arena",    self._on_open),
             Menu.SEPARATOR,
-            MenuItem(
-                "Monitoring",
-                self._toggle_monitoring,
-                checked=lambda item: self._monitoring_enabled,
-            ),
+            MenuItem("Monitoring", self._toggle_monitoring,
+                     checked=lambda item: self._monitoring_enabled),
             MenuItem("Game", Menu(
                 self._make_game_item("AUTO"),
                 self._make_game_item("CS2"),
                 self._make_game_item("Valorant"),
-                # Coming Soon:
-                # self._make_game_item("Fortnite"),
-                # self._make_game_item("Apex Legends"),
-                # self._make_game_item("PUBG"),
-                # self._make_game_item("COD"),
-                # self._make_game_item("League of Legends"),
             )),
             MenuItem("Check Engine", self._on_status),
             Menu.SEPARATOR,
@@ -1030,45 +1268,39 @@ class ArenaTray:
         )
 
         self.icon = pystray.Icon(
-            "Arena",
-            self._get_icon_image(),
-            "Arena - Match Monitor",
-            menu,
+            "Arena", _draw_arena_icon(128, state=self._icon_state()),
+            "Arena - Match Monitor", menu,
         )
 
         if self._monitoring_enabled:
             self.monitor.start()
 
-        # Signal handlers for Ctrl+C / SIGTERM
-        def _signal_handler(sig, frame):
-            self._shutdown()
+        def _sig(sig, frame): self._shutdown()
+        signal.signal(signal.SIGINT,  _sig)
+        signal.signal(signal.SIGTERM, _sig)
 
-        signal.signal(signal.SIGINT, _signal_handler)
-        signal.signal(signal.SIGTERM, _signal_handler)
-
-        # pystray runs in background so tkinter can own the main thread
+        # pystray in background — tkinter owns main thread
         self.icon.run_detached()
-        logger.info("Arena Desktop Client started (tray active)")
+        logger.info("Arena Desktop Client started")
 
-        # Main thread: open window immediately, then keep the process alive
-        _build_client_window(self.monitor, self.auth, self.config)
+        _build_client_window(self.monitor, self.auth, self.config, ico_path=ico_path)
 
 
-# ── Entry Point ───────────────────────────────────────────────────────────────
+# ── Entry Point ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    print(f"\n  ARENA Desktop Client v{CLIENT_VERSION}\n  Match Monitor + Screenshot Capture\n")
+    print(f"\n  ARENA Desktop Client v{CLIENT_VERSION}\n")
 
     if not os.path.exists(CONFIG_FILE):
         save_config(DEFAULT_CONFIG)
         logger.info("Created default config.json")
 
-    # Generate ICO on first run if it doesn't exist
     ico_path = os.path.join(_BASE_DIR, "assets", "arena_icon.ico")
     if not os.path.exists(ico_path):
         try:
             generate_ico_file(ico_path)
         except Exception as e:
             logger.warning(f"ICO generation failed (non-fatal): {e}")
+            ico_path = None
 
     app = ArenaTray()
-    app.run()
+    app.run(ico_path=ico_path)
