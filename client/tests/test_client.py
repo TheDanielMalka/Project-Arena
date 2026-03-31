@@ -263,3 +263,211 @@ class TestFailurePaths:
             # No match_id set → upload should never be called
             monitor.current_match_id = None
             instance.post.assert_not_called()
+
+
+# ══════════════════════════════════════════════════════════════
+# 5. Phase 5 — Auth wiring (login / bind / logout / profile)
+# ══════════════════════════════════════════════════════════════
+
+class TestEngineClientAuth:
+    """Tests for Phase 5 EngineClient auth methods."""
+
+    def _make_ec(self, mock_http):
+        return EngineClient("http://localhost:8001", "")
+
+    def _mock_response(self, status_code: int, json_data: dict) -> MagicMock:
+        r = MagicMock()
+        r.status_code = status_code
+        r.json.return_value = json_data
+        return r
+
+    # ── login ─────────────────────────────────────────────────
+
+    def test_login_success_returns_normalised_dict(self):
+        """login() maps access_token → token and returns user fields."""
+        resp = self._mock_response(200, {
+            "access_token": "jwt-abc", "token_type": "bearer",
+            "user_id": "u-001", "username": "player1", "email": "p@arena.gg",
+            "arena_id": "ARENA-XYZ",
+        })
+        with patch("main.httpx.Client") as MockClient:
+            MockClient.return_value.post.return_value = resp
+            ec = EngineClient("http://localhost:8001", "")
+            result = ec.login("player1", "pass123")
+        assert result["token"] == "jwt-abc"
+        assert result["user_id"] == "u-001"
+        assert result["username"] == "player1"
+        assert result["email"] == "p@arena.gg"
+        assert result["arena_id"] == "ARENA-XYZ"
+
+    def test_login_401_returns_detail(self):
+        """login() returns {'detail': ...} on 401."""
+        resp = self._mock_response(401, {"detail": "Invalid credentials"})
+        with patch("main.httpx.Client") as MockClient:
+            MockClient.return_value.post.return_value = resp
+            ec = EngineClient("http://localhost:8001", "")
+            result = ec.login("bad@user.com", "wrongpass")
+        assert result is not None
+        assert "detail" in result
+        assert "Invalid" in result["detail"]
+
+    def test_login_network_error_returns_none(self):
+        """login() returns None on network failure."""
+        with patch("main.httpx.Client") as MockClient:
+            MockClient.return_value.post.side_effect = Exception("Connection refused")
+            ec = EngineClient("http://localhost:8001", "")
+            result = ec.login("user@arena.gg", "pass")
+        assert result is None
+
+    # ── bind_session ──────────────────────────────────────────
+
+    def test_bind_session_returns_true_on_200(self):
+        """bind_session() returns True on success."""
+        resp = self._mock_response(200, {"bound": True, "session_id": "sess-1"})
+        with patch("main.httpx.Client") as MockClient:
+            MockClient.return_value.post.return_value = resp
+            ec = EngineClient("http://localhost:8001", "tok")
+            assert ec.bind_session("jwt-tok", "sess-1") is True
+
+    def test_bind_session_returns_false_on_non_200(self):
+        """bind_session() returns False on non-200 (non-fatal)."""
+        resp = self._mock_response(404, {"detail": "Session not found"})
+        with patch("main.httpx.Client") as MockClient:
+            MockClient.return_value.post.return_value = resp
+            ec = EngineClient("http://localhost:8001", "tok")
+            assert ec.bind_session("jwt-tok", "bad-sess") is False
+
+    def test_bind_session_returns_false_on_network_error(self):
+        """bind_session() returns False gracefully on network error."""
+        with patch("main.httpx.Client") as MockClient:
+            MockClient.return_value.post.side_effect = Exception("Timeout")
+            ec = EngineClient("http://localhost:8001", "tok")
+            assert ec.bind_session("jwt-tok", "sess-1") is False
+
+    # ── logout_from_engine ────────────────────────────────────
+
+    def test_logout_from_engine_calls_endpoint(self):
+        """logout_from_engine() POSTs to /auth/logout with Bearer token."""
+        resp = self._mock_response(200, {"logged_out": True})
+        with patch("main.httpx.Client") as MockClient:
+            instance = MockClient.return_value
+            instance.post.return_value = resp
+            ec = EngineClient("http://localhost:8001", "tok")
+            ec.logout_from_engine("jwt-tok")
+        call_kwargs = instance.post.call_args
+        assert "/auth/logout" in call_kwargs[0][0]
+        assert call_kwargs[1]["headers"]["Authorization"] == "Bearer jwt-tok"
+
+    def test_logout_from_engine_is_silent_on_network_error(self):
+        """logout_from_engine() does not raise on network failure."""
+        with patch("main.httpx.Client") as MockClient:
+            MockClient.return_value.post.side_effect = Exception("Engine down")
+            ec = EngineClient("http://localhost:8001", "tok")
+            ec.logout_from_engine("jwt-tok")  # must not raise
+
+    # ── get_profile ───────────────────────────────────────────
+
+    def test_get_profile_returns_dict_on_success(self):
+        """get_profile() returns profile dict on 200."""
+        profile = {"user_id": "u-001", "username": "player1", "rank": "Gold", "xp": 500}
+        resp = self._mock_response(200, profile)
+        with patch("main.httpx.Client") as MockClient:
+            MockClient.return_value.get.return_value = resp
+            ec = EngineClient("http://localhost:8001", "tok")
+            result = ec.get_profile("jwt-tok")
+        assert result["username"] == "player1"
+        assert result["xp"] == 500
+
+    def test_get_profile_returns_none_on_401(self):
+        """get_profile() returns None on 401 (token expired)."""
+        resp = self._mock_response(401, {"detail": "Token expired"})
+        with patch("main.httpx.Client") as MockClient:
+            MockClient.return_value.get.return_value = resp
+            ec = EngineClient("http://localhost:8001", "tok")
+            result = ec.get_profile("expired-jwt")
+        assert result is None
+
+    def test_get_profile_returns_none_on_network_error(self):
+        """get_profile() returns None gracefully on network failure."""
+        with patch("main.httpx.Client") as MockClient:
+            MockClient.return_value.get.side_effect = Exception("Timeout")
+            ec = EngineClient("http://localhost:8001", "tok")
+            result = ec.get_profile("jwt-tok")
+        assert result is None
+
+
+class TestAuthManagerPhase5:
+    """Tests for Phase 5 AuthManager.login() bind + AuthManager.logout() engine call."""
+
+    def _make_auth(self, tmp_path, monkeypatch) -> "AuthManager":
+        from main import AuthManager
+        cfg_path = str(tmp_path / "config.json")
+        import main as m
+        monkeypatch.setattr(m, "CONFIG_FILE", cfg_path)
+        cfg = {**DEFAULT_CONFIG}
+        return AuthManager(cfg)
+
+    def test_login_calls_bind_session_on_success(self, tmp_path, monkeypatch):
+        """AuthManager.login() calls engine.bind_session() when session_id given."""
+        from main import AuthManager
+        auth = self._make_auth(tmp_path, monkeypatch)
+
+        engine = MagicMock()
+        engine.login.return_value = {
+            "token": "jwt-x", "user_id": "u-1",
+            "username": "p1", "email": "p@a.gg",
+        }
+        engine.bind_session.return_value = True
+
+        err = auth.login(engine, "p1", "pass", session_id="sess-abc")
+        assert err is None
+        engine.bind_session.assert_called_once_with("jwt-x", "sess-abc")
+
+    def test_login_no_bind_when_no_session_id(self, tmp_path, monkeypatch):
+        """AuthManager.login() does NOT call bind_session when session_id is None."""
+        from main import AuthManager
+        auth = self._make_auth(tmp_path, monkeypatch)
+
+        engine = MagicMock()
+        engine.login.return_value = {
+            "token": "jwt-x", "user_id": "u-1",
+            "username": "p1", "email": "p@a.gg",
+        }
+
+        err = auth.login(engine, "p1", "pass")  # no session_id
+        assert err is None
+        engine.bind_session.assert_not_called()
+
+    def test_login_returns_detail_on_401(self, tmp_path, monkeypatch):
+        """AuthManager.login() surfaces error string from engine on bad credentials."""
+        from main import AuthManager
+        auth = self._make_auth(tmp_path, monkeypatch)
+
+        engine = MagicMock()
+        engine.login.return_value = {"detail": "Invalid credentials"}
+
+        err = auth.login(engine, "bad@user.com", "wrongpass")
+        assert err == "Invalid credentials"
+        engine.bind_session.assert_not_called()
+
+    def test_logout_calls_engine_logout(self, tmp_path, monkeypatch):
+        """AuthManager.logout(engine) calls engine.logout_from_engine() before clear."""
+        from main import AuthManager
+        auth = self._make_auth(tmp_path, monkeypatch)
+        auth._config["auth_token"] = "live-jwt"
+
+        engine = MagicMock()
+        auth.logout(engine=engine)
+
+        engine.logout_from_engine.assert_called_once_with("live-jwt")
+        assert auth._config["auth_token"] == ""
+
+    def test_logout_without_engine_still_clears(self, tmp_path, monkeypatch):
+        """AuthManager.logout() with no engine arg still clears local state."""
+        from main import AuthManager
+        auth = self._make_auth(tmp_path, monkeypatch)
+        auth._config["auth_token"] = "live-jwt"
+
+        auth.logout()  # no engine arg
+
+        assert auth._config["auth_token"] == ""
