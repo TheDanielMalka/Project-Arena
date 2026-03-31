@@ -1,10 +1,21 @@
-node_modules
-dist
+node_modules/
+dist/
+**/dist/
 .git
 *.md
 .env
-engine/__pycache__
-engine/*.pyc
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+coverage/
+.pytest_cache/
+htmlcov/
+.coverage
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
 # Python venvs — symlinks on Windows cause Docker build context errors
 venv/
 winvenv/
@@ -15,8 +26,9 @@ client/.venv/
 client/venv/
 engine/.venv/
 engine/venv/
-client/__pycache__/
+# Frontend / tooling build artifacts
 client/dist/
+# Test artifacts
 # Test artifacts
 screenshots/
 evidence/
