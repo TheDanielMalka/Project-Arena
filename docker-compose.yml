@@ -33,15 +33,14 @@ services:
       context: .
       dockerfile: Dockerfile.frontend
       args:
-        VITE_ENGINE_API_URL: ${VITE_ENGINE_API_URL:-http://localhost:8000}
-        VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8000/ws}
+        VITE_ENGINE_API_URL: ${VITE_ENGINE_API_URL:-http://localhost:8001}
+        VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8001/ws}
         VITE_CONTRACT_ADDRESS: ${CONTRACT_ADDRESS:-}
         VITE_CHAIN_ID: ${CHAIN_ID:-97}
     container_name: arena-frontend
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      - "3000:80"
     depends_on:
       arena-db:
         condition: service_healthy
@@ -72,7 +71,7 @@ services:
       CONTRACT_ADDRESS: ${CONTRACT_ADDRESS:-}
       CHAIN_ID: ${CHAIN_ID:-97}
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       # Screenshots — fast host-mount for capture output
       - arena-screenshots:/app/screenshots

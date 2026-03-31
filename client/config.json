@@ -1,5 +1,5 @@
 {
-  "engine_url": "http://localhost:8000",
+  "engine_url": "http://localhost:8001",
   "auth_token": "",
   "screenshot_interval": 5,
   "monitor": 1,
