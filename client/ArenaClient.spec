@@ -6,8 +6,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[('config.json', '.')],
-    hiddenimports=['pystray._win32', 'PIL._tkinter_finder', 'psutil', 'mss', 'mss.tools', 'httpx',
-                   'customtkinter', 'customtkinter.windows', 'customtkinter.windows.widgets'],
+    hiddenimports=['pystray._win32', 'PIL._tkinter_finder', 'psutil', 'mss', 'mss.tools', 'httpx', 'customtkinter', 'customtkinter.windows', 'customtkinter.windows.widgets'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -36,4 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=['assets\\arena_icon.ico'],
 )
