@@ -1007,7 +1007,11 @@ const MatchLobby = () => {
             </div>
             <div className="divide-y divide-border/40">
               {filteredPublicMatches.map((match) => {
-                const status = statusConfig[match.status];
+                const status = statusConfig[match.status] ?? {
+                  label: "Unknown",
+                  color: "bg-muted text-muted-foreground border-border",
+                  icon: AlertCircle,
+                };
                 const StatusIcon = status.icon;
                 const isLive = match.status === "in_progress";
                 const canJoin = match.status === "waiting" && match.players.length < match.maxPlayers;
@@ -1244,11 +1248,18 @@ const MatchLobby = () => {
           {/* Custom cards */}
           <div className="space-y-2.5">
             {filteredCustom.map((match) => {
-              const status = statusConfig[match.status];
+              const status = statusConfig[match.status] ?? {
+                label: "Unknown",
+                color: "bg-muted text-muted-foreground border-border",
+                icon: AlertCircle,
+              };
               const StatusIcon = status.icon;
               const isLive = match.status === "in_progress";
-              const teamAFull = match.teamA.length >= match.maxPerTeam;
-              const teamBFull = match.teamB.length >= match.maxPerTeam;
+              const maxPerTeam = match.maxPerTeam ?? match.teamSize ?? getTeamSize(match.mode);
+              const teamA = match.teamA ?? [];
+              const teamB = match.teamB ?? [];
+              const teamAFull = teamA.length >= maxPerTeam;
+              const teamBFull = teamB.length >= maxPerTeam;
               const canJoin = match.status === "waiting" && (!teamAFull || !teamBFull);
               const cfg = ALL_GAME_CONFIG[match.game];
 
@@ -1285,16 +1296,16 @@ const MatchLobby = () => {
                     </div>
                     <div className="grid grid-cols-2 gap-2.5">
                       {[
-                        { label: "Team A", players: match.teamA, full: teamAFull, border: "border-primary/20", bg: "bg-primary/5", text: "text-primary", joinBorder: "border-primary/30", joinText: "text-primary", joinHover: "hover:bg-primary/10", isA: true },
-                        { label: "Team B", players: match.teamB, full: teamBFull, border: "border-arena-orange/20", bg: "bg-arena-orange/5", text: "text-arena-orange", joinBorder: "border-arena-orange/30", joinText: "text-arena-orange", joinHover: "hover:bg-arena-orange/10", isA: false },
+                        { label: "Team A", players: teamA, full: teamAFull, border: "border-primary/20", bg: "bg-primary/5", text: "text-primary", joinBorder: "border-primary/30", joinText: "text-primary", joinHover: "hover:bg-primary/10", isA: true },
+                        { label: "Team B", players: teamB, full: teamBFull, border: "border-arena-orange/20", bg: "bg-arena-orange/5", text: "text-arena-orange", joinBorder: "border-arena-orange/30", joinText: "text-arena-orange", joinHover: "hover:bg-arena-orange/10", isA: false },
                       ].map(({ label, players, full, border, bg, text, joinBorder, joinText, joinHover, isA }) => (
                         <div key={label} className={`rounded-xl border ${border} ${bg} p-2.5`}>
                           <p className={`text-xs ${text} font-display uppercase tracking-wider mb-1.5 flex items-center gap-1`}>
-                            <Shield className="h-3 w-3" /> {label} ({players.length}/{match.maxPerTeam})
+                            <Shield className="h-3 w-3" /> {label} ({players.length}/{maxPerTeam})
                           </p>
                           <div className="space-y-0.5">
                             {players.map((p, i) => <PlayerRow key={i} name={p} isHost={isA} index={i} onPlayerClick={(name, rect) => setPlayerPopover({ slotValue: name, rect })} />)}
-                            {Array.from({ length: match.maxPerTeam - players.length }).map((_, i) => (
+                            {Array.from({ length: maxPerTeam - players.length }).map((_, i) => (
                               <p key={i} className="text-xs text-muted-foreground/30 italic pl-5">Empty slot</p>
                             ))}
                           </div>
