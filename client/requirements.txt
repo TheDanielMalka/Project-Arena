@@ -5,6 +5,9 @@
 pystray==0.19.*
 Pillow==11.*
 
+# Client Window UI
+customtkinter==5.*
+
 # Screenshot Capture
 mss==9.*
 

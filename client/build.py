@@ -33,6 +33,9 @@ HIDDEN_IMPORTS = [
     "mss",
     "mss.tools",
     "httpx",
+    "customtkinter",
+    "customtkinter.windows",
+    "customtkinter.windows.widgets",
 ]
 
 
