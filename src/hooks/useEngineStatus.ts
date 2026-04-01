@@ -81,9 +81,13 @@ export function useEngineStatus(pollInterval = 15_000) {
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [check]);
 
-  // Interval polling — faster when status is "connected"
+  // Interval polling — faster when client is online (ready/in_match) to detect
+  // disconnects quickly. Slower when already disconnected (saves requests).
   useEffect(() => {
-    const interval = clientStatus === "connected" ? 10_000 : pollInterval;
+    const interval =
+      clientStatus === "ready" || clientStatus === "in_match" ? 5_000  :  // detect disconnect fast
+      clientStatus === "connected"                             ? 10_000 :  // detect capture-ready fast
+      pollInterval;                                                        // disconnected → slow poll
     check();
     if (intervalRef.current) clearInterval(intervalRef.current);
     intervalRef.current = setInterval(check, interval);
