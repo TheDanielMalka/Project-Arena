@@ -177,3 +177,135 @@ export async function getMatchStatus(matchId: string): Promise<EngineMatchStatus
   if (!data?.status) return { id: matchId, status: "in_progress" };
   return { id: matchId, status: data.status, winnerId: data.winner_id };
 }
+
+// ── Auth / Identity (Phase 3: real website auth) ──────────────────────────────
+
+// POST /auth/login
+export async function apiLogin(
+  identifier: string,
+  password: string,
+): Promise<{
+  access_token: string;
+  user_id: string;
+  username: string;
+  email: string;
+  arena_id: string | null;
+  wallet_address: string | null;
+} | null> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier, password }),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as {
+      access_token: string;
+      user_id: string;
+      username: string;
+      email: string;
+      arena_id: string | null;
+      wallet_address: string | null;
+    };
+  } catch {
+    return null;
+  }
+}
+
+// POST /auth/register
+export async function apiRegister(
+  username: string,
+  email: string,
+  password: string,
+): Promise<{
+  access_token: string;
+  user_id: string;
+  username: string;
+  email: string;
+  arena_id: string | null;
+  wallet_address: string | null;
+} | null> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, email, password }),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as {
+      access_token: string;
+      user_id: string;
+      username: string;
+      email: string;
+      arena_id: string | null;
+      wallet_address: string | null;
+    };
+  } catch {
+    return null;
+  }
+}
+
+// GET /auth/me — returns full profile including rank, xp, avatar, badge
+export async function apiGetMe(token: string): Promise<{
+  user_id: string;
+  username: string;
+  email: string;
+  arena_id: string | null;
+  rank: string | null;
+  wallet_address: string | null;
+  xp: number;
+  wins: number;
+  losses: number;
+  avatar: string | null;
+  avatar_bg: string | null;
+  equipped_badge_icon: string | null;
+  forge_unlocked_item_ids: string[];
+  vip_expires_at: string | null;
+} | null> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as {
+      user_id: string;
+      username: string;
+      email: string;
+      arena_id: string | null;
+      rank: string | null;
+      wallet_address: string | null;
+      xp: number;
+      wins: number;
+      losses: number;
+      avatar: string | null;
+      avatar_bg: string | null;
+      equipped_badge_icon: string | null;
+      forge_unlocked_item_ids: string[];
+      vip_expires_at: string | null;
+    };
+  } catch {
+    return null;
+  }
+}
+
+// PATCH /users/me — persist avatar, badge, forge changes to DB
+export async function apiPatchMe(
+  token: string,
+  patch: {
+    avatar?: string | null;
+    avatar_bg?: string | null;
+    equipped_badge_icon?: string | null;
+    forge_unlocked_item_ids?: string[];
+  },
+): Promise<boolean> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/users/me`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(patch),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}

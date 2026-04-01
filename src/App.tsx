@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { NotificationToastListener } from "@/components/notifications/NotificationToast";
 import { useUserStore } from "@/stores/userStore";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { BrowserRouter, Navigate, Routes, Route } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import Index from "./pages/Index";
@@ -39,41 +40,47 @@ const AdminRoute = () => {
   return user?.role === "admin" ? <AppLayout><Admin /></AppLayout> : <Navigate to="/dashboard" replace />;
 };
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <NotificationToastListener />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Index />} />
-          <Route path="/auth" element={<Auth />} />
-          <Route path="/dashboard" element={<AppLayout><Dashboard /></AppLayout>} />
-          <Route path="/lobby" element={<AppLayout><MatchLobby /></AppLayout>} />
-          <Route path="/client" element={<AppLayout><ArenaClientPage /></AppLayout>} />
-          <Route path="/history" element={<AppLayout><History /></AppLayout>} />
-          <Route path="/profile" element={<AppLayout><Profile /></AppLayout>} />
-          <Route path="/wallet" element={<AppLayout><WalletPage /></AppLayout>} />
-          <Route path="/leaderboard" element={<AppLayout><Leaderboard /></AppLayout>} />
-          <Route path="/settings" element={<AppLayout><SettingsPage /></AppLayout>} />
-          <Route path="/terms-of-service" element={<AppLayout><TermsOfService /></AppLayout>} />
-          <Route path="/privacy-policy" element={<AppLayout><PrivacyPolicy /></AppLayout>} />
-          <Route path="/responsible-gaming" element={<AppLayout><ResponsibleGaming /></AppLayout>} />
-          {/* Public legal pages — accessible without authentication */}
-          <Route path="/legal/terms" element={<PublicLegal><TermsOfService /></PublicLegal>} />
-          <Route path="/legal/privacy" element={<PublicLegal><PrivacyPolicy /></PublicLegal>} />
-          <Route path="/legal/responsible-gaming" element={<PublicLegal><ResponsibleGaming /></PublicLegal>} />
-          <Route path="/hub" element={<AppLayout><Hub /></AppLayout>} />
-          <Route path="/forge" element={<AppLayout><Forge /></AppLayout>} />
-          <Route path="/players" element={<AppLayout><Players /></AppLayout>} />
-          <Route path="/players/:username" element={<AppLayout><PlayerProfile /></AppLayout>} />
-          <Route path="/admin" element={<AdminRoute />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
-    </TooltipProvider>
-  </QueryClientProvider>
-);
+const App = () => {
+  useEffect(() => {
+    void useUserStore.getState().restoreSession();
+  }, []);
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <NotificationToastListener />
+        <BrowserRouter>
+          <Routes>
+            <Route path="/" element={<Index />} />
+            <Route path="/auth" element={<Auth />} />
+            <Route path="/dashboard" element={<AppLayout><Dashboard /></AppLayout>} />
+            <Route path="/lobby" element={<AppLayout><MatchLobby /></AppLayout>} />
+            <Route path="/client" element={<AppLayout><ArenaClientPage /></AppLayout>} />
+            <Route path="/history" element={<AppLayout><History /></AppLayout>} />
+            <Route path="/profile" element={<AppLayout><Profile /></AppLayout>} />
+            <Route path="/wallet" element={<AppLayout><WalletPage /></AppLayout>} />
+            <Route path="/leaderboard" element={<AppLayout><Leaderboard /></AppLayout>} />
+            <Route path="/settings" element={<AppLayout><SettingsPage /></AppLayout>} />
+            <Route path="/terms-of-service" element={<AppLayout><TermsOfService /></AppLayout>} />
+            <Route path="/privacy-policy" element={<AppLayout><PrivacyPolicy /></AppLayout>} />
+            <Route path="/responsible-gaming" element={<AppLayout><ResponsibleGaming /></AppLayout>} />
+            {/* Public legal pages — accessible without authentication */}
+            <Route path="/legal/terms" element={<PublicLegal><TermsOfService /></PublicLegal>} />
+            <Route path="/legal/privacy" element={<PublicLegal><PrivacyPolicy /></PublicLegal>} />
+            <Route path="/legal/responsible-gaming" element={<PublicLegal><ResponsibleGaming /></PublicLegal>} />
+            <Route path="/hub" element={<AppLayout><Hub /></AppLayout>} />
+            <Route path="/forge" element={<AppLayout><Forge /></AppLayout>} />
+            <Route path="/players" element={<AppLayout><Players /></AppLayout>} />
+            <Route path="/players/:username" element={<AppLayout><PlayerProfile /></AppLayout>} />
+            <Route path="/admin" element={<AdminRoute />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </BrowserRouter>
+      </TooltipProvider>
+    </QueryClientProvider>
+  );
+};
 
 export default App;

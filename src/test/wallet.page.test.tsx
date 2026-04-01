@@ -8,8 +8,8 @@ import { useWalletStore } from "@/stores/walletStore";
 // Non-custodial wallet — no deposit/withdraw dialogs, only on-chain balance + activity
 
 describe("Wallet page — non-custodial", () => {
-  beforeEach(() => {
-    useUserStore.getState().login("player@arena.gg", "test");
+  beforeEach(async () => {
+    await useUserStore.getState().login("player@arena.gg", "test");
     useWalletStore.setState({
       usdtBalance: 1247.50,
       atBalance: 350,

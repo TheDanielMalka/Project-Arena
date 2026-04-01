@@ -6,8 +6,8 @@ import { useUserStore } from "@/stores/userStore";
 import { useWalletStore, PLATFORM_BETTING_MAX } from "@/stores/walletStore";
 
 describe("Settings page", () => {
-  beforeEach(() => {
-    useUserStore.getState().login("player@arena.gg", "test");
+  beforeEach(async () => {
+    await useUserStore.getState().login("player@arena.gg", "test");
   });
 
   it("renders Account section in sidebar", () => {
