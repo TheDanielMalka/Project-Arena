@@ -134,10 +134,13 @@ export const useClientStore = create<ClientState>((set, get) => ({
       set({ status: "connected", lastCheckedAt: now });
       return;
     }
-    // health.status === "ok" — only upgrade to "ready" if not already "in_match"
-    // (don't downgrade an active capture session via HTTP poll)
+    // health.status === "ok" — engine API is up, but this does NOT mean the
+    // desktop client is connected. Max status from health is "connected".
+    // Only syncFromClientStatus (GET /client/status) can promote to "ready".
+    // This prevents the header from showing "Client Ready" just because the
+    // engine container is running, even when no desktop client is connected.
     set((s) => ({
-      status:        s.status === "in_match" ? "in_match" : "ready",
+      status:        s.status === "in_match" ? "in_match" : "connected",
       version:       health.version ?? s.version,
       uptime:        health.uptime  ?? s.uptime,
       lastCheckedAt: now,
