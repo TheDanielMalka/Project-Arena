@@ -106,6 +106,9 @@ DEFAULT_CONFIG = {
     "avatar_url":          None,
     # Phase 4: stable UUID persisted per-install; sent in every heartbeat
     "session_id":          None,
+    # Phase 5: identity cosmetics — synced from /auth/me after login
+    "avatar_bg":           None,   # DB: users.avatar_bg
+    "equipped_badge_icon": None,   # DB: users.equipped_badge_icon  e.g. "badge:champions"
 }
 
 
@@ -219,24 +222,37 @@ class AuthManager:
     def avatar_url(self) -> str | None:
         return self._config.get("avatar_url")
 
+    @property
+    def avatar_bg(self) -> str | None:
+        return self._config.get("avatar_bg")
+
+    @property
+    def equipped_badge_icon(self) -> str | None:
+        return self._config.get("equipped_badge_icon")
+
     def set_token(self, token: str, user_id: str | None = None,
                   username: str | None = None, email: str | None = None,
                   wallet_address: str | None = None,
                   rank: str | None = None, xp: int | None = None,
-                  avatar_url: str | None = None):
+                  avatar_url: str | None = None,
+                  avatar_bg: str | None = None,
+                  equipped_badge_icon: str | None = None):
         self._config["auth_token"] = token
-        if user_id        is not None: self._config["user_id"]        = user_id
-        if username       is not None: self._config["username"]       = username
-        if email          is not None: self._config["email"]          = email
-        if wallet_address is not None: self._config["wallet_address"] = wallet_address
-        if rank           is not None: self._config["rank"]           = rank
-        if xp             is not None: self._config["xp"]             = xp
-        if avatar_url     is not None: self._config["avatar_url"]     = avatar_url
+        if user_id             is not None: self._config["user_id"]             = user_id
+        if username            is not None: self._config["username"]            = username
+        if email               is not None: self._config["email"]               = email
+        if wallet_address      is not None: self._config["wallet_address"]      = wallet_address
+        if rank                is not None: self._config["rank"]                = rank
+        if xp                  is not None: self._config["xp"]                  = xp
+        if avatar_url          is not None: self._config["avatar_url"]          = avatar_url
+        if avatar_bg           is not None: self._config["avatar_bg"]           = avatar_bg
+        if equipped_badge_icon is not None: self._config["equipped_badge_icon"] = equipped_badge_icon
         save_config(self._config)
         logger.info(f"Logged in: {username or email or user_id}")
 
     def clear(self):
-        for k in ("auth_token", "user_id", "username", "email", "rank", "avatar_url"):
+        for k in ("auth_token", "user_id", "username", "email", "rank",
+                  "avatar_url", "avatar_bg", "equipped_badge_icon"):
             self._config[k] = "" if k == "auth_token" else None
         self._config["xp"]             = 0
         self._config["wallet_address"] = "unknown"
@@ -267,6 +283,17 @@ class AuthManager:
                 xp=result.get("xp"),
                 avatar_url=result.get("avatar_url"),
             )
+            # Fetch full profile immediately so avatar_bg / badge appear at first paint,
+            # not after the 60-second poll cycle. Non-fatal if /auth/me is unavailable.
+            profile = engine.get_profile(result["token"])
+            if profile:
+                self.set_token(
+                    token=result["token"],
+                    rank=profile.get("rank") or result.get("rank"),
+                    xp=profile.get("xp") or result.get("xp"),
+                    avatar_bg=profile.get("avatar_bg"),
+                    equipped_badge_icon=profile.get("equipped_badge_icon"),
+                )
             # Phase 5: bind session so website can detect this client immediately
             if session_id:
                 engine.bind_session(result["token"], session_id)
@@ -504,7 +531,7 @@ class EngineClient:
 
 # ── Match Monitor ──────────────────────────────────────────────────────────────
 class MatchMonitor:
-    _HEARTBEAT_INTERVAL = 15  # must be < engine _CLIENT_TIMEOUT_SECONDS (30s)
+    _HEARTBEAT_INTERVAL = 4   # must be < engine _CLIENT_TIMEOUT_SECONDS (10s); fast disconnect detection
 
     def __init__(self, config: dict):
         self.config            = config
@@ -699,6 +726,54 @@ def generate_ico_file(path: str):
 
 # ── Client Window ──────────────────────────────────────────────────────────────
 _window_instance = None   # global ref so tray can deiconify safely
+
+# ── Avatar cosmetics ──────────────────────────────────────────────────────────
+# Mirrors avatarBgs.ts `accent` hex values → RGB tuple for Pillow drawing.
+_AVATAR_BG_COLORS: dict[str, tuple[int, int, int]] = {
+    "default":  (239, 68,  68),   # Crimson Core
+    "blue":     (59,  130, 246),  # Ion Blue
+    "purple":   (168, 85,  247),  # Void Violet
+    "cyan":     (34,  211, 238),  # Neon Azure
+    "green":    (34,  197, 94),   # Toxic Matrix
+    "orange":   (249, 115, 22),   # Solar Flare
+    "fire":     (249, 115, 22),   # Inferno Season
+    "ice":      (125, 211, 252),  # Sub-Zero Crown
+    "electric": (250, 204, 21),   # Storm Surge
+    "void":     (124, 58,  237),  # Abyss Prime
+    "gold":     (234, 179, 8),    # Sovereign Gold
+    "rainbow":  (236, 72,  153),  # Chroma Luxe
+    "aurora":   (52,  211, 153),  # Northern Pulse
+    "lava":     (220, 38,  38),   # Magma Elite
+}
+
+# Maps badge ID (after stripping "badge:") → emoji shown in the client profile card.
+_BADGE_EMOJI: dict[str, str] = {
+    "founders":        "🏛",
+    "champions":       "🏆",
+    "veterans":        "⚔",
+    "arena_ring":      "💠",
+    "sun_god":         "☀",
+    "neon_hunter":     "🎯",
+    "shadow_ronin":    "🥷",
+    "black_mage":      "🔮",
+    "desert_prince":   "👑",
+    "storm_swordsman": "⚡",
+    "crimson_core":    "💢",
+    "void_warden":     "🌑",
+    "iron_command":    "🛡",
+}
+
+
+def _resolve_avatar_color(bg_id: str | None) -> tuple[int, int, int]:
+    """Return RGB tuple for the given avatar_bg id; falls back to default red."""
+    return _AVATAR_BG_COLORS.get(bg_id or "default", _AVATAR_BG_COLORS["default"])
+
+
+def _resolve_badge_emoji(equipped_badge_icon: str | None) -> str | None:
+    """Return emoji for a 'badge:<id>' string, or None if not set / unrecognised."""
+    if not equipped_badge_icon or not equipped_badge_icon.startswith("badge:"):
+        return None
+    return _BADGE_EMOJI.get(equipped_badge_icon[len("badge:"):])
 
 
 def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
@@ -946,27 +1021,39 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         initial = uname[0].upper()
         av_size = 44
 
-        # Avatar
-        av_img = Image.new("RGBA", (av_size, av_size), (0, 0, 0, 0))
-        av_d   = ImageDraw.Draw(av_img)
-        av_d.ellipse([0, 0, av_size, av_size], fill=(228, 37, 53, 30))
-        av_d.ellipse([0, 0, av_size, av_size], outline=BRAND["accent_pil"], width=2)
-        ctk_av = ctk.CTkImage(light_image=av_img, dark_image=av_img,
-                               size=(av_size, av_size))
+        # Avatar — circle color matches the user's avatar_bg setting on the website
+        bg_rgb  = _resolve_avatar_color(auth.avatar_bg)
+        av_img  = Image.new("RGBA", (av_size, av_size), (0, 0, 0, 0))
+        av_d    = ImageDraw.Draw(av_img)
+        av_d.ellipse([0, 0, av_size, av_size], fill=(*bg_rgb, 35))
+        av_d.ellipse([0, 0, av_size, av_size], outline=(*bg_rgb, 255), width=2)
+        ctk_av  = ctk.CTkImage(light_image=av_img, dark_image=av_img,
+                                size=(av_size, av_size))
+
+        # Badge emoji (equipped_badge_icon = "badge:<id>")
+        badge_emoji = _resolve_badge_emoji(auth.equipped_badge_icon)
+        av_hex      = "#{:02x}{:02x}{:02x}".format(*bg_rgb)
 
         row = ctk.CTkFrame(parent, fg_color="transparent")
         row.pack(fill="x", pady=(0, 10))
 
         ctk.CTkLabel(row, image=ctk_av, text=initial,
                      font=ctk.CTkFont(size=16, weight="bold"),
-                     text_color=BRAND["accent"]).pack(side="left")
+                     text_color=av_hex).pack(side="left")
 
         info = ctk.CTkFrame(row, fg_color="transparent")
         info.pack(side="left", padx=(10, 0))
 
-        ctk.CTkLabel(info, text=uname,
+        # Username + optional badge chip on the same line
+        name_row = ctk.CTkFrame(info, fg_color="transparent")
+        name_row.pack(anchor="w")
+        ctk.CTkLabel(name_row, text=uname,
                      font=ctk.CTkFont(size=14, weight="bold"),
-                     text_color=BRAND["text"]).pack(anchor="w")
+                     text_color=BRAND["text"]).pack(side="left")
+        if badge_emoji:
+            ctk.CTkLabel(name_row, text=f" {badge_emoji}",
+                         font=ctk.CTkFont(size=13),
+                         text_color=av_hex).pack(side="left")
 
         if auth.email:
             ctk.CTkLabel(info, text=auth.email,
@@ -1219,19 +1306,28 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         win.after(30_000, _poll_events)
 
     def _poll_profile_sync():
-        """Phase 3: re-sync rank/XP from /user/profile every 60s."""
+        """Phase 3: re-sync rank/XP/avatar from /auth/me every 60s."""
         if auth.is_authenticated:
             token = auth.access_token or ""
             def _fetch():
                 profile = monitor.engine.get_profile(token)
                 if profile:
-                    changed = (profile.get("rank") != auth.rank or
-                               profile.get("xp")   != auth.xp)
+                    changed = (
+                        profile.get("rank")                != auth.rank
+                        or profile.get("xp")              != auth.xp
+                        or profile.get("avatar_bg")        != auth.avatar_bg
+                        or profile.get("equipped_badge_icon") != auth.equipped_badge_icon
+                    )
                     if changed:
-                        auth.set_token(token=token,
-                                       rank=profile.get("rank"),
-                                       xp=profile.get("xp"),
-                                       avatar_url=profile.get("avatar_url"))
+                        auth.set_token(
+                            token=token,
+                            rank=profile.get("rank"),
+                            xp=profile.get("xp"),
+                            avatar_url=profile.get("avatar_url"),
+                            avatar_bg=profile.get("avatar_bg"),
+                        )
+                        # equipped_badge_icon can be None (badge removed) — update directly
+                        auth._config["equipped_badge_icon"] = profile.get("equipped_badge_icon")
                         win.after(0, _rebuild_identity)
             threading.Thread(target=_fetch, daemon=True).start()
         win.after(60_000, _poll_profile_sync)

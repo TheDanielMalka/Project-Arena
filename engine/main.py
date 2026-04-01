@@ -389,8 +389,9 @@ async def submit_result(result: MatchResult, token: dict = Depends(verify_token)
 _client_store_lock = threading.Lock()
 _client_statuses: dict[str, dict] = {}   # wallet_address → latest heartbeat payload
 
-# A heartbeat older than this threshold is treated as "offline"
-_CLIENT_TIMEOUT_SECONDS = 30
+# A heartbeat older than this threshold is treated as "offline".
+# Client sends every 4s; 10s = ~2 missed beats before marking offline.
+_CLIENT_TIMEOUT_SECONDS = 10
 
 
 def _version_ok(ver: str | None) -> bool:
