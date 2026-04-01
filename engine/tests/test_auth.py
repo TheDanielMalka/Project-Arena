@@ -133,7 +133,8 @@ class TestRegister:
 class TestLogin:
     def _db_user_row(self, password: str = "password123"):
         pw_hash = auth.hash_password(password)
-        return (FAKE_UUID, "daniel", "daniel@arena.gg", pw_hash, FAKE_ARENA_ID)
+        # Columns: id, username, email, password_hash, arena_id, wallet_address
+        return (FAKE_UUID, "daniel", "daniel@arena.gg", pw_hash, FAKE_ARENA_ID, "0xDeAdBeEf")
 
     def test_login_by_email_success(self):
         ctx, session = _make_session_mock(fetchone_return=self._db_user_row())
