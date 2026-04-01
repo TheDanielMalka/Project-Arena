@@ -91,6 +91,7 @@ class AuthResponse(BaseModel):
     username: str
     email: str
     arena_id: str | None = None
+    wallet_address: str | None = None   # DB-ready: from users.wallet_address
 
 
 class UserProfile(BaseModel):
@@ -709,7 +710,7 @@ async def login(req: LoginRequest):
         with SessionLocal() as session:
             row = session.execute(
                 text(
-                    "SELECT id, username, email, password_hash, arena_id "
+                    "SELECT id, username, email, password_hash, arena_id, wallet_address "
                     "FROM users "
                     "WHERE email = :id OR username = :id"
                 ),
@@ -730,6 +731,7 @@ async def login(req: LoginRequest):
         username=row[1],
         email=row[2],
         arena_id=row[4],
+        wallet_address=row[5],
     )
 
 

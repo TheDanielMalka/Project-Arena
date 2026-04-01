@@ -194,9 +194,13 @@ describe("syncFromHealth (backward compat)", () => {
     expect(useClientStore.getState().status).toBe("disconnected");
   });
 
-  it("health.status=ok → ready", () => {
+  it("health.status=ok → connected (engine up but no desktop client)", () => {
+    // Phase 4 fix: syncFromHealth must never promote to "ready".
+    // Only syncFromClientStatus (GET /client/status) can set "ready".
+    // This prevents the header showing "Client Ready" just because the
+    // engine container is running with no desktop client connected.
     useClientStore.getState().syncFromHealth({ status: "ok" });
-    expect(useClientStore.getState().status).toBe("ready");
+    expect(useClientStore.getState().status).toBe("connected");
   });
 
   it("health.status=error → connected", () => {

@@ -411,11 +411,12 @@ class EngineClient:
                 data = r.json()
                 # Normalise access_token → token so AuthManager.set_token() works
                 return {
-                    "token":    data.get("access_token"),
-                    "user_id":  data.get("user_id"),
-                    "username": data.get("username"),
-                    "email":    data.get("email"),
-                    "arena_id": data.get("arena_id"),
+                    "token":          data.get("access_token"),
+                    "user_id":        data.get("user_id"),
+                    "username":       data.get("username"),
+                    "email":          data.get("email"),
+                    "arena_id":       data.get("arena_id"),
+                    "wallet_address": data.get("wallet_address"),
                 }
             try:
                 detail = r.json().get("detail", "Invalid credentials")
