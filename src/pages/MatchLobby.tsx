@@ -697,6 +697,7 @@ const MatchLobby = () => {
                     disabled={selectedPublicLobby.status !== "waiting" || selectedPublicLobby.players.length >= selectedPublicLobby.maxPlayers || !canPlay}
                     onClick={() => { setSelectedPublicLobbyId(null); handleJoinPublic(selectedPublicLobby.id, selectedPublicLobby.betAmount); }}
                     className="font-display"
+                    title={!canPlay ? "Arena Client not connected" : undefined}
                     style={cfg ? { boxShadow: `0 0 16px ${cfg.color}40` } : {}}>
                     <Swords className="mr-1.5 h-4 w-4" /> Join This Lobby
                   </Button>
@@ -1061,6 +1062,7 @@ const MatchLobby = () => {
                         <Button size="sm" disabled={depositConfirm !== null || !canPlay}
                           onClick={(e) => { e.stopPropagation(); handleJoinPublic(match.id, match.betAmount); }}
                           className="font-display text-xs"
+                          title={!canPlay ? "Arena Client not connected" : undefined}
                           style={glowing && cfg ? { boxShadow: `0 0 12px ${cfg.color}60` } : {}}>
                           <Swords className="mr-1 h-3 w-3" /> Join
                         </Button>
