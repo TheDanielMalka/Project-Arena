@@ -247,7 +247,8 @@ class AuthManager:
               session_id: str | None = None) -> str | None:
         """
         POST /auth/login with {identifier, password}.
-        identifier = email OR username — backend accepts both.
+        identifier = email — backend also accepts username but email is
+        preferred because username is user-changeable in the profile.
         Returns None on success, error string on failure.
 
         Phase 5: after successful login, calls engine.bind_session() with the
@@ -851,15 +852,15 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     def _build_login_form(parent: ctk.CTkFrame):
         """
         Login form — accepts email OR username (backend handles both).
-        DB-ready: /auth/login validates identifier against users.email
-                  OR users.username column.
+        DB-ready: /auth/login validates identifier against users.email.
+                  Email is used (not username) because username is changeable in profile.
         """
         ctk.CTkLabel(parent, text="Sign in to Arena",
                      font=ctk.CTkFont(size=14, weight="bold"),
                      text_color=BRAND["text"]).pack(anchor="w", pady=(0, 10))
 
         id_entry = ctk.CTkEntry(
-            parent, placeholder_text="Email or Username",
+            parent, placeholder_text="Email",
             height=36, corner_radius=6,
             fg_color=BRAND["bg_hover"],
             border_color=BRAND["border"],
