@@ -94,6 +94,15 @@ interface ClientState extends ClientSession {
   canPlay: () => boolean;
 
   /**
+   * Phase 4 strict gate: client must be ready AND bound to the currently
+   * authenticated website user (client_sessions.user_id).
+   *
+   * This prevents "Client Ready" from unlocking play when the desktop client
+   * is running but not signed in / bound to the same user.
+   */
+  canPlayForUser: (userId: string | undefined) => boolean;
+
+  /**
    * Returns a human-readable label for the current status.
    * Used in ArenaHeader and any status badge.
    */
@@ -194,6 +203,14 @@ export const useClientStore = create<ClientState>((set, get) => ({
     const { status, versionOk } = get();
     // Phase 4: must be online (ready/in_match) AND version_ok
     return (status === "ready" || status === "in_match") && (versionOk ?? false);
+  },
+
+  canPlayForUser: (userId) => {
+    const { status, versionOk, bindUserId } = get();
+    if (!(status === "ready" || status === "in_match")) return false;
+    if (!(versionOk ?? false)) return false;
+    if (!userId) return false;
+    return bindUserId === userId;
   },
 
   statusLabel: () => {

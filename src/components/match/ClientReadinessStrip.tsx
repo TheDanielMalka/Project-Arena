@@ -56,7 +56,9 @@ function StepRow({
 export function ClientReadinessStrip() {
   const clientStatus      = useClientStore((s) => s.status);
   const version           = useClientStore((s) => s.version);
-  const canPlay           = useClientStore((s) => s.canPlay());
+  const websiteUserId     = useUserStore((s) => s.user?.id);
+  const bindUserId        = useClientStore((s) => s.bindUserId);
+  const canPlay           = useClientStore((s) => s.canPlayForUser(websiteUserId));
   const statusLabelFn     = useClientStore((s) => s.statusLabel);
   const syncFromClientStatus = useClientStore((s) => s.syncFromClientStatus);
   const walletAddress     = useUserStore((s) => s.user?.walletAddress);
@@ -80,6 +82,7 @@ export function ClientReadinessStrip() {
   // Engine API is reachable if we got any response (even online=false) or status moved past checking/disconnected
   const engineReachable = engineApiUp === true || (clientStatus !== "disconnected" && clientStatus !== "checking");
   const captureReady  = clientStatus === "ready" || clientStatus === "in_match";
+  const boundToWebsiteUser = !!websiteUserId && !!bindUserId && bindUserId === websiteUserId;
 
   const showSuccessSlim = canPlay && !isChecking;
 
@@ -123,12 +126,16 @@ export function ClientReadinessStrip() {
               ? "Checking Arena Client…"
               : isDisconnected
                 ? "Arena Client Required"
-                : "Finish setup to play"}
+                : captureReady && !boundToWebsiteUser
+                  ? "Sign in to Arena Client"
+                  : "Finish setup to play"}
           </p>
           <p className="text-xs text-muted-foreground">
             {isDisconnected
               ? "Run the Arena desktop client on this machine while the engine is up (Docker or local). Join stays blocked until the client looks healthy."
-              : "Your client is starting or not fully ready. When capture turns ready, Join unlocks automatically — use Refresh if you just started the client."}
+              : captureReady && !boundToWebsiteUser
+                ? "Your desktop client is running, but it is not linked to the same Arena user as this website session. Sign in inside the client to bind your session."
+                : "Your client is starting or not fully ready. When capture turns ready, Join unlocks automatically — use Refresh if you just started the client."}
           </p>
         </div>
         <div className="flex flex-col gap-1.5 shrink-0 items-end">

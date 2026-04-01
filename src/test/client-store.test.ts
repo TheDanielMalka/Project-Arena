@@ -160,6 +160,25 @@ describe("canPlay", () => {
   });
 });
 
+// ── canPlayForUser (strict bind gate) ─────────────────────────────────────────
+
+describe("canPlayForUser", () => {
+  it("false when userId missing", () => {
+    useClientStore.setState({ status: "ready", versionOk: true, bindUserId: "u1" });
+    expect(useClientStore.getState().canPlayForUser(undefined)).toBe(false);
+  });
+
+  it("false when not bound to the same user", () => {
+    useClientStore.setState({ status: "ready", versionOk: true, bindUserId: "u-other" });
+    expect(useClientStore.getState().canPlayForUser("u1")).toBe(false);
+  });
+
+  it("true when ready + version_ok=true + bound user matches", () => {
+    useClientStore.setState({ status: "ready", versionOk: true, bindUserId: "u1" });
+    expect(useClientStore.getState().canPlayForUser("u1")).toBe(true);
+  });
+});
+
 // ── statusLabel ───────────────────────────────────────────────────────────────
 
 describe("statusLabel", () => {
