@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -64,6 +64,15 @@ function ReportModal({ open, onClose, reportedId, reportedUsername }: ReportModa
   const [reason,      setReason]      = useState<TicketReason | "">("");
   const [description, setDescription] = useState("");
   const [submitting,  setSubmitting]  = useState(false);
+  const submitTidRef = useRef<number | null>(null);
+  const resetTidRef  = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (submitTidRef.current !== null) window.clearTimeout(submitTidRef.current);
+      if (resetTidRef.current  !== null) window.clearTimeout(resetTidRef.current);
+    };
+  }, []);
 
   const canSubmit = reason !== "" && description.trim().length >= 10;
 
@@ -71,7 +80,8 @@ function ReportModal({ open, onClose, reportedId, reportedUsername }: ReportModa
     if (!user || !canSubmit) return;
     setSubmitting(true);
     // DB-ready: replace with POST /api/reports
-    setTimeout(() => {
+    if (submitTidRef.current !== null) window.clearTimeout(submitTidRef.current);
+    submitTidRef.current = window.setTimeout(() => {
       submitReport({
         reporterId:        user.id,
         reporterName:      user.username,
@@ -87,13 +97,20 @@ function ReportModal({ open, onClose, reportedId, reportedUsername }: ReportModa
       });
       setSubmitting(false);
       setStep("success");
+      submitTidRef.current = null;
     }, 800);
   };
 
   const handleClose = () => {
     onClose();
     // reset after close animation
-    setTimeout(() => { setStep("form"); setReason(""); setDescription(""); }, 300);
+    if (resetTidRef.current !== null) window.clearTimeout(resetTidRef.current);
+    resetTidRef.current = window.setTimeout(() => {
+      setStep("form");
+      setReason("");
+      setDescription("");
+      resetTidRef.current = null;
+    }, 300);
   };
 
   return (
