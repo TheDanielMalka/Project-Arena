@@ -184,8 +184,13 @@ class TestMe:
         return {"Authorization": f"Bearer {token}"}
 
     def _db_profile_row(self):
+        # Columns: id, username, email, arena_id, rank, wallet_address,
+        #          xp, wins, losses, avatar, avatar_bg, equipped_badge_icon,
+        #          forge_unlocked_item_ids, vip_expires_at
         return (FAKE_UUID, "daniel", "daniel@arena.gg", FAKE_ARENA_ID,
-                "Gold", "0xABC", 1500, 42, 10)
+                "Gold", "0xABC", 1500, 42, 10,
+                "preset:warrior", "red", "badge:champion",
+                ["item-001", "item-002"], None)
 
     def test_me_returns_profile(self):
         ctx, _ = _make_session_mock(fetchone_return=self._db_profile_row())
@@ -196,6 +201,10 @@ class TestMe:
         assert data["username"] == "daniel"
         assert data["xp"] == 1500
         assert data["wins"] == 42
+        assert data["avatar"] == "preset:warrior"
+        assert data["equipped_badge_icon"] == "badge:champion"
+        assert data["forge_unlocked_item_ids"] == ["item-001", "item-002"]
+        assert data["vip_expires_at"] is None
 
     def test_me_no_token_returns_422(self):
         resp = client.get("/auth/me")
@@ -210,3 +219,110 @@ class TestMe:
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.get("/auth/me", headers=self._auth_header())
         assert resp.status_code == 404
+
+
+# ─── PATCH /users/me ──────────────────────────────────────────────────────────
+
+class TestPatchUserMe:
+    def _auth_header(self) -> dict:
+        token = auth.issue_token(FAKE_UUID, "daniel@arena.gg")
+        return {"Authorization": f"Bearer {token}"}
+
+    def _db_profile_row(self):
+        return (FAKE_UUID, "daniel", "daniel@arena.gg", FAKE_ARENA_ID,
+                "Gold", "0xABC", 10, 3, 1,
+                "preset:warrior", "blue", "badge:pro",
+                ["item-001"], None)
+
+    def test_patch_avatar_returns_200(self):
+        ctx, session = _make_session_mock(fetchone_return=self._db_profile_row())
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.patch(
+                "/users/me",
+                json={"avatar": "preset:ninja"},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        # UPDATE was called
+        assert session.execute.call_count >= 1
+
+    def test_patch_badge_returns_200(self):
+        ctx, _ = _make_session_mock(fetchone_return=self._db_profile_row())
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.patch(
+                "/users/me",
+                json={"equipped_badge_icon": "badge:legend"},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+
+    def test_patch_forge_items_returns_200(self):
+        ctx, _ = _make_session_mock(fetchone_return=self._db_profile_row())
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.patch(
+                "/users/me",
+                json={"forge_unlocked_item_ids": ["item-001", "item-005"]},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+
+    def test_patch_empty_body_returns_200(self):
+        """Empty patch is valid — returns current profile without DB write."""
+        ctx, session = _make_session_mock(fetchone_return=self._db_profile_row())
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.patch("/users/me", json={}, headers=self._auth_header())
+        assert resp.status_code == 200
+
+    def test_patch_no_token_returns_422(self):
+        resp = client.patch("/users/me", json={"avatar": "preset:ninja"})
+        assert resp.status_code == 422
+
+
+# ─── POST /match/result ───────────────────────────────────────────────────────
+
+class TestSubmitResult:
+    def _auth_header(self) -> dict:
+        token = auth.issue_token(FAKE_UUID, "daniel@arena.gg")
+        return {"Authorization": f"Bearer {token}"}
+
+    def _result_payload(self) -> dict:
+        return {
+            "match_id": str(uuid.uuid4()),
+            "winner_id": str(uuid.uuid4()),
+            "game": "CS2",
+            "players_detected": ["player1", "player2"],
+            "agents_detected": [],
+            "ocr_confidence": 0.95,
+            "score": "13-7",
+        }
+
+    def test_submit_result_returns_accepted(self):
+        ctx, _ = _make_session_mock()
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/match/result",
+                json=self._result_payload(),
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["accepted"] is True
+        assert data["message"] == "Result recorded"
+
+    def test_submit_result_db_error_still_returns_accepted(self):
+        """DB failure is non-fatal — client should not retry endlessly."""
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(side_effect=Exception("db down"))
+        ctx.__exit__ = MagicMock(return_value=False)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/match/result",
+                json=self._result_payload(),
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["accepted"] is True
+
+    def test_submit_result_no_token_returns_422(self):
+        resp = client.post("/match/result", json=self._result_payload())
+        assert resp.status_code == 422
