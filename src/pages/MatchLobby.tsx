@@ -227,9 +227,10 @@ const LiveTicker = ({ matches }: { matches: Match[] }) => {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 const MatchLobby = () => {
   const { user } = useUserStore();
+  const websiteUserId = user?.id;
   const { matches, addMatch, joinMatch, leaveMatch, updateMatchStatus, getMatchByCode, deleteMatch, expireOldMatches } = useMatchStore();
   const { lockEscrow, cancelEscrow } = useWalletStore();
-  const canPlay      = useClientStore((s) => s.canPlay());
+  const canPlay      = useClientStore((s) => s.canPlayForUser(websiteUserId));
   const clientStatus = useClientStore((s) => s.status);
   const clientVersion = useClientStore((s) => s.version);
   const clientStatusLabel = useClientStore((s) => s.statusLabel);
@@ -272,9 +273,9 @@ const MatchLobby = () => {
     return { maxPerTeam, teamA: match.players.slice(0, maxPerTeam), teamB: match.players.slice(maxPerTeam, maxPerTeam * 2) };
   };
 
-  /** Same rules as Join buttons — blocks programmatic / race paths until client is ready (DB/client_sessions alignment). */
+  /** Same rules as Join buttons — blocks programmatic / race paths until client is ready AND bound to this user. */
   const guardCanPlay = useCallback((): boolean => {
-    if (useClientStore.getState().canPlay()) return true;
+    if (useClientStore.getState().canPlayForUser(websiteUserId)) return true;
     useNotificationStore.getState().addNotification({
       type: "system",
       title: "Arena Client required",
@@ -284,7 +285,7 @@ const MatchLobby = () => {
           : "Download and run the Arena desktop client before joining a match.",
     });
     return false;
-  }, [clientStatus]);
+  }, [clientStatus, websiteUserId]);
 
   const handleJoinPublic = (matchId: string, betAmount?: number) => {
     if (!user) return;

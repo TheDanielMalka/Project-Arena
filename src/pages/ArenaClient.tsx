@@ -15,7 +15,8 @@ import { useCallback, useState } from "react";
 const ArenaClientPage = () => {
   const statusLabel          = useClientStore((s) => s.statusLabel);
   const version              = useClientStore((s) => s.version);
-  const canPlay              = useClientStore((s) => s.canPlay());
+  const websiteUserId        = useUserStore((s) => s.user?.id);
+  const canPlay              = useClientStore((s) => s.canPlayForUser(websiteUserId));
   const syncFromClientStatus = useClientStore((s) => s.syncFromClientStatus);
   const walletAddress        = useUserStore((s) => s.user?.walletAddress);
   const [busy, setBusy]      = useState(false);
