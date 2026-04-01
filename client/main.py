@@ -531,7 +531,7 @@ class EngineClient:
 
 # ── Match Monitor ──────────────────────────────────────────────────────────────
 class MatchMonitor:
-    _HEARTBEAT_INTERVAL = 15  # must be < engine _CLIENT_TIMEOUT_SECONDS (30s)
+    _HEARTBEAT_INTERVAL = 4   # must be < engine _CLIENT_TIMEOUT_SECONDS (10s); fast disconnect detection
 
     def __init__(self, config: dict):
         self.config            = config

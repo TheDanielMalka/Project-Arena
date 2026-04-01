@@ -418,6 +418,7 @@ class TestAuthManagerPhase5:
             "username": "p1", "email": "p@a.gg",
         }
         engine.bind_session.return_value = True
+        engine.get_profile.return_value = None  # no profile fetch in unit tests
 
         err = auth.login(engine, "p1", "pass", session_id="sess-abc")
         assert err is None
@@ -433,6 +434,7 @@ class TestAuthManagerPhase5:
             "token": "jwt-x", "user_id": "u-1",
             "username": "p1", "email": "p@a.gg",
         }
+        engine.get_profile.return_value = None  # no profile fetch in unit tests
 
         err = auth.login(engine, "p1", "pass")  # no session_id
         assert err is None
