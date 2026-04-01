@@ -4,7 +4,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { NotificationToastListener } from "@/components/notifications/NotificationToast";
 import { useUserStore } from "@/stores/userStore";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect } from "react";
 import { BrowserRouter, Navigate, Routes, Route } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import Index from "./pages/Index";
@@ -41,10 +40,6 @@ const AdminRoute = () => {
 };
 
 const App = () => {
-  useEffect(() => {
-    void useUserStore.getState().restoreSession();
-  }, []);
-
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>

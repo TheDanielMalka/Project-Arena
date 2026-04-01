@@ -411,7 +411,7 @@ class HeartbeatRequest(BaseModel):
 
     DB-ready: maps to client_sessions row —
       wallet_address, status, game, session_id, match_id,
-      client_version, last_heartbeat (server-stamped)
+      client_version, user_id, last_heartbeat (server-stamped)
     """
     wallet_address: str
     client_version: str = "unknown"
@@ -419,6 +419,7 @@ class HeartbeatRequest(BaseModel):
     game: str | None = None         # "CS2" | "Valorant" | None
     session_id: str | None = None   # DB-ready: FK → client_sessions.id
     match_id: str | None = None     # DB-ready: FK → matches.id
+    user_id: str | None = None      # DB-ready: FK → users.id; sent after client login
 
 
 class ClientStatusResponse(BaseModel):
@@ -457,9 +458,9 @@ async def client_heartbeat(payload: HeartbeatRequest):
 
     # ── In-memory update (always) ─────────────────────────────
     with _client_store_lock:
-        # Preserve user_id from a previous bind if present
         existing = _client_statuses.get(payload.wallet_address, {})
-        record["user_id"] = existing.get("user_id")
+        # user_id: prefer the heartbeat-provided value; fall back to a prior bind
+        record["user_id"] = payload.user_id or existing.get("user_id")
         _client_statuses[payload.wallet_address] = record
 
     # ── DB UPSERT (best-effort, only when session_id is present) ─
@@ -477,17 +478,18 @@ async def client_heartbeat(payload: HeartbeatRequest):
                     ),
                     {"w": payload.wallet_address, "sid": payload.session_id},
                 )
-                # Upsert current session
+                # Upsert current session; write user_id when the client is logged in
                 session.execute(
                     text(
                         "INSERT INTO client_sessions "
-                        "  (id, wallet_address, status, game, client_version, match_id, last_heartbeat) "
-                        "VALUES (:sid, :w, :s, :g, :v, :m, NOW()) "
+                        "  (id, wallet_address, status, game, client_version, match_id, user_id, last_heartbeat) "
+                        "VALUES (:sid, :w, :s, :g, :v, :m, :uid, NOW()) "
                         "ON CONFLICT (id) DO UPDATE SET "
                         "  status         = EXCLUDED.status, "
                         "  game           = EXCLUDED.game, "
                         "  client_version = EXCLUDED.client_version, "
                         "  match_id       = EXCLUDED.match_id, "
+                        "  user_id        = COALESCE(EXCLUDED.user_id, client_sessions.user_id), "
                         "  last_heartbeat = NOW(), "
                         "  disconnected_at = NULL"
                     ),
@@ -498,6 +500,7 @@ async def client_heartbeat(payload: HeartbeatRequest):
                         "g":   payload.game,
                         "v":   payload.client_version,
                         "m":   payload.match_id,
+                        "uid": payload.user_id,
                     },
                 )
                 session.commit()

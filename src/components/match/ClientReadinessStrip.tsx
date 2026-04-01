@@ -57,6 +57,7 @@ export function ClientReadinessStrip() {
   const clientStatus      = useClientStore((s) => s.status);
   const version           = useClientStore((s) => s.version);
   const websiteUserId     = useUserStore((s) => s.user?.id);
+  const token             = useUserStore((s) => s.token);
   const bindUserId        = useClientStore((s) => s.bindUserId);
   const canPlay           = useClientStore((s) => s.canPlayForUser(websiteUserId));
   const statusLabelFn     = useClientStore((s) => s.statusLabel);
@@ -69,13 +70,15 @@ export function ClientReadinessStrip() {
   const recheck = useCallback(async () => {
     setBusy(true);
     try {
-      const data = await getClientStatus(walletAddress);
+      const data = token
+        ? await getClientStatus(undefined, token)
+        : await getClientStatus(walletAddress);
       setEngineApiUp(data !== null);
       syncFromClientStatus(data);
     } finally {
       setBusy(false);
     }
-  }, [syncFromClientStatus, walletAddress]);
+  }, [syncFromClientStatus, token, walletAddress]);
 
   const isChecking    = clientStatus === "checking";
   const isDisconnected = clientStatus === "disconnected";

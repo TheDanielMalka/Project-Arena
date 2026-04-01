@@ -604,6 +604,7 @@ class MatchMonitor:
                 "game":           game,
                 "session_id":     self._session_id,  # Phase 4: client_sessions FK
                 "match_id":       self.current_match_id,
+                "user_id":        self.config.get("user_id"),  # set after login; binds session to user
             }
             resp = self.engine.client.post(
                 f"{self.engine.base_url}/client/heartbeat", json=payload, timeout=5)

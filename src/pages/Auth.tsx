@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -25,11 +25,12 @@ const Auth = () => {
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [confirmedAge, setConfirmedAge] = useState(false);
 
-  // Redirect if already logged in
-  if (isAuthenticated) {
-    navigate("/dashboard", { replace: true });
-    return null;
-  }
+  // Redirect if already logged in (do NOT navigate during render)
+  useEffect(() => {
+    if (isAuthenticated) navigate("/dashboard", { replace: true });
+  }, [isAuthenticated, navigate]);
+
+  if (isAuthenticated) return null;
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();

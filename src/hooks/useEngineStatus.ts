@@ -29,16 +29,19 @@ export function useEngineStatus(pollInterval = 15_000) {
   const clientStatus          = useClientStore((s) => s.status);
   const walletAddress         = useUserStore((s) => s.user?.walletAddress);
   const isAuthenticated       = useUserStore((s) => s.isAuthenticated);
+  const token                 = useUserStore((s) => s.token);
 
   const [health, setHealth] = useState<EngineHealth | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const check = useCallback(async () => {
     // ── Primary: GET /client/status (Phase 4) ────────────────────────────
-    // Only poll when user is authenticated and has a wallet address.
-    // This is the authoritative gate for canPlay().
-    if (isAuthenticated && walletAddress) {
-      const statusData = await getClientStatus(walletAddress);
+    // Prefer token-based lookup (backend resolves user_id → session binding).
+    // Fallback to walletAddress only when token is unavailable.
+    if (isAuthenticated && (token || walletAddress)) {
+      const statusData = token
+        ? await getClientStatus(undefined, token)
+        : await getClientStatus(walletAddress);
       syncFromClientStatus(statusData);
     } else {
       // Not logged in → client is definitely not ready
@@ -53,16 +56,16 @@ export function useEngineStatus(pollInterval = 15_000) {
       setHealth(h);
       // Only apply syncFromHealth if we are NOT using the new client/status path
       // (to avoid overwriting the authoritative syncFromClientStatus result).
-      if (!isAuthenticated || !walletAddress) {
+      if (!isAuthenticated || (!token && !walletAddress)) {
         syncFromHealth(h);
       }
     } catch {
       setHealth(null);
-      if (!isAuthenticated || !walletAddress) {
+      if (!isAuthenticated || (!token && !walletAddress)) {
         syncFromHealth(null);
       }
     }
-  }, [syncFromHealth, syncFromClientStatus, walletAddress, isAuthenticated]);
+  }, [syncFromHealth, syncFromClientStatus, walletAddress, isAuthenticated, token]);
 
   // Burst after mount — badge updates quickly after client starts.
   useEffect(() => {

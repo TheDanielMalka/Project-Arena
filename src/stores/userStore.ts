@@ -141,7 +141,6 @@ export const useUserStore = create<UserState>((set, get) => ({
       vipExpiresAt: profile?.vip_expires_at ?? undefined,
     };
 
-    localStorage.setItem("arena_token", data.access_token);
     set({
       user,
       token: data.access_token,
@@ -178,7 +177,6 @@ export const useUserStore = create<UserState>((set, get) => ({
       balance: { total: 0, available: 0, inEscrow: 0 },
     };
 
-    localStorage.setItem("arena_token", data.access_token);
     set({
       user,
       token: data.access_token,
@@ -198,42 +196,13 @@ export const useUserStore = create<UserState>((set, get) => ({
   },
 
   logout: () => {
-    localStorage.removeItem("arena_token");
     set({ user: null, token: null, isAuthenticated: false, walletConnected: false, showLoginGreeting: false, greetingType: null });
   },
 
   restoreSession: async (): Promise<void> => {
-    const token = localStorage.getItem("arena_token");
-    if (!token) return;
-    const profile = await apiGetMe(token);
-    if (!profile) {
-      localStorage.removeItem("arena_token");
-      return;
-    }
-
-    const normalizedEmail = profile.email.trim().toLowerCase();
-    const wallet = profile.wallet_address ?? null;
-
-    const user: UserProfile = {
-      ...MOCK_USER,
-      id: profile.user_id,
-      username: profile.username,
-      email: normalizedEmail,
-      arenaId: profile.arena_id ?? "",
-      walletAddress: wallet ?? MOCK_USER.walletAddress,
-      walletShort: wallet ? `${wallet.slice(0, 6)}...${wallet.slice(-4)}` : MOCK_USER.walletShort,
-      role: ADMIN_EMAILS.has(normalizedEmail) ? "admin" : "user",
-      rank: profile.rank ?? MOCK_USER.rank,
-      stats: { ...MOCK_USER.stats, wins: profile.wins, losses: profile.losses, xp: profile.xp },
-      avatar: profile.avatar ?? MOCK_USER.avatar,
-      avatarBg: profile.avatar_bg ?? MOCK_USER.avatarBg,
-      equippedBadgeIcon: profile.equipped_badge_icon ?? MOCK_USER.equippedBadgeIcon,
-      unlockedForgeItemIds: profile.forge_unlocked_item_ids ?? [],
-      vipExpiresAt: profile.vip_expires_at ?? undefined,
-    };
-
-    set({ user, token, isAuthenticated: true, walletConnected: !!wallet });
-    scheduleSyncForgePurchasesToProfile();
+    // Temporarily disabled: do not persist login between refreshes.
+    // Kept for backward-compat callers/tests.
+    return;
   },
 
   clearLoginGreeting: () => set({ showLoginGreeting: false, greetingType: null }),
