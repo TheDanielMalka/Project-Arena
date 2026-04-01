@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   LogOut,
@@ -7,7 +7,8 @@ import {
   Clock,
   Flag,
   UserCircle2,
-  Mail,
+  MessageSquare,
+  Send,
   Ban,
 } from "lucide-react";
 import { useNotificationStore } from "@/stores/notificationStore";
@@ -15,6 +16,7 @@ import { useUserStore } from "@/stores/userStore";
 import { ignoredRefMatchesContext, useFriendStore } from "@/stores/friendStore";
 import { useReportStore } from "@/stores/reportStore";
 import { usePlayerStore } from "@/stores/playerStore";
+import { useMessageStore } from "@/stores/messageStore";
 import type { TicketReason } from "@/types";
 import {
   isCurrentUserSlot,
@@ -29,6 +31,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
 
 // Mini-profile card when clicking a player in lobby / history / recent matches
 // DB-ready: GET /api/players/:username — POST /api/friends — POST /api/reports
@@ -48,12 +52,19 @@ export function PlayerCardPopover({
   const navigate = useNavigate();
   const { user } = useUserStore();
   const { players } = usePlayerStore();
+  const sendMessage = useMessageStore((s) => s.sendMessage);
   const ignoredUsers = useFriendStore((s) => s.ignoredUsers);
   const friendships = useFriendStore((s) => s.friendships);
   const sendFriendRequest = useFriendStore((s) => s.sendFriendRequest);
   const blockPlayer = useFriendStore((s) => s.blockPlayer);
   const unignoreForRoster = useFriendStore((s) => s.unignoreForRoster);
   const { submitReport } = useReportStore();
+
+  type PopoverTab = "actions" | "message";
+  const [tab, setTab] = useState<PopoverTab>("actions");
+  const [msgText, setMsgText] = useState("");
+  const [msgSent, setMsgSent] = useState(false);
+  const msgRef = useRef<HTMLTextAreaElement>(null);
 
   const isOwnSlot = isCurrentUserSlot(slotValue, user?.id, user?.username);
   const profile = resolveRosterProfile(slotValue, user?.id, user?.username, players);
@@ -162,6 +173,23 @@ export function PlayerCardPopover({
     });
   };
 
+  const handleSendMessage = () => {
+    if (!user || !msgText.trim()) return;
+    const sent = sendMessage({
+      myId: user.id,
+      myUsername: user.username,
+      friendId: targetId,
+      content: msgText.trim(),
+    });
+    if (!sent) return;
+    setMsgSent(true);
+    useNotificationStore.getState().addNotification({
+      type: "system",
+      title: "Message Sent",
+      message: `Your message was delivered to ${username}`,
+    });
+  };
+
   return (
     <div className="w-56 rounded-xl border border-border/60 bg-card shadow-2xl overflow-hidden">
       <div className="px-3 py-2.5 bg-secondary/40 border-b border-border/40 flex items-center gap-2">
@@ -200,7 +228,75 @@ export function PlayerCardPopover({
       </div>
 
       <div className="p-2 space-y-1">
-        {isOwnSlot && enableLeaveRoom ? (
+        {!isOwnSlot && tab === "message" ? (
+          <div className="space-y-2">
+            {!msgSent ? (
+              <>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-display">
+                  Message to {username}
+                </p>
+                <Textarea
+                  ref={msgRef}
+                  placeholder="Type your message…"
+                  value={msgText}
+                  onChange={(e) => setMsgText(e.target.value)}
+                  rows={3}
+                  maxLength={500}
+                  className="bg-secondary/50 border-border/50 resize-none text-xs"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && msgText.trim()) {
+                      e.preventDefault();
+                      handleSendMessage();
+                    }
+                  }}
+                />
+                <p className="text-[9px] text-muted-foreground text-right">{msgText.length}/500 · Ctrl+Enter to send</p>
+                <div className="flex flex-wrap gap-1.5 items-center">
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors py-1.5 px-1"
+                    onClick={() => setTab("actions")}
+                  >
+                    ← Back
+                  </button>
+                  {!targetIgnored && !isFriend && !isPending && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs shrink-0 border-primary/30 text-primary gap-1"
+                      onClick={handleAddFriend}
+                    >
+                      <UserPlus className="h-3 w-3" /> Add Friend
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    className="flex-1 min-w-[6rem] h-7 text-xs gap-1.5"
+                    disabled={!msgText.trim()}
+                    onClick={handleSendMessage}
+                  >
+                    <Send className="h-3.5 w-3.5" /> Send
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-2 space-y-2">
+                <p className="text-xs font-display font-semibold text-primary">Sent!</p>
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  onClick={() => { setTab("actions"); setMsgText(""); setMsgSent(false); }}
+                >
+                  ← Back to actions
+                </button>
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        {tab === "actions" ? (
+        isOwnSlot && enableLeaveRoom ? (
           <button
             type="button"
             className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
@@ -248,14 +344,15 @@ export function PlayerCardPopover({
 
             <button
               type="button"
-              className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/40 rounded-lg transition-colors text-left"
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-primary/10 text-primary rounded-lg transition-colors text-left"
               onClick={() => {
-                navigate("/hub?tab=messages");
-                onClose();
+                setTab("message");
+                setMsgSent(false);
+                setMsgText("");
+                setTimeout(() => msgRef.current?.focus(), 50);
               }}
             >
-              <Mail className="h-3 w-3" /> Messages
-              {/* DB-ready: deep-link ?user=username to open DM thread */}
+              <MessageSquare className="h-3 w-3" /> Send Message
             </button>
 
             {!targetIgnored && (
@@ -333,7 +430,8 @@ export function PlayerCardPopover({
               <p className="text-[10px] text-primary px-2.5 py-1.5">✓ Report submitted</p>
             )}
           </>
-        )}
+        )
+        ) : null}
 
         {!isOwnSlot && (
           <button

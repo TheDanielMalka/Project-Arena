@@ -258,6 +258,20 @@ describe("Hub — Messages tab", () => {
     expect(screen.getByPlaceholderText(/ARENA-XXXXXX/i)).toBeInTheDocument();
   });
 
+  it("deep-link (?composeTo=ARENA-...) opens compose with prefilled Arena ID", () => {
+    window.history.pushState({}, "", "/hub?tab=messages&composeTo=ARENA-WP0002");
+    render(
+      <MemoryRouter initialEntries={["/hub?tab=messages&composeTo=ARENA-WP0002"]}>
+        <Routes>
+          <Route path="/hub" element={<Hub />} />
+        </Routes>
+      </MemoryRouter>
+    );
+    expect(screen.getByPlaceholderText(/ARENA-XXXXXX/i)).toBeInTheDocument();
+    const input = screen.getByPlaceholderText(/ARENA-XXXXXX/i) as HTMLInputElement;
+    expect(input.value).toBe("ARENA-WP0002");
+  });
+
   it("shows Inbox and Chats sub-tabs", () => {
     renderHub("messages");
     // Sub-tab buttons — Inbox may have a count badge so use partial match

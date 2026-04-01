@@ -40,6 +40,10 @@ const SEED_INBOX: InboxMessage[] = [
 interface InboxState {
   messages: InboxMessage[];
 
+  // UI-only: deep-link compose target across routes (fallback if URL params are lost).
+  composePrefillArenaId?: string;
+  setComposePrefill: (arenaId: string | undefined) => void;
+
   // DB-ready: replace with POST /api/inbox
   sendInboxMessage: (params: {
     myId:         string;
@@ -64,6 +68,8 @@ interface InboxState {
 
 export const useInboxStore = create<InboxState>((set, get) => ({
   messages: SEED_INBOX,
+  composePrefillArenaId: undefined,
+  setComposePrefill: (arenaId) => set({ composePrefillArenaId: arenaId }),
 
   sendInboxMessage: ({ myId, myName, myArenaId, targetArenaId, subject, content }) => {
     // Validate target exists by ArenaId
@@ -86,7 +92,9 @@ export const useInboxStore = create<InboxState>((set, get) => ({
       deleted:      false,
       createdAt:    new Date().toISOString(),
     };
-    set((s) => ({ messages: [message, ...s.messages] }));
+    // Keep a small local inbox history (UI-only) to avoid unbounded growth.
+    // DB-ready: server becomes source of truth; this is only a dev/demo cache.
+    set((s) => ({ messages: [message, ...s.messages].slice(0, 20) }));
     return { success: true, message };
   },
 

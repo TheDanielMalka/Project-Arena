@@ -475,6 +475,7 @@ export default function Hub() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = (searchParams.get("tab") as HubTab) || "community";
   const setTab = (t: HubTab) => setSearchParams({ tab: t });
+  const composeTo = searchParams.get("composeTo") || undefined;
 
   const user            = useUserStore((s) => s.user);
   const searchPlayers   = usePlayerStore((s) => s.searchPlayers);
@@ -505,6 +506,8 @@ export default function Hub() {
   const markOneRead     = useInboxStore((s) => s.markRead);
   const deleteMessage   = useInboxStore((s) => s.deleteMessage);
   const getInboxUnread  = useInboxStore((s) => s.getTotalUnread);
+  const composePrefillArenaId = useInboxStore((s) => s.composePrefillArenaId);
+  const setComposePrefill     = useInboxStore((s) => s.setComposePrefill);
 
   // Community tab state
   const [query,       setQuery]       = useState("");
@@ -540,6 +543,22 @@ export default function Hub() {
       setActivePanel(null);
     }
   }, [ignoredUsers, activePanel]);
+
+  // Deep-link: from anywhere in the app, navigate to /hub?tab=messages&composeTo=ARENA-XXXX
+  // → open Compose and prefill the Arena ID once, then clear the param.
+  useEffect(() => {
+    if (tab !== "messages") return;
+    const target = composeTo ?? composePrefillArenaId;
+    if (!target) return;
+    setReplyArenaId(target);
+    setComposeOpen(true);
+    setComposePrefill(undefined);
+
+    const next = new URLSearchParams(searchParams);
+    next.delete("composeTo");
+    if (!next.get("tab")) next.set("tab", "messages");
+    setSearchParams(next, { replace: true });
+  }, [tab, composeTo, composePrefillArenaId, searchParams, setSearchParams, setComposePrefill]);
 
   // Derived data
   const communityResults = useMemo(

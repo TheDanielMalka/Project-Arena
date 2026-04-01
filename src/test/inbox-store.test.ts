@@ -110,6 +110,20 @@ describe("inboxStore", () => {
     expect(newest.deleted).toBe(false);
   });
 
+  it("keeps at most 20 inbox messages (newest-first)", () => {
+    // Seed a known player lookup
+    for (let i = 0; i < 30; i++) {
+      useInboxStore.getState().sendInboxMessage({
+        myId: "user-001", myName: "ArenaPlayer_01", myArenaId: "ARENA-AP0001",
+        targetArenaId: "ARENA-WP0002",
+        subject: `S${i}`, content: `C${i}`,
+      });
+    }
+    expect(useInboxStore.getState().messages.length).toBeLessThanOrEqual(20);
+    // newest is last sent
+    expect(useInboxStore.getState().messages[0].subject).toBe("S29");
+  });
+
   it("Arena ID lookup is case-insensitive", () => {
     const result = useInboxStore.getState().sendInboxMessage({
       myId: "user-001", myName: "ArenaPlayer_01", myArenaId: "ARENA-AP0001",
