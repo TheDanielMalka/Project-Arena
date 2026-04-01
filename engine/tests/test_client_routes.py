@@ -117,6 +117,50 @@ class TestClientHeartbeat:
         resp = client.post("/client/heartbeat", json={"status": "idle"})
         assert resp.status_code == 422
 
+    def test_heartbeat_with_user_id_stores_it(self):
+        """user_id in heartbeat payload is stored in-memory immediately."""
+        uid = str(uuid.uuid4())
+        client.post("/client/heartbeat", json={
+            "wallet_address": "0xUID_BEAT",
+            "status": "idle",
+            "user_id": uid,
+        })
+        with _client_store_lock:
+            record = _client_statuses.get("0xUID_BEAT")
+        assert record is not None
+        assert record["user_id"] == uid
+
+    def test_heartbeat_user_id_reflected_in_status(self):
+        """After heartbeat with user_id, GET /client/status returns that user_id."""
+        uid = str(uuid.uuid4())
+        client.post("/client/heartbeat", json={
+            "wallet_address": "0xUID_STATUS",
+            "status": "idle",
+            "client_version": "1.0.0",
+            "user_id": uid,
+        })
+        resp = client.get("/client/status", params={"wallet_address": "0xUID_STATUS"})
+        assert resp.status_code == 200
+        assert resp.json()["user_id"] == uid
+
+    def test_heartbeat_preserves_user_id_when_not_provided(self):
+        """Subsequent heartbeat without user_id must not clear a previously bound user_id."""
+        uid = str(uuid.uuid4())
+        # First beat sets user_id
+        client.post("/client/heartbeat", json={
+            "wallet_address": "0xUID_PRESERVE",
+            "status": "idle",
+            "user_id": uid,
+        })
+        # Second beat has no user_id field
+        client.post("/client/heartbeat", json={
+            "wallet_address": "0xUID_PRESERVE",
+            "status": "in_game",
+        })
+        with _client_store_lock:
+            record = _client_statuses.get("0xUID_PRESERVE")
+        assert record["user_id"] == uid  # must still be set
+
 
 # ── GET /client/status ────────────────────────────────────────────────────────
 
