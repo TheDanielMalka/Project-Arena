@@ -179,7 +179,7 @@ class AuthManager:
     Phase 3-ready: login() / logout() / refresh() call real engine endpoints
     once /auth/login, /auth/logout, /auth/refresh exist.
 
-    Login field: "Email or Username" — backend accepts either (matches website).
+    Login field: Email only — username is changeable in profile, email is the stable identity.
     DB-ready: users table has both email and username columns.
     """
 
@@ -926,9 +926,9 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     def _build_login_form(parent: ctk.CTkFrame):
         """
-        Login form — accepts email OR username (backend handles both).
+        Login form — email only.
         DB-ready: /auth/login validates identifier against users.email.
-                  Email is used (not username) because username is changeable in profile.
+                  Email is used because username is changeable in profile.
         """
         ctk.CTkLabel(parent, text="Sign in to Arena",
                      font=ctk.CTkFont(size=14, weight="bold"),
