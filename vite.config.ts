@@ -10,6 +10,15 @@ export default defineConfig(() => ({
     hmr: {
       overlay: false,
     },
+    proxy: {
+      // Dev proxy: /api/* → engine on :8001
+      // Used when VITE_ENGINE_API_URL is not set or set to /api
+      "/api": {
+        target: "http://localhost:8001",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ""),
+      },
+    },
   },
   plugins: [react()],
   resolve: {
