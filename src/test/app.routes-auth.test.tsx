@@ -3,9 +3,9 @@ import { render, screen } from "@testing-library/react";
 import App from "@/App";
 import { useUserStore } from "@/stores/userStore";
 
-function loginAs(role: "user" | "admin") {
+async function loginAs(role: "user" | "admin") {
   const store = useUserStore.getState();
-  store.login(role === "admin" ? "admin@arena.gg" : "player@arena.gg", "test");
+  await store.login(role === "admin" ? "admin@arena.gg" : "player@arena.gg", "test");
 }
 
 describe("App routing and admin guard", () => {
@@ -14,7 +14,7 @@ describe("App routing and admin guard", () => {
   });
 
   it("loads terms route correctly", async () => {
-    loginAs("user");
+    await loginAs("user");
     window.history.pushState({}, "", "/terms-of-service");
 
     render(<App />);
@@ -23,7 +23,7 @@ describe("App routing and admin guard", () => {
   });
 
   it("redirects non-admin users away from admin route", async () => {
-    loginAs("user");
+    await loginAs("user");
     window.history.pushState({}, "", "/admin");
 
     render(<App />);
@@ -32,7 +32,7 @@ describe("App routing and admin guard", () => {
   });
 
   it("allows admin users to open admin route", async () => {
-    loginAs("admin");
+    await loginAs("admin");
     window.history.pushState({}, "", "/admin");
 
     render(<App />);

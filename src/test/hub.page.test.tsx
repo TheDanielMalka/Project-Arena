@@ -22,9 +22,9 @@ function renderHub(tab?: "community" | "friends" | "messages") {
   );
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   // Login as the default user before every test
-  useUserStore.getState().login("player@arena.gg", "test");
+  await useUserStore.getState().login("player@arena.gg", "test");
 
   // Reset inbox to seed state (3 messages: 1 unread, 2 read)
   useInboxStore.setState({

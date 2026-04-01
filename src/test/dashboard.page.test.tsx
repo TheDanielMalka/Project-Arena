@@ -4,19 +4,19 @@ import { MemoryRouter } from "react-router-dom";
 import Dashboard from "@/pages/Dashboard";
 import { useUserStore } from "@/stores/userStore";
 
-function loginAs(role: "user" | "admin" = "user") {
-  useUserStore.getState().login(
+async function loginAs(role: "user" | "admin" = "user") {
+  await useUserStore.getState().login(
     role === "admin" ? "admin@arena.gg" : "player@arena.gg",
     "test"
   );
 }
 
 describe("Dashboard page", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     localStorage.clear();
     useUserStore.getState().logout();
-    loginAs("user");
     vi.useFakeTimers();
+    await loginAs("user");
   });
 
   afterEach(() => {
@@ -53,7 +53,7 @@ describe("Dashboard page", () => {
 
   it("shows login greeting banner after login and auto-dismisses", async () => {
     useUserStore.getState().logout();
-    useUserStore.getState().login("player@arena.gg", "test");
+    await useUserStore.getState().login("player@arena.gg", "test");
 
     render(<MemoryRouter><Dashboard /></MemoryRouter>);
 
@@ -64,9 +64,9 @@ describe("Dashboard page", () => {
     expect(useUserStore.getState().showLoginGreeting).toBe(false);
   });
 
-  it("shows correct greeting type for new signup", () => {
+  it("shows correct greeting type for new signup", async () => {
     useUserStore.getState().logout();
-    useUserStore.getState().signup("NewPlayer", "new@arena.gg", "password123");
+    await useUserStore.getState().signup("NewPlayer", "new@arena.gg", "password123");
 
     render(<MemoryRouter><Dashboard /></MemoryRouter>);
 

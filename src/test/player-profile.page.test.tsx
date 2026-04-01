@@ -20,9 +20,9 @@ function renderProfile(username: string) {
   );
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   // Always start with a logged-in user (ArenaPlayer_01 / user-001)
-  useUserStore.getState().login("player@arena.gg", "test");
+  await useUserStore.getState().login("player@arena.gg", "test");
 
   // Reset report store and friend store to clean state
   useReportStore.setState({ tickets: [] });

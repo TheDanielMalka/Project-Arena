@@ -360,8 +360,8 @@ describe("forgeStore — purchaseItem with USDT", () => {
     expect(atTx?.token).toBe("USDT");
   });
 
-  it("merges unlock + badge onto logged-in user after USDT purchase", () => {
-    useUserStore.getState().login("player@arena.gg", "pw");
+  it("merges unlock + badge onto logged-in user after USDT purchase", async () => {
+    await useUserStore.getState().login("player@arena.gg", "pw");
     const result = useForgeStore.getState().purchaseItem("item-005", "USDT");
     expect(result.success).toBe(true);
     const u = useUserStore.getState().user;
@@ -384,8 +384,8 @@ describe("forgeStore — claimChallenge", () => {
     useUserStore.getState().logout();
   });
 
-  it("adds rewardXP to logged-in user (DB user_stats.xp)", () => {
-    useUserStore.getState().login("player@arena.gg", "pw");
+  it("adds rewardXP to logged-in user (DB user_stats.xp)", async () => {
+    await useUserStore.getState().login("player@arena.gg", "pw");
     const xpBefore = useUserStore.getState().user!.stats.xp;
     const result = useForgeStore.getState().claimChallenge("ch-d02");
     expect(result.success).toBe(true);
@@ -555,8 +555,8 @@ describe("forgeStore — syncForgePurchasesToUserProfile", () => {
     expect(useUserStore.getState().user).toBeNull();
   });
 
-  it("merges cosmetic purchase ids into unlockedForgeItemIds and equips newest badge last", () => {
-    useUserStore.getState().login("player@arena.gg", "pw");
+  it("merges cosmetic purchase ids into unlockedForgeItemIds and equips newest badge last", async () => {
+    await useUserStore.getState().login("player@arena.gg", "pw");
     // Store prepends newest first (same as purchaseItem)
     useForgeStore.setState({
       purchases: [
@@ -585,8 +585,8 @@ describe("forgeStore — syncForgePurchasesToUserProfile", () => {
     expect(u?.equippedBadgeIcon).toBe("badge:veterans");
   });
 
-  it("keeps existing unlockedForgeItemIds not present in forge purchases (server grants)", () => {
-    useUserStore.getState().login("player@arena.gg", "pw");
+  it("keeps existing unlockedForgeItemIds not present in forge purchases (server grants)", async () => {
+    await useUserStore.getState().login("player@arena.gg", "pw");
     useUserStore.getState().updateProfile({ unlockedForgeItemIds: ["custom-grant-1"] });
     useForgeStore.setState({
       purchases: [

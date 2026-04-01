@@ -31,19 +31,21 @@ const Auth = () => {
     return null;
   }
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!loginEmail || !loginPassword) {
       toast({ title: "Missing fields", description: "Please enter email and password.", variant: "destructive" });
       return;
     }
-    const success = login(loginEmail, loginPassword);
-    if (success) {
-      navigate("/dashboard");
+    const ok = await login(loginEmail, loginPassword);
+    if (!ok) {
+      toast({ title: "Login failed", description: "Invalid email or password.", variant: "destructive" });
+      return;
     }
+    navigate("/dashboard");
   };
 
-  const handleSignup = (e: React.FormEvent) => {
+  const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!signupUsername || !signupEmail || !signupPassword) {
       toast({ title: "Missing fields", description: "Please fill all required fields.", variant: "destructive" });
@@ -61,10 +63,12 @@ const Auth = () => {
       toast({ title: "Terms required", description: "You must agree to the Terms of Service.", variant: "destructive" });
       return;
     }
-    const success = signup(signupUsername, signupEmail, signupPassword, signupSteamId);
-    if (success) {
-      navigate("/dashboard");
+    const ok = await signup(signupUsername, signupEmail, signupPassword, signupSteamId);
+    if (!ok) {
+      toast({ title: "Signup failed", description: "Please check your details and try again.", variant: "destructive" });
+      return;
     }
+    navigate("/dashboard");
   };
 
   const handleGoogle = () => {

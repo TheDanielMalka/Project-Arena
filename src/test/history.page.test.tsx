@@ -8,9 +8,9 @@ import { useUserStore } from "@/stores/userStore";
 const seedMatches = useMatchStore.getState().matches;
 
 describe("History page", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     useMatchStore.setState({ matches: seedMatches });
-    useUserStore.getState().login("player@arena.gg", "test");
+    await useUserStore.getState().login("player@arena.gg", "test");
   });
 
   it("filters matches by search input", () => {

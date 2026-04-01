@@ -1,21 +1,25 @@
 import { create } from "zustand";
 import type { UserProfile, UserProfilePatch, ForgeCategory, ShopEntitlement } from "@/types";
 import { setPendingClientSetupAfterSignup } from "@/lib/localArenaPrefs";
+import { apiGetMe, apiLogin, apiPatchMe, apiRegister } from "@/lib/engine-api";
 
 interface UserState {
   user: UserProfile | null;
+  token: string | null;
   isAuthenticated: boolean;
   walletConnected: boolean;
   showLoginGreeting: boolean;
   greetingType: "login" | "signup" | "google" | null;
   // DB-ready: replace with POST /api/auth/login
-  login: (email: string, password: string) => boolean;
+  login: (email: string, password: string) => Promise<boolean>;
   // DB-ready: replace with POST /api/auth/signup
-  signup: (username: string, email: string, password: string, steamId?: string) => boolean;
+  signup: (username: string, email: string, password: string, steamId?: string) => Promise<boolean>;
   // DB-ready: replace with POST /api/auth/google (OAuth)
   loginWithGoogle: () => void;
   // DB-ready: replace with POST /api/auth/logout
   logout: () => void;
+  /** Restore session from localStorage token (Phase 3). */
+  restoreSession: () => Promise<void>;
   // DB-ready: replace with POST /api/wallet/connect
   connectWallet: () => void;
   // DB-ready: replace with POST /api/wallet/disconnect
@@ -98,38 +102,91 @@ function scheduleSyncForgePurchasesToProfile() {
   void import("@/stores/forgeStore").then((m) => m.syncForgePurchasesToUserProfile());
 }
 
-export const useUserStore = create<UserState>((set) => ({
+export const useUserStore = create<UserState>((set, get) => ({
   user: null,
+  token: null,
   isAuthenticated: false,
   walletConnected: false,
   showLoginGreeting: false,
   greetingType: null,
 
-  login: (email: string, _password: string) => {
-    const normalizedEmail = email.trim().toLowerCase();
+  login: async (email: string, password: string): Promise<boolean> => {
+    const data = await apiLogin(email, password);
+    if (!data) return false;
+    const profile = await apiGetMe(data.access_token);
+
+    const normalizedEmail = data.email.trim().toLowerCase();
+    const wallet = data.wallet_address ?? profile?.wallet_address ?? null;
+
     const user: UserProfile = {
-      ...MOCK_USER,
+      ...MOCK_USER, // keep UI defaults for fields not in DB yet
+      id: data.user_id,
+      username: data.username,
       email: normalizedEmail,
+      arenaId: data.arena_id ?? "",
+      walletAddress: wallet ?? MOCK_USER.walletAddress,
+      walletShort: wallet ? `${wallet.slice(0, 6)}...${wallet.slice(-4)}` : MOCK_USER.walletShort,
       role: ADMIN_EMAILS.has(normalizedEmail) ? "admin" : "user",
+      rank: profile?.rank ?? MOCK_USER.rank,
+      stats: {
+        ...MOCK_USER.stats,
+        wins: profile?.wins ?? 0,
+        losses: profile?.losses ?? 0,
+        xp: profile?.xp ?? 0,
+      },
+      avatar: profile?.avatar ? profile.avatar : MOCK_USER.avatar,
+      avatarBg: profile?.avatar_bg ?? MOCK_USER.avatarBg,
+      equippedBadgeIcon: profile?.equipped_badge_icon ?? MOCK_USER.equippedBadgeIcon,
+      unlockedForgeItemIds: profile?.forge_unlocked_item_ids ?? MOCK_USER.unlockedForgeItemIds,
+      vipExpiresAt: profile?.vip_expires_at ?? undefined,
     };
-    set({ user, isAuthenticated: true, walletConnected: true, showLoginGreeting: true, greetingType: "login" });
+
+    localStorage.setItem("arena_token", data.access_token);
+    set({
+      user,
+      token: data.access_token,
+      isAuthenticated: true,
+      walletConnected: !!wallet,
+      showLoginGreeting: true,
+      greetingType: "login",
+    });
     scheduleSyncForgePurchasesToProfile();
     return true;
   },
 
-  signup: (username: string, email: string, _password: string, steamId?: string) => {
-    const initials = username.slice(0, 2).toUpperCase();
+  signup: async (username: string, email: string, password: string, steamId?: string): Promise<boolean> => {
+    const data = await apiRegister(username, email, password);
+    if (!data) return false;
+
+    const initials = data.username.slice(0, 2).toUpperCase();
+    const normalizedEmail = data.email.trim().toLowerCase();
+
     const user: UserProfile = {
       ...MOCK_USER,
       role: "user",
-      username,
-      email,
+      id: data.user_id,
+      username: data.username,
+      email: normalizedEmail,
+      arenaId: data.arena_id ?? "",
+      walletAddress: data.wallet_address ?? MOCK_USER.walletAddress,
+      walletShort: data.wallet_address
+        ? `${data.wallet_address.slice(0, 6)}...${data.wallet_address.slice(-4)}`
+        : MOCK_USER.walletShort,
       steamId: steamId || "",
       avatarInitials: initials,
       stats: { matches: 0, wins: 0, losses: 0, winRate: 0, totalEarnings: 0, inEscrow: 0, xp: 0 },
       balance: { total: 0, available: 0, inEscrow: 0 },
     };
-    set({ user, isAuthenticated: true, walletConnected: false, showLoginGreeting: true, greetingType: "signup" });
+
+    localStorage.setItem("arena_token", data.access_token);
+    set({
+      user,
+      token: data.access_token,
+      isAuthenticated: true,
+      walletConnected: false,
+      showLoginGreeting: true,
+      greetingType: "signup",
+    });
     setPendingClientSetupAfterSignup();
     scheduleSyncForgePurchasesToProfile();
     return true;
@@ -140,7 +197,44 @@ export const useUserStore = create<UserState>((set) => ({
     scheduleSyncForgePurchasesToProfile();
   },
 
-  logout: () => set({ user: null, isAuthenticated: false, walletConnected: false, showLoginGreeting: false, greetingType: null }),
+  logout: () => {
+    localStorage.removeItem("arena_token");
+    set({ user: null, token: null, isAuthenticated: false, walletConnected: false, showLoginGreeting: false, greetingType: null });
+  },
+
+  restoreSession: async (): Promise<void> => {
+    const token = localStorage.getItem("arena_token");
+    if (!token) return;
+    const profile = await apiGetMe(token);
+    if (!profile) {
+      localStorage.removeItem("arena_token");
+      return;
+    }
+
+    const normalizedEmail = profile.email.trim().toLowerCase();
+    const wallet = profile.wallet_address ?? null;
+
+    const user: UserProfile = {
+      ...MOCK_USER,
+      id: profile.user_id,
+      username: profile.username,
+      email: normalizedEmail,
+      arenaId: profile.arena_id ?? "",
+      walletAddress: wallet ?? MOCK_USER.walletAddress,
+      walletShort: wallet ? `${wallet.slice(0, 6)}...${wallet.slice(-4)}` : MOCK_USER.walletShort,
+      role: ADMIN_EMAILS.has(normalizedEmail) ? "admin" : "user",
+      rank: profile.rank ?? MOCK_USER.rank,
+      stats: { ...MOCK_USER.stats, wins: profile.wins, losses: profile.losses, xp: profile.xp },
+      avatar: profile.avatar ?? MOCK_USER.avatar,
+      avatarBg: profile.avatar_bg ?? MOCK_USER.avatarBg,
+      equippedBadgeIcon: profile.equipped_badge_icon ?? MOCK_USER.equippedBadgeIcon,
+      unlockedForgeItemIds: profile.forge_unlocked_item_ids ?? [],
+      vipExpiresAt: profile.vip_expires_at ?? undefined,
+    };
+
+    set({ user, token, isAuthenticated: true, walletConnected: !!wallet });
+    scheduleSyncForgePurchasesToProfile();
+  },
 
   clearLoginGreeting: () => set({ showLoginGreeting: false, greetingType: null }),
 
@@ -148,7 +242,7 @@ export const useUserStore = create<UserState>((set) => ({
 
   disconnectWallet: () => set({ walletConnected: false }),
 
-  updateProfile: (updates) =>
+  updateProfile: (updates) => {
     set((state) => {
       if (!state.user) return { user: null };
       const u = state.user;
@@ -158,7 +252,19 @@ export const useUserStore = create<UserState>((set) => ({
         next.stats = { ...u.stats, ...statsPatch };
       }
       return { user: next };
-    }),
+    });
+
+    const { token } = get();
+    if (!token || !updates) return;
+
+    const patch: Parameters<typeof apiPatchMe>[1] = {};
+    if ("avatar" in updates) patch.avatar = updates.avatar ?? null;
+    if ("avatarBg" in updates) patch.avatar_bg = updates.avatarBg ?? null;
+    if ("equippedBadgeIcon" in updates) patch.equipped_badge_icon = updates.equippedBadgeIcon ?? null;
+    if ("unlockedForgeItemIds" in updates) patch.forge_unlocked_item_ids = updates.unlockedForgeItemIds ?? [];
+
+    if (Object.keys(patch).length > 0) void apiPatchMe(token, patch);
+  },
 
   applyDropPurchaseEffects: (dropId) =>
     set((state) => {

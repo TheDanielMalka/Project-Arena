@@ -5,8 +5,8 @@ import Profile from "@/pages/Profile";
 import { useUserStore } from "@/stores/userStore";
 
 describe("Profile page", () => {
-  beforeEach(() => {
-    useUserStore.getState().login("player@arena.gg", "test");
+  beforeEach(async () => {
+    await useUserStore.getState().login("player@arena.gg", "test");
   });
 
   it("renders username in profile", () => {

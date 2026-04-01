@@ -21,9 +21,9 @@ const renderAdmin = () =>
   );
 
 // ── Setup ─────────────────────────────────────────────────────
-beforeEach(() => {
+beforeEach(async () => {
   useUserStore.getState().logout();
-  useUserStore.getState().login("admin@arena.gg", "test");
+  await useUserStore.getState().login("admin@arena.gg", "test");
 });
 
 // ─────────────────────────────────────────────────────────────
