@@ -82,6 +82,14 @@ class TestConfigLoadSave:
         for key in DEFAULT_CONFIG:
             assert key in cfg, f"Missing key: {key}"
 
+    def test_heartbeat_interval_is_4_seconds(self):
+        """_HEARTBEAT_INTERVAL must be 4s — must stay below engine _CLIENT_TIMEOUT_SECONDS (10s).
+        If this constant is changed, disconnect detection breaks."""
+        assert MatchMonitor._HEARTBEAT_INTERVAL == 4, (
+            "_HEARTBEAT_INTERVAL must be 4s (engine timeout is 10s; "
+            "2 missed beats before marking offline)"
+        )
+
 
 # ══════════════════════════════════════════════════════════════
 # 2. Game Detection
