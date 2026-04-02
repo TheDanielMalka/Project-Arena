@@ -18,6 +18,7 @@ import uuid
 import random
 import logging
 import threading
+import ctypes
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
@@ -1467,6 +1468,17 @@ class ArenaTray:
 
 # ── Entry Point ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    # Single-instance guard — only one Arena Client may run at a time
+    _mutex = ctypes.windll.kernel32.CreateMutexW(None, True, "ArenaClient_SingleInstance")
+    if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            "Arena Client is already running.\nCheck your system tray.",
+            "Arena Client",
+            0x40,  # MB_ICONINFORMATION
+        )
+        sys.exit(0)
+
     print(f"\n  ARENA Desktop Client v{CLIENT_VERSION}\n")
 
     if not os.path.exists(CONFIG_FILE):
