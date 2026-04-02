@@ -73,6 +73,8 @@ __pycache__/
 .env
 .env.local
 .secret
+# SSH keys / certs (e.g. ARENA.V01.pem) — never commit
+*.pem
 
 # -----------------------------
 # Testing / reports

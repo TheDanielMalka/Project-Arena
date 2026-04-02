@@ -1,3 +1,5 @@
+*.pem
+
 # Python venvs — symlinks on Windows cause Docker build context errors
 .venv/
 venv/
