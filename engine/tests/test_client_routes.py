@@ -174,6 +174,29 @@ class TestClientHeartbeat:
             record = _client_statuses.get("0xUID_PRESERVE")
         assert record["user_id"] == uid  # must still be set
 
+    def test_heartbeat_with_user_id_clears_disconnected_state(self):
+        """Re-login flow: heartbeat carrying user_id must clear disconnected_at.
+        This ensures the session becomes active again after sign-out + re-login."""
+        uid = str(uuid.uuid4())
+        # First beat: no user_id (client not yet logged in)
+        client.post("/client/heartbeat", json={
+            "wallet_address": "0xRELOGIN",
+            "status": "idle",
+        })
+        # In-memory record exists but has no user_id
+        with _client_store_lock:
+            assert _client_statuses.get("0xRELOGIN", {}).get("user_id") is None
+        # Re-login beat: carries user_id
+        client.post("/client/heartbeat", json={
+            "wallet_address": "0xRELOGIN",
+            "status": "idle",
+            "user_id": uid,
+        })
+        with _client_store_lock:
+            record = _client_statuses.get("0xRELOGIN")
+        assert record is not None
+        assert record["user_id"] == uid  # re-login bound correctly
+
 
 # ── GET /client/status ────────────────────────────────────────────────────────
 
@@ -425,6 +448,24 @@ class TestClientBind:
                 headers=_AUTH_HEADER,
             )
         assert resp.status_code == 403
+
+    def test_bind_disconnected_session_allowed_for_relogin(self):
+        """Binding a previously-disconnected session succeeds on re-login.
+        This is the re-login-after-sign-out flow: the session row exists in DB
+        but has disconnected_at set.  bind must clear it so the website
+        immediately sees the client as online without waiting for a heartbeat."""
+        # Simulate DB returning a row with no user_id (disconnected session exists)
+        ctx, mock_session = _make_session_mock(
+            fetchone_return=(self.FAKE_SESSION_ID, None)
+        )
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/client/bind",
+                json={"session_id": self.FAKE_SESSION_ID},
+                headers=_AUTH_HEADER,
+            )
+        assert resp.status_code == 200
+        assert resp.json()["bound"] is True
 
     def test_bind_same_user_rebind_is_allowed(self):
         """Binding the same user again to the same session is idempotent."""
