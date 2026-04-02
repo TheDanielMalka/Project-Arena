@@ -480,11 +480,13 @@ async def client_heartbeat(payload: HeartbeatRequest):
                     {"w": payload.wallet_address, "sid": payload.session_id},
                 )
                 # Upsert current session; write user_id when the client is logged in.
-                # IMPORTANT: only clear disconnected_at when the row was previously
-                # connected (i.e. disconnected_at IS NULL or the session was never
-                # disconnected).  If the row was explicitly logged-out
-                # (disconnected_at IS NOT NULL), a stale heartbeat from the still-running
-                # monitor must NOT re-open it — the user signed out intentionally.
+                #
+                # disconnected_at rules:
+                #   • Heartbeat carries user_id  → client just re-logged in → clear it (NULL)
+                #   • Heartbeat has NO user_id AND row was already disconnected
+                #     → stale unauthenticated beat (monitor still running after sign-out race)
+                #     → keep disconnected_at so the website stays locked
+                #   • Row was not disconnected → keep NULL
                 session.execute(
                     text(
                         "INSERT INTO client_sessions "
@@ -498,6 +500,7 @@ async def client_heartbeat(payload: HeartbeatRequest):
                         "  user_id        = COALESCE(EXCLUDED.user_id, client_sessions.user_id), "
                         "  last_heartbeat = NOW(), "
                         "  disconnected_at = CASE "
+                        "    WHEN EXCLUDED.user_id IS NOT NULL THEN NULL "
                         "    WHEN client_sessions.disconnected_at IS NULL THEN NULL "
                         "    ELSE client_sessions.disconnected_at "
                         "  END"
@@ -977,24 +980,26 @@ async def client_bind(req: BindRequest, payload: dict = Depends(verify_token)):
     # ── DB write ──────────────────────────────────────────────
     try:
         with SessionLocal() as session:
+            # Allow binding to a previously-disconnected session so that
+            # re-login after sign-out works immediately (before the next heartbeat).
             row = session.execute(
-                text(
-                    "SELECT id, user_id FROM client_sessions "
-                    "WHERE id = :sid AND disconnected_at IS NULL"
-                ),
+                text("SELECT id, user_id FROM client_sessions WHERE id = :sid"),
                 {"sid": session_id},
             ).fetchone()
 
             if not row:
-                raise HTTPException(404, "Session not found or already disconnected")
+                raise HTTPException(404, "Session not found")
 
             existing_user = str(row[1]) if row[1] else None
             if existing_user and existing_user != user_id:
                 raise HTTPException(403, "Session already bound to a different user")
 
+            # Bind user_id and clear disconnected_at — this re-activates the session
+            # for a client that just re-logged in after a sign-out.
             session.execute(
                 text(
-                    "UPDATE client_sessions SET user_id = :uid "
+                    "UPDATE client_sessions "
+                    "SET user_id = :uid, disconnected_at = NULL "
                     "WHERE id = :sid"
                 ),
                 {"uid": user_id, "sid": session_id},
