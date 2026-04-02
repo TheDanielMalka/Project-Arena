@@ -121,7 +121,7 @@ const Dashboard = () => {
           </div>
           <div className="flex flex-wrap gap-2 shrink-0">
             <a
-              href="https://arena.gg/download-client"
+              href="https://arena-client-dist.s3.us-east-1.amazonaws.com/ArenaClient.exe"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary/15 border border-primary/40 text-primary font-display text-xs font-semibold hover:bg-primary/25 transition-colors"

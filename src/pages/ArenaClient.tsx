@@ -87,7 +87,7 @@ const ArenaClientPage = () => {
 
       <div className="flex flex-wrap gap-3">
         <a
-          href="https://arena.gg/download-client"
+          href="https://arena-client-dist.s3.us-east-1.amazonaws.com/ArenaClient.exe"
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex"
