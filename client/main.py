@@ -85,7 +85,7 @@ else:
 CONFIG_FILE = os.path.join(_BASE_DIR, "config.json")
 
 DEFAULT_CONFIG = {
-    "engine_url":          "http://3.236.9.133:8001",
+    "engine_url":          "http://3.236.9.133/api",
     "frontend_url":        "http://3.236.9.133",
     "auth_token":          "",
     "screenshot_interval": 5,
