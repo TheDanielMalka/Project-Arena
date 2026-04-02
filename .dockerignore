@@ -4,6 +4,7 @@ dist/
 .git
 *.md
 .env
+*.pem
 **/__pycache__/
 **/*.pyc
 **/*.pyo
