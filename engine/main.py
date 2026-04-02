@@ -479,7 +479,12 @@ async def client_heartbeat(payload: HeartbeatRequest):
                     ),
                     {"w": payload.wallet_address, "sid": payload.session_id},
                 )
-                # Upsert current session; write user_id when the client is logged in
+                # Upsert current session; write user_id when the client is logged in.
+                # IMPORTANT: only clear disconnected_at when the row was previously
+                # connected (i.e. disconnected_at IS NULL or the session was never
+                # disconnected).  If the row was explicitly logged-out
+                # (disconnected_at IS NOT NULL), a stale heartbeat from the still-running
+                # monitor must NOT re-open it — the user signed out intentionally.
                 session.execute(
                     text(
                         "INSERT INTO client_sessions "
@@ -492,7 +497,10 @@ async def client_heartbeat(payload: HeartbeatRequest):
                         "  match_id       = EXCLUDED.match_id, "
                         "  user_id        = COALESCE(EXCLUDED.user_id, client_sessions.user_id), "
                         "  last_heartbeat = NOW(), "
-                        "  disconnected_at = NULL"
+                        "  disconnected_at = CASE "
+                        "    WHEN client_sessions.disconnected_at IS NULL THEN NULL "
+                        "    ELSE client_sessions.disconnected_at "
+                        "  END"
                     ),
                     {
                         "sid": payload.session_id,

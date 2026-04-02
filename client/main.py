@@ -291,6 +291,7 @@ class AuthManager:
                     token=result["token"],
                     rank=profile.get("rank") or result.get("rank"),
                     xp=profile.get("xp") or result.get("xp"),
+                    wallet_address=profile.get("wallet_address") or result.get("wallet_address"),
                     avatar_bg=profile.get("avatar_bg"),
                     equipped_badge_icon=profile.get("equipped_badge_icon"),
                 )
@@ -982,6 +983,9 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                         err_lbl.configure(text=error, text_color=BRAND["error"])
                     else:
                         monitor.engine.token = auth.access_token or ""
+                        # Re-start heartbeat if it was stopped by a prior sign-out
+                        if not monitor.running:
+                            monitor.start()
                         _rebuild_identity()
                 win.after(0, _after)
             threading.Thread(target=_thread, daemon=True).start()
@@ -1085,6 +1089,9 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         xp_bar.pack(fill="x", pady=(0, 10))
 
         def _do_logout():
+            # Stop heartbeat FIRST so no stale beat re-opens the disconnected session
+            # before the engine logout call marks it as disconnected.
+            monitor.stop()
             # Phase 5: tell engine to disconnect sessions before clearing local state
             auth.logout(engine=monitor.engine)
             monitor.engine.token = ""
@@ -1325,9 +1332,8 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                             xp=profile.get("xp"),
                             avatar_url=profile.get("avatar_url"),
                             avatar_bg=profile.get("avatar_bg"),
+                            equipped_badge_icon=profile.get("equipped_badge_icon"),
                         )
-                        # equipped_badge_icon can be None (badge removed) — update directly
-                        auth._config["equipped_badge_icon"] = profile.get("equipped_badge_icon")
                         win.after(0, _rebuild_identity)
             threading.Thread(target=_fetch, daemon=True).start()
         win.after(60_000, _poll_profile_sync)

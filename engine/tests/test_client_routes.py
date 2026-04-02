@@ -39,6 +39,19 @@ def clear_client_store():
 client = TestClient(app)
 
 
+# ── Protocol constants ───────────────────────────────────────────────────────
+
+def test_client_timeout_is_10_seconds():
+    """_CLIENT_TIMEOUT_SECONDS must be 10 — client heartbeats every 4s,
+    so 10s = ~2 missed beats before marking offline.
+    If this changes, update _HEARTBEAT_INTERVAL in client/main.py too."""
+    from main import _CLIENT_TIMEOUT_SECONDS
+    assert _CLIENT_TIMEOUT_SECONDS == 10, (
+        "_CLIENT_TIMEOUT_SECONDS must be 10s; "
+        "client _HEARTBEAT_INTERVAL is 4s (2 missed beats = offline)"
+    )
+
+
 # ── POST /client/heartbeat ────────────────────────────────────────────────────
 
 class TestClientHeartbeat:
@@ -248,7 +261,7 @@ class TestClientStatus:
     def test_status_online_flag_reflects_freshness(self):
         """
         online=True immediately after heartbeat.
-        We can't wait 30s in a unit test, so we verify the logic by
+        We can't wait 10s in a unit test, so we verify the logic by
         directly manipulating the store with a stale timestamp.
         """
         from datetime import datetime, timezone, timedelta
