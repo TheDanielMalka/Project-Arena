@@ -64,6 +64,26 @@ async def lifespan(app: FastAPI):
                 "CREATE INDEX IF NOT EXISTS idx_match_evidence_match "
                 "ON match_evidence (match_id)"
             ))
+            # Ensure client_sessions table exists (idempotent migration).
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS client_sessions (
+                    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    wallet_address  VARCHAR UNIQUE NOT NULL,
+                    status          VARCHAR DEFAULT 'connected',
+                    game            VARCHAR,
+                    client_version  VARCHAR,
+                    match_id        UUID,
+                    last_heartbeat  TIMESTAMPTZ DEFAULT NOW(),
+                    user_id         UUID REFERENCES users(id),
+                    disconnected_at TIMESTAMPTZ
+                )
+            """))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_cs_wallet ON client_sessions(wallet_address)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_cs_user ON client_sessions(user_id)"
+            ))
             conn.commit()
         logger.info("✅ Arena Engine connected to DB")
     except Exception as exc:

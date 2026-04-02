@@ -67,7 +67,7 @@ export function ArenaHeader() {
               <TooltipTrigger asChild>
                 {/* Clicking "disconnected" opens download page — others do nothing */}
                 <button
-                  onClick={clientStatus === "disconnected" ? () => window.open("https://arena.gg/download-client", "_blank") : undefined}
+                  onClick={clientStatus === "disconnected" ? () => window.open("https://arena-client-dist.s3.us-east-1.amazonaws.com/ArenaClient.exe", "_blank") : undefined}
                   className={`flex items-center gap-1.5 px-2 py-1 rounded-md transition-colors ${
                     clientStatus === "disconnected"
                       ? "cursor-pointer hover:bg-secondary/60"
