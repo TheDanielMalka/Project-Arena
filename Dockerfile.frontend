@@ -10,6 +10,18 @@ COPY package.json package-lock.json* ./
 RUN npm ci --legacy-peer-deps
 
 COPY . .
+
+# Declare build-args so Vite can bake them into the bundle
+ARG VITE_ENGINE_API_URL
+ARG VITE_WS_URL
+ARG VITE_CONTRACT_ADDRESS
+ARG VITE_CHAIN_ID
+
+ENV VITE_ENGINE_API_URL=$VITE_ENGINE_API_URL
+ENV VITE_WS_URL=$VITE_WS_URL
+ENV VITE_CONTRACT_ADDRESS=$VITE_CONTRACT_ADDRESS
+ENV VITE_CHAIN_ID=$VITE_CHAIN_ID
+
 RUN npm run build
 
 # ── Stage 2: Serve ────────────────────────────────────────────
