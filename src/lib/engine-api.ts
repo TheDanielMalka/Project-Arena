@@ -212,36 +212,73 @@ export async function apiLogin(
   }
 }
 
-// POST /auth/register
-export async function apiRegister(
-  username: string,
-  email: string,
-  password: string,
-): Promise<{
+function parseFastApiDetail(raw: unknown): string | null {
+  if (typeof raw === "string" && raw.trim()) return raw;
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (typeof item === "object" && item !== null && "msg" in item) {
+        const msg = (item as { msg: unknown }).msg;
+        if (typeof msg === "string" && msg.trim()) return msg;
+      }
+    }
+  }
+  return null;
+}
+
+/** Maps backend `detail` text (e.g. 409 "Email already registered") to a signup field. */
+export type RegisterConflictField = "email" | "username" | "steam";
+
+export function registerConflictFieldFromDetail(detail: string | null): RegisterConflictField | null {
+  if (!detail) return null;
+  const d = detail.toLowerCase();
+  if (d.includes("email")) return "email";
+  if (d.includes("username") || d.includes("user name")) return "username";
+  if (d.includes("steam")) return "steam";
+  if (d.includes("riot")) return "steam";
+  return null;
+}
+
+export type ApiRegisterSuccess = {
   access_token: string;
   user_id: string;
   username: string;
   email: string;
   arena_id: string | null;
   wallet_address: string | null;
-} | null> {
+};
+
+export type ApiRegisterResult =
+  | { ok: true; data: ApiRegisterSuccess }
+  | { ok: false; status: number; detail: string | null; field: RegisterConflictField | null };
+
+// POST /auth/register — 409 returns { detail: string }; UI maps detail → field via registerConflictFieldFromDetail
+export async function apiRegister(
+  username: string,
+  email: string,
+  password: string,
+): Promise<ApiRegisterResult> {
   try {
     const res = await fetch(`${ENGINE_BASE}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, email, password }),
     });
-    if (!res.ok) return null;
-    return (await res.json()) as {
-      access_token: string;
-      user_id: string;
-      username: string;
-      email: string;
-      arena_id: string | null;
-      wallet_address: string | null;
+    const raw = (await res.json().catch(() => ({}))) as { detail?: unknown } & Partial<ApiRegisterSuccess>;
+    if (!res.ok) {
+      const detail = parseFastApiDetail(raw.detail);
+      return {
+        ok: false,
+        status: res.status,
+        detail,
+        field: registerConflictFieldFromDetail(detail),
+      };
+    }
+    return {
+      ok: true,
+      data: raw as ApiRegisterSuccess,
     };
   } catch {
-    return null;
+    return { ok: false, status: 0, detail: null, field: null };
   }
 }
 

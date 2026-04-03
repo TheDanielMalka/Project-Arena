@@ -8,6 +8,7 @@ import { Swords, Mail, Lock, Eye, EyeOff, User, Gamepad2, KeyRound, Chrome, Chec
 import { useUserStore } from "@/stores/userStore";
 import { useToast } from "@/hooks/use-toast";
 import { PASSWORD_RULES, isPasswordValid } from "@/lib/passwordValidation";
+import { cn } from "@/lib/utils";
 
 const Auth = () => {
   const navigate = useNavigate();
@@ -24,6 +25,9 @@ const Auth = () => {
   const [forgotEmail, setForgotEmail] = useState("");
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [confirmedAge, setConfirmedAge] = useState(false);
+  const [signupFieldErrors, setSignupFieldErrors] = useState<
+    Partial<Record<"username" | "email" | "steam", string>>
+  >({});
 
   // Redirect if already logged in (do NOT navigate during render)
   useEffect(() => {
@@ -48,6 +52,7 @@ const Auth = () => {
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSignupFieldErrors({});
     if (!signupUsername || !signupEmail || !signupPassword) {
       toast({ title: "Missing fields", description: "Please fill all required fields.", variant: "destructive" });
       return;
@@ -64,9 +69,15 @@ const Auth = () => {
       toast({ title: "Terms required", description: "You must agree to the Terms of Service.", variant: "destructive" });
       return;
     }
-    const ok = await signup(signupUsername, signupEmail, signupPassword, signupSteamId);
-    if (!ok) {
-      toast({ title: "Signup failed", description: "Please check your details and try again.", variant: "destructive" });
+    const result = await signup(signupUsername, signupEmail, signupPassword, signupSteamId);
+    if (!result.ok) {
+      const msg = result.detail ?? "Please check your details and try again.";
+      if (result.field === "email") setSignupFieldErrors({ email: msg });
+      else if (result.field === "username") setSignupFieldErrors({ username: msg });
+      else if (result.field === "steam") setSignupFieldErrors({ steam: msg });
+      else {
+        toast({ title: "Signup failed", description: msg, variant: "destructive" });
+      }
       return;
     }
     navigate("/dashboard");
@@ -201,10 +212,17 @@ const Auth = () => {
                       type="text"
                       placeholder="Choose a username"
                       value={signupUsername}
-                      onChange={(e) => setSignupUsername(e.target.value)}
-                      className="pl-10 bg-secondary border-border"
+                      onChange={(e) => {
+                        setSignupUsername(e.target.value);
+                        setSignupFieldErrors((p) => ({ ...p, username: undefined }));
+                      }}
+                      className={cn("pl-10 bg-secondary border-border", signupFieldErrors.username && "border-destructive")}
+                      aria-invalid={!!signupFieldErrors.username}
                     />
                   </div>
+                  {signupFieldErrors.username ? (
+                    <p className="text-xs text-destructive mt-1">{signupFieldErrors.username}</p>
+                  ) : null}
                 </div>
                 <div>
                   <label className="text-sm text-muted-foreground mb-1 block">Email</label>
@@ -214,10 +232,17 @@ const Auth = () => {
                       type="email"
                       placeholder="your@email.com"
                       value={signupEmail}
-                      onChange={(e) => setSignupEmail(e.target.value)}
-                      className="pl-10 bg-secondary border-border"
+                      onChange={(e) => {
+                        setSignupEmail(e.target.value);
+                        setSignupFieldErrors((p) => ({ ...p, email: undefined }));
+                      }}
+                      className={cn("pl-10 bg-secondary border-border", signupFieldErrors.email && "border-destructive")}
+                      aria-invalid={!!signupFieldErrors.email}
                     />
                   </div>
+                  {signupFieldErrors.email ? (
+                    <p className="text-xs text-destructive mt-1">{signupFieldErrors.email}</p>
+                  ) : null}
                 </div>
                 <div>
                   <label className="text-sm text-muted-foreground mb-1 block">Password</label>
@@ -267,13 +292,24 @@ const Auth = () => {
                       type="text"
                       placeholder="76561198XXXXXXXX"
                       value={signupSteamId}
-                      onChange={(e) => setSignupSteamId(e.target.value)}
-                      className="pl-10 bg-secondary border-border font-mono"
+                      onChange={(e) => {
+                        setSignupSteamId(e.target.value);
+                        setSignupFieldErrors((p) => ({ ...p, steam: undefined }));
+                      }}
+                      className={cn(
+                        "pl-10 bg-secondary border-border font-mono",
+                        signupFieldErrors.steam && "border-destructive",
+                      )}
+                      aria-invalid={!!signupFieldErrors.steam}
                     />
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Find your Steam ID at steamid.io
-                  </p>
+                  {signupFieldErrors.steam ? (
+                    <p className="text-xs text-destructive mt-1">{signupFieldErrors.steam}</p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Find your Steam ID at steamid.io
+                    </p>
+                  )}
                 </div>
 
                 {/* Legal Checkboxes */}

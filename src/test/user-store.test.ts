@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as engineApi from "@/lib/engine-api";
 import { useUserStore } from "@/stores/userStore";
 
 describe("userStore", () => {
@@ -50,6 +51,22 @@ describe("userStore", () => {
     const stats = useUserStore.getState().user?.stats;
     expect(stats?.xp).toBe(0);
     expect(stats?.matches).toBe(0);
+  });
+
+  it("signup returns field and detail on 409-style conflict without authenticating", async () => {
+    vi.mocked(engineApi.apiRegister).mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      detail: "Email already registered",
+      field: "email",
+    });
+    const r = await useUserStore.getState().signup("TestUser", "taken@arena.gg", "password123");
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.field).toBe("email");
+      expect(r.detail).toBe("Email already registered");
+    }
+    expect(useUserStore.getState().isAuthenticated).toBe(false);
   });
 
   // ── loginWithGoogle ───────────────────────────────────────────────────────

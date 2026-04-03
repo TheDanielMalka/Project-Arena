@@ -1,7 +1,17 @@
 import { create } from "zustand";
 import type { UserProfile, UserProfilePatch, ForgeCategory, ShopEntitlement } from "@/types";
 import { setPendingClientSetupAfterSignup } from "@/lib/localArenaPrefs";
-import { apiGetMe, apiLogin, apiPatchMe, apiRegister } from "@/lib/engine-api";
+import {
+  apiGetMe,
+  apiLogin,
+  apiPatchMe,
+  apiRegister,
+  type RegisterConflictField,
+} from "@/lib/engine-api";
+
+export type SignupResult =
+  | { ok: true }
+  | { ok: false; detail?: string; field?: RegisterConflictField | null };
 
 interface UserState {
   user: UserProfile | null;
@@ -13,7 +23,7 @@ interface UserState {
   // DB-ready: replace with POST /api/auth/login
   login: (email: string, password: string) => Promise<boolean>;
   // DB-ready: replace with POST /api/auth/signup
-  signup: (username: string, email: string, password: string, steamId?: string) => Promise<boolean>;
+  signup: (username: string, email: string, password: string, steamId?: string) => Promise<SignupResult>;
   // DB-ready: replace with POST /api/auth/google (OAuth)
   loginWithGoogle: () => void;
   // DB-ready: replace with POST /api/auth/logout
@@ -153,9 +163,16 @@ export const useUserStore = create<UserState>((set, get) => ({
     return true;
   },
 
-  signup: async (username: string, email: string, password: string, steamId?: string): Promise<boolean> => {
-    const data = await apiRegister(username, email, password);
-    if (!data) return false;
+  signup: async (username: string, email: string, password: string, steamId?: string): Promise<SignupResult> => {
+    const result = await apiRegister(username, email, password);
+    if (!result.ok) {
+      return {
+        ok: false,
+        detail: result.detail ?? undefined,
+        field: result.field,
+      };
+    }
+    const data = result.data;
 
     const initials = data.username.slice(0, 2).toUpperCase();
     const normalizedEmail = data.email.trim().toLowerCase();
@@ -187,7 +204,7 @@ export const useUserStore = create<UserState>((set, get) => ({
     });
     setPendingClientSetupAfterSignup();
     scheduleSyncForgePurchasesToProfile();
-    return true;
+    return { ok: true };
   },
 
   loginWithGoogle: () => {
