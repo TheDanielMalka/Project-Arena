@@ -56,7 +56,7 @@ const MOCK_USER: UserProfile = {
   username: "ArenaPlayer_01",
   email: "player@arena.gg",
   steamId: "76561198XXXXXXXX",
-  riotId: "",
+  riotId: null,
   walletAddress: "0x7a3F9c2E1b8D4a5C6f7e8d9B0c1A2b3C4d5E6f7A",
   walletShort: "0x7a3...6f7A",
   rank: "Gold III",
@@ -140,8 +140,8 @@ export const useUserStore = create<UserState>((set, get) => ({
       username: data.username,
       email: normalizedEmail,
       arenaId: data.arena_id ?? "",
-      walletAddress: wallet ?? MOCK_USER.walletAddress,
-      walletShort: wallet ? `${wallet.slice(0, 6)}...${wallet.slice(-4)}` : MOCK_USER.walletShort,
+      walletAddress: wallet,
+      walletShort: wallet ? `${wallet.slice(0, 6)}...${wallet.slice(-4)}` : "",
       role: ADMIN_EMAILS.has(normalizedEmail) ? "admin" : "user",
       rank: profile?.rank ?? MOCK_USER.rank,
       stats: {
@@ -155,8 +155,8 @@ export const useUserStore = create<UserState>((set, get) => ({
       equippedBadgeIcon: profile?.equipped_badge_icon ?? MOCK_USER.equippedBadgeIcon,
       unlockedForgeItemIds: profile?.forge_unlocked_item_ids ?? MOCK_USER.unlockedForgeItemIds,
       vipExpiresAt: profile?.vip_expires_at ?? undefined,
-      steamId: profile?.steam_id?.trim() ?? "",
-      riotId: profile?.riot_id?.trim() ?? "",
+      steamId: profile?.steam_id?.trim() || null,
+      riotId: profile?.riot_id?.trim() || null,
     };
 
     set({
@@ -200,12 +200,12 @@ export const useUserStore = create<UserState>((set, get) => ({
       username: data.username,
       email: normalizedEmail,
       arenaId: data.arena_id ?? "",
-      walletAddress: data.wallet_address ?? MOCK_USER.walletAddress,
+      walletAddress: data.wallet_address ?? null,
       walletShort: data.wallet_address
         ? `${data.wallet_address.slice(0, 6)}...${data.wallet_address.slice(-4)}`
-        : MOCK_USER.walletShort,
-      steamId: gameAccounts?.steamId?.trim() ?? "",
-      riotId: gameAccounts?.riotId?.trim() ?? "",
+        : "",
+      steamId: gameAccounts?.steamId?.trim() || null,
+      riotId: gameAccounts?.riotId?.trim() || null,
       avatarInitials: initials,
       stats: { matches: 0, wins: 0, losses: 0, winRate: 0, totalEarnings: 0, inEscrow: 0, xp: 0 },
       balance: { total: 0, available: 0, inEscrow: 0 },
@@ -265,8 +265,14 @@ export const useUserStore = create<UserState>((set, get) => ({
     if ("avatarBg" in updates) patch.avatar_bg = updates.avatarBg ?? null;
     if ("equippedBadgeIcon" in updates) patch.equipped_badge_icon = updates.equippedBadgeIcon ?? null;
     if ("unlockedForgeItemIds" in updates) patch.forge_unlocked_item_ids = updates.unlockedForgeItemIds ?? [];
-    if ("steamId" in updates && updates.steamId !== undefined) patch.steam_id = updates.steamId || "";
-    if ("riotId" in updates && updates.riotId !== undefined) patch.riot_id = updates.riotId || "";
+    if ("steamId" in updates && updates.steamId !== undefined) {
+      const s = updates.steamId;
+      patch.steam_id = s === null || s === "" ? null : s.trim();
+    }
+    if ("riotId" in updates && updates.riotId !== undefined) {
+      const r = updates.riotId;
+      patch.riot_id = r === null || r === "" ? null : r.trim();
+    }
     if ("username" in updates && updates.username !== undefined) patch.username = updates.username;
 
     if (Object.keys(patch).length > 0) void apiPatchMe(token, patch);

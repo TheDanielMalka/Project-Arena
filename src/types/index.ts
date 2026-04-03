@@ -43,10 +43,12 @@ export interface UserProfile {
   role: UserRole;
   username: string;
   email: string;
-  steamId: string;
-  /** Valorant Riot ID (Name#TAG); DB: users.riot_id */
-  riotId: string;
-  walletAddress: string;
+  /** DB: users.steam_id — NULL when unset */
+  steamId: string | null;
+  /** Valorant Riot ID (Name#TAG); DB: users.riot_id — NULL when unset */
+  riotId: string | null;
+  /** DB: users.wallet_address — NULL until linked */
+  walletAddress: string | null;
   walletShort: string;
   rank: string;
   tier: string;

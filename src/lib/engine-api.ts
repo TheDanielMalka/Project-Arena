@@ -141,7 +141,7 @@ export async function isEngineOnline(): Promise<boolean> {
  * Returns null on network error (treat as disconnected).
  */
 export async function getClientStatus(
-  walletAddress?: string,
+  walletAddress?: string | null,
   token?: string,
 ): Promise<ClientStatusResponse | null> {
   try {
