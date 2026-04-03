@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Depends, Header, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
@@ -85,6 +85,19 @@ async def lifespan(app: FastAPI):
             conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS idx_cs_user ON client_sessions(user_id)"
             ))
+            # ── Match table schema additions (idempotent) ─────────────────────
+            # Each ALTER is wrapped individually so a missing table never
+            # blocks subsequent migrations.
+            for _stmt in [
+                "ALTER TABLE matches ADD COLUMN IF NOT EXISTS game VARCHAR(20)",
+                "ALTER TABLE matches ADD COLUMN IF NOT EXISTS creator_id UUID REFERENCES users(id)",
+                "ALTER TABLE matches ADD COLUMN IF NOT EXISTS stake_amount NUMERIC(18,6) DEFAULT 0",
+                "ALTER TABLE match_players ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id)",
+            ]:
+                try:
+                    conn.execute(text(_stmt))
+                except Exception as _alt_exc:
+                    logger.debug("schema migration skipped (%s): %s", _stmt[:50], _alt_exc)
             conn.commit()
         logger.info("✅ Arena Engine connected to DB")
     except Exception as exc:
@@ -128,8 +141,39 @@ class RegisterRequest(BaseModel):
     username: str
     email: str
     password: str
-    steam_id: str | None = None   # optional on register; unique if provided
-    riot_id:  str | None = None   # optional on register; unique if provided
+    steam_id: str | None = None   # CS2 account; at least one game account required
+    riot_id:  str | None = None   # Valorant account; at least one game account required
+
+    @model_validator(mode="after")
+    def require_and_validate_game_account(self) -> "RegisterRequest":
+        """
+        Enforce two rules at the Pydantic layer (→ automatic 422):
+          1. At least one of steam_id / riot_id must be provided.
+          2. Whichever is provided must pass the format check.
+        Format checks are pure string validation — no DB or network calls.
+        """
+        steam = self.steam_id.strip() if self.steam_id else None
+        riot  = self.riot_id.strip()  if self.riot_id  else None
+
+        if not steam and not riot:
+            raise ValueError(
+                "At least one game account is required: "
+                "provide steam_id (for CS2) or riot_id (for Valorant)"
+            )
+
+        if steam:
+            err = auth.validate_steam_id(steam)
+            if err:
+                raise ValueError(err)
+            self.steam_id = steam   # store stripped value
+
+        if riot:
+            err = auth.validate_riot_id(riot)
+            if err:
+                raise ValueError(err)
+            self.riot_id = riot     # store stripped value
+
+        return self
 
 
 class LoginRequest(BaseModel):
@@ -1096,3 +1140,191 @@ async def client_bind(req: BindRequest, payload: dict = Depends(verify_token)):
                 break
 
     return {"bound": True, "user_id": user_id, "session_id": session_id}
+
+
+# ── Match lifecycle ───────────────────────────────────────────────────────────
+
+_VALID_GAMES = {"CS2", "Valorant"}
+
+
+def _normalize_game(raw: str) -> str:
+    """Normalise game name to canonical form ('CS2' or 'Valorant')."""
+    mapping = {"cs2": "CS2", "valorant": "Valorant"}
+    return mapping.get(raw.strip().lower(), raw.strip())
+
+
+def _assert_game_account(game: str, steam_id: str | None, riot_id: str | None) -> None:
+    """
+    Raise HTTPException(403) if the user lacks the required game account.
+
+    CS2      → needs steam_id
+    Valorant → needs riot_id
+    """
+    if game == "CS2" and not steam_id:
+        raise HTTPException(
+            403,
+            "A verified Steam ID is required to create or join CS2 matches. "
+            "Add your Steam ID in Profile → Settings."
+        )
+    if game == "Valorant" and not riot_id:
+        raise HTTPException(
+            403,
+            "A verified Riot ID is required to create or join Valorant matches. "
+            "Add your Riot ID in Profile → Settings."
+        )
+
+
+class CreateMatchRequest(BaseModel):
+    """
+    POST /matches — create a new match lobby.
+
+    DB-ready: writes to matches + match_players tables.
+    CONTRACT-ready: stake_amount → ArenaEscrow.lockStake() once wallet is linked.
+    """
+    game: str = "CS2"          # "CS2" | "Valorant"
+    stake_amount: float = 0.0  # CONTRACT-ready: USDT escrow amount
+
+
+@app.post("/matches", status_code=201)
+async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_token)):
+    """
+    Create a new match lobby.
+
+    Game-account gate:
+      CS2      → creator must have steam_id
+      Valorant → creator must have riot_id
+
+    On success returns match_id + status='waiting' so the frontend can
+    open the lobby and wait for the second player.
+
+    DB-ready: inserts into matches (id, game, creator_id, stake_amount, status)
+              and match_players (match_id, user_id, wallet_address).
+    """
+    user_id: str = payload["sub"]
+    game = _normalize_game(req.game)
+
+    if game not in _VALID_GAMES:
+        raise HTTPException(400, f"game must be one of: {', '.join(sorted(_VALID_GAMES))}")
+
+    try:
+        with SessionLocal() as session:
+            # ── Look up creator's game accounts ───────────────────────────────
+            user_row = session.execute(
+                text("SELECT steam_id, riot_id, wallet_address FROM users WHERE id = :uid"),
+                {"uid": user_id},
+            ).fetchone()
+
+            if not user_row:
+                raise HTTPException(404, "User not found")
+
+            steam_id, riot_id, wallet_address = user_row
+            _assert_game_account(game, steam_id, riot_id)
+
+            # ── Create match ──────────────────────────────────────────────────
+            match_row = session.execute(
+                text(
+                    "INSERT INTO matches (game, creator_id, stake_amount, status) "
+                    "VALUES (:g, :creator, :stake, 'waiting') "
+                    "RETURNING id"
+                ),
+                {"g": game, "creator": user_id, "stake": req.stake_amount},
+            ).fetchone()
+            match_id = str(match_row[0])
+
+            # ── Add creator as first player ───────────────────────────────────
+            session.execute(
+                text(
+                    "INSERT INTO match_players (match_id, user_id, wallet_address) "
+                    "VALUES (:mid, :uid, :w)"
+                ),
+                {"mid": match_id, "uid": user_id, "w": wallet_address},
+            )
+            session.commit()
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("create_match error: %s", exc)
+        raise HTTPException(500, "Match creation failed")
+
+    return {
+        "match_id":     match_id,
+        "game":         game,
+        "status":       "waiting",
+        "stake_amount": req.stake_amount,
+    }
+
+
+@app.post("/matches/{match_id}/join", status_code=200)
+async def join_match(match_id: str, payload: dict = Depends(verify_token)):
+    """
+    Join an existing match lobby.
+
+    Game-account gate (same as create_match):
+      CS2      → joiner must have steam_id
+      Valorant → joiner must have riot_id
+
+    DB-ready: validates match exists + is 'waiting', checks duplicate join,
+              inserts into match_players.
+    CONTRACT-ready: triggers escrow lock once both players have joined.
+    """
+    user_id: str = payload["sub"]
+
+    try:
+        with SessionLocal() as session:
+            # ── Verify match exists and is open ───────────────────────────────
+            match_row = session.execute(
+                text("SELECT game, status FROM matches WHERE id = :mid"),
+                {"mid": match_id},
+            ).fetchone()
+
+            if not match_row:
+                raise HTTPException(404, "Match not found")
+
+            game, status = match_row
+            game = _normalize_game(game or "CS2")
+
+            if status != "waiting":
+                raise HTTPException(409, f"Match is not open for joining (status: {status})")
+
+            # ── Check joiner's game account ───────────────────────────────────
+            user_row = session.execute(
+                text("SELECT steam_id, riot_id, wallet_address FROM users WHERE id = :uid"),
+                {"uid": user_id},
+            ).fetchone()
+
+            if not user_row:
+                raise HTTPException(404, "User not found")
+
+            steam_id, riot_id, wallet_address = user_row
+            _assert_game_account(game, steam_id, riot_id)
+
+            # ── Duplicate join guard ──────────────────────────────────────────
+            already = session.execute(
+                text(
+                    "SELECT 1 FROM match_players "
+                    "WHERE match_id = :mid AND user_id = :uid"
+                ),
+                {"mid": match_id, "uid": user_id},
+            ).fetchone()
+
+            if already:
+                raise HTTPException(409, "Already joined this match")
+
+            # ── Join ──────────────────────────────────────────────────────────
+            session.execute(
+                text(
+                    "INSERT INTO match_players (match_id, user_id, wallet_address) "
+                    "VALUES (:mid, :uid, :w)"
+                ),
+                {"mid": match_id, "uid": user_id, "w": wallet_address},
+            )
+            session.commit()
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("join_match error: %s", exc)
+        raise HTTPException(500, "Join failed")
+
+    return {"joined": True, "match_id": match_id, "game": game}
