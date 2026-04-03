@@ -494,34 +494,20 @@ async def client_heartbeat(payload: HeartbeatRequest):
         _client_statuses[payload.wallet_address] = record
 
     # ── DB UPSERT (best-effort, only when session_id is present) ─
+    # Conflict target: wallet_address (UNIQUE) — one active row per wallet.
+    # This avoids the bug where ON CONFLICT (id) would INSERT a new row that
+    # violates the wallet_address UNIQUE constraint when the session_id changes
+    # (e.g. after client reinstall), leaving the session permanently disconnected.
     if payload.session_id:
         try:
             with SessionLocal() as session:
-                # Disconnect any OTHER active sessions for this wallet
-                session.execute(
-                    text(
-                        "UPDATE client_sessions "
-                        "SET status = 'disconnected', disconnected_at = NOW() "
-                        "WHERE wallet_address = :w "
-                        "  AND id != :sid "
-                        "  AND disconnected_at IS NULL"
-                    ),
-                    {"w": payload.wallet_address, "sid": payload.session_id},
-                )
-                # Upsert current session; write user_id when the client is logged in.
-                #
-                # disconnected_at rules:
-                #   • Heartbeat carries user_id  → client just re-logged in → clear it (NULL)
-                #   • Heartbeat has NO user_id AND row was already disconnected
-                #     → stale unauthenticated beat (monitor still running after sign-out race)
-                #     → keep disconnected_at so the website stays locked
-                #   • Row was not disconnected → keep NULL
                 session.execute(
                     text(
                         "INSERT INTO client_sessions "
                         "  (id, wallet_address, status, game, client_version, match_id, user_id, last_heartbeat) "
                         "VALUES (:sid, :w, :s, :g, :v, :m, :uid, NOW()) "
-                        "ON CONFLICT (id) DO UPDATE SET "
+                        "ON CONFLICT (wallet_address) DO UPDATE SET "
+                        "  id             = EXCLUDED.id, "
                         "  status         = EXCLUDED.status, "
                         "  game           = EXCLUDED.game, "
                         "  client_version = EXCLUDED.client_version, "
