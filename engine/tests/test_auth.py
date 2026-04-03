@@ -4,9 +4,14 @@ Tests for Phase 3 Auth routes:
   POST /auth/login
   GET  /auth/me
 
+And Phase 4 Match-gating routes:
+  POST /matches
+  POST /matches/{match_id}/join
+
 Strategy: mock SessionLocal so no real DB is needed.
 All auth utility functions (hash_password, verify_password, issue_token,
-decode_token) are tested independently — no mocking needed there.
+decode_token, validate_steam_id, validate_riot_id) are tested independently
+— no mocking needed there.
 """
 from __future__ import annotations
 
@@ -34,8 +39,12 @@ def _make_session_mock(fetchone_return=None):
     return ctx, session
 
 
-FAKE_UUID = str(uuid.uuid4())
+FAKE_UUID     = str(uuid.uuid4())
 FAKE_ARENA_ID = "ARENA-TST001"
+
+# Valid game account IDs used across tests
+VALID_STEAM_ID = "76561198000000001"
+VALID_RIOT_ID  = "Player#1234"
 
 
 # ─── Unit tests: auth utilities ────────────────────────────────────────────────
@@ -74,16 +83,47 @@ class TestAuthUtils:
         assert arena_id.startswith("ARENA-")
         assert len(arena_id) == 12   # "ARENA-" (6) + 6 chars
 
+    # ── Game account format validators ────────────────────────────────────────
+
+    def test_validate_steam_id_valid(self):
+        assert auth.validate_steam_id("76561198000000001") is None
+        assert auth.validate_steam_id("76561199000000001") is None
+
+    def test_validate_steam_id_too_short(self):
+        assert auth.validate_steam_id("123456") is not None
+
+    def test_validate_steam_id_wrong_prefix(self):
+        assert auth.validate_steam_id("12345678901234567") is not None  # 17 digits but wrong prefix
+
+    def test_validate_steam_id_with_whitespace_passes(self):
+        """Leading/trailing whitespace is stripped before validation."""
+        assert auth.validate_steam_id("  76561198000000001  ") is None
+
+    def test_validate_riot_id_valid(self):
+        assert auth.validate_riot_id("Player#1234") is None
+        assert auth.validate_riot_id("ABC#XY1") is None
+        assert auth.validate_riot_id("LongName16Char#ABC") is None
+
+    def test_validate_riot_id_missing_hash(self):
+        assert auth.validate_riot_id("NoHashHere") is not None
+
+    def test_validate_riot_id_tag_too_long(self):
+        assert auth.validate_riot_id("Player#TOOLONG") is not None   # TAG > 5 chars
+
+    def test_validate_riot_id_name_too_short(self):
+        assert auth.validate_riot_id("AB#123") is not None   # name < 3 chars
+
 
 # ─── POST /auth/register ──────────────────────────────────────────────────────
 
 class TestRegister:
     def test_register_success_returns_201_and_token(self):
         ctx, session = _make_session_mock()
-        # New flow: 2 duplicate checks (email, username) → None each, then INSERT
+        # Flow: email check → username check → steam_id check → INSERT RETURNING
         session.execute.return_value.fetchone.side_effect = [
             None,   # email duplicate check
             None,   # username duplicate check
+            None,   # steam_id duplicate check
             (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),  # INSERT RETURNING
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -91,6 +131,7 @@ class TestRegister:
                 "username": "newuser",
                 "email": "new@arena.gg",
                 "password": "password123",
+                "steam_id": VALID_STEAM_ID,
             })
         assert resp.status_code == 201
         data = resp.json()
@@ -105,6 +146,7 @@ class TestRegister:
         session.execute.return_value.fetchone.side_effect = [
             None,   # email duplicate check
             None,   # username duplicate check
+            None,   # steam_id duplicate check
             (FAKE_UUID, "user", "user@arena.gg", FAKE_ARENA_ID),
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -112,6 +154,7 @@ class TestRegister:
                 "username": "user",
                 "email": "User@Arena.GG",   # mixed case input
                 "password": "password123",
+                "steam_id": VALID_STEAM_ID,
             })
         assert resp.status_code == 201
         assert resp.json()["email"] == "user@arena.gg"
@@ -124,6 +167,7 @@ class TestRegister:
                 "username": "newname",
                 "email": "taken@arena.gg",
                 "password": "password123",
+                "steam_id": VALID_STEAM_ID,
             })
         assert resp.status_code == 409
         assert "email" in resp.json()["detail"].lower()
@@ -133,13 +177,14 @@ class TestRegister:
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
             None,          # email check passes
-            (FAKE_UUID,),  # username already taken
+            (FAKE_UUID,),  # username already taken → 409 before steam check
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post("/auth/register", json={
                 "username": "takenname",
                 "email": "new@arena.gg",
                 "password": "password123",
+                "steam_id": VALID_STEAM_ID,
             })
         assert resp.status_code == 409
         assert "username" in resp.json()["detail"].lower()
@@ -157,7 +202,7 @@ class TestRegister:
                 "username": "newuser",
                 "email": "new@arena.gg",
                 "password": "password123",
-                "steam_id": "76561198000000001",
+                "steam_id": VALID_STEAM_ID,
             })
         assert resp.status_code == 409
         assert "steam" in resp.json()["detail"].lower()
@@ -177,7 +222,7 @@ class TestRegister:
                 "username": "newuser",
                 "email": "new@arena.gg",
                 "password": "password123",
-                "riot_id": "Player#1234",
+                "riot_id": VALID_RIOT_ID,
             })
         assert resp.status_code == 409
         assert "riot" in resp.json()["detail"].lower()
@@ -192,6 +237,7 @@ class TestRegister:
                 "username": "existing",
                 "email": "existing@arena.gg",
                 "password": "password123",
+                "steam_id": VALID_STEAM_ID,
             })
         assert resp.status_code == 409
 
@@ -204,12 +250,64 @@ class TestRegister:
                 "username": "user",
                 "email": "user@arena.gg",
                 "password": "pass",
+                "steam_id": VALID_STEAM_ID,
             })
         assert resp.status_code == 500
 
     def test_register_missing_field_returns_422(self):
+        """Missing required fields (email, password) → 422."""
         resp = client.post("/auth/register", json={"username": "nopass"})
         assert resp.status_code == 422
+
+    # ── New: game account requirement ─────────────────────────────────────────
+
+    def test_register_no_game_account_returns_422(self):
+        """Registration without steam_id AND riot_id must return 422."""
+        resp = client.post("/auth/register", json={
+            "username": "newuser",
+            "email": "new@arena.gg",
+            "password": "password123",
+            # intentionally omitting both steam_id and riot_id
+        })
+        assert resp.status_code == 422
+
+    def test_register_invalid_steam_id_returns_422(self):
+        """Invalid Steam ID format must be rejected before hitting the DB."""
+        resp = client.post("/auth/register", json={
+            "username": "newuser",
+            "email": "new@arena.gg",
+            "password": "password123",
+            "steam_id": "12345",  # too short, wrong prefix
+        })
+        assert resp.status_code == 422
+
+    def test_register_invalid_riot_id_returns_422(self):
+        """Invalid Riot ID format (missing #TAG) must be rejected before hitting the DB."""
+        resp = client.post("/auth/register", json={
+            "username": "newuser",
+            "email": "new@arena.gg",
+            "password": "password123",
+            "riot_id": "NoHashHere",
+        })
+        assert resp.status_code == 422
+
+    def test_register_valid_riot_id_only_accepted(self):
+        """riot_id alone (without steam_id) satisfies the game account requirement."""
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            None,   # email duplicate check
+            None,   # username duplicate check
+            None,   # riot_id duplicate check (steam_id check skipped)
+            (FAKE_UUID, "user", "user@arena.gg", FAKE_ARENA_ID),
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post("/auth/register", json={
+                "username": "user",
+                "email": "user@arena.gg",
+                "password": "password123",
+                "riot_id": VALID_RIOT_ID,
+            })
+        assert resp.status_code == 201
 
 
 # ─── POST /auth/login ─────────────────────────────────────────────────────────
@@ -415,4 +513,183 @@ class TestSubmitResult:
 
     def test_submit_result_no_token_returns_422(self):
         resp = client.post("/match/result", json=self._result_payload())
+        assert resp.status_code == 422
+
+
+# ─── POST /matches  &  POST /matches/{id}/join ────────────────────────────────
+
+class TestMatchGating:
+    """
+    Game-account gate: CS2 requires steam_id, Valorant requires riot_id.
+    All checks happen in the backend before any DB write.
+    """
+
+    def _auth_header(self) -> dict:
+        token = auth.issue_token(FAKE_UUID, "daniel@arena.gg")
+        return {"Authorization": f"Bearer {token}"}
+
+    # ── Helper user rows (steam_id, riot_id, wallet_address) ─────────────────
+    def _user_steam(self):  return (VALID_STEAM_ID, None,           "0xABC")
+    def _user_riot(self):   return (None,           VALID_RIOT_ID,  "0xABC")
+    def _user_none(self):   return (None,           None,           "0xABC")
+
+    # ── POST /matches ─────────────────────────────────────────────────────────
+
+    def test_create_cs2_match_with_steam_returns_201(self):
+        match_id = str(uuid.uuid4())
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            self._user_steam(),  # user lookup
+            (match_id,),         # INSERT matches RETURNING id
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/matches",
+                json={"game": "CS2"},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 201
+        assert resp.json()["game"] == "CS2"
+        assert resp.json()["status"] == "waiting"
+
+    def test_create_cs2_match_without_steam_returns_403(self):
+        ctx, session = _make_session_mock(fetchone_return=self._user_none())
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/matches",
+                json={"game": "CS2"},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 403
+        assert "steam" in resp.json()["detail"].lower()
+
+    def test_create_valorant_match_with_riot_returns_201(self):
+        match_id = str(uuid.uuid4())
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            self._user_riot(),  # user lookup
+            (match_id,),        # INSERT matches RETURNING id
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/matches",
+                json={"game": "Valorant"},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 201
+        assert resp.json()["game"] == "Valorant"
+
+    def test_create_valorant_match_without_riot_returns_403(self):
+        ctx, session = _make_session_mock(fetchone_return=self._user_none())
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/matches",
+                json={"game": "Valorant"},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 403
+        assert "riot" in resp.json()["detail"].lower()
+
+    def test_create_match_invalid_game_returns_400(self):
+        ctx, session = _make_session_mock(fetchone_return=self._user_steam())
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/matches",
+                json={"game": "Fortnite"},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 400
+
+    def test_create_match_no_token_returns_422(self):
+        resp = client.post("/matches", json={"game": "CS2"})
+        assert resp.status_code == 422
+
+    # ── POST /matches/{match_id}/join ─────────────────────────────────────────
+
+    def test_join_cs2_match_with_steam_returns_200(self):
+        match_id = str(uuid.uuid4())
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            ("CS2", "waiting"),      # match lookup
+            self._user_steam(),      # user lookup
+            None,                    # already-joined check → not joined yet
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{match_id}/join",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["joined"] is True
+
+    def test_join_cs2_match_without_steam_returns_403(self):
+        match_id = str(uuid.uuid4())
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            ("CS2", "waiting"),  # match lookup
+            self._user_none(),   # user lookup → no steam_id → 403
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{match_id}/join",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 403
+        assert "steam" in resp.json()["detail"].lower()
+
+    def test_join_valorant_match_without_riot_returns_403(self):
+        match_id = str(uuid.uuid4())
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            ("Valorant", "waiting"),  # match lookup
+            self._user_none(),         # user lookup → no riot_id → 403
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{match_id}/join",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 403
+        assert "riot" in resp.json()["detail"].lower()
+
+    def test_join_match_not_found_returns_404(self):
+        match_id = str(uuid.uuid4())
+        ctx, session = _make_session_mock(fetchone_return=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{match_id}/join",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 404
+
+    def test_join_match_not_waiting_returns_409(self):
+        match_id = str(uuid.uuid4())
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            ("CS2", "in_progress"),  # match is already started → 409
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{match_id}/join",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 409
+
+    def test_join_match_already_joined_returns_409(self):
+        match_id = str(uuid.uuid4())
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            ("CS2", "waiting"),   # match lookup
+            self._user_steam(),   # user lookup
+            (1,),                 # already-joined check → duplicate
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{match_id}/join",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 409
+
+    def test_join_match_no_token_returns_422(self):
+        resp = client.post(f"/matches/{uuid.uuid4()}/join")
         assert resp.status_code == 422
