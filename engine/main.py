@@ -961,6 +961,18 @@ async def patch_user_me(req: PatchUserRequest, payload: dict = Depends(verify_to
         logger.error("patch_user_me uniqueness check error: %s", exc)
         raise HTTPException(500, "Profile update failed")
 
+    # ── Guard: cannot unlink both game accounts simultaneously ───────────────
+    # A user without any game account can't join any match.
+    # We check the resulting state: if both would become NULL → 400.
+    unlinking_steam = req.steam_id is not None and req.steam_id.strip() == ""
+    unlinking_riot  = req.riot_id  is not None and req.riot_id.strip()  == ""
+    if unlinking_steam and unlinking_riot:
+        raise HTTPException(
+            400,
+            "Cannot unlink both game accounts at once. "
+            "Keep at least one (Steam ID or Riot ID) to remain eligible for matches."
+        )
+
     # ── Build update fields ───────────────────────────────────────────────────
     fields: dict = {}
     if req.avatar                  is not None: fields["avatar"]                  = req.avatar
