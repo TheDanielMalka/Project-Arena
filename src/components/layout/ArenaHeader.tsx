@@ -36,6 +36,7 @@ export function ArenaHeader() {
   const totalBalance = useWalletStore((s) => s.usdtBalance);
   const clientStatus = useClientStore((s) => s.status);
   const clientVersion = useClientStore((s) => s.version);
+  const bindUserId    = useClientStore((s) => s.bindUserId);
   const navigate = useNavigate();
 
   // Keep the poller alive — syncs into clientStore automatically
@@ -43,9 +44,16 @@ export function ArenaHeader() {
 
   const handleSignOut = () => { logout(); navigate("/"); };
 
-  const cfg = CLIENT_STATUS_CONFIG[clientStatus];
+  // "Client Ready" only when the client is logged in as the same user as the website.
+  // If client is running but bound to a different (or no) user → show "connected" state.
+  const userMatched = (clientStatus === "ready" || clientStatus === "in_match") && bindUserId === user?.id;
+  const effectiveStatus = (clientStatus === "ready" || clientStatus === "in_match") && !userMatched
+    ? "connected"
+    : clientStatus;
+
+  const cfg = CLIENT_STATUS_CONFIG[effectiveStatus];
   const Icon = cfg.icon;
-  const isAnimated = clientStatus === "checking" || clientStatus === "connected";
+  const isAnimated = effectiveStatus === "checking" || effectiveStatus === "connected";
 
   return (
     <header className="h-14 flex items-center justify-between border-b border-border px-4">
@@ -67,23 +75,23 @@ export function ArenaHeader() {
               <TooltipTrigger asChild>
                 {/* Clicking "disconnected" opens download page — others do nothing */}
                 <button
-                  onClick={clientStatus === "disconnected" ? () => window.open("https://arena-client-dist.s3.us-east-1.amazonaws.com/ArenaClient.exe", "_blank") : undefined}
+                  onClick={effectiveStatus === "disconnected" ? () => window.open("https://arena-client-dist.s3.us-east-1.amazonaws.com/ArenaClient.exe", "_blank") : undefined}
                   className={`flex items-center gap-1.5 px-2 py-1 rounded-md transition-colors ${
-                    clientStatus === "disconnected"
+                    effectiveStatus === "disconnected"
                       ? "cursor-pointer hover:bg-secondary/60"
                       : "cursor-default"
                   }`}
                 >
                   {/* Animated dot */}
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot} ${
-                    clientStatus === "ready" ? "animate-pulse" : ""
+                    effectiveStatus === "ready" ? "animate-pulse" : ""
                   }`} />
                   <Icon className={`h-3.5 w-3.5 ${cfg.color} ${isAnimated ? "animate-spin" : ""}`} />
                   <span className={`text-xs font-mono hidden sm:inline ${cfg.color}`}>
                     {cfg.label}
                   </span>
                   {/* Download hint when offline */}
-                  {clientStatus === "disconnected" && (
+                  {effectiveStatus === "disconnected" && (
                     <Download className="h-3 w-3 text-muted-foreground hidden sm:inline ml-0.5" />
                   )}
                 </button>
