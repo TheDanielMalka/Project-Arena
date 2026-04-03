@@ -28,7 +28,8 @@ CREATE TABLE users (
     username        VARCHAR(50) UNIQUE NOT NULL,
     email           VARCHAR(255) UNIQUE NOT NULL,
     password_hash   TEXT NOT NULL,
-    steam_id        VARCHAR(30),
+    steam_id        VARCHAR(30),           -- nullable; unique via partial index below
+    riot_id         VARCHAR(30),           -- nullable; unique via partial index below
     wallet_address  VARCHAR(100),
     rank            VARCHAR(20) DEFAULT 'Unranked',
     tier            VARCHAR(20) DEFAULT 'Bronze',
@@ -228,6 +229,27 @@ CREATE TABLE wallet_addresses (
     address VARCHAR(100) NOT NULL,
     PRIMARY KEY (user_id, network)
 );
+
+-- ── Users: uniqueness indexes ────────────────────────────────
+-- Case-insensitive email (stored lowercase via API, index enforces it at DB level too)
+CREATE UNIQUE INDEX users_email_lower_idx    ON users (lower(email));
+-- Case-insensitive username (display case preserved, duplicates blocked)
+CREATE UNIQUE INDEX users_username_lower_idx ON users (lower(username));
+-- Nullable unique IDs — NULLs allowed, but non-NULL values must be globally unique
+CREATE UNIQUE INDEX users_steam_id_idx       ON users (steam_id) WHERE steam_id IS NOT NULL;
+CREATE UNIQUE INDEX users_riot_id_idx        ON users (riot_id)  WHERE riot_id  IS NOT NULL;
+
+-- ── Game account registry (future: replaces steam_id/riot_id columns) ─
+CREATE TABLE user_game_accounts (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider    TEXT NOT NULL,        -- 'steam' | 'riot' | 'epic' | 'psn' | 'xbox' …
+    account_id  TEXT NOT NULL,        -- platform-assigned ID
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (provider, account_id),    -- one account per provider, globally
+    UNIQUE (user_id,  provider)       -- one provider account per user
+);
+CREATE INDEX idx_uga_user ON user_game_accounts(user_id);
 
 -- ── Indexes ──────────────────────────────────────────────────
 CREATE INDEX idx_matches_status        ON matches(status);

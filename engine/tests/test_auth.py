@@ -80,11 +80,11 @@ class TestAuthUtils:
 class TestRegister:
     def test_register_success_returns_201_and_token(self):
         ctx, session = _make_session_mock()
-        # First call: duplicate check → None (no existing user)
-        # Second call: INSERT RETURNING → fake row
+        # New flow: 2 duplicate checks (email, username) → None each, then INSERT
         session.execute.return_value.fetchone.side_effect = [
-            None,   # duplicate check
-            (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),  # INSERT
+            None,   # email duplicate check
+            None,   # username duplicate check
+            (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),  # INSERT RETURNING
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post("/auth/register", json={
@@ -96,12 +96,96 @@ class TestRegister:
         data = resp.json()
         assert "access_token" in data
         assert data["username"] == "newuser"
-        assert data["email"] == "new@arena.gg"
+        assert data["email"] == "new@arena.gg"   # stored lowercase
         assert data["token_type"] == "bearer"
 
+    def test_register_email_normalized_to_lowercase(self):
+        """Email is always stored lowercase regardless of input case."""
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            None,   # email duplicate check
+            None,   # username duplicate check
+            (FAKE_UUID, "user", "user@arena.gg", FAKE_ARENA_ID),
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post("/auth/register", json={
+                "username": "user",
+                "email": "User@Arena.GG",   # mixed case input
+                "password": "password123",
+            })
+        assert resp.status_code == 201
+        assert resp.json()["email"] == "user@arena.gg"
+
+    def test_register_duplicate_email_returns_409(self):
+        """Duplicate email → 409 with specific message."""
+        ctx, session = _make_session_mock(fetchone_return=(FAKE_UUID,))
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post("/auth/register", json={
+                "username": "newname",
+                "email": "taken@arena.gg",
+                "password": "password123",
+            })
+        assert resp.status_code == 409
+        assert "email" in resp.json()["detail"].lower()
+
+    def test_register_duplicate_username_returns_409(self):
+        """Duplicate username → 409 with specific message."""
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            None,          # email check passes
+            (FAKE_UUID,),  # username already taken
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post("/auth/register", json={
+                "username": "takenname",
+                "email": "new@arena.gg",
+                "password": "password123",
+            })
+        assert resp.status_code == 409
+        assert "username" in resp.json()["detail"].lower()
+
+    def test_register_duplicate_steam_id_returns_409(self):
+        """Duplicate steam_id → 409 with specific message."""
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            None,          # email check passes
+            None,          # username check passes
+            (FAKE_UUID,),  # steam_id already linked
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post("/auth/register", json={
+                "username": "newuser",
+                "email": "new@arena.gg",
+                "password": "password123",
+                "steam_id": "76561198000000001",
+            })
+        assert resp.status_code == 409
+        assert "steam" in resp.json()["detail"].lower()
+
+    def test_register_duplicate_riot_id_returns_409(self):
+        """Duplicate riot_id → 409 with specific message.
+        steam_id not provided → its check is skipped → riot_id is the 3rd fetchone."""
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            None,          # email check passes
+            None,          # username check passes
+            # steam_id check SKIPPED (not in request)
+            (FAKE_UUID,),  # riot_id already linked
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post("/auth/register", json={
+                "username": "newuser",
+                "email": "new@arena.gg",
+                "password": "password123",
+                "riot_id": "Player#1234",
+            })
+        assert resp.status_code == 409
+        assert "riot" in resp.json()["detail"].lower()
+
     def test_register_duplicate_returns_409(self):
+        """Legacy test — any duplicate returns 409."""
         ctx, session = _make_session_mock(
-            fetchone_return=(FAKE_UUID,)  # user already exists
+            fetchone_return=(FAKE_UUID,)  # email check hits immediately
         )
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post("/auth/register", json={
@@ -185,10 +269,12 @@ class TestMe:
 
     def _db_profile_row(self):
         # Columns: id, username, email, arena_id, rank, wallet_address,
+        #          steam_id, riot_id,
         #          xp, wins, losses, avatar, avatar_bg, equipped_badge_icon,
         #          forge_unlocked_item_ids, vip_expires_at
         return (FAKE_UUID, "daniel", "daniel@arena.gg", FAKE_ARENA_ID,
-                "Gold", "0xABC", 1500, 42, 10,
+                "Gold", "0xABC", None, None,
+                1500, 42, 10,
                 "preset:warrior", "red", "badge:champion",
                 ["item-001", "item-002"], None)
 
@@ -229,8 +315,12 @@ class TestPatchUserMe:
         return {"Authorization": f"Bearer {token}"}
 
     def _db_profile_row(self):
+        # id, username, email, arena_id, rank, wallet_address, steam_id, riot_id,
+        # xp, wins, losses, avatar, avatar_bg, equipped_badge_icon,
+        # forge_unlocked_item_ids, vip_expires_at
         return (FAKE_UUID, "daniel", "daniel@arena.gg", FAKE_ARENA_ID,
-                "Gold", "0xABC", 10, 3, 1,
+                "Gold", "0xABC", None, None,
+                10, 3, 1,
                 "preset:warrior", "blue", "badge:pro",
                 ["item-001"], None)
 

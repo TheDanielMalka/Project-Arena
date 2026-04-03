@@ -128,6 +128,8 @@ class RegisterRequest(BaseModel):
     username: str
     email: str
     password: str
+    steam_id: str | None = None   # optional on register; unique if provided
+    riot_id:  str | None = None   # optional on register; unique if provided
 
 
 class LoginRequest(BaseModel):
@@ -154,6 +156,8 @@ class UserProfile(BaseModel):
     arena_id: str | None = None
     rank: str | None = None
     wallet_address: str | None = None
+    steam_id: str | None = None
+    riot_id: str | None = None
     xp: int = 0
     wins: int = 0
     losses: int = 0
@@ -493,32 +497,30 @@ async def client_heartbeat(payload: HeartbeatRequest):
         record["user_id"] = payload.user_id or existing.get("user_id")
         _client_statuses[payload.wallet_address] = record
 
-    # ── DB UPSERT (best-effort, only when session_id is present) ─
-    # Conflict target: wallet_address (UNIQUE) — one active row per wallet.
-    # This avoids the bug where ON CONFLICT (id) would INSERT a new row that
-    # violates the wallet_address UNIQUE constraint when the session_id changes
-    # (e.g. after client reinstall), leaving the session permanently disconnected.
+    # ── DB UPSERT (best-effort, only when session_id is present) ─────────────
+    # Conflict target: partial unique index on wallet_address WHERE disconnected_at IS NULL.
+    # This matches idx_client_sessions_wallet_active from infra/sql/init.sql.
+    # Behaviour:
+    #   • Active session exists for this wallet  → UPDATE it (refresh heartbeat + user_id)
+    #   • No active session (all disconnected)   → INSERT a new active row
+    # disconnected_at is always NULL on upsert (we are declaring ourselves alive).
     if payload.session_id:
         try:
             with SessionLocal() as session:
                 session.execute(
                     text(
                         "INSERT INTO client_sessions "
-                        "  (id, wallet_address, status, game, client_version, match_id, user_id, last_heartbeat) "
-                        "VALUES (:sid, :w, :s, :g, :v, :m, :uid, NOW()) "
-                        "ON CONFLICT (wallet_address) DO UPDATE SET "
-                        "  id             = EXCLUDED.id, "
+                        "  (id, wallet_address, status, game, client_version, match_id, user_id, "
+                        "   last_heartbeat, disconnected_at) "
+                        "VALUES (:sid, :w, :s, :g, :v, :m, :uid, NOW(), NULL) "
+                        "ON CONFLICT (wallet_address) WHERE disconnected_at IS NULL DO UPDATE SET "
                         "  status         = EXCLUDED.status, "
                         "  game           = EXCLUDED.game, "
                         "  client_version = EXCLUDED.client_version, "
                         "  match_id       = EXCLUDED.match_id, "
                         "  user_id        = COALESCE(EXCLUDED.user_id, client_sessions.user_id), "
                         "  last_heartbeat = NOW(), "
-                        "  disconnected_at = CASE "
-                        "    WHEN EXCLUDED.user_id IS NOT NULL THEN NULL "
-                        "    WHEN client_sessions.disconnected_at IS NULL THEN NULL "
-                        "    ELSE client_sessions.disconnected_at "
-                        "  END"
+                        "  disconnected_at = NULL"
                     ),
                     {
                         "sid": payload.session_id,
@@ -747,57 +749,73 @@ async def register(req: RegisterRequest):
     Creates rows in: users, user_stats, user_balances, user_roles.
     DB-ready: all inserts use the users table from infra/sql/init.sql.
     """
+    # ── Normalize inputs ──────────────────────────────────────────────────────
+    email    = req.email.strip().lower()
+    username = req.username.strip()
+    steam_id = req.steam_id.strip() if req.steam_id else None
+    riot_id  = req.riot_id.strip()  if req.riot_id  else None
+
     try:
         with SessionLocal() as session:
-            # ── Duplicate check ───────────────────────────────────────
-            existing = session.execute(
-                text("SELECT id FROM users WHERE email = :e OR username = :u"),
-                {"e": req.email, "u": req.username},
-            ).fetchone()
-            if existing:
-                raise HTTPException(409, "Email or username already registered")
+            # ── Duplicate checks — one clear 409 per field ────────────────────
+            if session.execute(
+                text("SELECT 1 FROM users WHERE lower(email) = :e"), {"e": email}
+            ).fetchone():
+                raise HTTPException(409, "Email already in use")
 
-            # ── Create user ───────────────────────────────────────────
-            pw_hash = auth.hash_password(req.password)
+            if session.execute(
+                text("SELECT 1 FROM users WHERE lower(username) = lower(:u)"), {"u": username}
+            ).fetchone():
+                raise HTTPException(409, "Username already taken")
+
+            if steam_id and session.execute(
+                text("SELECT 1 FROM users WHERE steam_id = :s"), {"s": steam_id}
+            ).fetchone():
+                raise HTTPException(409, "Steam ID already linked to another account")
+
+            if riot_id and session.execute(
+                text("SELECT 1 FROM users WHERE riot_id = :r"), {"r": riot_id}
+            ).fetchone():
+                raise HTTPException(409, "Riot ID already linked to another account")
+
+            # ── Create user ───────────────────────────────────────────────────
+            pw_hash  = auth.hash_password(req.password)
             arena_id = auth.generate_arena_id()
             row = session.execute(
                 text(
-                    "INSERT INTO users (username, email, password_hash, arena_id) "
-                    "VALUES (:u, :e, :h, :a) "
+                    "INSERT INTO users (username, email, password_hash, arena_id, steam_id, riot_id) "
+                    "VALUES (:u, :e, :h, :a, :s, :r) "
                     "RETURNING id, username, email, arena_id"
                 ),
-                {"u": req.username, "e": req.email, "h": pw_hash, "a": arena_id},
+                {"u": username, "e": email, "h": pw_hash, "a": arena_id,
+                 "s": steam_id, "r": riot_id},
             ).fetchone()
 
             user_id = str(row[0])
 
-            # ── Seed companion rows ───────────────────────────────────
-            session.execute(
-                text("INSERT INTO user_stats (user_id) VALUES (:uid)"),
-                {"uid": user_id},
-            )
-            session.execute(
-                text("INSERT INTO user_balances (user_id) VALUES (:uid)"),
-                {"uid": user_id},
-            )
-            session.execute(
-                text("INSERT INTO user_roles (user_id, role) VALUES (:uid, 'user')"),
-                {"uid": user_id},
-            )
+            # ── Seed companion rows ───────────────────────────────────────────
+            session.execute(text("INSERT INTO user_stats (user_id) VALUES (:uid)"),    {"uid": user_id})
+            session.execute(text("INSERT INTO user_balances (user_id) VALUES (:uid)"), {"uid": user_id})
+            session.execute(text("INSERT INTO user_roles (user_id, role) VALUES (:uid, 'user')"), {"uid": user_id})
             session.commit()
 
     except HTTPException:
         raise
     except Exception as exc:
+        # Catch any remaining DB-level UNIQUE violations as a safe 409
+        err = str(exc).lower()
+        if "unique" in err or "duplicate" in err:
+            logger.warning("register unique violation: %s", exc)
+            raise HTTPException(409, "An account with these details already exists")
         logger.error("register error: %s", exc)
         raise HTTPException(500, "Registration failed")
 
-    token = auth.issue_token(user_id, req.email)
+    token = auth.issue_token(user_id, email)
     return AuthResponse(
         access_token=token,
         user_id=user_id,
-        username=req.username,
-        email=req.email,
+        username=username,
+        email=email,
         arena_id=arena_id,
     )
 
@@ -852,7 +870,7 @@ async def me(payload: dict = Depends(verify_token)):
             row = session.execute(
                 text(
                     "SELECT u.id, u.username, u.email, u.arena_id, "
-                    "       u.rank, u.wallet_address, "
+                    "       u.rank, u.wallet_address, u.steam_id, u.riot_id, "
                     "       COALESCE(s.xp, 0), COALESCE(s.wins, 0), COALESCE(s.losses, 0), "
                     "       u.avatar, u.avatar_bg, u.equipped_badge_icon, "
                     "       u.forge_unlocked_item_ids, u.vip_expires_at "
@@ -876,14 +894,16 @@ async def me(payload: dict = Depends(verify_token)):
         arena_id=row[3],
         rank=row[4],
         wallet_address=row[5],
-        xp=int(row[6]),
-        wins=int(row[7]),
-        losses=int(row[8]),
-        avatar=row[9],
-        avatar_bg=row[10],
-        equipped_badge_icon=row[11],
-        forge_unlocked_item_ids=list(row[12]) if row[12] else [],
-        vip_expires_at=row[13].isoformat() if row[13] else None,
+        steam_id=row[6],
+        riot_id=row[7],
+        xp=int(row[8]),
+        wins=int(row[9]),
+        losses=int(row[10]),
+        avatar=row[11],
+        avatar_bg=row[12],
+        equipped_badge_icon=row[13],
+        forge_unlocked_item_ids=list(row[14]) if row[14] else [],
+        vip_expires_at=row[15].isoformat() if row[15] else None,
     )
 
 
@@ -897,26 +917,67 @@ class PatchUserRequest(BaseModel):
     avatar_bg: str | None = None
     equipped_badge_icon: str | None = None
     forge_unlocked_item_ids: list[str] | None = None
+    # Identity fields — uniqueness enforced per field
+    username: str | None = None   # case-insensitive unique
+    steam_id: str | None = None   # globally unique; pass "" to unlink
+    riot_id:  str | None = None   # globally unique; pass "" to unlink
 
 
 @app.patch("/users/me", response_model=UserProfile)
 async def patch_user_me(req: PatchUserRequest, payload: dict = Depends(verify_token)):
     """
-    Persist avatar, badge, and forge item changes to the users table.
+    Partial update of the authenticated user's profile.
 
-    Only fields explicitly provided in the request body are updated.
-    Returns the full updated UserProfile.
-    DB-ready: writes to users table columns avatar, avatar_bg,
-              equipped_badge_icon, forge_unlocked_item_ids.
+    Cosmetic fields (avatar, badge, forge items) are updated directly.
+    Identity fields (username, steam_id, riot_id) are checked for uniqueness
+    before writing — returns 409 if the value is already taken.
+    Pass steam_id="" or riot_id="" to unlink (sets column to NULL).
+    DB-ready: writes to users table columns.
     """
     user_id: str = payload["sub"]
+
+    # ── Uniqueness checks for identity fields ─────────────────────────────────
+    try:
+        with SessionLocal() as session:
+            if req.username is not None:
+                conflict = session.execute(
+                    text("SELECT 1 FROM users WHERE lower(username) = lower(:u) AND id != :uid"),
+                    {"u": req.username.strip(), "uid": user_id},
+                ).fetchone()
+                if conflict:
+                    raise HTTPException(409, "Username already taken")
+
+            if req.steam_id is not None and req.steam_id != "":
+                conflict = session.execute(
+                    text("SELECT 1 FROM users WHERE steam_id = :s AND id != :uid"),
+                    {"s": req.steam_id.strip(), "uid": user_id},
+                ).fetchone()
+                if conflict:
+                    raise HTTPException(409, "Steam ID already linked to another account")
+
+            if req.riot_id is not None and req.riot_id != "":
+                conflict = session.execute(
+                    text("SELECT 1 FROM users WHERE riot_id = :r AND id != :uid"),
+                    {"r": req.riot_id.strip(), "uid": user_id},
+                ).fetchone()
+                if conflict:
+                    raise HTTPException(409, "Riot ID already linked to another account")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("patch_user_me uniqueness check error: %s", exc)
+        raise HTTPException(500, "Profile update failed")
+
+    # ── Build update fields ───────────────────────────────────────────────────
     fields: dict = {}
-    if req.avatar                is not None: fields["avatar"]                = req.avatar
-    if req.avatar_bg             is not None: fields["avatar_bg"]             = req.avatar_bg
-    if req.equipped_badge_icon   is not None: fields["equipped_badge_icon"]   = req.equipped_badge_icon
+    if req.avatar                  is not None: fields["avatar"]                  = req.avatar
+    if req.avatar_bg               is not None: fields["avatar_bg"]               = req.avatar_bg
+    if req.equipped_badge_icon     is not None: fields["equipped_badge_icon"]     = req.equipped_badge_icon
     if req.forge_unlocked_item_ids is not None:
-        # Postgres TEXT[] — pass as Python list; SQLAlchemy handles the cast
         fields["forge_unlocked_item_ids"] = req.forge_unlocked_item_ids
+    if req.username is not None: fields["username"] = req.username.strip()
+    if req.steam_id is not None: fields["steam_id"] = req.steam_id.strip() or None  # "" → NULL
+    if req.riot_id  is not None: fields["riot_id"]  = req.riot_id.strip()  or None  # "" → NULL
 
     if fields:
         set_clause = ", ".join(f"{col} = :{col}" for col in fields)
