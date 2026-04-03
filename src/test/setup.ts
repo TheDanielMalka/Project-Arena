@@ -21,12 +21,15 @@ vi.mock("@/lib/engine-api", async () => {
       };
     }),
     apiRegister: vi.fn(async (username: string, email: string, _password: string) => ({
-      access_token: "token-new",
-      user_id: "user-new-001",
-      username,
-      email: email.trim().toLowerCase(),
-      arena_id: "ARENA-NEW001",
-      wallet_address: null,
+      ok: true as const,
+      data: {
+        access_token: "token-new",
+        user_id: "user-new-001",
+        username,
+        email: email.trim().toLowerCase(),
+        arena_id: "ARENA-NEW001",
+        wallet_address: null,
+      },
     })),
     apiGetMe: vi.fn(async (token: string) => {
       const isAdmin = token === "token-admin";
