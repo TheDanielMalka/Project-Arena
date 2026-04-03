@@ -177,12 +177,28 @@ jobs:
         run: npm run build
 
   # ══════════════════════════════════════════════════════════════════════════════
-  # 4. SQL VALIDATION — syntax check on init.sql changes
+  # 4. SQL VALIDATION — syntax check on init.sql changes (real Postgres)
   # ══════════════════════════════════════════════════════════════════════════════
   sql-check:
     name: SQL Syntax Check
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: arena
+          POSTGRES_PASSWORD: arena
+          POSTGRES_DB: arena_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -202,20 +218,72 @@ jobs:
             echo "No SQL files changed — skipping"
           fi
 
-      - name: Validate SQL syntax
+      - name: Validate SQL syntax against real Postgres
         if: steps.sql_changed.outputs.changed == 'true'
+        env:
+          PGPASSWORD: arena
         run: |
-          sudo apt-get install -y postgresql-client -qq
-          for f in $(find infra/sql -name "*.sql"); do
-            echo "Checking $f..."
-            psql --no-psqlrc -v ON_ERROR_STOP=1 \
-              "host=localhost user=postgres dbname=postgres" \
-              -c "\i $f" 2>&1 | grep -v "^$" || true
-          done
-        continue-on-error: true
+          echo "Running init.sql against Postgres 16..."
+          psql -h localhost -U arena -d arena_test -v ON_ERROR_STOP=1 -f infra/sql/init.sql
+          echo "SQL validation passed."
 
   # ══════════════════════════════════════════════════════════════════════════════
-  # 5. ISSUE MANAGEMENT — auto-label + comment on new issues
+  # 5. CONTRACTS — Hardhat compile + test (triggers on engine/contracts/ changes)
+  # ══════════════════════════════════════════════════════════════════════════════
+  test-contracts:
+    name: Solidity Contracts (Hardhat)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if contract files changed
+        id: contracts_changed
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          CHANGED=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -E '^engine/contracts/' || true)
+          if [ -n "$CHANGED" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Contract files changed: $CHANGED"
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "No contract files changed — skipping"
+          fi
+
+      - name: Set up Node.js 20
+        if: steps.contracts_changed.outputs.changed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: engine/contracts/package.json
+
+      - name: Install Hardhat dependencies
+        if: steps.contracts_changed.outputs.changed == 'true'
+        working-directory: engine/contracts
+        run: npm install
+
+      - name: Compile contracts
+        if: steps.contracts_changed.outputs.changed == 'true'
+        working-directory: engine/contracts
+        run: npx hardhat compile
+
+      - name: Run contract tests
+        if: steps.contracts_changed.outputs.changed == 'true'
+        working-directory: engine/contracts
+        run: |
+          if [ -d test ] && [ "$(ls -A test 2>/dev/null)" ]; then
+            echo "Running Hardhat tests..."
+            npx hardhat test
+          else
+            echo "No contract tests yet — compile-only check passed."
+          fi
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # 6. ISSUE MANAGEMENT — auto-label + comment on new issues
   # ══════════════════════════════════════════════════════════════════════════════
   issue-management:
     name: Issue Auto-Triage
@@ -244,7 +312,7 @@ jobs:
             });
 
   # ══════════════════════════════════════════════════════════════════════════════
-  # 6. PR SYNC — auto-assign + inherit labels/milestone from linked issue
+  # 7. PR SYNC — auto-assign + inherit labels/milestone from linked issue
   # ══════════════════════════════════════════════════════════════════════════════
   sync-and-assign:
     name: PR Sync & Assign
