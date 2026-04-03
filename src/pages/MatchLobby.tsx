@@ -23,6 +23,8 @@ import { useClientStore }  from "@/stores/clientStore";
 import { GAME_MODES, getDefaultMode, getTeamSize, getTotalPlayers, isGameActive } from "@/config/gameModes";
 import { PlayerPopoverLayer } from "@/components/players/PlayerCardPopover";
 import { ClientReadinessStrip } from "@/components/match/ClientReadinessStrip";
+import { apiCreateMatch, apiJoinMatch } from "@/lib/engine-api";
+import { looksLikeServerMatchId } from "@/lib/gameAccounts";
 
 // ─── Game configs ─────────────────────────────────────────────────────────────
 // comingSoon: true → game visible in dropdowns but non-selectable (greyed, locked)
@@ -226,7 +228,7 @@ const LiveTicker = ({ matches }: { matches: Match[] }) => {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 const MatchLobby = () => {
-  const { user } = useUserStore();
+  const { user, token } = useUserStore();
   const websiteUserId = user?.id;
   const { matches, addMatch, joinMatch, leaveMatch, updateMatchStatus, getMatchByCode, deleteMatch, expireOldMatches } = useMatchStore();
   const { lockEscrow, cancelEscrow } = useWalletStore();
@@ -322,10 +324,23 @@ const MatchLobby = () => {
     // DB-ready: replace with wagmi readContract / balanceOf check in Issue #Frontend-Wallet
     setTimeout(() => setDepositStep("confirmed"), 2200);
   };
-  const handleDepositFinal = () => {
+  const handleDepositFinal = async () => {
     if (!depositConfirm || !user) return;
     if (!guardCanPlay()) return;
     const { match, team } = depositConfirm;
+    if (token && looksLikeServerMatchId(match.id)) {
+      const jr = await apiJoinMatch(token, match.id);
+      if (jr.ok === false) {
+        useNotificationStore.getState().addNotification({
+          type: "system",
+          title: "Could not join match",
+          message: jr.detail ?? "The server rejected your join request.",
+        });
+        setDepositConfirm(null);
+        setDepositStep("idle");
+        return;
+      }
+    }
     // DB-ready: replace with wagmi writeContract(joinMatch, { value: stakePerPlayer }) in Issue #Frontend-Wallet
     lockEscrow(match.betAmount, match.id);
     joinMatch(match.id, user.username, team);
@@ -1209,21 +1224,63 @@ const MatchLobby = () => {
                   <Button
                     disabled={!newMatchGame || !newMatchBet || !newMatchPassword || !newMatchMode || !canPlay}
                     onClick={() => {
-                      if (!newMatchGame || !newMatchBet || !newMatchMode || !user) return;
-                      const teamSize  = getTeamSize(newMatchMode);
-                      const created   = addMatch({
-                        type: "custom", host: user.username, hostId: user.id, game: newMatchGame as Game,
-                        mode: newMatchMode, betAmount: newMatchBet, players: [],
-                        maxPlayers: getTotalPlayers(newMatchMode), status: "waiting",
-                        password: newMatchPassword, teamA: [user.username], teamB: [],
-                        maxPerTeam: teamSize, teamSize, depositsReceived: 1,
-                      });
-                      lockEscrow(newMatchBet, created.id);
-                      setMyRoomMatchId(created.id);   // ← host appears in "My Active Room" panel with Leave/Delete buttons
-                      setRoomLocked(false);
-                      const { addNotification } = useNotificationStore.getState();
-                      addNotification({ type: "match_invite", title: "⚔️ Match Created", message: `Your ${newMatchGame} ${newMatchMode} ($${newMatchBet}) is live! Code: ${created.code}` });
-                      setCreateMode(false); setNewMatchPassword(""); setNewMatchGame(""); setNewMatchBet(null); setNewMatchMode(null);
+                      void (async () => {
+                        if (!newMatchGame || !newMatchBet || !newMatchMode || !user) return;
+                        const teamSize = getTeamSize(newMatchMode);
+                        let serverMatchId: string | undefined;
+                        if (
+                          token &&
+                          (newMatchGame === "CS2" || newMatchGame === "Valorant")
+                        ) {
+                          const apiRes = await apiCreateMatch(token, {
+                            game: newMatchGame,
+                            stake_amount: newMatchBet,
+                          });
+                          if (apiRes.ok === false) {
+                            useNotificationStore.getState().addNotification({
+                              type: "system",
+                              title: "Could not create match",
+                              message:
+                                apiRes.detail ??
+                                "Check your Steam / Riot ID on your account and try again.",
+                            });
+                            return;
+                          }
+                          serverMatchId = apiRes.data.match_id;
+                        }
+                        const created = addMatch({
+                          ...(serverMatchId ? { id: serverMatchId } : {}),
+                          type: "custom",
+                          host: user.username,
+                          hostId: user.id,
+                          game: newMatchGame as Game,
+                          mode: newMatchMode,
+                          betAmount: newMatchBet,
+                          players: [],
+                          maxPlayers: getTotalPlayers(newMatchMode),
+                          status: "waiting",
+                          password: newMatchPassword,
+                          teamA: [user.username],
+                          teamB: [],
+                          maxPerTeam: teamSize,
+                          teamSize,
+                          depositsReceived: 1,
+                        });
+                        lockEscrow(newMatchBet, created.id);
+                        setMyRoomMatchId(created.id);
+                        setRoomLocked(false);
+                        const { addNotification } = useNotificationStore.getState();
+                        addNotification({
+                          type: "match_invite",
+                          title: "⚔️ Match Created",
+                          message: `Your ${newMatchGame} ${newMatchMode} ($${newMatchBet}) is live! Code: ${created.code}`,
+                        });
+                        setCreateMode(false);
+                        setNewMatchPassword("");
+                        setNewMatchGame("");
+                        setNewMatchBet(null);
+                        setNewMatchMode(null);
+                      })();
                     }}
                     className="glow-green font-display">
                     <Swords className="mr-2 h-4 w-4" /> Create {newMatchMode ?? ""} Match

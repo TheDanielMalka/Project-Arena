@@ -3,8 +3,8 @@ import type { Match, Game, MatchStatus } from "@/types";
 
 interface MatchState {
   matches: Match[];
-  // DB-ready: replace with POST /api/matches
-  addMatch: (match: Omit<Match, "id" | "createdAt">) => Match;
+  // DB-ready: replace with POST /api/matches — pass `id` when server returned match UUID
+  addMatch: (match: Omit<Match, "id" | "createdAt"> & { id?: string }) => Match;
   // DB-ready: replace with POST /api/matches/:id/join
   joinMatch: (matchId: string, playerId: string, team?: "A" | "B") => boolean;
   // DB-ready: replace with PATCH /api/matches/:id/status
@@ -67,12 +67,17 @@ export const useMatchStore = create<MatchState>((set, get) => ({
   matches: SEED_MATCHES,
 
   addMatch: (matchData) => {
+    const { id: presetId, ...rest } = matchData;
+    const id =
+      typeof presetId === "string" && presetId.trim().length > 0
+        ? presetId.trim()
+        : `m-${++matchCounter}`;
     const newMatch: Match = {
-      ...matchData,
-      id: `m-${++matchCounter}`,
+      ...rest,
+      id,
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-      code: matchData.type === "custom" ? generateCode() : undefined,
+      code: rest.type === "custom" ? generateCode() : undefined,
     };
     set((state) => ({ matches: [newMatch, ...state.matches] }));
     return newMatch;

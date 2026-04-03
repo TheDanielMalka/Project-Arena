@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as engineApi from "@/lib/engine-api";
 import { useUserStore } from "@/stores/userStore";
 
+const SIGNUP_GAME = { steamId: "76561198000000001" } as const;
+
 describe("userStore", () => {
   beforeEach(() => {
     useUserStore.getState().logout();
@@ -31,23 +33,23 @@ describe("userStore", () => {
 
   // ── signup ────────────────────────────────────────────────────────────────
   it("signup creates user with correct username", async () => {
-    await useUserStore.getState().signup("TestUser", "test@arena.gg", "password123");
+    await useUserStore.getState().signup("TestUser", "test@arena.gg", "password123", SIGNUP_GAME);
     expect(useUserStore.getState().user?.username).toBe("TestUser");
   });
 
   it("signup sets showLoginGreeting with type 'signup'", async () => {
-    await useUserStore.getState().signup("TestUser", "test@arena.gg", "password123");
+    await useUserStore.getState().signup("TestUser", "test@arena.gg", "password123", SIGNUP_GAME);
     expect(useUserStore.getState().showLoginGreeting).toBe(true);
     expect(useUserStore.getState().greetingType).toBe("signup");
   });
 
   it("signup sets walletConnected to false", async () => {
-    await useUserStore.getState().signup("TestUser", "test@arena.gg", "password123");
+    await useUserStore.getState().signup("TestUser", "test@arena.gg", "password123", SIGNUP_GAME);
     expect(useUserStore.getState().walletConnected).toBe(false);
   });
 
   it("signup starts user with 0 xp and 0 matches", async () => {
-    await useUserStore.getState().signup("NewPlayer", "new@arena.gg", "password123");
+    await useUserStore.getState().signup("NewPlayer", "new@arena.gg", "password123", SIGNUP_GAME);
     const stats = useUserStore.getState().user?.stats;
     expect(stats?.xp).toBe(0);
     expect(stats?.matches).toBe(0);
@@ -60,7 +62,7 @@ describe("userStore", () => {
       detail: "Email already registered",
       field: "email",
     });
-    const r = await useUserStore.getState().signup("TestUser", "taken@arena.gg", "password123");
+    const r = await useUserStore.getState().signup("TestUser", "taken@arena.gg", "password123", SIGNUP_GAME);
     expect(r.ok).toBe(false);
     if (r.ok === false) {
       expect(r.field).toBe("email");

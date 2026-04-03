@@ -44,6 +44,8 @@ export interface UserProfile {
   username: string;
   email: string;
   steamId: string;
+  /** Valorant Riot ID (Name#TAG); DB: users.riot_id */
+  riotId: string;
   walletAddress: string;
   walletShort: string;
   rank: string;
