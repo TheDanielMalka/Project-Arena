@@ -226,7 +226,7 @@ function parseFastApiDetail(raw: unknown): string | null {
 }
 
 /** Maps backend `detail` text (e.g. 409 "Email already registered") to a signup field. */
-export type RegisterConflictField = "email" | "username" | "steam";
+export type RegisterConflictField = "email" | "username" | "steam" | "riot";
 
 export function registerConflictFieldFromDetail(detail: string | null): RegisterConflictField | null {
   if (!detail) return null;
@@ -234,7 +234,7 @@ export function registerConflictFieldFromDetail(detail: string | null): Register
   if (d.includes("email")) return "email";
   if (d.includes("username") || d.includes("user name")) return "username";
   if (d.includes("steam")) return "steam";
-  if (d.includes("riot")) return "steam";
+  if (d.includes("riot")) return "riot";
   return null;
 }
 
@@ -251,17 +251,32 @@ export type ApiRegisterResult =
   | { ok: true; data: ApiRegisterSuccess }
   | { ok: false; status: number; detail: string | null; field: RegisterConflictField | null };
 
-// POST /auth/register — 409 returns { detail: string }; UI maps detail → field via registerConflictFieldFromDetail
+export type ApiRegisterOptions = {
+  steam_id?: string | null;
+  riot_id?: string | null;
+};
+
+// POST /auth/register — requires at least one of steam_id / riot_id (validated on server)
 export async function apiRegister(
   username: string,
   email: string,
   password: string,
+  opts?: ApiRegisterOptions,
 ): Promise<ApiRegisterResult> {
+  const body: Record<string, string> = {
+    username,
+    email,
+    password,
+  };
+  const steam = opts?.steam_id?.trim();
+  const riot = opts?.riot_id?.trim();
+  if (steam) body.steam_id = steam;
+  if (riot) body.riot_id = riot;
   try {
     const res = await fetch(`${ENGINE_BASE}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, email, password }),
+      body: JSON.stringify(body),
     });
     const raw = (await res.json().catch(() => ({}))) as { detail?: unknown } & Partial<ApiRegisterSuccess>;
     if (!res.ok) {
@@ -279,7 +294,7 @@ export async function apiRegister(
   }
 }
 
-// GET /auth/me — returns full profile including rank, xp, avatar, badge
+// GET /auth/me — returns full profile including rank, xp, avatar, badge, game accounts
 export async function apiGetMe(token: string): Promise<{
   user_id: string;
   username: string;
@@ -287,6 +302,8 @@ export async function apiGetMe(token: string): Promise<{
   arena_id: string | null;
   rank: string | null;
   wallet_address: string | null;
+  steam_id: string | null;
+  riot_id: string | null;
   xp: number;
   wins: number;
   losses: number;
@@ -308,6 +325,8 @@ export async function apiGetMe(token: string): Promise<{
       arena_id: string | null;
       rank: string | null;
       wallet_address: string | null;
+      steam_id: string | null;
+      riot_id: string | null;
       xp: number;
       wins: number;
       losses: number;
@@ -322,6 +341,97 @@ export async function apiGetMe(token: string): Promise<{
   }
 }
 
+export type ApiCreateMatchSuccess = {
+  match_id: string;
+  game: string;
+  status: string;
+  stake_amount: number;
+};
+
+export type ApiMatchMutationResult =
+  | { ok: true; data: ApiCreateMatchSuccess }
+  | { ok: false; status: number; detail: string | null };
+
+/** POST /matches — Bearer auth; CS2 needs steam_id on user, Valorant needs riot_id */
+export async function apiCreateMatch(
+  token: string,
+  body: { game: string; stake_amount: number },
+): Promise<ApiMatchMutationResult> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/matches`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+    const raw = (await res.json().catch(() => ({}))) as {
+      detail?: unknown;
+      match_id?: string;
+      game?: string;
+      status?: string;
+      stake_amount?: number;
+    };
+    if (!res.ok) {
+      return {
+        ok: false as const,
+        status: res.status,
+        detail: parseFastApiDetail(raw.detail),
+      };
+    }
+    return {
+      ok: true as const,
+      data: {
+        match_id: String(raw.match_id ?? ""),
+        game: String(raw.game ?? body.game),
+        status: String(raw.status ?? "waiting"),
+        stake_amount: typeof raw.stake_amount === "number" ? raw.stake_amount : body.stake_amount,
+      },
+    };
+  } catch {
+    return { ok: false as const, status: 0, detail: null };
+  }
+}
+
+export type ApiJoinMatchSuccess = { joined: boolean; match_id: string; game: string };
+
+/** POST /matches/{match_id}/join — Bearer auth */
+export async function apiJoinMatch(
+  token: string,
+  matchId: string,
+): Promise<{ ok: true; data: ApiJoinMatchSuccess } | { ok: false; status: number; detail: string | null }> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/join`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const raw = (await res.json().catch(() => ({}))) as {
+      detail?: unknown;
+      joined?: boolean;
+      match_id?: string;
+      game?: string;
+    };
+    if (!res.ok) {
+      return {
+        ok: false as const,
+        status: res.status,
+        detail: parseFastApiDetail(raw.detail),
+      };
+    }
+    return {
+      ok: true as const,
+      data: {
+        joined: !!raw.joined,
+        match_id: String(raw.match_id ?? matchId),
+        game: String(raw.game ?? ""),
+      },
+    };
+  } catch {
+    return { ok: false as const, status: 0, detail: null };
+  }
+}
+
 // PATCH /users/me — persist avatar, badge, forge changes to DB
 export async function apiPatchMe(
   token: string,
@@ -330,6 +440,9 @@ export async function apiPatchMe(
     avatar_bg?: string | null;
     equipped_badge_icon?: string | null;
     forge_unlocked_item_ids?: string[];
+    steam_id?: string | null;
+    riot_id?: string | null;
+    username?: string | null;
   },
 ): Promise<boolean> {
   try {

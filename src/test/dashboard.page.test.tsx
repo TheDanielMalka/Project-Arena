@@ -66,7 +66,9 @@ describe("Dashboard page", () => {
 
   it("shows correct greeting type for new signup", async () => {
     useUserStore.getState().logout();
-    await useUserStore.getState().signup("NewPlayer", "new@arena.gg", "password123");
+    await useUserStore.getState().signup("NewPlayer", "new@arena.gg", "password123", {
+      steamId: "76561198000000001",
+    });
 
     render(<MemoryRouter><Dashboard /></MemoryRouter>);
 

@@ -4,11 +4,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Swords, Mail, Lock, Eye, EyeOff, User, Gamepad2, KeyRound, Chrome, Check, X } from "lucide-react";
+import { Swords, Mail, Lock, Eye, EyeOff, User, Gamepad2, KeyRound, Chrome, Check, X, Hash } from "lucide-react";
 import { useUserStore } from "@/stores/userStore";
 import { useToast } from "@/hooks/use-toast";
 import { PASSWORD_RULES, isPasswordValid } from "@/lib/passwordValidation";
 import { cn } from "@/lib/utils";
+import {
+  isValidRiotId,
+  isValidSteamId,
+  RIOT_ID_HINT,
+  STEAM_ID_HINT,
+} from "@/lib/gameAccounts";
 
 const Auth = () => {
   const navigate = useNavigate();
@@ -21,12 +27,13 @@ const Auth = () => {
   const [signupEmail, setSignupEmail] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
   const [signupSteamId, setSignupSteamId] = useState("");
+  const [signupRiotId, setSignupRiotId] = useState("");
   const [forgotMode, setForgotMode] = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [confirmedAge, setConfirmedAge] = useState(false);
   const [signupFieldErrors, setSignupFieldErrors] = useState<
-    Partial<Record<"username" | "email" | "steam", string>>
+    Partial<Record<"username" | "email" | "steam" | "riot", string>>
   >({});
 
   // Redirect if already logged in (do NOT navigate during render)
@@ -69,12 +76,34 @@ const Auth = () => {
       toast({ title: "Terms required", description: "You must agree to the Terms of Service.", variant: "destructive" });
       return;
     }
-    const result = await signup(signupUsername, signupEmail, signupPassword, signupSteamId);
+    const steamTrim = signupSteamId.trim();
+    const riotTrim = signupRiotId.trim();
+    if (!steamTrim && !riotTrim) {
+      toast({
+        title: "Game account required",
+        description: "Enter at least one: Steam ID (for CS2) or Riot ID Name#TAG (for Valorant).",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (steamTrim && !isValidSteamId(steamTrim)) {
+      setSignupFieldErrors({ steam: STEAM_ID_HINT });
+      return;
+    }
+    if (riotTrim && !isValidRiotId(riotTrim)) {
+      setSignupFieldErrors({ riot: RIOT_ID_HINT });
+      return;
+    }
+    const result = await signup(signupUsername, signupEmail, signupPassword, {
+      steamId: steamTrim || undefined,
+      riotId: riotTrim || undefined,
+    });
     if (result.ok === false) {
       const msg = result.detail ?? "Please check your details and try again.";
       if (result.field === "email") setSignupFieldErrors({ email: msg });
       else if (result.field === "username") setSignupFieldErrors({ username: msg });
       else if (result.field === "steam") setSignupFieldErrors({ steam: msg });
+      else if (result.field === "riot") setSignupFieldErrors({ riot: msg });
       else {
         toast({ title: "Signup failed", description: msg, variant: "destructive" });
       }
@@ -282,15 +311,18 @@ const Auth = () => {
                     </div>
                   )}
                 </div>
+                <p className="text-xs text-muted-foreground -mb-1">
+                  Game account — provide <strong className="text-foreground">at least one</strong> (Steam for CS2, Riot for Valorant). You can add both.
+                </p>
                 <div>
                   <label className="text-sm text-muted-foreground mb-1 flex items-center gap-1">
-                    <Gamepad2 className="h-3 w-3" /> Steam ID
+                    <Gamepad2 className="h-3 w-3" /> Steam ID <span className="text-[10px] opacity-70">(CS2)</span>
                   </label>
                   <div className="relative">
                     <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
                       type="text"
-                      placeholder="76561198XXXXXXXX"
+                      placeholder="76561198000000001"
                       value={signupSteamId}
                       onChange={(e) => {
                         setSignupSteamId(e.target.value);
@@ -307,7 +339,36 @@ const Auth = () => {
                     <p className="text-xs text-destructive mt-1">{signupFieldErrors.steam}</p>
                   ) : (
                     <p className="text-xs text-muted-foreground mt-1">
-                      Find your Steam ID at steamid.io
+                      17 digits starting with 7656119 · steamid.io
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="text-sm text-muted-foreground mb-1 flex items-center gap-1">
+                    <Hash className="h-3 w-3" /> Riot ID <span className="text-[10px] opacity-70">(Valorant)</span>
+                  </label>
+                  <div className="relative">
+                    <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      type="text"
+                      placeholder="PlayerName#1234"
+                      value={signupRiotId}
+                      onChange={(e) => {
+                        setSignupRiotId(e.target.value);
+                        setSignupFieldErrors((p) => ({ ...p, riot: undefined }));
+                      }}
+                      className={cn(
+                        "pl-10 bg-secondary border-border font-mono",
+                        signupFieldErrors.riot && "border-destructive",
+                      )}
+                      aria-invalid={!!signupFieldErrors.riot}
+                    />
+                  </div>
+                  {signupFieldErrors.riot ? (
+                    <p className="text-xs text-destructive mt-1">{signupFieldErrors.riot}</p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Format Name#TAG (3–16 chars + # + 3–5 alphanumeric)
                     </p>
                   )}
                 </div>

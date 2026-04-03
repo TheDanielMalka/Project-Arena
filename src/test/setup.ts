@@ -20,7 +20,7 @@ vi.mock("@/lib/engine-api", async () => {
         wallet_address: isAdmin ? "0xADMIN" : "0x7a3F9c2E1b8D4a5C6f7e8d9B0c1A2b3C4d5E6f7A",
       };
     }),
-    apiRegister: vi.fn(async (username: string, email: string, _password: string) => ({
+    apiRegister: vi.fn(async (username: string, email: string, _password: string, _opts?: unknown) => ({
       ok: true as const,
       data: {
         access_token: "token-new",
@@ -40,6 +40,8 @@ vi.mock("@/lib/engine-api", async () => {
         arena_id: isAdmin ? "ARENA-ADM001" : "ARENA-AP0001",
         rank: isAdmin ? "Diamond I" : "Gold III",
         wallet_address: isAdmin ? "0xADMIN" : "0x7a3F9c2E1b8D4a5C6f7e8d9B0c1A2b3C4d5E6f7A",
+        steam_id: "76561198000000001",
+        riot_id: null,
         xp: isAdmin ? 9999 : 840,
         wins: isAdmin ? 999 : 94,
         losses: isAdmin ? 1 : 53,
