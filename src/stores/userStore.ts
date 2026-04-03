@@ -164,15 +164,15 @@ export const useUserStore = create<UserState>((set, get) => ({
   },
 
   signup: async (username: string, email: string, password: string, steamId?: string): Promise<SignupResult> => {
-    const result = await apiRegister(username, email, password);
-    if (!result.ok) {
+    const reg = await apiRegister(username, email, password);
+    if (reg.ok === false) {
       return {
-        ok: false,
-        detail: result.detail ?? undefined,
-        field: result.field,
+        ok: false as const,
+        detail: reg.detail ?? undefined,
+        field: reg.field,
       };
     }
-    const data = result.data;
+    const data = reg.data;
 
     const initials = data.username.slice(0, 2).toUpperCase();
     const normalizedEmail = data.email.trim().toLowerCase();
@@ -204,7 +204,7 @@ export const useUserStore = create<UserState>((set, get) => ({
     });
     setPendingClientSetupAfterSignup();
     scheduleSyncForgePurchasesToProfile();
-    return { ok: true };
+    return { ok: true as const };
   },
 
   loginWithGoogle: () => {

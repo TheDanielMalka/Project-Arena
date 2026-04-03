@@ -70,7 +70,7 @@ const Auth = () => {
       return;
     }
     const result = await signup(signupUsername, signupEmail, signupPassword, signupSteamId);
-    if (!result.ok) {
+    if (result.ok === false) {
       const msg = result.detail ?? "Please check your details and try again.";
       if (result.field === "email") setSignupFieldErrors({ email: msg });
       else if (result.field === "username") setSignupFieldErrors({ username: msg });

@@ -55,14 +55,14 @@ describe("userStore", () => {
 
   it("signup returns field and detail on 409-style conflict without authenticating", async () => {
     vi.mocked(engineApi.apiRegister).mockResolvedValueOnce({
-      ok: false,
+      ok: false as const,
       status: 409,
       detail: "Email already registered",
       field: "email",
     });
     const r = await useUserStore.getState().signup("TestUser", "taken@arena.gg", "password123");
     expect(r.ok).toBe(false);
-    if (!r.ok) {
+    if (r.ok === false) {
       expect(r.field).toBe("email");
       expect(r.detail).toBe("Email already registered");
     }

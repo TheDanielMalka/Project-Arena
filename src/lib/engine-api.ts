@@ -267,18 +267,15 @@ export async function apiRegister(
     if (!res.ok) {
       const detail = parseFastApiDetail(raw.detail);
       return {
-        ok: false,
+        ok: false as const,
         status: res.status,
         detail,
         field: registerConflictFieldFromDetail(detail),
       };
     }
-    return {
-      ok: true,
-      data: raw as ApiRegisterSuccess,
-    };
+    return { ok: true as const, data: raw as ApiRegisterSuccess };
   } catch {
-    return { ok: false, status: 0, detail: null, field: null };
+    return { ok: false as const, status: 0, detail: null, field: null };
   }
 }
 
