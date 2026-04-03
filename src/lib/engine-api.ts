@@ -251,7 +251,7 @@ export type ApiRegisterResult =
   | { ok: true; data: ApiRegisterSuccess }
   | { ok: false; status: number; detail: string | null; field: RegisterConflictField | null };
 
-// POST /auth/register — 409 returns { detail: string }; UI maps detail → field
+// POST /auth/register — 409 returns { detail: string }; UI maps detail → field via registerConflictFieldFromDetail
 export async function apiRegister(
   username: string,
   email: string,
