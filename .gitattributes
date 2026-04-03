@@ -1,0 +1,9 @@
+# Normalize line endings so only real edits show as modified (Windows CRLF noise).
+* text=auto
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.sql text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
