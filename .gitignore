@@ -101,3 +101,11 @@ engine/evidence/
 # Client build outputs
 client/build/
 client/dist/
+
+# -----------------------------
+# Hardhat / Solidity
+# -----------------------------
+engine/contracts/artifacts/
+engine/contracts/cache/
+engine/contracts/node_modules/
+engine/contracts/typechain-types/

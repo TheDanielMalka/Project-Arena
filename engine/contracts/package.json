@@ -1,0 +1,10 @@
+{
+  "name": "arena-contracts",
+  "version": "1.0.0",
+  "description": "ArenaEscrow smart contracts",
+  "private": true,
+  "devDependencies": {
+    "hardhat": "^2.22.4",
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0"
+  }
+}
