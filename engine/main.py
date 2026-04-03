@@ -43,29 +43,10 @@ async def lifespan(app: FastAPI):
     try:
         with db_engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-            # Ensure match_evidence table exists (idempotent migration).
-            # DB-ready: stores VisionEngine output per screenshot submission.
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS match_evidence (
-                    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                    match_id        UUID NOT NULL REFERENCES matches(id),
-                    submitted_by    UUID REFERENCES users(id),
-                    result          VARCHAR(20),
-                    confidence      NUMERIC(5,4),
-                    accepted        BOOLEAN NOT NULL DEFAULT FALSE,
-                    players         TEXT[],
-                    agents          TEXT[],
-                    score           VARCHAR(20),
-                    evidence_path   TEXT,
-                    game            VARCHAR(20),
-                    created_at      TIMESTAMPTZ DEFAULT NOW()
-                )
-            """))
-            conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS idx_match_evidence_match "
-                "ON match_evidence (match_id)"
-            ))
-            # Ensure client_sessions table exists (idempotent migration).
+            # Safety-net: create client_sessions if init.sql hasn't been applied yet.
+            # On a DB initialised from infra/sql/init.sql this is a harmless no-op.
+            # All other tables (matches, match_evidence, users, …) are owned by
+            # init.sql — never duplicated here to avoid schema drift.
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS client_sessions (
                     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -85,19 +66,6 @@ async def lifespan(app: FastAPI):
             conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS idx_cs_user ON client_sessions(user_id)"
             ))
-            # ── Match table schema additions (idempotent) ─────────────────────
-            # Each ALTER is wrapped individually so a missing table never
-            # blocks subsequent migrations.
-            for _stmt in [
-                "ALTER TABLE matches ADD COLUMN IF NOT EXISTS game VARCHAR(20)",
-                "ALTER TABLE matches ADD COLUMN IF NOT EXISTS creator_id UUID REFERENCES users(id)",
-                "ALTER TABLE matches ADD COLUMN IF NOT EXISTS stake_amount NUMERIC(18,6) DEFAULT 0",
-                "ALTER TABLE match_players ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id)",
-            ]:
-                try:
-                    conn.execute(text(_stmt))
-                except Exception as _alt_exc:
-                    logger.debug("schema migration skipped (%s): %s", _stmt[:50], _alt_exc)
             conn.commit()
         logger.info("✅ Arena Engine connected to DB")
     except Exception as exc:
@@ -401,32 +369,13 @@ async def submit_result(result: MatchResult, token: dict = Depends(verify_token)
     Writes to match_evidence and updates matches.status/winner_id.
     CONTRACT-ready: winner_id → ArenaEscrow.declareWinner() (Phase 6).
     """
-    submitted_by: str | None = token.get("sub") if isinstance(token, dict) else None
-
-    # ── Persist evidence ───────────────────────────────────────────────────────
+    # ── Persist result ────────────────────────────────────────────────────────
+    # match_evidence rows are written by POST /validate/screenshot (VisionEngine
+    # pipeline). This endpoint only updates matches.status / winner_id so the
+    # frontend and escrow layer can react.
+    # CONTRACT-ready: declareWinner() call replaces this UPDATE in Phase 6.
     try:
         with SessionLocal() as session:
-            session.execute(
-                text("""
-                    INSERT INTO match_evidence
-                        (match_id, submitted_by, result, confidence, accepted,
-                         players, agents, score, game)
-                    VALUES
-                        (:match_id, :submitted_by, :result, :confidence, :accepted,
-                         :players, :agents, :score, :game)
-                """),
-                {
-                    "match_id":     result.match_id,
-                    "submitted_by": submitted_by,
-                    "result":       None,               # CLIENT-ready: pass VisionOutput.result
-                    "confidence":   result.ocr_confidence,
-                    "accepted":     True,
-                    "players":      result.players_detected,
-                    "agents":       result.agents_detected,
-                    "score":        result.score,
-                    "game":         result.game,
-                },
-            )
             # Update match status to completed + set winner if provided
             if result.winner_id:
                 session.execute(
@@ -1174,15 +1123,26 @@ def _assert_game_account(game: str, steam_id: str | None, riot_id: str | None) -
         )
 
 
+_VALID_MODES = {"1v1", "2v2", "4v4", "5v5"}
+
+
 class CreateMatchRequest(BaseModel):
     """
     POST /matches — create a new match lobby.
 
+    Field names mirror infra/sql/init.sql exactly:
+      game         → matches.game  (game enum: 'CS2' | 'Valorant' | …)
+      stake_amount → matches.bet_amount  (NUMERIC, must be > 0; CHECK enforced by DB)
+      mode         → matches.mode  (match_mode enum: '1v1' | '2v2' | '4v4' | '5v5')
+      match_type   → matches.type  (match_type enum: 'public' | 'custom')
+
     DB-ready: writes to matches + match_players tables.
     CONTRACT-ready: stake_amount → ArenaEscrow.lockStake() once wallet is linked.
     """
-    game: str = "CS2"          # "CS2" | "Valorant"
-    stake_amount: float = 0.0  # CONTRACT-ready: USDT escrow amount
+    game: str = "CS2"           # "CS2" | "Valorant"
+    stake_amount: float = 1.0   # CONTRACT-ready: USDT per player; bet_amount > 0 enforced by DB
+    mode: str = "1v1"           # "1v1" | "2v2" | "4v4" | "5v5"
+    match_type: str = "custom"  # "public" | "custom"
 
 
 @app.post("/matches", status_code=201)
@@ -1206,6 +1166,17 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
     if game not in _VALID_GAMES:
         raise HTTPException(400, f"game must be one of: {', '.join(sorted(_VALID_GAMES))}")
 
+    mode = req.mode.strip()
+    if mode not in _VALID_MODES:
+        raise HTTPException(400, f"mode must be one of: {', '.join(sorted(_VALID_MODES))}")
+
+    match_type = req.match_type.strip()
+    if match_type not in ("public", "custom"):
+        raise HTTPException(400, "match_type must be 'public' or 'custom'")
+
+    # bet_amount has CHECK > 0 in DB; clamp to minimum to prevent constraint error
+    bet_amount = max(float(req.stake_amount), 0.01)
+
     try:
         with SessionLocal() as session:
             # ── Look up creator's game accounts ───────────────────────────────
@@ -1220,14 +1191,23 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
             steam_id, riot_id, wallet_address = user_row
             _assert_game_account(game, steam_id, riot_id)
 
-            # ── Create match ──────────────────────────────────────────────────
+            # ── Create match (column names match infra/sql/init.sql exactly) ──
+            # host_id  = creator of the room (users.id FK, NOT NULL)
+            # bet_amount = stake per player (NUMERIC NOT NULL, CHECK > 0)
+            # type, mode = required enums (match_type, match_mode)
             match_row = session.execute(
                 text(
-                    "INSERT INTO matches (game, creator_id, stake_amount, status) "
-                    "VALUES (:g, :creator, :stake, 'waiting') "
+                    "INSERT INTO matches (type, game, host_id, mode, bet_amount) "
+                    "VALUES (:mtype, :g, :host, :mode, :bet) "
                     "RETURNING id"
                 ),
-                {"g": game, "creator": user_id, "stake": req.stake_amount},
+                {
+                    "mtype": match_type,
+                    "g":     game,
+                    "host":  user_id,
+                    "mode":  mode,
+                    "bet":   bet_amount,
+                },
             ).fetchone()
             match_id = str(match_row[0])
 
@@ -1250,8 +1230,10 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
     return {
         "match_id":     match_id,
         "game":         game,
+        "mode":         mode,
+        "match_type":   match_type,
         "status":       "waiting",
-        "stake_amount": req.stake_amount,
+        "stake_amount": bet_amount,
     }
 
 
