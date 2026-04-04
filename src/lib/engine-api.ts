@@ -514,7 +514,7 @@ export async function apiPatchMe(
 
 /**
  * PATCH /users/me — set `wallet_address` after client-side signature (Issue #23).
- * Backend `PatchUserRequest` must include `wallet_address` (Claude) or the field is ignored.
+ * Engine: `wallet_address` on PatchUserRequest — checksummed address string.
  */
 export async function apiPatchMeWalletAddress(token: string, wallet_address: string): Promise<boolean> {
   try {
@@ -522,6 +522,23 @@ export async function apiPatchMeWalletAddress(token: string, wallet_address: str
       method: "PATCH",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ wallet_address }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * PATCH /users/me — clear linked wallet (`users.wallet_address` → NULL).
+ * Engine: same contract as unlinking steam/riot — send empty string (or null once supported).
+ */
+export async function apiUnlinkMeWalletAddress(token: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/users/me`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ wallet_address: "" }),
     });
     return res.ok;
   } catch {

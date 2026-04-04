@@ -2,12 +2,14 @@ import { create } from "zustand";
 import { parseEther } from "ethers";
 import type { Transaction, TransactionType, TransactionStatus, Network } from "@/types";
 import { useUserStore } from "@/stores/userStore";
-import { apiGetMatchStatus, apiPatchMeWalletAddress } from "@/lib/engine-api";
+import { apiGetMatchStatus, apiPatchMeWalletAddress, apiUnlinkMeWalletAddress } from "@/lib/engine-api";
 import { connectMetaMaskAndSignOwnership, depositToEscrow } from "@/lib/metamaskBsc";
 
 export type ConnectWalletResult =
   | { ok: true }
   | { ok: false; error: string };
+
+export type DisconnectWalletResult = ConnectWalletResult;
 
 // ─── Architecture note ──────────────────────────────────────────────────────
 // Arena is NON-CUSTODIAL. The platform never holds user funds.
@@ -62,7 +64,7 @@ interface WalletState {
   getAvailableBalance: () => number;
   /** MetaMask (EIP-1193) on BSC Testnet — sign ownership message, then PATCH /users/me `wallet_address`. */
   connectWallet: () => Promise<ConnectWalletResult>;
-  disconnectWallet: () => void;
+  disconnectWallet: () => Promise<DisconnectWalletResult>;
   /** DB-ready: POST /api/wallet/buy-at — mock deducts USDT, credits atBalance; returns false if insufficient */
   buyArenaTokens: (atAmount: number, totalUsdtCost: number) => boolean;
 }
@@ -162,6 +164,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         };
       }
       set({ connectedAddress: address, selectedNetwork: "bsc" });
+      useUserStore.getState().setLinkedWalletAddress(address);
       return { ok: true as const };
     } catch (e: unknown) {
       const err = e as { code?: string; message?: string };
@@ -179,9 +182,21 @@ export const useWalletStore = create<WalletState>((set, get) => ({
     }
   },
 
-  disconnectWallet: () => {
-    // DB-ready: wagmi useDisconnect() + optional PATCH wallet_address null
+  disconnectWallet: async (): Promise<DisconnectWalletResult> => {
+    const token = useUserStore.getState().token;
+    if (token) {
+      const ok = await apiUnlinkMeWalletAddress(token);
+      if (!ok) {
+        return {
+          ok: false as const,
+          error:
+            "Could not unlink wallet on the server. If the backend is not updated yet, try again after deploy.",
+        };
+      }
+    }
     set({ connectedAddress: null });
+    useUserStore.getState().unlinkWalletFromProfile();
+    return { ok: true as const };
   },
 
   setDailyBettingLimit: (limit) =>

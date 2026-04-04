@@ -13,6 +13,7 @@ vi.mock("@/lib/engine-api", async (importOriginal) => {
       stake_per_player: 0.01,
       your_team: 0 as const,
     }),
+    apiUnlinkMeWalletAddress: vi.fn().mockResolvedValue(true),
   };
 });
 
@@ -254,8 +255,9 @@ describe("walletStore — non-custodial model", () => {
     expect(useWalletStore.getState().selectedNetwork).toBe("bsc");
   });
 
-  it("disconnectWallet clears connectedAddress", () => {
-    useWalletStore.getState().disconnectWallet();
+  it("disconnectWallet clears connectedAddress", async () => {
+    const r = await useWalletStore.getState().disconnectWallet();
+    expect(r.ok).toBe(true);
     expect(useWalletStore.getState().connectedAddress).toBeNull();
   });
 });
