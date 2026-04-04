@@ -5,9 +5,10 @@ Issue #24: Calculates and logs platform fees on every match payout.
 Default fee: 5% of the gross payout amount.
 Fee deductions are logged in TransactionLedger (Issue #22) as tx_type="fee".
 
-TODO (requires M5 Smart Contract):
-    - Route fee amount to platform wallet on-chain via Escrow contract.
-      Currently fee is calculated and logged but not transferred on-chain.
+On-chain routing:
+    - Fee is transferred automatically by ArenaEscrow.declareWinner() → _sendEth(owner, fee).
+    - platform_address defaults to WALLET_ADDRESS from .env (the contract owner).
+    - This class handles calculation + ledger logging only.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
     from src.wallet.ledger import TransactionLedger
 
 from src.wallet.wallet_manager import Transaction
+from src.config import WALLET_ADDRESS as _PLATFORM_WALLET
 
 log = logging.getLogger("wallet.fee_engine")
 
@@ -67,7 +69,7 @@ class FeeEngine:
     def __init__(
         self,
         fee_percent: float = DEFAULT_FEE_PERCENT,
-        platform_address: str = "",
+        platform_address: str = _PLATFORM_WALLET or "",
         ledger: Optional[TransactionLedger] = None,
     ) -> None:
         if not (MIN_FEE_PERCENT <= fee_percent <= MAX_FEE_PERCENT):
@@ -139,7 +141,7 @@ class FeeEngine:
             asset=result.asset,
             timestamp=datetime.now(timezone.utc),
             tx_hash=None,
-            # TODO (M5): set tx_hash once fee is routed on-chain via Smart Contract
+            # tx_hash is the on-chain tx from ArenaEscrow.declareWinner() — not available here
             status="success",
         )
         self._ledger.record(
