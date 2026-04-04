@@ -430,7 +430,7 @@ const MatchLobby = () => {
     useNotificationStore.getState().addNotification({
       type: "system",
       title: "🔒 Deposit Confirmed",
-      message: `$${match.betAmount} locked in escrow for ${match.game} ${match.mode}. Waiting for all players.`,
+      message: `${match.betAmount} BNB locked in escrow for ${match.game} ${match.mode}. Waiting for all players.`,
     });
     setDepositConfirm(null);
     setDepositStep("idle");
