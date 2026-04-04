@@ -15,7 +15,13 @@ import jwt as _jwt
 from src.config import DATABASE_URL, ENVIRONMENT, MIN_CLIENT_VERSION
 from src.vision.capture import capture_screen, crop_roi
 from src.vision.engine import VisionEngine, VisionEngineConfig
-from src.contract import build_escrow_client
+try:
+    from src.contract import build_escrow_client
+except ImportError:
+    # web3 C extensions not available in this environment (e.g. Windows without MSVC).
+    # Engine runs without escrow client — build_escrow_client returns None gracefully.
+    def build_escrow_client(_session_factory):  # type: ignore[misc]
+        return None
 import src.auth as auth
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -116,6 +122,19 @@ async def verify_token(authorization: str = Header(...)) -> dict:
         raise HTTPException(401, "Token expired")
     except _jwt.InvalidTokenError:
         raise HTTPException(401, "Invalid token")
+
+
+async def optional_token(authorization: str | None = Header(default=None)) -> dict | None:
+    """Like verify_token but returns None instead of 401 when header is absent."""
+    if not authorization:
+        return None
+    if not authorization.startswith("Bearer "):
+        return None
+    token = authorization.removeprefix("Bearer ")
+    try:
+        return auth.decode_token(token)
+    except (_jwt.ExpiredSignatureError, _jwt.InvalidTokenError):
+        return None
 
 
 # ── Auth models ───────────────────────────────────────────────────────────────
@@ -734,32 +753,68 @@ async def client_active_match(wallet_address: str):
 
 
 @app.get("/match/{match_id}/status")
-async def match_status(match_id: str):
+async def match_status(
+    match_id: str,
+    token: dict | None = Depends(optional_token),
+):
     """
     Check match validation status from DB.
 
-    Returns status + winner_id so the frontend can trigger escrow release
-    without guessing.  winner_id is null until the engine writes a confirmed
-    result — callers must treat null as "not yet decided".
+    Returns:
+      - status, winner_id         — always present
+      - on_chain_match_id         — BIGINT from matches table; null until MatchCreated event
+      - stake_per_player          — BNB amount each player staked (float, e.g. 0.1)
+      - your_team                 — 0 (Team A) or 1 (Team B) for the calling user;
+                                    null when unauthenticated or user not in match
 
-    DB-ready: SELECT status, winner_id FROM matches WHERE id = :mid
-    CONTRACT-ready: winner_id → escrow.release(winner_id)
+    Frontend uses on_chain_match_id + your_team to call
+    ArenaEscrow.deposit(on_chain_match_id, your_team, { value: stake_wei }).
+
+    DB-ready: matches + match_players
+    CONTRACT-ready: on_chain_match_id → ArenaEscrow.deposit() / declareWinner()
     """
+    user_id: str | None = token.get("user_id") if token else None
     try:
         with SessionLocal() as session:
             row = session.execute(
-                text("SELECT status, winner_id FROM matches WHERE id = :mid"),
+                text("""
+                    SELECT status, winner_id, on_chain_match_id, stake_per_player
+                    FROM matches
+                    WHERE id = :mid
+                """),
                 {"mid": match_id},
             ).fetchone()
             if row:
+                your_team: int | None = None
+                if user_id:
+                    team_row = session.execute(
+                        text(
+                            "SELECT team FROM match_players "
+                            "WHERE match_id = :mid AND user_id = :uid"
+                        ),
+                        {"mid": match_id, "uid": user_id},
+                    ).fetchone()
+                    if team_row:
+                        # DB stores 'A' / 'B'; contract uses 0 / 1
+                        your_team = 0 if team_row[0] == "A" else 1
                 return {
-                    "match_id":  match_id,
-                    "status":    row[0],
-                    "winner_id": row[1],   # None until match is completed
+                    "match_id":          match_id,
+                    "status":            row[0],
+                    "winner_id":         row[1],
+                    "on_chain_match_id": row[2],        # null until MatchCreated event
+                    "stake_per_player":  float(row[3]) if row[3] is not None else None,
+                    "your_team":         your_team,     # 0=A / 1=B / null
                 }
     except Exception:
         pass
-    return {"match_id": match_id, "status": "pending", "winner_id": None}
+    return {
+        "match_id":          match_id,
+        "status":            "pending",
+        "winner_id":         None,
+        "on_chain_match_id": None,
+        "stake_per_player":  None,
+        "your_team":         None,
+    }
 
 
 # ── Auth routes ───────────────────────────────────────────────────────────────
