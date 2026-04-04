@@ -217,10 +217,18 @@ describe("walletStore — non-custodial model", () => {
   });
 
   // ── connectWallet / disconnectWallet ──────────────────────────────────────
-  it("connectWallet sets connectedAddress and network", () => {
-    useWalletStore.getState().connectWallet("0xNEWADDR", "ethereum");
-    expect(useWalletStore.getState().connectedAddress).toBe("0xNEWADDR");
-    expect(useWalletStore.getState().selectedNetwork).toBe("ethereum");
+  it("connectWallet returns error when not signed in", async () => {
+    const { useUserStore } = await import("@/stores/userStore");
+    useUserStore.getState().logout();
+    const r = await useWalletStore.getState().connectWallet();
+    expect(r.ok).toBe(false);
+    if (r.ok === false) expect(r.error).toMatch(/sign in/i);
+  });
+
+  it("setState can set connectedAddress for tests (MetaMask flow is integration-tested)", () => {
+    useWalletStore.setState({ connectedAddress: "0xNEWADDR0000000000000000000000000000000001", selectedNetwork: "bsc" });
+    expect(useWalletStore.getState().connectedAddress).toBe("0xNEWADDR0000000000000000000000000000000001");
+    expect(useWalletStore.getState().selectedNetwork).toBe("bsc");
   });
 
   it("disconnectWallet clears connectedAddress", () => {
