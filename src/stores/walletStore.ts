@@ -1,8 +1,9 @@
 import { create } from "zustand";
+import { parseEther } from "ethers";
 import type { Transaction, TransactionType, TransactionStatus, Network } from "@/types";
 import { useUserStore } from "@/stores/userStore";
-import { apiPatchMeWalletAddress } from "@/lib/engine-api";
-import { connectMetaMaskAndSignOwnership } from "@/lib/metamaskBsc";
+import { apiGetMatchStatus, apiPatchMeWalletAddress } from "@/lib/engine-api";
+import { connectMetaMaskAndSignOwnership, depositToEscrow } from "@/lib/metamaskBsc";
 
 export type ConnectWalletResult =
   | { ok: true }
@@ -47,8 +48,8 @@ interface WalletState {
   transactions: Transaction[];
 
   // Actions
-  // DB-ready: POST /api/escrow/lock  → wagmi writeContract(ArenaEscrow.deposit, { value: amount })
-  lockEscrow: (amount: number, matchId: string) => Transaction | null;
+  // DB-ready: GET /match/:id/status + ArenaEscrow.deposit via MetaMask ({ value: stakeWei })
+  lockEscrow: (amount: number, matchId: string) => Promise<Transaction | null>;
   // DB-ready: POST /api/escrow/release → emitted by ArenaEscrow.declareWinner() event
   releaseEscrow: (amount: number, matchId: string, won: boolean) => Transaction;
   // DB-ready: POST /api/escrow/cancel → wagmi writeContract(ArenaEscrow.cancelDeposit)
@@ -198,14 +199,54 @@ export const useWalletStore = create<WalletState>((set, get) => ({
     return tx;
   },
 
-  lockEscrow: (amount, matchId) => {
+  lockEscrow: async (amount, matchId) => {
+    const legacyLock = (): Transaction | null => {
+      const state = get();
+      if (amount + state.dailyBettingUsed > state.dailyBettingLimit) return null;
+      if (state.usdtBalance < amount) return null;
+      set((s) => ({
+        usdtBalance: s.usdtBalance - amount,
+        dailyBettingUsed: s.dailyBettingUsed + amount,
+      }));
+      return get().addTransaction({
+        userId: "user-001",
+        type: "escrow_lock",
+        amount: -amount,
+        token: "USDT",
+        usdValue: amount,
+        status: "pending",
+        matchId,
+        note: `Escrow locked for match ${matchId}`,
+      });
+    };
+
+    // Forge / mock entry fees — no on-chain match id (see forgeStore joinEvent).
+    if (matchId.startsWith("forge-event-")) {
+      return legacyLock();
+    }
+
+    const token = useUserStore.getState().token;
+    const status = await apiGetMatchStatus(matchId, token ?? undefined);
+    if (status == null || status.on_chain_match_id == null || status.your_team == null) {
+      return null;
+    }
+
     const state = get();
-    // Enforce daily betting limit
     if (amount + state.dailyBettingUsed > state.dailyBettingLimit) return null;
     if (state.usdtBalance < amount) return null;
 
-    // DB-ready: wagmi writeContract(ArenaEscrow.deposit, { matchId, value: amount })
-    //           → on TransactionConfirmed event: deduct from local usdtBalance
+    const stakeWei = parseEther(String(status.stake_per_player ?? amount));
+    let txHash: string;
+    try {
+      txHash = await depositToEscrow(
+        BigInt(String(status.on_chain_match_id)),
+        status.your_team,
+        stakeWei,
+      );
+    } catch {
+      return null;
+    }
+
     set((s) => ({
       usdtBalance: s.usdtBalance - amount,
       dailyBettingUsed: s.dailyBettingUsed + amount,
@@ -219,6 +260,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       usdValue: amount,
       status: "pending",
       matchId,
+      txHash,
       note: `Escrow locked for match ${matchId}`,
     });
   },

@@ -31,7 +31,9 @@ interface PendingPurchase {
   label?:   string;         // e.g. "Event Entry", "Hot Drop", "Item"
   /** When set, checkout shows “on your profile” preview for cosmetics */
   itemCategory?: ForgeCategory;
-  onConfirm: () => { success: boolean; error?: string };
+  onConfirm: () =>
+    | { success: boolean; error?: string }
+    | Promise<{ success: boolean; error?: string }>;
   onSuccess?: () => void;
 }
 
@@ -69,16 +71,20 @@ function PurchaseConfirmDialog({
     setLoading(true);
     setError("");
     // Simulate async verify (replace with real API call)
-    setTimeout(() => {
-      const result = pending!.onConfirm();
-      setLoading(false);
-      if (result.success) {
-        pending!.onSuccess?.();
-        onClose();
-      } else {
-        setError(result.error ?? "Purchase failed. Please try again.");
+    void (async () => {
+      await new Promise((r) => setTimeout(r, 400));
+      try {
+        const result = await Promise.resolve(pending!.onConfirm());
+        if (result.success) {
+          pending!.onSuccess?.();
+          onClose();
+        } else {
+          setError(result.error ?? "Purchase failed. Please try again.");
+        }
+      } finally {
+        setLoading(false);
       }
-    }, 400);
+    })();
   };
 
   const isUSDT   = pending?.currency === "USDT";
@@ -1052,13 +1058,13 @@ function EventsTab() {
   const [joinedNow, setJoinedNow]   = useState<Set<string>>(new Set());
   const [joinError, setJoinError]   = useState<{ id: string; msg: string } | null>(null);
 
-  function handleJoin(eventId: string) {
+  async function handleJoin(eventId: string) {
     const allEvents = [...getActiveEvents(), ...getUpcomingEvents()];
     const event = allEvents.find((e) => e.id === eventId);
     if (!event) return;
     // Free events — join directly, no confirm
     if (!event.entryFee) {
-      const result = joinEvent(eventId);
+      const result = await joinEvent(eventId);
       if (result.success) setJoinedNow((prev) => new Set(prev).add(eventId));
       else { setJoinError({ id: eventId, msg: result.error ?? "Could not join" }); setTimeout(() => setJoinError(null), 3000); }
       return;
@@ -1069,7 +1075,7 @@ function EventsTab() {
       price: event.entryFee,
       currency: "USDT",
       label: "Event Entry Fee",
-      onConfirm: () => {
+      onConfirm: async () => {
         setJoinError(null);
         return joinEvent(eventId);
       },

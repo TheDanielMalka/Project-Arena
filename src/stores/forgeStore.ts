@@ -94,7 +94,7 @@ interface ForgeState {
   // DB-ready: replace with POST /api/forge/challenges/:id/claim
   claimChallenge: (challengeId: string) => { success: boolean; earned?: number };
   // DB-ready: replace with POST /api/forge/events/:id/join
-  joinEvent: (eventId: string) => { success: boolean; error?: string };
+  joinEvent: (eventId: string) => Promise<{ success: boolean; error?: string }>;
 
   // DB-ready: replace with GET /api/forge/challenges?type=daily
   getDailyChallenges: () => ForgeChallenge[];
@@ -191,7 +191,7 @@ export const useForgeStore = create<ForgeState>()(
     return { success: true, earned: challenge.rewardAT };
   },
 
-  joinEvent: (eventId) => {
+  joinEvent: async (eventId) => {
     const event = get().events.find((e) => e.id === eventId);
     if (!event) return { success: false, error: "Event not found" };
     if (event.joined) return { success: false, error: "Already joined" };
@@ -199,7 +199,7 @@ export const useForgeStore = create<ForgeState>()(
 
     if (event.entryFee) {
       // DB-ready: replace with POST /api/forge/events/:id/join → locks escrow server-side
-      const result = useWalletStore.getState().lockEscrow(event.entryFee, `forge-event-${eventId}`);
+      const result = await useWalletStore.getState().lockEscrow(event.entryFee, `forge-event-${eventId}`);
       if (!result) return { success: false, error: `Insufficient balance — entry fee is $${event.entryFee}` };
     }
     set((s) => ({
