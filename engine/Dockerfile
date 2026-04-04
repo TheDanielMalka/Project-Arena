@@ -17,7 +17,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# build-essential + python3-dev are needed to compile web3's C extensions
+# (lru-dict, ckzg). Purged after pip install to keep the image lean.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential python3-dev \
+    && pip install --no-cache-dir -r requirements.txt \
+    && apt-get purge -y --auto-remove build-essential python3-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY . .
 
