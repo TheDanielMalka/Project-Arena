@@ -249,10 +249,21 @@ class TestMatchStatusRoute:
         assert r1.json()["match_id"] == "AAA"
         assert r2.json()["match_id"] == "BBB"
 
-    def test_response_has_all_three_fields(self):
-        """match_id + status + winner_id — all three required by contract."""
+    def test_response_has_all_required_fields(self):
+        """All contract fields must be present — including on-chain escrow fields."""
         resp = client.get("/match/M-999/status")
         data = resp.json()
-        assert "match_id"  in data
-        assert "status"    in data
-        assert "winner_id" in data
+        assert "match_id"          in data
+        assert "status"            in data
+        assert "winner_id"         in data
+        assert "on_chain_match_id" in data   # null until MatchCreated event
+        assert "stake_per_player"  in data   # null until match is funded
+        assert "your_team"         in data   # null when unauthenticated
+
+    def test_on_chain_fields_null_when_no_db(self):
+        """Without DB the new escrow fields return null gracefully."""
+        resp = client.get("/match/M-999/status")
+        data = resp.json()
+        assert data["on_chain_match_id"] is None
+        assert data["stake_per_player"]  is None
+        assert data["your_team"]         is None
