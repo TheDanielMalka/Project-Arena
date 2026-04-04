@@ -226,7 +226,16 @@ export const useWalletStore = create<WalletState>((set, get) => ({
     }
 
     const token = useUserStore.getState().token;
-    const status = await apiGetMatchStatus(matchId, token ?? undefined);
+    // on_chain_match_id may be null if EscrowClient hasn't processed MatchCreated yet.
+    // Retry up to 3x with 5s apart before giving up.
+    let status = await apiGetMatchStatus(matchId, token ?? undefined);
+    if (status?.on_chain_match_id == null) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await new Promise((r) => setTimeout(r, 5000));
+        status = await apiGetMatchStatus(matchId, token ?? undefined);
+        if (status?.on_chain_match_id != null) break;
+      }
+    }
     if (status == null || status.on_chain_match_id == null || status.your_team == null) {
       return null;
     }
