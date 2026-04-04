@@ -1,4 +1,4 @@
-import { BrowserProvider, Contract, getAddress } from "ethers";
+import { BrowserProvider, Contract, getAddress, parseEther } from "ethers";
 
 /** EIP-155 chain id — default BSC Testnet (97). Override with `VITE_CHAIN_ID`. */
 export function getArenaTargetChainId(): number {
@@ -104,6 +104,54 @@ export async function depositToEscrow(
   const tx = await contract.deposit(onChainMatchId, team, { value: stakeWei });
   await tx.wait();
   return tx.hash;
+}
+
+/**
+ * ArenaEscrow.createMatch — host creates the match on-chain and pays their stake.
+ * teamSize: 1 | 2 | 4 | 5   stakeEther: e.g. 0.1 (BNB)
+ * Returns txHash + the on-chain matchId extracted from the MatchCreated event.
+ */
+export async function createMatchOnChain(
+  teamSize: number,
+  stakeEther: number,
+): Promise<{ txHash: string; onChainMatchId: bigint }> {
+  const addr = import.meta.env.VITE_CONTRACT_ADDRESS;
+  if (!addr?.trim()) throw new Error("VITE_CONTRACT_ADDRESS is not set");
+  const eth = getInjectedEthereum();
+  if (!eth) throw new Error("MetaMask not found");
+  await ensureTargetChain(eth);
+  const provider = new BrowserProvider(eth);
+  const signer = await provider.getSigner();
+  const stakeWei = parseEther(String(stakeEther));
+  const contract = new Contract(
+    addr,
+    [
+      "function createMatch(uint8 teamSize, uint256 stakePerPlayer) payable",
+      "event MatchCreated(uint256 indexed matchId, address indexed creator, uint8 teamSize, uint256 stakePerPlayer)",
+    ],
+    signer,
+  );
+  const tx = await contract.createMatch(teamSize, stakeWei, { value: stakeWei });
+  const receipt = await tx.wait();
+  if (!receipt) throw new Error("Transaction receipt not available");
+
+  let onChainMatchId = 0n;
+  for (const log of receipt.logs) {
+    try {
+      const parsed = contract.interface.parseLog(log);
+      if (parsed?.name === "MatchCreated") {
+        const arg0 = parsed.args[0];
+        onChainMatchId = typeof arg0 === "bigint" ? arg0 : BigInt(String(arg0));
+        break;
+      }
+    } catch {
+      /* not our event */
+    }
+  }
+  if (onChainMatchId === 0n) {
+    throw new Error("MatchCreated event not found in transaction receipt");
+  }
+  return { txHash: String(tx.hash), onChainMatchId };
 }
 
 export async function connectMetaMaskAndSignOwnership(): Promise<{ address: string; signature: string }> {

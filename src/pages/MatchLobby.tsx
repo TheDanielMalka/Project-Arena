@@ -25,6 +25,7 @@ import { PlayerPopoverLayer } from "@/components/players/PlayerCardPopover";
 import { ClientReadinessStrip } from "@/components/match/ClientReadinessStrip";
 import { apiCreateMatch, apiJoinMatch } from "@/lib/engine-api";
 import { looksLikeServerMatchId } from "@/lib/gameAccounts";
+import { createMatchOnChain } from "@/lib/metamaskBsc";
 
 // ─── Game configs ─────────────────────────────────────────────────────────────
 // comingSoon: true → game visible in dropdowns but non-selectable (greyed, locked)
@@ -1303,10 +1304,26 @@ const MatchLobby = () => {
                         if (!newMatchGame || !newMatchBet || !newMatchMode || !user) return;
                         const teamSize = getTeamSize(newMatchMode);
                         let serverMatchId: string | undefined;
-                        if (
-                          token &&
-                          (newMatchGame === "CS2" || newMatchGame === "Valorant")
-                        ) {
+                        const useServerApi =
+                          !!token &&
+                          (newMatchGame === "CS2" || newMatchGame === "Valorant");
+
+                        if (useServerApi) {
+                          // Step 1: Create match on-chain (host pays stake here — no separate deposit for host)
+                          try {
+                            await createMatchOnChain(teamSize, newMatchBet);
+                          } catch (e: unknown) {
+                            useNotificationStore.getState().addNotification({
+                              type: "system",
+                              title: "On-chain match creation failed",
+                              message:
+                                e instanceof Error
+                                  ? e.message
+                                  : "MetaMask transaction was rejected or failed.",
+                            });
+                            return;
+                          }
+
                           const apiRes = await apiCreateMatch(token, {
                             game: newMatchGame,
                             stake_amount: newMatchBet,
@@ -1323,6 +1340,7 @@ const MatchLobby = () => {
                           }
                           serverMatchId = apiRes.data.match_id;
                         }
+
                         const created = addMatch({
                           ...(serverMatchId ? { id: serverMatchId } : {}),
                           type: "custom",
@@ -1341,24 +1359,35 @@ const MatchLobby = () => {
                           teamSize,
                           depositsReceived: 1,
                         });
-                        const escrowTx = await lockEscrow(newMatchBet, created.id);
-                        if (!escrowTx) {
+
+                        if (useServerApi) {
+                          // Host's stake was paid in createMatchOnChain() — no second deposit needed.
+                          // EscrowClient will detect MatchCreated event and mark host's deposit in DB.
                           useNotificationStore.getState().addNotification({
                             type: "system",
-                            title: "Escrow deposit failed",
-                            message:
-                              "Match was created but the on-chain deposit did not complete. Check MetaMask and VITE_CONTRACT_ADDRESS, then try joining again if needed.",
+                            title: "⚔️ Match Created",
+                            message: `Your ${newMatchGame} ${newMatchMode} ($${newMatchBet} BNB) is live on-chain! Code: ${created.code}`,
                           });
-                          return;
+                        } else {
+                          const escrowTx = await lockEscrow(newMatchBet, created.id);
+                          if (!escrowTx) {
+                            useNotificationStore.getState().addNotification({
+                              type: "system",
+                              title: "Escrow deposit failed",
+                              message:
+                                "Match was created but the on-chain deposit did not complete. Check MetaMask and VITE_CONTRACT_ADDRESS, then try joining again if needed.",
+                            });
+                            return;
+                          }
+                          useNotificationStore.getState().addNotification({
+                            type: "match_invite",
+                            title: "⚔️ Match Created",
+                            message: `Your ${newMatchGame} ${newMatchMode} ($${newMatchBet}) is live! Code: ${created.code}`,
+                          });
                         }
+
                         setMyRoomMatchId(created.id);
                         setRoomLocked(false);
-                        const { addNotification } = useNotificationStore.getState();
-                        addNotification({
-                          type: "match_invite",
-                          title: "⚔️ Match Created",
-                          message: `Your ${newMatchGame} ${newMatchMode} ($${newMatchBet}) is live! Code: ${created.code}`,
-                        });
                         setCreateMode(false);
                         setNewMatchPassword("");
                         setNewMatchGame("");
