@@ -816,3 +816,77 @@ class TestBuyArenaTokens:
             json={"tx_hash": "0xabc", "usdt_amount": 10.0},
         )
         assert resp.status_code == 422
+
+
+# ─── POST /forge/purchase ─────────────────────────────────────────────────────
+
+class TestForgePurchase:
+    def _auth_header(self) -> dict:
+        token = auth.issue_token(FAKE_UUID, "daniel@arena.gg")
+        return {"Authorization": f"Bearer {token}"}
+
+    def _item_row(self, price_at=50):
+        return (str(uuid.uuid4()), price_at)   # id, price_at
+
+    def _user_row(self, at_balance=200, owned=None):
+        return (at_balance, owned or [])        # at_balance, forge_unlocked_item_ids
+
+    def test_purchase_success_returns_new_balance(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            self._item_row(50),          # forge_items lookup
+            self._user_row(200, []),     # user lookup
+            (150,),                      # UPDATE RETURNING at_balance
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/forge/purchase",
+                json={"item_slug": "avatar-dragon"},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["at_balance"] == 150
+        assert resp.json()["item_slug"] == "avatar-dragon"
+
+    def test_purchase_item_not_found_returns_404(self):
+        ctx, session = _make_session_mock(fetchone_return=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/forge/purchase",
+                json={"item_slug": "nonexistent"},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 404
+
+    def test_purchase_already_owned_returns_409(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            self._item_row(50),
+            self._user_row(200, ["avatar-dragon"]),  # already owned
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/forge/purchase",
+                json={"item_slug": "avatar-dragon"},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 409
+
+    def test_purchase_insufficient_at_returns_400(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            self._item_row(price_at=500),   # costs 500 AT
+            self._user_row(at_balance=100), # user has only 100
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/forge/purchase",
+                json={"item_slug": "badge-legendary"},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 400
+        assert "insufficient" in resp.json()["detail"].lower()
+
+    def test_purchase_no_token_returns_422(self):
+        resp = client.post("/forge/purchase", json={"item_slug": "avatar-dragon"})
+        assert resp.status_code == 422
