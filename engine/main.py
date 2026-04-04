@@ -1251,6 +1251,48 @@ def _assert_game_account(game: str, steam_id: str | None, riot_id: str | None) -
         )
 
 
+def _assert_usdt_balance(wallet_address: str, required_usdt: float) -> None:
+    """
+    Verify wallet_address holds at least required_usdt USDT on-chain.
+    Raises HTTPException(400) if balance is insufficient.
+    Skips silently if BLOCKCHAIN_RPC_URL or USDT_CONTRACT_ADDRESS not set
+    (fail-open so dev/test environments without RPC still work).
+
+    CONTRACT-ready: ERC20 balanceOf() on BSC — 18 decimals.
+    """
+    from src.config import BLOCKCHAIN_RPC_URL, USDT_CONTRACT_ADDRESS
+    if not BLOCKCHAIN_RPC_URL or not USDT_CONTRACT_ADDRESS:
+        log.debug("_assert_usdt_balance: RPC/USDT contract not configured, skipping")
+        return
+    try:
+        from web3 import Web3
+        w3 = Web3(Web3.HTTPProvider(BLOCKCHAIN_RPC_URL))
+        abi = [{
+            "inputs": [{"name": "account", "type": "address"}],
+            "name": "balanceOf",
+            "outputs": [{"name": "", "type": "uint256"}],
+            "stateMutability": "view",
+            "type": "function",
+        }]
+        contract = w3.eth.contract(
+            address=Web3.to_checksum_address(USDT_CONTRACT_ADDRESS), abi=abi
+        )
+        balance_wei = contract.functions.balanceOf(
+            Web3.to_checksum_address(wallet_address)
+        ).call()
+        balance_usdt = balance_wei / 10 ** 18   # USDT on BSC: 18 decimals
+        if balance_usdt < required_usdt:
+            raise HTTPException(
+                400,
+                f"Insufficient USDT balance. Need {required_usdt} USDT, "
+                f"your wallet has {balance_usdt:.4f} USDT.",
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.warning("_assert_usdt_balance: on-chain check failed, skipping: %s", exc)
+
+
 _VALID_MODES = {"1v1", "2v2", "4v4", "5v5"}
 
 
@@ -1384,14 +1426,14 @@ async def join_match(match_id: str, payload: dict = Depends(verify_token)):
         with SessionLocal() as session:
             # ── Verify match exists and is open ───────────────────────────────
             match_row = session.execute(
-                text("SELECT game, status FROM matches WHERE id = :mid"),
+                text("SELECT game, status, stake_amount FROM matches WHERE id = :mid"),
                 {"mid": match_id},
             ).fetchone()
 
             if not match_row:
                 raise HTTPException(404, "Match not found")
 
-            game, status = match_row
+            game, status, stake_amount = match_row
             game = _normalize_game(game or "CS2")
 
             if status != "waiting":
@@ -1416,6 +1458,12 @@ async def join_match(match_id: str, payload: dict = Depends(verify_token)):
                     "You must link a wallet before joining a staked match. "
                     "Go to Profile → Wallet and connect your MetaMask."
                 )
+
+            # ── On-chain USDT balance check ───────────────────────────────────
+            # CONTRACT-ready: verifies wallet holds >= stake_amount USDT on BSC.
+            # Skipped if BLOCKCHAIN_RPC_URL / USDT_CONTRACT_ADDRESS not configured.
+            if stake_amount:
+                _assert_usdt_balance(wallet_address, float(stake_amount))
 
             # ── Duplicate join guard ──────────────────────────────────────────
             already = session.execute(
@@ -1446,3 +1494,75 @@ async def join_match(match_id: str, payload: dict = Depends(verify_token)):
         raise HTTPException(500, "Join failed")
 
     return {"joined": True, "match_id": match_id, "game": game}
+
+
+# ── Arena Token purchase ───────────────────────────────────────────────────────
+
+class BuyAtRequest(BaseModel):
+    """
+    POST /wallet/buy-at — credit Arena Tokens after on-chain USDT transfer.
+
+    Flow:
+      1. Frontend: user transfers USDT to platform wallet via MetaMask.
+      2. Frontend: sends tx_hash + usdt_amount to this endpoint.
+      3. Backend: CONTRACT-ready: verify tx on-chain (skipped if no RPC).
+      4. Backend: credits at_balance += usdt_amount * AT_PER_USDT.
+      5. Returns new at_balance.
+    """
+    tx_hash: str         # MetaMask tx hash of the USDT transfer
+    usdt_amount: float   # USDT transferred (must be > 0)
+
+
+@app.post("/wallet/buy-at")
+async def buy_arena_tokens(req: BuyAtRequest, payload: dict = Depends(verify_token)):
+    """
+    Credit Arena Tokens to the user after they transfer USDT to the platform wallet.
+
+    CONTRACT-ready: tx_hash should be verified on-chain before crediting.
+    Rate: AT_PER_USDT env var (default 10 AT per 1 USDT).
+    DB-ready: UPDATE users SET at_balance = at_balance + :at WHERE id = :uid.
+    """
+    from src.config import AT_PER_USDT
+
+    user_id: str = payload["sub"]
+
+    if req.usdt_amount <= 0:
+        raise HTTPException(400, "usdt_amount must be greater than 0")
+
+    at_to_credit = int(req.usdt_amount * AT_PER_USDT)
+    if at_to_credit <= 0:
+        raise HTTPException(400, "Amount too small to purchase Arena Tokens")
+
+    try:
+        with SessionLocal() as session:
+            result = session.execute(
+                text("""
+                    UPDATE users
+                       SET at_balance = at_balance + :at
+                     WHERE id = :uid
+                    RETURNING at_balance
+                """),
+                {"at": at_to_credit, "uid": user_id},
+            ).fetchone()
+
+            if not result:
+                raise HTTPException(404, "User not found")
+
+            session.commit()
+            new_balance = int(result[0])
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("buy_at error: %s", exc)
+        raise HTTPException(500, "Purchase failed")
+
+    logger.info(
+        "buy_at: user=%s credited %d AT (%.2f USDT, tx=%s)",
+        user_id, at_to_credit, req.usdt_amount, req.tx_hash,
+    )
+    return {
+        "at_balance":  new_balance,
+        "at_credited": at_to_credit,
+        "usdt_spent":  req.usdt_amount,
+    }

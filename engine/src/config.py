@@ -20,9 +20,11 @@ BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
 BINANCE_SECRET = os.getenv("BINANCE_SECRET")
 
 # ── Blockchain / Smart Contract ──────────────────────────────
-BLOCKCHAIN_RPC_URL = os.getenv("BLOCKCHAIN_RPC_URL")   # e.g. BSC Testnet RPC
-CONTRACT_ADDRESS   = os.getenv("CONTRACT_ADDRESS")      # ArenaEscrow deployed address
-CHAIN_ID           = int(os.getenv("CHAIN_ID", "97"))   # 97 = BSC Testnet, 56 = BSC Mainnet
+BLOCKCHAIN_RPC_URL    = os.getenv("BLOCKCHAIN_RPC_URL")          # e.g. BSC Testnet RPC
+CONTRACT_ADDRESS      = os.getenv("CONTRACT_ADDRESS")             # ArenaEscrow deployed address
+CHAIN_ID              = int(os.getenv("CHAIN_ID", "97"))          # 97 = BSC Testnet, 56 = BSC Mainnet
+USDT_CONTRACT_ADDRESS = os.getenv("USDT_CONTRACT_ADDRESS")        # ERC20 USDT on BSC
+AT_PER_USDT           = int(os.getenv("AT_PER_USDT", "10"))       # Arena Tokens credited per 1 USDT
 
 # ── Infrastructure ───────────────────────────────────────────
 SSH_KEY_PATH = os.getenv("SSH_KEY_PATH")
@@ -53,6 +55,7 @@ OPTIONAL_VARS = [
     "BINANCE_SECRET",
     "BLOCKCHAIN_RPC_URL",
     "CONTRACT_ADDRESS",
+    "USDT_CONTRACT_ADDRESS",
     "SSH_KEY_PATH",
     "ORACLE_API_KEY",
 ]

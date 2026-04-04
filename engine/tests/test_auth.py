@@ -659,7 +659,7 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "waiting"),      # match lookup
+            ("CS2", "waiting", None),  # match lookup
             self._user_steam(),      # user lookup
             None,                    # already-joined check → not joined yet
         ]
@@ -675,7 +675,7 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "waiting"),  # match lookup
+            ("CS2", "waiting", None),  # match lookup
             self._user_none(),   # user lookup → no steam_id → 403
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -690,7 +690,7 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("Valorant", "waiting"),  # match lookup
+            ("Valorant", "waiting", None),  # match lookup
             self._user_none(),         # user lookup → no riot_id → 403
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -715,7 +715,7 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "in_progress"),  # match is already started → 409
+            ("CS2", "in_progress", None),  # match is already started → 409
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
@@ -728,7 +728,7 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "waiting"),   # match lookup
+            ("CS2", "waiting", None),   # match lookup
             self._user_steam(),   # user lookup
             (1,),                 # already-joined check → duplicate
         ]
@@ -748,7 +748,7 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "waiting"),         # match lookup
+            ("CS2", "waiting", None),         # match lookup
             self._user_steam_no_wallet(),  # user has steam but no wallet
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -758,3 +758,61 @@ class TestMatchGating:
             )
         assert resp.status_code == 400
         assert "wallet" in resp.json()["detail"].lower()
+
+# ─── POST /wallet/buy-at ──────────────────────────────────────────────────────
+
+class TestBuyArenaTokens:
+    def _auth_header(self) -> dict:
+        token = auth.issue_token(FAKE_UUID, "daniel@arena.gg")
+        return {"Authorization": f"Bearer {token}"}
+
+    def test_buy_at_credits_correct_amount(self):
+        """10 USDT → 100 AT (default AT_PER_USDT=10)."""
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.return_value = (300,)  # new at_balance
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/wallet/buy-at",
+                json={"tx_hash": "0xabc", "usdt_amount": 10.0},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "at_balance" in data
+        assert "at_credited" in data
+        assert data["at_credited"] == 100
+        assert data["usdt_spent"] == 10.0
+
+    def test_buy_at_returns_new_balance(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.return_value = (450,)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/wallet/buy-at",
+                json={"tx_hash": "0xdef", "usdt_amount": 25.0},
+                headers=self._auth_header(),
+            )
+        assert resp.json()["at_balance"] == 450
+
+    def test_buy_at_zero_amount_returns_400(self):
+        resp = client.post(
+            "/wallet/buy-at",
+            json={"tx_hash": "0x000", "usdt_amount": 0},
+            headers=self._auth_header(),
+        )
+        assert resp.status_code == 400
+
+    def test_buy_at_negative_amount_returns_400(self):
+        resp = client.post(
+            "/wallet/buy-at",
+            json={"tx_hash": "0x000", "usdt_amount": -5},
+            headers=self._auth_header(),
+        )
+        assert resp.status_code == 400
+
+    def test_buy_at_no_token_returns_422(self):
+        resp = client.post(
+            "/wallet/buy-at",
+            json={"tx_hash": "0xabc", "usdt_amount": 10.0},
+        )
+        assert resp.status_code == 422
