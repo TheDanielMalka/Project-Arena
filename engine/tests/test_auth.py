@@ -310,6 +310,36 @@ class TestRegister:
         assert resp.status_code == 201
 
 
+    def test_register_insert_includes_at_balance_200(self):
+        """
+        The INSERT INTO users statement must include at_balance=200.
+        We verify by inspecting the SQL string sent to the DB mock.
+        """
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            None,   # email duplicate check
+            None,   # username duplicate check
+            None,   # steam_id duplicate check
+            (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            client.post("/auth/register", json={
+                "username": "newuser",
+                "email": "new@arena.gg",
+                "password": "password123",
+                "steam_id": VALID_STEAM_ID,
+            })
+        # Find the INSERT call and assert it sets at_balance = 200
+        insert_calls = [
+            str(call_args[0][0])
+            for call_args in session.execute.call_args_list
+            if "INSERT INTO users" in str(call_args[0][0])
+        ]
+        assert insert_calls, "No INSERT INTO users call found"
+        assert "at_balance" in insert_calls[0]
+        assert "200" in insert_calls[0]
+
+
 # ─── POST /auth/login ─────────────────────────────────────────────────────────
 
 class TestLogin:
@@ -365,16 +395,16 @@ class TestMe:
         token = auth.issue_token(FAKE_UUID, "daniel@arena.gg")
         return {"Authorization": f"Bearer {token}"}
 
-    def _db_profile_row(self):
+    def _db_profile_row(self, at_balance: int = 200):
         # Columns: id, username, email, arena_id, rank, wallet_address,
         #          steam_id, riot_id,
         #          xp, wins, losses, avatar, avatar_bg, equipped_badge_icon,
-        #          forge_unlocked_item_ids, vip_expires_at
+        #          forge_unlocked_item_ids, vip_expires_at, at_balance
         return (FAKE_UUID, "daniel", "daniel@arena.gg", FAKE_ARENA_ID,
                 "Gold", "0xABC", None, None,
                 1500, 42, 10,
                 "preset:warrior", "red", "badge:champion",
-                ["item-001", "item-002"], None)
+                ["item-001", "item-002"], None, at_balance)
 
     def test_me_returns_profile(self):
         ctx, _ = _make_session_mock(fetchone_return=self._db_profile_row())
@@ -404,6 +434,24 @@ class TestMe:
             resp = client.get("/auth/me", headers=self._auth_header())
         assert resp.status_code == 404
 
+    def test_me_returns_at_balance(self):
+        """GET /auth/me always includes at_balance (int)."""
+        ctx, _ = _make_session_mock(fetchone_return=self._db_profile_row(at_balance=200))
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/auth/me", headers=self._auth_header())
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "at_balance" in data
+        assert data["at_balance"] == 200
+
+    def test_me_at_balance_is_int(self):
+        """at_balance must be an integer, never null."""
+        ctx, _ = _make_session_mock(fetchone_return=self._db_profile_row(at_balance=0))
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/auth/me", headers=self._auth_header())
+        data = resp.json()
+        assert type(data["at_balance"]) is int
+
 
 # ─── PATCH /users/me ──────────────────────────────────────────────────────────
 
@@ -415,12 +463,12 @@ class TestPatchUserMe:
     def _db_profile_row(self):
         # id, username, email, arena_id, rank, wallet_address, steam_id, riot_id,
         # xp, wins, losses, avatar, avatar_bg, equipped_badge_icon,
-        # forge_unlocked_item_ids, vip_expires_at
+        # forge_unlocked_item_ids, vip_expires_at, at_balance
         return (FAKE_UUID, "daniel", "daniel@arena.gg", FAKE_ARENA_ID,
                 "Gold", "0xABC", None, None,
                 10, 3, 1,
                 "preset:warrior", "blue", "badge:pro",
-                ["item-001"], None)
+                ["item-001"], None, 200)
 
     def test_patch_avatar_returns_200(self):
         ctx, session = _make_session_mock(fetchone_return=self._db_profile_row())
@@ -529,9 +577,10 @@ class TestMatchGating:
         return {"Authorization": f"Bearer {token}"}
 
     # ── Helper user rows (steam_id, riot_id, wallet_address) ─────────────────
-    def _user_steam(self):  return (VALID_STEAM_ID, None,           "0xABC")
-    def _user_riot(self):   return (None,           VALID_RIOT_ID,  "0xABC")
-    def _user_none(self):   return (None,           None,           "0xABC")
+    def _user_steam(self):          return (VALID_STEAM_ID, None,           "0xABC")
+    def _user_riot(self):           return (None,           VALID_RIOT_ID,  "0xABC")
+    def _user_none(self):           return (None,           None,           "0xABC")
+    def _user_steam_no_wallet(self):return (VALID_STEAM_ID, None,           None)
 
     # ── POST /matches ─────────────────────────────────────────────────────────
 
@@ -693,3 +742,19 @@ class TestMatchGating:
     def test_join_match_no_token_returns_422(self):
         resp = client.post(f"/matches/{uuid.uuid4()}/join")
         assert resp.status_code == 422
+
+    def test_join_without_wallet_returns_400(self):
+        """Server rejects join when the user has no linked wallet_address."""
+        match_id = str(uuid.uuid4())
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            ("CS2", "waiting"),         # match lookup
+            self._user_steam_no_wallet(),  # user has steam but no wallet
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{match_id}/join",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 400
+        assert "wallet" in resp.json()["detail"].lower()

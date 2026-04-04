@@ -217,6 +217,9 @@ class UserProfile(BaseModel):
     xp: int = 0
     wins: int = 0
     losses: int = 0
+    # Arena Tokens — platform currency for Forge store (NOT on-chain)
+    # DB-ready: users.at_balance — awarded 200 on signup, spent in Forge
+    at_balance: int = 0
     # Identity / Forge fields (from users table)
     avatar: str | None = None
     avatar_bg: str | None = None
@@ -871,8 +874,8 @@ async def register(req: RegisterRequest):
             arena_id = auth.generate_arena_id()
             row = session.execute(
                 text(
-                    "INSERT INTO users (username, email, password_hash, arena_id, steam_id, riot_id) "
-                    "VALUES (:u, :e, :h, :a, :s, :r) "
+                    "INSERT INTO users (username, email, password_hash, arena_id, steam_id, riot_id, at_balance) "
+                    "VALUES (:u, :e, :h, :a, :s, :r, 200) "
                     "RETURNING id, username, email, arena_id"
                 ),
                 {"u": username, "e": email, "h": pw_hash, "a": arena_id,
@@ -961,7 +964,8 @@ async def me(payload: dict = Depends(verify_token)):
                     "       u.rank, u.wallet_address, u.steam_id, u.riot_id, "
                     "       COALESCE(s.xp, 0), COALESCE(s.wins, 0), COALESCE(s.losses, 0), "
                     "       u.avatar, u.avatar_bg, u.equipped_badge_icon, "
-                    "       u.forge_unlocked_item_ids, u.vip_expires_at "
+                    "       u.forge_unlocked_item_ids, u.vip_expires_at, "
+                    "       COALESCE(u.at_balance, 0) "
                     "FROM users u "
                     "LEFT JOIN user_stats s ON s.user_id = u.id "
                     "WHERE u.id = :uid"
@@ -992,6 +996,7 @@ async def me(payload: dict = Depends(verify_token)):
         equipped_badge_icon=row[13],
         forge_unlocked_item_ids=list(row[14]) if row[14] else [],
         vip_expires_at=row[15].isoformat() if row[15] else None,
+        at_balance=int(row[16]),
     )
 
 
@@ -1403,6 +1408,14 @@ async def join_match(match_id: str, payload: dict = Depends(verify_token)):
 
             steam_id, riot_id, wallet_address = user_row
             _assert_game_account(game, steam_id, riot_id)
+
+            # ── Wallet must be linked before joining a staked match ───────────
+            if not wallet_address:
+                raise HTTPException(
+                    400,
+                    "You must link a wallet before joining a staked match. "
+                    "Go to Profile → Wallet and connect your MetaMask."
+                )
 
             # ── Duplicate join guard ──────────────────────────────────────────
             already = session.execute(
