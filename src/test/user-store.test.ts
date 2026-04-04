@@ -55,6 +55,11 @@ describe("userStore", () => {
     expect(stats?.matches).toBe(0);
   });
 
+  it("signup sets atBalance from GET /auth/me (welcome AT)", async () => {
+    await useUserStore.getState().signup("AtUser", "at@arena.gg", "password123", SIGNUP_GAME);
+    expect(useUserStore.getState().user?.atBalance).toBe(200);
+  });
+
   it("signup returns field and detail on 409-style conflict without authenticating", async () => {
     vi.mocked(engineApi.apiRegister).mockResolvedValueOnce({
       ok: false as const,

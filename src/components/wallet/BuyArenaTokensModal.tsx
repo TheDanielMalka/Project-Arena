@@ -10,7 +10,6 @@ import {
   AlertTriangle, Wallet, ArrowRight, Info,
 } from "lucide-react";
 import { useWalletStore } from "@/stores/walletStore";
-import { useForgeStore } from "@/stores/forgeStore";
 import { cn } from "@/lib/utils";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -40,7 +39,6 @@ interface BuyArenaTokensModalProps {
 
 export function BuyArenaTokensModal({ open, onClose }: BuyArenaTokensModalProps) {
   const { usdtBalance, buyArenaTokens } = useWalletStore();
-  const { addArenaTokens } = useForgeStore();
 
   const [step, setStep]           = useState<Step>("select");
   const [selectedAt, setSelectedAt] = useState<number>(1_000);
@@ -111,14 +109,11 @@ export function BuyArenaTokensModal({ open, onClose }: BuyArenaTokensModalProps)
     // DB-ready: POST /api/auth/verify-password { password: pw }
     //           → POST /api/wallet/buy-at { atAmount, usdtCost: totalCost }
     //           → server: wagmi USDT.transfer(PLATFORM_WALLET, totalCost)
-    //           → confirmed: DB UPDATE users SET at_balance += atAmount
+    //           → then refreshProfileFromServer() when POST /wallet/buy-at exists
     processingTimerRef.current = globalThis.setTimeout(() => {
       processingTimerRef.current = null;
       const tx = buyArenaTokens(atAmount, totalCost);
       if (tx) {
-        // Also sync into forgeStore's AT balance
-        // DB-ready: forgeStore.arenaTokens syncs from GET /api/users/me/at-balance
-        addArenaTokens(atAmount);
         setPurchasedAt(atAmount);
         setStep("success");
       } else {

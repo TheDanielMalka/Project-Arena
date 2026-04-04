@@ -27,14 +27,12 @@ vi.mock("@/lib/metamaskBsc", async (importOriginal) => {
 
 // Non-custodial wallet — no deposit/withdraw, only escrow + AT activity
 
-const INITIAL_STATE = useWalletStore.getState();
-
 describe("walletStore — non-custodial model", () => {
   beforeEach(() => {
     useWalletStore.setState({
       usdtBalance: 1247.50,
       atBalance: 350,
-      transactions: [...INITIAL_STATE.transactions],
+      transactions: [],
       dailyBettingLimit: 500,
       dailyBettingUsed: 0,
       connectedAddress: "0x7a3F9c2E1b8D4a5C6f7e8d9B0c1A2b3C4d5E6f7A",
@@ -60,7 +58,16 @@ describe("walletStore — non-custodial model", () => {
     expect(useWalletStore.getState()).not.toHaveProperty("withdraw");
   });
 
-  it("seed transactions contain no deposit or withdrawal types", () => {
+  it("transaction list has no deposit or withdrawal types", () => {
+    useWalletStore.getState().addTransaction({
+      userId: "u1",
+      type: "escrow_lock",
+      amount: -10,
+      token: "USDT",
+      usdValue: 10,
+      status: "completed",
+      note: "test",
+    });
     const txs = useWalletStore.getState().transactions;
     txs.forEach((tx) => {
       expect(tx.type).not.toBe("deposit");
@@ -172,22 +179,6 @@ describe("walletStore — non-custodial model", () => {
 
     store.setDailyBettingLimit(200);
     expect(useWalletStore.getState().dailyBettingLimit).toBe(200);
-  });
-
-  // ── fee consistency — 5% ─────────────────────────────────────────────────
-  it("seed transactions contain no 10% fee notes", () => {
-    const feeTxs = useWalletStore.getState().transactions.filter((tx) => tx.type === "fee");
-    feeTxs.forEach((tx) => {
-      expect(tx.note).not.toMatch(/10%/);
-    });
-  });
-
-  it("seed fee transaction reflects 5% of match stake", () => {
-    // TX-003: fee = 5 on a 50 USDT stake → 5/50 = 10% ... actually 5% of prize = 5% of 100 = 5
-    const fee = useWalletStore.getState().transactions.find((tx) => tx.id === "TX-003");
-    expect(fee).toBeDefined();
-    expect(fee?.type).toBe("fee");
-    expect(Math.abs(fee!.amount)).toBe(5);
   });
 
   // ── buyArenaTokens ────────────────────────────────────────────────────────

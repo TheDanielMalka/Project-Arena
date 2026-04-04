@@ -4,6 +4,7 @@ import type { Transaction, TransactionType, TransactionStatus, Network } from "@
 import { useUserStore } from "@/stores/userStore";
 import { apiGetMatchStatus, apiPatchMeWalletAddress, apiUnlinkMeWalletAddress } from "@/lib/engine-api";
 import { connectMetaMaskAndSignOwnership, depositToEscrow } from "@/lib/metamaskBsc";
+import { publishAtToWalletAndForge } from "@/lib/sessionAtSync";
 
 export type ConnectWalletResult =
   | { ok: true }
@@ -65,88 +66,25 @@ interface WalletState {
   /** MetaMask (EIP-1193) on BSC Testnet — sign ownership message, then PATCH /users/me `wallet_address`. */
   connectWallet: () => Promise<ConnectWalletResult>;
   disconnectWallet: () => Promise<DisconnectWalletResult>;
-  /** DB-ready: POST /api/wallet/buy-at — mock deducts USDT, credits atBalance; returns false if insufficient */
+  /** Until POST /wallet/buy-at: local mock only; then refreshProfileFromServer */
   buyArenaTokens: (atAmount: number, totalUsdtCost: number) => boolean;
 }
 
 let txCounter = 100;
-
-// Seed transactions — realistic non-custodial history
-// No deposits/withdrawals: only escrow events, match results, AT activity, refunds
-const SEED_TRANSACTIONS: Transaction[] = [
-  {
-    id: "TX-001", userId: "user-001", type: "escrow_lock",
-    amount: -50, token: "USDT", usdValue: 50, status: "completed",
-    timestamp: "2026-03-08 15:30", txHash: "0xabc123...def456",
-    matchId: "M-2048", note: "Escrow locked — CS2 5v5 ($50)",
-  },
-  {
-    id: "TX-002", userId: "user-001", type: "match_win",
-    amount: 95, token: "USDT", usdValue: 95, status: "completed",
-    timestamp: "2026-03-08 16:10", txHash: "0xwin001...abc",
-    matchId: "M-2048", note: "Victory — CS2 5v5 vs ShadowKing (×2 − 5% fee)",
-  },
-  {
-    id: "TX-003", userId: "user-001", type: "fee",
-    amount: -5, token: "USDT", usdValue: 5, status: "completed",
-    timestamp: "2026-03-08 16:10", matchId: "M-2048", note: "Platform fee 5% — Match M-2048",
-  },
-  {
-    id: "TX-004", userId: "user-001", type: "escrow_lock",
-    amount: -75, token: "USDT", usdValue: 75, status: "completed",
-    timestamp: "2026-03-08 11:00", txHash: "0xesc002...fed",
-    matchId: "M-2045", note: "Escrow locked — Valorant 5v5 ($75)",
-  },
-  {
-    id: "TX-005", userId: "user-001", type: "match_loss",
-    amount: -75, token: "USDT", usdValue: 75, status: "completed",
-    timestamp: "2026-03-08 11:50", matchId: "M-2045", note: "Defeat — Valorant 5v5 vs CyberWolf",
-  },
-  {
-    id: "TX-006", userId: "user-001", type: "refund",
-    amount: 90, token: "USDT", usdValue: 90, status: "completed",
-    timestamp: "2026-03-07 18:00", txHash: "0xref001...777",
-    matchId: "M-2025", note: "Refund — Match M-2025 cancelled (room expired)",
-  },
-  {
-    id: "TX-007", userId: "user-001", type: "escrow_lock",
-    amount: -50, token: "USDT", usdValue: 50, status: "completed",
-    timestamp: "2026-03-06 12:00", txHash: "0xesc003...abc",
-    matchId: "M-2020", note: "Escrow locked — CS2 1v1 ($50)",
-  },
-  {
-    id: "TX-008", userId: "user-001", type: "match_win",
-    amount: 95, token: "USDT", usdValue: 95, status: "completed",
-    timestamp: "2026-03-06 12:30", txHash: "0xwin002...def",
-    matchId: "M-2020", note: "Victory — CS2 1v1 vs StormRider (×2 − 5% fee)",
-  },
-  {
-    id: "TX-009", userId: "user-001", type: "at_purchase",
-    amount: -20, token: "USDT", usdValue: 20, status: "completed",
-    timestamp: "2026-03-05 14:00", note: "Purchased 200 AT — Forge store",
-  },
-  {
-    id: "TX-010", userId: "user-001", type: "at_spend",
-    amount: -150, token: "AT", usdValue: 0, status: "completed",
-    timestamp: "2026-03-05 14:05", note: "Purchased Dragon Blade skin — Forge",
-  },
-];
 
 export const useWalletStore = create<WalletState>((set, get) => ({
   // DB-ready: from wagmi useAccount(); null until MetaMask link succeeds
   connectedAddress: null,
   selectedNetwork: "bsc",
 
-  // DB-ready: from wagmi useBalance() — USDT on BSC
-  usdtBalance: 1247.50,
+  usdtBalance: 0,
 
-  // DB-ready: GET /api/users/me/at-balance
-  atBalance: 350,
+  atBalance: 0,
 
   platformBettingMax: PLATFORM_BETTING_MAX,
   dailyBettingLimit: 500,
-  dailyBettingUsed: 200,
-  transactions: SEED_TRANSACTIONS,
+  dailyBettingUsed: 0,
+  transactions: [],
 
   connectWallet: async (): Promise<ConnectWalletResult> => {
     try {
@@ -351,18 +289,22 @@ export const useWalletStore = create<WalletState>((set, get) => ({
   buyArenaTokens: (atAmount, totalUsdtCost) => {
     const state = get();
     if (state.usdtBalance < totalUsdtCost) return false;
+    const uid = useUserStore.getState().user?.id ?? "user";
+    const nextAt = state.atBalance + atAmount;
     set((s) => ({
       usdtBalance: s.usdtBalance - totalUsdtCost,
-      atBalance: s.atBalance + atAmount,
+      atBalance: nextAt,
     }));
+    publishAtToWalletAndForge(nextAt);
+    useUserStore.setState((s) => (s.user ? { user: { ...s.user, atBalance: nextAt } } : {}));
     get().addTransaction({
-      userId: "user-001",
+      userId: uid,
       type: "at_purchase",
       amount: -totalUsdtCost,
       token: "USDT",
       usdValue: totalUsdtCost,
       status: "completed",
-      note: `Purchased ${atAmount} AT — buy flow`,
+      note: `Purchased ${atAmount} AT — buy flow (mock until POST /wallet/buy-at)`,
     });
     return true;
   },

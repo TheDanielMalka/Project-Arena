@@ -6,6 +6,7 @@ import type {
 } from "@/types";
 import { useWalletStore } from "@/stores/walletStore";
 import { useUserStore } from "@/stores/userStore";
+import { publishAtToWalletAndForge } from "@/lib/sessionAtSync";
 
 // ─── Seed Data ────────────────────────────────────────────────
 // DB-ready: replace with GET /api/forge/items
@@ -111,7 +112,7 @@ interface ForgeState {
 export const useForgeStore = create<ForgeState>()(
   persist(
     (set, get) => ({
-  arenaTokens: 500,
+  arenaTokens: 0,
   items:      SEED_ITEMS,
   challenges: SEED_CHALLENGES,
   events:     SEED_EVENTS,
@@ -125,7 +126,12 @@ export const useForgeStore = create<ForgeState>()(
 
   getFeaturedItem: () => get().items.find((i) => i.featured),
 
-  addArenaTokens: (amount) => set((s) => ({ arenaTokens: s.arenaTokens + amount })),
+  addArenaTokens: (amount) => {
+    const next = get().arenaTokens + amount;
+    set({ arenaTokens: next });
+    publishAtToWalletAndForge(next);
+    useUserStore.setState((s) => (s.user ? { user: { ...s.user, atBalance: next } } : {}));
+  },
 
   purchaseItem: (itemId, currency) => {
     const item = get().items.find((i) => i.id === itemId);
@@ -136,7 +142,10 @@ export const useForgeStore = create<ForgeState>()(
       if (item.priceAT == null || item.priceAT <= 0) return { success: false, error: "Not available for AT" };
       if (get().arenaTokens < item.priceAT) return { success: false, error: `Insufficient AT — need ${item.priceAT} AT` };
       const purchase: ForgePurchase = { id: `pur-${Date.now()}`, itemId, itemName: item.name, currency: "AT", amount: item.priceAT, purchasedAt: new Date().toISOString() };
-      set((s) => ({ arenaTokens: s.arenaTokens - item.priceAT!, purchases: [purchase, ...s.purchases] }));
+      const nextAt = get().arenaTokens - item.priceAT!;
+      set((s) => ({ arenaTokens: nextAt, purchases: [purchase, ...s.purchases] }));
+      publishAtToWalletAndForge(nextAt);
+      useUserStore.setState((s) => (s.user ? { user: { ...s.user, atBalance: nextAt } } : {}));
       useUserStore.getState().applyForgePurchase({ itemId: item.id, category: item.category, icon: item.icon });
       return { success: true };
     }
@@ -176,12 +185,15 @@ export const useForgeStore = create<ForgeState>()(
     const challenge = get().challenges.find((c) => c.id === challengeId);
     if (!challenge || challenge.status !== "claimable") return { success: false };
     // DB-ready: replace with POST /api/forge/challenges/:id/claim → awards AT + XP server-side (user_stats.xp)
+    const nextAt = get().arenaTokens + challenge.rewardAT;
     set((s) => ({
       challenges: s.challenges.map((c) =>
         c.id === challengeId ? { ...c, status: "claimed" as const } : c
       ),
-      arenaTokens: s.arenaTokens + challenge.rewardAT,
+      arenaTokens: nextAt,
     }));
+    publishAtToWalletAndForge(nextAt);
+    useUserStore.setState((s) => (s.user ? { user: { ...s.user, atBalance: nextAt } } : {}));
     const u = useUserStore.getState().user;
     if (u && challenge.rewardXP > 0) {
       useUserStore.getState().updateProfile({
