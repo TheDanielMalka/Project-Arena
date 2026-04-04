@@ -15,6 +15,7 @@ import jwt as _jwt
 from src.config import DATABASE_URL, ENVIRONMENT, MIN_CLIENT_VERSION
 from src.vision.capture import capture_screen, crop_roi
 from src.vision.engine import VisionEngine, VisionEngineConfig
+from src.vision.rage_quit import RageQuitDetector
 try:
     from src.contract import build_escrow_client
 except ImportError:
@@ -91,7 +92,16 @@ async def lifespan(app: FastAPI):
         logger.info("✅ EscrowClient initialised (contract=%s)", _escrow_client.contract.address)
     else:
         logger.info("ℹ️  EscrowClient disabled — blockchain env vars not set")
+
+    # Rage-quit detector — runs as background task; works with or without EscrowClient
+    _rage_quit_detector = RageQuitDetector(SessionLocal, _escrow_client)
+    import asyncio
+    _rq_task = asyncio.create_task(_rage_quit_detector.run())
+    logger.info("✅ RageQuitDetector started")
+
     yield
+
+    _rq_task.cancel()
 
 
 app = FastAPI(
