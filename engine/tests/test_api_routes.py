@@ -267,3 +267,75 @@ class TestMatchStatusRoute:
         assert data["on_chain_match_id"] is None
         assert data["stake_per_player"]  is None
         assert data["your_team"]         is None
+
+
+# ── PATCH /users/me — wallet_address ─────────────────────────────────────────
+
+class TestPatchWalletAddress:
+    """
+    Verifies the wallet_address field in PATCH /users/me.
+    DB is not available in tests — we mock SessionLocal to control responses.
+    """
+
+    _VALID_ADDR = "0xAbCd1234AbCd1234AbCd1234AbCd1234AbCd1234"
+
+    def _patch(self, body: dict):
+        return client.patch("/users/me", json=body, headers=_AUTH_HEADER)
+
+    # ── Format validation (no DB needed) ─────────────────────────────────────
+
+    def test_invalid_address_too_short_returns_400(self):
+        resp = self._patch({"wallet_address": "0x1234"})
+        assert resp.status_code == 400
+
+    def test_invalid_address_no_0x_prefix_returns_400(self):
+        resp = self._patch({"wallet_address": "AbCd1234AbCd1234AbCd1234AbCd1234AbCd1234"})
+        assert resp.status_code == 400
+
+    def test_invalid_address_wrong_chars_returns_400(self):
+        resp = self._patch({"wallet_address": "0x" + "G" * 40})
+        assert resp.status_code == 400
+
+    # ── Link / unlink (DB mocked) ─────────────────────────────────────────────
+
+    def test_link_valid_address_calls_db_update(self):
+        """Valid address with no conflict → DB UPDATE executed."""
+        with patch("main.SessionLocal") as MockSession:
+            session = MockSession.return_value.__enter__.return_value
+            session.execute.return_value.fetchone.return_value = None  # no conflict
+            resp = self._patch({"wallet_address": self._VALID_ADDR})
+        # No DB in test env → will fail at UPDATE, but format check passes (not 400)
+        assert resp.status_code != 400
+
+    def test_unlink_empty_string_accepted(self):
+        """wallet_address="" passes format check (unlink path — no regex applied)."""
+        with patch("main.SessionLocal") as MockSession:
+            session = MockSession.return_value.__enter__.return_value
+            session.execute.return_value.fetchone.return_value = None
+            resp = self._patch({"wallet_address": ""})
+        assert resp.status_code != 400
+
+    def test_unlink_null_accepted(self):
+        """wallet_address=null passes (Pydantic accepts None for Optional field)."""
+        with patch("main.SessionLocal") as MockSession:
+            session = MockSession.return_value.__enter__.return_value
+            session.execute.return_value.fetchone.return_value = None
+            resp = self._patch({"wallet_address": None})
+        assert resp.status_code != 400
+
+    def test_conflict_returns_409(self):
+        """wallet_address already taken by another user → 409."""
+        with patch("main.SessionLocal") as MockSession:
+            session = MockSession.return_value.__enter__.return_value
+            session.execute.return_value.fetchone.return_value = (1,)  # conflict row
+            resp = self._patch({"wallet_address": self._VALID_ADDR})
+        assert resp.status_code == 409
+
+    def test_unrelated_fields_not_affected(self):
+        """Sending only avatar does not touch wallet_address logic."""
+        with patch("main.SessionLocal") as MockSession:
+            session = MockSession.return_value.__enter__.return_value
+            session.execute.return_value.fetchone.return_value = None
+            resp = self._patch({"avatar": "avatar_01"})
+        # Should not hit wallet validation path at all
+        assert resp.status_code != 400

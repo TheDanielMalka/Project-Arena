@@ -10,7 +10,7 @@ import {
   Copy, CheckCircle2, Eye, EyeOff, ExternalLink,
   TrendingUp, TrendingDown, Clock, RefreshCw,
   Search, Landmark, Flame, Wallet, ShieldCheck,
-  ChevronLeft, ChevronRight, Swords, WifiOff, Zap,
+  ChevronLeft, ChevronRight, Swords, WifiOff, Zap, Unplug,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useWalletStore } from "@/stores/walletStore";
@@ -58,6 +58,7 @@ const WalletPage = () => {
     usdtBalance, atBalance,
     dailyBettingLimit, dailyBettingUsed, platformBettingMax,
     transactions, setDailyBettingLimit, connectWallet: linkMetaMaskWallet,
+    disconnectWallet: unlinkMetaMaskWallet,
   } = useWalletStore();
   const { arenaTokens: forgeAT } = useForgeStore();
 
@@ -68,6 +69,7 @@ const WalletPage = () => {
   const [txPage, setTxPage]                 = useState(1);
   const [buyATOpen, setBuyATOpen]           = useState(false);
   const [walletLinkBusy, setWalletLinkBusy] = useState(false);
+  const [walletUnlinkBusy, setWalletUnlinkBusy] = useState(false);
 
   // Derived
   const networkCfg      = NETWORKS[selectedNetwork];
@@ -175,6 +177,7 @@ const WalletPage = () => {
             <CardContent className="px-4 pb-4 space-y-3">
               {/* Address */}
               {connectedAddress ? (
+                <>
                 <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-secondary/40 px-3 py-2">
                   <div className="flex-1 min-w-0">
                     <p className="text-[10px] text-muted-foreground font-display uppercase tracking-wider mb-0.5">
@@ -189,6 +192,71 @@ const WalletPage = () => {
                     }
                   </button>
                 </div>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="text-xs font-display"
+                    disabled={walletUnlinkBusy || !user}
+                    onClick={() => {
+                      void (async () => {
+                        setWalletUnlinkBusy(true);
+                        try {
+                          const r = await unlinkMetaMaskWallet();
+                          if (r.ok === false) {
+                            toast({ variant: "destructive", title: "Wallet", description: r.error });
+                            return;
+                          }
+                          toast({
+                            title: "Wallet disconnected",
+                            description: "Profile updated — this wallet is no longer linked.",
+                          });
+                        } finally {
+                          setWalletUnlinkBusy(false);
+                        }
+                      })();
+                    }}
+                  >
+                    <Unplug className="mr-1.5 h-3.5 w-3.5" />
+                    {walletUnlinkBusy ? "…" : "Disconnect"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="text-xs font-display"
+                    disabled={walletUnlinkBusy || !user}
+                    onClick={() => {
+                      void (async () => {
+                        setWalletUnlinkBusy(true);
+                        try {
+                          const d = await unlinkMetaMaskWallet();
+                          if (d.ok === false) {
+                            toast({ variant: "destructive", title: "Wallet", description: d.error });
+                            return;
+                          }
+                          const r = await linkMetaMaskWallet();
+                          if (r.ok === false) {
+                            toast({ variant: "destructive", title: "Wallet", description: r.error });
+                            return;
+                          }
+                          syncProfileWalletConnected();
+                          toast({
+                            title: "Wallet switched",
+                            description: "New address saved to your profile.",
+                          });
+                        } finally {
+                          setWalletUnlinkBusy(false);
+                        }
+                      })();
+                    }}
+                  >
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                    Switch wallet
+                  </Button>
+                </div>
+                </>
               ) : (
                 <div className="rounded-lg border border-dashed border-border/60 bg-secondary/20 px-3 py-3 text-center">
                   <p className="text-xs text-muted-foreground">No wallet connected</p>

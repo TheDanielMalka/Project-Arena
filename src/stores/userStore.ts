@@ -37,6 +37,10 @@ interface UserState {
   restoreSession: () => Promise<void>;
   // DB-ready: replace with POST /api/wallet/connect
   connectWallet: () => void;
+  /** Clear profile wallet fields locally (after PATCH unlink or when not persisting). */
+  unlinkWalletFromProfile: () => void;
+  /** After MetaMask link + PATCH success — keep user.* in sync with chain address. */
+  setLinkedWalletAddress: (address: string) => void;
   // DB-ready: replace with POST /api/wallet/disconnect
   disconnectWallet: () => void;
   // DB-ready: PATCH /api/users/me — persist identity row (avatar, avatar_bg, equipped_badge_icon, forge_unlocked_item_ids, …)
@@ -243,7 +247,40 @@ export const useUserStore = create<UserState>((set, get) => ({
 
   connectWallet: () => set({ walletConnected: true }),
 
-  disconnectWallet: () => set({ walletConnected: false }),
+  unlinkWalletFromProfile: () =>
+    set((state) => {
+      if (!state.user) return { walletConnected: false };
+      return {
+        walletConnected: false,
+        user: {
+          ...state.user,
+          walletAddress: null,
+          walletShort: "",
+        },
+      };
+    }),
+
+  setLinkedWalletAddress: (address: string) => {
+    const trimmed = address.trim();
+    set((state) => {
+      if (!state.user) return { walletConnected: !!trimmed };
+      return {
+        walletConnected: true,
+        user: {
+          ...state.user,
+          walletAddress: trimmed,
+          walletShort:
+            trimmed.length >= 10
+              ? `${trimmed.slice(0, 6)}...${trimmed.slice(-4)}`
+              : trimmed,
+        },
+      };
+    });
+  },
+
+  disconnectWallet: () => {
+    get().unlinkWalletFromProfile();
+  },
 
   updateProfile: (updates) => {
     set((state) => {

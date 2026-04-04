@@ -1,5 +1,5 @@
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { Wallet, LogOut, User, ChevronDown, Wifi, WifiOff, Loader2, MonitorPlay, Download, Lightbulb } from "lucide-react";
+import { Wallet, LogOut, User, ChevronDown, Wifi, WifiOff, Loader2, MonitorPlay, Download, Lightbulb, Unplug, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NotificationCenter } from "@/components/notifications/NotificationCenter";
 import { useUserStore } from "@/stores/userStore";
@@ -36,6 +36,7 @@ export function ArenaHeader() {
   const { user, isAuthenticated, walletConnected, connectWallet: connectUserWalletFlag, logout } = useUserStore();
   const chainConnectedAddress = useWalletStore((s) => s.connectedAddress);
   const connectMetaMaskWallet = useWalletStore((s) => s.connectWallet);
+  const disconnectMetaMaskWallet = useWalletStore((s) => s.disconnectWallet);
   // DB-ready: wagmi useBalance() — live on-chain USDT balance
   const totalBalance = useWalletStore((s) => s.usdtBalance);
   const clientStatus = useClientStore((s) => s.status);
@@ -189,6 +190,46 @@ export function ArenaHeader() {
                 >
                   <Wallet className="mr-2 h-4 w-4" /> Connect Wallet
                 </DropdownMenuItem>
+              )}
+              {chainConnectedAddress && (
+                <>
+                  <DropdownMenuItem
+                    onClick={() => {
+                      void (async () => {
+                        const r = await disconnectMetaMaskWallet();
+                        if (r.ok === false) {
+                          toast({ variant: "destructive", title: "Wallet", description: r.error });
+                          return;
+                        }
+                        toast({ title: "Wallet disconnected", description: "Your profile no longer has this wallet linked." });
+                      })();
+                    }}
+                    className="cursor-pointer"
+                  >
+                    <Unplug className="mr-2 h-4 w-4" /> Disconnect wallet
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => {
+                      void (async () => {
+                        const d = await disconnectMetaMaskWallet();
+                        if (d.ok === false) {
+                          toast({ variant: "destructive", title: "Wallet", description: d.error });
+                          return;
+                        }
+                        const r = await connectMetaMaskWallet();
+                        if (r.ok === false) {
+                          toast({ variant: "destructive", title: "Wallet", description: r.error });
+                          return;
+                        }
+                        connectUserWalletFlag();
+                        toast({ title: "Wallet switched", description: "New address saved to your profile." });
+                      })();
+                    }}
+                    className="cursor-pointer"
+                  >
+                    <RefreshCw className="mr-2 h-4 w-4" /> Switch wallet
+                  </DropdownMenuItem>
+                </>
               )}
               <DropdownMenuItem onClick={() => navigate("/wallet")} className="cursor-pointer">
                 <Wallet className="mr-2 h-4 w-4" /> Wallet

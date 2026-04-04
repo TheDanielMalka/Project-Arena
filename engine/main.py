@@ -996,9 +996,10 @@ class PatchUserRequest(BaseModel):
     equipped_badge_icon: str | None = None
     forge_unlocked_item_ids: list[str] | None = None
     # Identity fields — uniqueness enforced per field
-    username: str | None = None   # case-insensitive unique
-    steam_id: str | None = None   # globally unique; pass "" to unlink
-    riot_id:  str | None = None   # globally unique; pass "" to unlink
+    username:       str | None = None   # case-insensitive unique
+    steam_id:       str | None = None   # globally unique; pass "" to unlink
+    riot_id:        str | None = None   # globally unique; pass "" to unlink
+    wallet_address: str | None = None   # Ethereum address; pass "" or null to unlink
 
 
 @app.patch("/users/me", response_model=UserProfile)
@@ -1007,9 +1008,10 @@ async def patch_user_me(req: PatchUserRequest, payload: dict = Depends(verify_to
     Partial update of the authenticated user's profile.
 
     Cosmetic fields (avatar, badge, forge items) are updated directly.
-    Identity fields (username, steam_id, riot_id) are checked for uniqueness
-    before writing — returns 409 if the value is already taken.
-    Pass steam_id="" or riot_id="" to unlink (sets column to NULL).
+    Identity fields (username, steam_id, riot_id, wallet_address) are checked
+    for uniqueness before writing — returns 409 if the value is already taken.
+    Pass "" or null to unlink a field (sets column to NULL in DB).
+    wallet_address: validated as 0x + 40 hex chars; "" or null → unlink.
     DB-ready: writes to users table columns.
     """
     user_id: str = payload["sub"]
@@ -1040,6 +1042,19 @@ async def patch_user_me(req: PatchUserRequest, payload: dict = Depends(verify_to
                 ).fetchone()
                 if conflict:
                     raise HTTPException(409, "Riot ID already linked to another account")
+
+            if req.wallet_address is not None and req.wallet_address.strip() != "":
+                addr = req.wallet_address.strip()
+                # Basic Ethereum address format check (0x + 40 hex chars)
+                import re
+                if not re.fullmatch(r"0x[0-9a-fA-F]{40}", addr):
+                    raise HTTPException(400, "Invalid Ethereum wallet address format")
+                conflict = session.execute(
+                    text("SELECT 1 FROM users WHERE wallet_address = :w AND id != :uid"),
+                    {"w": addr, "uid": user_id},
+                ).fetchone()
+                if conflict:
+                    raise HTTPException(409, "Wallet address already linked to another account")
     except HTTPException:
         raise
     except Exception as exc:
@@ -1065,9 +1080,10 @@ async def patch_user_me(req: PatchUserRequest, payload: dict = Depends(verify_to
     if req.equipped_badge_icon     is not None: fields["equipped_badge_icon"]     = req.equipped_badge_icon
     if req.forge_unlocked_item_ids is not None:
         fields["forge_unlocked_item_ids"] = req.forge_unlocked_item_ids
-    if req.username is not None: fields["username"] = req.username.strip()
-    if req.steam_id is not None: fields["steam_id"] = req.steam_id.strip() or None  # "" → NULL
-    if req.riot_id  is not None: fields["riot_id"]  = req.riot_id.strip()  or None  # "" → NULL
+    if req.username       is not None: fields["username"]       = req.username.strip()
+    if req.steam_id       is not None: fields["steam_id"]       = req.steam_id.strip()       or None  # "" → NULL
+    if req.riot_id        is not None: fields["riot_id"]        = req.riot_id.strip()        or None  # "" → NULL
+    if req.wallet_address is not None: fields["wallet_address"] = req.wallet_address.strip() or None  # "" → NULL (unlink)
 
     if fields:
         set_clause = ", ".join(f"{col} = :{col}" for col in fields)
