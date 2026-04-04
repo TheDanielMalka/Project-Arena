@@ -584,10 +584,24 @@ COMMENT ON COLUMN matches.lock_countdown_start IS 'Set when all players have dep
 
 -- ── Match Lobby Enhancements ──────────────────────────────────────────────────
 
--- Auto-expire: computed column so clients and server always agree on expiry time
+-- Auto-expire: regular column populated by trigger on INSERT.
+-- GENERATED ALWAYS AS cannot use TIMESTAMPTZ arithmetic (classified STABLE, not
+-- IMMUTABLE in PostgreSQL due to timezone dependency) — trigger is the fix.
 ALTER TABLE matches
-  ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ
-    GENERATED ALWAYS AS (created_at + INTERVAL '30 minutes') STORED;
+  ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+
+CREATE OR REPLACE FUNCTION set_match_expires_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.expires_at := NEW.created_at + INTERVAL '30 minutes';
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_match_expires_at ON matches;
+CREATE TRIGGER trg_match_expires_at
+    BEFORE INSERT ON matches
+    FOR EACH ROW EXECUTE FUNCTION set_match_expires_at();
 
 -- Index for the expiry polling query and CRON cleanup
 CREATE INDEX IF NOT EXISTS idx_matches_expires_at
