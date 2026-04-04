@@ -80,11 +80,23 @@ class TestBuildEscrowClient:
 
     def test_returns_client(self):
         from src.contract.escrow_client import build_escrow_client, EscrowClient
+        from unittest.mock import patch
         f, _ = _sf(); self._clean()
         os.environ["BLOCKCHAIN_RPC_URL"] = "http://x"
         os.environ["CONTRACT_ADDRESS"] = "0x47bB9861263A1AB7dAF2353765e0fd3118b71d38"
         os.environ["PRIVATE_KEY"] = "aa" * 32
-        assert isinstance(build_escrow_client(f), EscrowClient)
+        # Patch Web3 at module level so no real RPC connection is attempted.
+        # On CI (Linux) web3 is installed for real; without this patch __init__
+        # calls self._w3.eth.chain_id which tries to reach http://x and fails.
+        with patch("src.contract.escrow_client.Web3") as MockWeb3:
+            mock_w3 = MagicMock()
+            MockWeb3.return_value = mock_w3
+            MockWeb3.HTTPProvider.return_value = MagicMock()
+            MockWeb3.to_checksum_address.side_effect = lambda x: x
+            mock_w3.eth.account.from_key.return_value = MagicMock()
+            mock_w3.eth.contract.return_value = MagicMock()
+            result = build_escrow_client(f)
+        assert isinstance(result, EscrowClient)
 
 
 class TestIsHealthy:
