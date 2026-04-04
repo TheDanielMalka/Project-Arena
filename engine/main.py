@@ -1566,3 +1566,111 @@ async def buy_arena_tokens(req: BuyAtRequest, payload: dict = Depends(verify_tok
         "at_credited": at_to_credit,
         "usdt_spent":  req.usdt_amount,
     }
+
+
+# ── Forge purchase ─────────────────────────────────────────────────────────────
+
+class ForgePurchaseRequest(BaseModel):
+    """
+    POST /forge/purchase — spend AT to unlock a Forge item.
+
+    item_slug: unique item identifier from forge_items.slug
+               (e.g. "avatar-dragon", "badge-founders")
+    """
+    item_slug: str
+
+
+@app.post("/forge/purchase")
+async def forge_purchase(req: ForgePurchaseRequest, payload: dict = Depends(verify_token)):
+    """
+    Purchase a Forge item with Arena Tokens.
+
+    Flow:
+      1. Fetch item from forge_items by slug — 404 if not found / not active.
+      2. Check user does not already own it — 409 if duplicate.
+      3. Check at_balance >= price_at — 400 if insufficient.
+      4. Deduct at_balance, add slug to forge_unlocked_item_ids, insert forge_purchase row.
+      5. Return new at_balance + item_slug.
+
+    DB-ready: writes to users (at_balance, forge_unlocked_item_ids) + forge_purchases.
+    """
+    user_id: str = payload["sub"]
+
+    try:
+        with SessionLocal() as session:
+            # ── 1. Fetch item ─────────────────────────────────────────────────
+            item_row = session.execute(
+                text(
+                    "SELECT id, price_at FROM forge_items "
+                    "WHERE slug = :slug AND active = TRUE"
+                ),
+                {"slug": req.item_slug},
+            ).fetchone()
+
+            if not item_row:
+                raise HTTPException(404, f"Item '{req.item_slug}' not found or unavailable")
+
+            item_id, price_at = item_row
+
+            if price_at is None:
+                raise HTTPException(400, f"Item '{req.item_slug}' is not available for Arena Tokens")
+
+            # ── 2. Already owned? ─────────────────────────────────────────────
+            user_row = session.execute(
+                text("SELECT at_balance, forge_unlocked_item_ids FROM users WHERE id = :uid"),
+                {"uid": user_id},
+            ).fetchone()
+
+            if not user_row:
+                raise HTTPException(404, "User not found")
+
+            at_balance, owned_ids = user_row
+            owned_ids = list(owned_ids) if owned_ids else []
+
+            if req.item_slug in owned_ids:
+                raise HTTPException(409, f"You already own '{req.item_slug}'")
+
+            # ── 3. Sufficient AT? ─────────────────────────────────────────────
+            if at_balance < price_at:
+                raise HTTPException(
+                    400,
+                    f"Insufficient Arena Tokens. Need {price_at} AT, you have {at_balance} AT.",
+                )
+
+            # ── 4. Deduct + unlock ────────────────────────────────────────────
+            new_ids = owned_ids + [req.item_slug]
+            result = session.execute(
+                text("""
+                    UPDATE users
+                       SET at_balance              = at_balance - :cost,
+                           forge_unlocked_item_ids = :ids
+                     WHERE id = :uid
+                    RETURNING at_balance
+                """),
+                {"cost": price_at, "ids": new_ids, "uid": user_id},
+            ).fetchone()
+
+            session.execute(
+                text(
+                    "INSERT INTO forge_purchases (user_id, item_id, currency, amount) "
+                    "VALUES (:uid, :iid, 'AT', :cost)"
+                ),
+                {"uid": user_id, "iid": str(item_id), "cost": price_at},
+            )
+            session.commit()
+            new_balance = int(result[0])
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("forge_purchase error: %s", exc)
+        raise HTTPException(500, "Purchase failed")
+
+    logger.info(
+        "forge_purchase: user=%s bought %s for %d AT (balance now %d)",
+        user_id, req.item_slug, price_at, new_balance,
+    )
+    return {
+        "at_balance": new_balance,
+        "item_slug":  req.item_slug,
+    }
