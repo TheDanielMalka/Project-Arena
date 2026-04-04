@@ -1,10 +1,19 @@
 {
   "name": "arena-contracts",
   "version": "1.0.0",
-  "description": "ArenaEscrow smart contracts",
+  "description": "ArenaEscrow smart contracts — BSC Testnet / Mainnet",
   "private": true,
+  "scripts": {
+    "compile":          "hardhat compile",
+    "test":             "hardhat test",
+    "deploy:testnet":   "hardhat run scripts/deploy.js --network bscTestnet",
+    "deploy:mainnet":   "hardhat run scripts/deploy.js --network bsc",
+    "verify:testnet":   "hardhat verify --network bscTestnet",
+    "verify:mainnet":   "hardhat verify --network bsc"
+  },
   "devDependencies": {
     "hardhat": "^2.22.4",
-    "@nomicfoundation/hardhat-toolbox": "^5.0.0"
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "dotenv": "^16.4.5"
   }
 }
