@@ -177,12 +177,12 @@ export function ArenaHeader() {
                   onClick={() => {
                     void (async () => {
                       const r = await connectMetaMaskWallet();
-                      if (r.ok) {
-                        connectUserWalletFlag();
-                        toast({ title: "Wallet linked", description: "Your wallet is connected and saved to your profile." });
-                      } else {
+                      if (r.ok === false) {
                         toast({ variant: "destructive", title: "Wallet", description: r.error });
+                        return;
                       }
+                      connectUserWalletFlag();
+                      toast({ title: "Wallet linked", description: "Your wallet is connected and saved to your profile." });
                     })();
                   }}
                   className="cursor-pointer"

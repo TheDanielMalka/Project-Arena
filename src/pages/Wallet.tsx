@@ -134,14 +134,14 @@ const WalletPage = () => {
                 setWalletLinkBusy(true);
                 try {
                   const r = await linkMetaMaskWallet();
-                  if (r.ok) {
+                  if (r.ok === false) {
+                    toast({ variant: "destructive", title: "Wallet", description: r.error });
+                  } else {
                     syncProfileWalletConnected();
                     toast({
                       title: "Wallet linked",
                       description: "MetaMask on BSC Testnet — address saved to your profile.",
                     });
-                  } else {
-                    toast({ variant: "destructive", title: "Wallet", description: r.error });
                   }
                 } finally {
                   setWalletLinkBusy(false);

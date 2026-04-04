@@ -222,7 +222,7 @@ describe("walletStore — non-custodial model", () => {
     useUserStore.getState().logout();
     const r = await useWalletStore.getState().connectWallet();
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toMatch(/sign in/i);
+    if (r.ok === false) expect(r.error).toMatch(/sign in/i);
   });
 
   it("setState can set connectedAddress for tests (MetaMask flow is integration-tested)", () => {

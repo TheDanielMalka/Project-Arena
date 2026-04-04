@@ -145,7 +145,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
   dailyBettingUsed: 200,
   transactions: SEED_TRANSACTIONS,
 
-  connectWallet: async () => {
+  connectWallet: async (): Promise<ConnectWalletResult> => {
     try {
       const token = useUserStore.getState().token;
       if (!token) {

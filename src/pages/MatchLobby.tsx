@@ -1154,18 +1154,18 @@ const MatchLobby = () => {
                       setWalletLinkBusy(true);
                       try {
                         const r = await linkMetaMaskForMatch();
-                        if (r.ok) {
+                        if (r.ok === false) {
+                          useNotificationStore.getState().addNotification({
+                            type: "system",
+                            title: "Wallet",
+                            message: r.error,
+                          });
+                        } else {
                           syncProfileWalletConnected();
                           useNotificationStore.getState().addNotification({
                             type: "system",
                             title: "Wallet connected",
                             message: "You can create or join staked matches.",
-                          });
-                        } else {
-                          useNotificationStore.getState().addNotification({
-                            type: "system",
-                            title: "Wallet",
-                            message: r.error,
                           });
                         }
                       } finally {
