@@ -1,4 +1,4 @@
-import { BrowserProvider, Contract, getAddress, parseEther } from "ethers";
+import { BrowserProvider, Contract, formatEther, getAddress, parseEther } from "ethers";
 
 /** EIP-155 chain id — default BSC Testnet (97). Override with `VITE_CHAIN_ID`. */
 export function getArenaTargetChainId(): number {
@@ -152,6 +152,20 @@ export async function createMatchOnChain(
     throw new Error("MatchCreated event not found in transaction receipt");
   }
   return { txHash: String(tx.hash), onChainMatchId };
+}
+
+/**
+ * Native BNB balance of `address` on the current MetaMask chain (ether units, e.g. 0.5).
+ * Used by the deposit modal before lock — must match `ensureTargetChain` (BSC testnet by default).
+ */
+export async function getBnbBalance(address: string): Promise<number> {
+  const eth = getInjectedEthereum();
+  if (!eth) throw new Error("MetaMask not found");
+  await ensureTargetChain(eth);
+  const provider = new BrowserProvider(eth);
+  const checksummed = getAddress(address);
+  const raw = await provider.getBalance(checksummed);
+  return parseFloat(formatEther(raw));
 }
 
 export async function connectMetaMaskAndSignOwnership(): Promise<{ address: string; signature: string }> {

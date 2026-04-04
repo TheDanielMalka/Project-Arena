@@ -14,7 +14,7 @@ import {
   Search, Copy, UserPlus, Crown, Shield, Hash, KeyRound, Eye, EyeOff,
   AlertCircle, ChevronDown, Monitor, MonitorPlay, Smartphone, Zap, TrendingUp,
   Wallet, Loader2, ScanLine, LogOut, AlertTriangle, Timer,
-  Trash2,
+  Trash2, XCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MatchRosterAvatar } from "@/components/match/MatchRosterAvatar";
@@ -25,7 +25,7 @@ import { PlayerPopoverLayer } from "@/components/players/PlayerCardPopover";
 import { ClientReadinessStrip } from "@/components/match/ClientReadinessStrip";
 import { apiCreateMatch, apiJoinMatch } from "@/lib/engine-api";
 import { looksLikeServerMatchId } from "@/lib/gameAccounts";
-import { createMatchOnChain } from "@/lib/metamaskBsc";
+import { createMatchOnChain, getBnbBalance } from "@/lib/metamaskBsc";
 
 // ─── Game configs ─────────────────────────────────────────────────────────────
 // comingSoon: true → game visible in dropdowns but non-selectable (greyed, locked)
@@ -261,7 +261,14 @@ const MatchLobby = () => {
   const [filterGame, setFilterGame]           = useState<string>("");
   const [filterMode, setFilterMode]           = useState<MatchMode | null>(null);
   const [depositConfirm, setDepositConfirm]   = useState<{ match: Match; team?: "A" | "B" } | null>(null);
-  const [depositStep, setDepositStep]         = useState<"idle" | "verifying" | "confirmed">("idle");
+  const [depositStep, setDepositStep]         = useState<"idle" | "verifying" | "confirmed" | "failed">("idle");
+  const [checkResults, setCheckResults]       = useState<{
+    client: boolean;
+    wallet: boolean;
+    identity: boolean;
+    balance: boolean;
+    balanceDetail: string;
+  } | null>(null);
   const [myRoomMatchId, setMyRoomMatchId] = useState<string | null>(null);
   const [roomLocked, setRoomLocked]       = useState(false);
   const [countdown, setCountdown]         = useState<number | null>(null);
@@ -317,6 +324,7 @@ const MatchLobby = () => {
     // No team for public matches — deposit modal handles both public and custom
     setDepositConfirm({ match });
     setDepositStep("idle");
+    setCheckResults(null);
   };
   const handleOpenPublicLobby = (matchId: string) => setSelectedPublicLobbyId(matchId);
   const handleJoinCustom = (matchId: string, bet: number, team?: "A" | "B") => {
@@ -333,16 +341,56 @@ const MatchLobby = () => {
       setPasswordPrompt(null); setPasswordInput("");
       setDepositConfirm({ match, team: passwordPrompt.team });
       setDepositStep("idle");
+      setCheckResults(null);
     } else { setPasswordError(true); }
   };
-  const handleDepositConfirm = () => {
+  const handleDepositConfirm = async () => {
     if (!depositConfirm || !user) return;
     if (!guardWalletConnected()) return;
     if (!guardCanPlay()) return;
+    const { match } = depositConfirm;
     setDepositStep("verifying");
-    // Simulates contract pre-check (wallet + identity + amount).
-    // DB-ready: replace with wagmi readContract / balanceOf check in Issue #Frontend-Wallet
-    setTimeout(() => setDepositStep("confirmed"), 2200);
+    setCheckResults(null);
+
+    // 1. Arena Client — same gate as Join (desktop client + version_ok + user binding).
+    const clientOk = useClientStore.getState().canPlayForUser(websiteUserId);
+
+    // 2. Wallet — linked in session (MetaMask address).
+    const walletAddr = useWalletStore.getState().connectedAddress;
+    const walletOk = !!walletAddr;
+
+    // 3. Identity — game account on profile (matches create/join API gates).
+    const isCs2 = match.game === "CS2";
+    const identityOk = isCs2
+      ? !!user.steamId
+      : match.game === "Valorant"
+        ? !!user.riotId
+        : !!(user.steamId || user.riotId);
+
+    // 4. Balance — native BNB on configured chain ≥ stake amount (numeric same as match.betAmount / contract stake).
+    let balanceOk = false;
+    let balanceDetail = "–";
+    if (walletAddr) {
+      try {
+        const bnb = await getBnbBalance(walletAddr);
+        balanceOk = bnb >= match.betAmount;
+        balanceDetail = `${bnb.toFixed(4)} BNB (need ≥${match.betAmount})`;
+      } catch {
+        balanceOk = false;
+        balanceDetail = "Error reading balance";
+      }
+    }
+
+    setCheckResults({
+      client: clientOk,
+      wallet: walletOk,
+      identity: identityOk,
+      balance: balanceOk,
+      balanceDetail,
+    });
+
+    const allPassed = clientOk && walletOk && identityOk && balanceOk;
+    setDepositStep(allPassed ? "confirmed" : "failed");
   };
   const handleDepositFinal = async () => {
     if (!depositConfirm || !user) return;
@@ -359,6 +407,7 @@ const MatchLobby = () => {
         });
         setDepositConfirm(null);
         setDepositStep("idle");
+        setCheckResults(null);
         return;
       }
     }
@@ -372,6 +421,7 @@ const MatchLobby = () => {
       });
       setDepositConfirm(null);
       setDepositStep("idle");
+      setCheckResults(null);
       return;
     }
     joinMatch(match.id, user.username, team);
@@ -384,6 +434,7 @@ const MatchLobby = () => {
     });
     setDepositConfirm(null);
     setDepositStep("idle");
+    setCheckResults(null);
   };
   const handleCopyCode = (code: string) => {
     navigator.clipboard.writeText(code); setCopiedCode(code);
@@ -586,15 +637,39 @@ const MatchLobby = () => {
         const idp = IDENTITY_PROVIDER[match.game] ?? { name: "Platform", field: "Account ID" };
         const isVerifying  = depositStep === "verifying";
         const isConfirmed  = depositStep === "confirmed";
-        const checks: { icon: React.ElementType; label: string; detail: string }[] = [
+        const isFailed     = depositStep === "failed";
+        const checks: {
+          icon: React.ElementType;
+          label: string;
+          detail: string;
+          ok: boolean | null;
+        }[] = [
           {
             icon: MonitorPlay,
             label: "Arena Client",
             detail: `${clientStatusLabel()}${clientVersion ? ` · v${clientVersion}` : ""}`,
+            ok: checkResults?.client ?? null,
           },
-          { icon: Wallet,      label: "Wallet connected",          detail: "0x•••••••" },
-          { icon: ScanLine,    label: `${idp.field} verified`,     detail: idp.name    },
-          { icon: CheckCircle, label: "Bet amount confirmed",      detail: `$${match.betAmount}` },
+          {
+            icon: Wallet,
+            label: "Wallet connected",
+            detail: connectedAddress
+              ? `${connectedAddress.slice(0, 6)}...${connectedAddress.slice(-4)}`
+              : "Not connected",
+            ok: checkResults?.wallet ?? null,
+          },
+          {
+            icon: ScanLine,
+            label: `${idp.field} verified`,
+            detail: idp.name,
+            ok: checkResults?.identity ?? null,
+          },
+          {
+            icon: CheckCircle,
+            label: "Sufficient BNB for stake",
+            detail: checkResults?.balanceDetail ?? `≥ ${match.betAmount} BNB`,
+            ok: checkResults?.balance ?? null,
+          },
         ];
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
@@ -629,20 +704,31 @@ const MatchLobby = () => {
                   <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground flex items-center gap-1.5">
                     <span className="w-1 h-3 rounded-full bg-arena-cyan inline-block" /> Contract Verification
                   </p>
-                  {checks.map(({ icon: Icon, label, detail }) => (
+                  {checks.map(({ icon: Icon, label, detail, ok }) => (
                     <div key={label} className="flex items-center gap-3 rounded-lg border border-border/60 bg-secondary/20 px-3 py-2">
                       {isVerifying
                         ? <Loader2 className="h-4 w-4 text-arena-cyan animate-spin shrink-0" />
                         : <Icon className="h-4 w-4 text-arena-cyan shrink-0" />}
                       <span className="text-sm flex-1">{label}</span>
-                      <span className="text-xs text-muted-foreground font-mono">{detail}</span>
-                      {!isVerifying && <CheckCircle className="h-3.5 w-3.5 text-green-500 shrink-0" />}
+                      <span className="text-xs text-muted-foreground font-mono text-right max-w-[55%] truncate" title={detail}>{detail}</span>
+                      {!isVerifying && ok === true && (
+                        <CheckCircle className="h-3.5 w-3.5 text-green-500 shrink-0" />
+                      )}
+                      {!isVerifying && ok === false && (
+                        <XCircle className="h-3.5 w-3.5 text-red-500 shrink-0" />
+                      )}
                     </div>
                   ))}
                   {isVerifying && (
                     <p className="text-xs text-arena-cyan flex items-center gap-1.5 pl-1 animate-pulse">
                       <span className="w-1.5 h-1.5 rounded-full bg-arena-cyan" />
-                      Awaiting contract confirmation…
+                      Running on-chain pre-checks…
+                    </p>
+                  )}
+                  {isFailed && (
+                    <p className="text-xs text-red-400 flex items-center gap-1.5 pl-1">
+                      <XCircle className="h-3.5 w-3.5 shrink-0" />
+                      One or more checks failed. Fix the issue and try again.
                     </p>
                   )}
                 </div>
@@ -654,15 +740,15 @@ const MatchLobby = () => {
                       All checks passed — ready to lock funds
                     </p>
                     <p className="text-xs text-muted-foreground leading-relaxed">
-                      Pressing <span className="text-foreground font-semibold">Confirm &amp; Lock</span> will call the smart
-                      contract and transfer <span className="text-arena-gold font-bold">${match.betAmount}</span> into escrow.
+                      Pressing <span className="text-foreground font-semibold">Confirm &amp; Lock</span> will open MetaMask
+                      and lock <span className="text-arena-gold font-bold">{match.betAmount} BNB</span> (stake) into escrow.
                       This action cannot be undone until the match resolves.
                     </p>
                     <div className="flex gap-2">
                       <Button onClick={handleDepositFinal} className="flex-1 font-display glow-green">
-                        <Lock className="mr-2 h-4 w-4" /> Confirm &amp; Lock ${match.betAmount}
+                        <Lock className="mr-2 h-4 w-4" /> Confirm &amp; Lock {match.betAmount} BNB
                       </Button>
-                      <Button variant="outline" onClick={() => { setDepositConfirm(null); setDepositStep("idle"); }}>
+                      <Button variant="outline" onClick={() => { setDepositConfirm(null); setDepositStep("idle"); setCheckResults(null); }}>
                         Cancel
                       </Button>
                     </div>
@@ -672,13 +758,17 @@ const MatchLobby = () => {
                 {/* ── Initial deposit button (hidden once confirmed) ── */}
                 {!isConfirmed && (
                   <div className="flex gap-2 pt-1">
-                    <Button onClick={handleDepositConfirm} disabled={isVerifying} className="flex-1 font-display glow-green">
+                    <Button
+                      onClick={() => void handleDepositConfirm()}
+                      disabled={isVerifying}
+                      className="flex-1 font-display glow-green"
+                    >
                       {isVerifying
                         ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verifying…</>
-                        : <><Lock className="mr-2 h-4 w-4" /> Deposit ${match.betAmount}</>}
+                        : <><Lock className="mr-2 h-4 w-4" /> Run checks &amp; deposit</>}
                     </Button>
                     {!isVerifying && (
-                      <Button variant="outline" onClick={() => { setDepositConfirm(null); setDepositStep("idle"); }}>
+                      <Button variant="outline" onClick={() => { setDepositConfirm(null); setDepositStep("idle"); setCheckResults(null); }}>
                         Cancel
                       </Button>
                     )}
