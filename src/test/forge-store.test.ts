@@ -287,7 +287,11 @@ describe("forgeStore — event selectors", () => {
 // ─── purchaseItem (AT) ─────────────────────────────────────────
 
 describe("forgeStore — purchaseItem with AT", () => {
-  beforeEach(resetForge);
+  beforeEach(() => {
+    useUserStore.getState().logout();
+    resetForge();
+    resetWallet();
+  });
 
   it("succeeds when user has enough AT (Emerald Samurai costs 320, user has 500)", () => {
     const result = useForgeStore.getState().purchaseItem("item-004", "AT");
@@ -336,9 +340,9 @@ describe("forgeStore — purchaseItem with AT", () => {
 
 describe("forgeStore — purchaseItem with USDT", () => {
   beforeEach(() => {
+    useUserStore.getState().logout();
     resetForge();
     resetWallet();
-    useUserStore.getState().logout();
   });
 
   it("succeeds for Founder's Badge ($9.99 USDT) when wallet has balance", () => {
@@ -362,6 +366,7 @@ describe("forgeStore — purchaseItem with USDT", () => {
 
   it("merges unlock + badge onto logged-in user after USDT purchase", async () => {
     await useUserStore.getState().login("player@arena.gg", "pw");
+    useWalletStore.setState({ usdtBalance: 1247.5 });
     const result = useForgeStore.getState().purchaseItem("item-005", "USDT");
     expect(result.success).toBe(true);
     const u = useUserStore.getState().user;
@@ -380,8 +385,9 @@ describe("forgeStore — purchaseItem with USDT", () => {
 
 describe("forgeStore — claimChallenge", () => {
   beforeEach(() => {
-    resetForge();
     useUserStore.getState().logout();
+    resetForge();
+    resetWallet();
   });
 
   it("adds rewardXP to logged-in user (DB user_stats.xp)", async () => {
@@ -612,7 +618,7 @@ describe("forgeStore — syncForgePurchasesToUserProfile", () => {
 describe("forgeStore — initial state", () => {
   beforeEach(resetForge);
 
-  it("starts with 500 Arena Tokens", () => {
+  it("resetForge sets 500 AT for purchase tests", () => {
     expect(useForgeStore.getState().arenaTokens).toBe(500);
   });
 

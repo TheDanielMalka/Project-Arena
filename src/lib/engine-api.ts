@@ -367,6 +367,7 @@ export async function apiGetMe(token: string): Promise<{
   equipped_badge_icon: string | null;
   forge_unlocked_item_ids: string[];
   vip_expires_at: string | null;
+  at_balance: number;
 } | null> {
   try {
     const res = await fetch(`${ENGINE_BASE}/auth/me`, {
@@ -390,6 +391,7 @@ export async function apiGetMe(token: string): Promise<{
       equipped_badge_icon: string | null;
       forge_unlocked_item_ids: string[];
       vip_expires_at: string | null;
+      at_balance: number;
     };
   } catch {
     return null;

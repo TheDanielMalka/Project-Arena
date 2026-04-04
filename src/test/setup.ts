@@ -32,6 +32,27 @@ vi.mock("@/lib/engine-api", async () => {
       },
     })),
     apiGetMe: vi.fn(async (token: string) => {
+      if (token === "token-new") {
+        return {
+          user_id: "user-new-001",
+          username: "NewUser",
+          email: "new@arena.gg",
+          arena_id: "ARENA-NEW001",
+          rank: null,
+          wallet_address: null,
+          steam_id: null,
+          riot_id: null,
+          xp: 0,
+          wins: 0,
+          losses: 0,
+          avatar: "initials",
+          avatar_bg: "default",
+          equipped_badge_icon: null,
+          forge_unlocked_item_ids: [],
+          vip_expires_at: null,
+          at_balance: 200,
+        };
+      }
       const isAdmin = token === "token-admin";
       return {
         user_id: isAdmin ? "user-admin-001" : "user-001",
@@ -50,6 +71,7 @@ vi.mock("@/lib/engine-api", async () => {
         equipped_badge_icon: null,
         forge_unlocked_item_ids: [],
         vip_expires_at: null,
+        at_balance: isAdmin ? 50_000 : 200,
       };
     }),
     apiPatchMe: vi.fn(async () => true),

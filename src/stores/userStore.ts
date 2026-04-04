@@ -8,6 +8,10 @@ import {
   apiRegister,
   type RegisterConflictField,
 } from "@/lib/engine-api";
+import {
+  hydrateWalletForgeAfterAuth,
+  resetWalletForgeForLogout,
+} from "@/lib/sessionAtSync";
 
 export type SignupResult =
   | { ok: true }
@@ -35,6 +39,8 @@ interface UserState {
   logout: () => void;
   /** Restore session from localStorage token (Phase 3). */
   restoreSession: () => Promise<void>;
+  /** After server changes AT — call GET /auth/me again (no POST body yet). */
+  refreshProfileFromServer: () => Promise<void>;
   // DB-ready: replace with POST /api/wallet/connect
   connectWallet: () => void;
   /** Clear profile wallet fields locally (after PATCH unlink or when not persisting). */
@@ -87,6 +93,7 @@ const MOCK_USER: UserProfile = {
     available: 7198.20,
     inEscrow: 50,
   },
+  atBalance: 200,
 };
 
 const ADMIN_EMAILS = new Set(["admin@arena.gg"]);
@@ -134,33 +141,46 @@ export const useUserStore = create<UserState>((set, get) => ({
     const data = await apiLogin(email, password);
     if (!data) return false;
     const profile = await apiGetMe(data.access_token);
+    if (!profile) return false;
 
     const normalizedEmail = data.email.trim().toLowerCase();
-    const wallet = data.wallet_address ?? profile?.wallet_address ?? null;
+    const wallet = data.wallet_address ?? profile.wallet_address ?? null;
+    const wins = profile.wins ?? 0;
+    const losses = profile.losses ?? 0;
 
     const user: UserProfile = {
-      ...MOCK_USER, // keep UI defaults for fields not in DB yet
       id: data.user_id,
+      role: ADMIN_EMAILS.has(normalizedEmail) ? "admin" : "user",
       username: data.username,
       email: normalizedEmail,
-      arenaId: data.arena_id ?? "",
+      steamId: profile.steam_id?.trim() || null,
+      riotId: profile.riot_id?.trim() || null,
       walletAddress: wallet,
       walletShort: wallet ? `${wallet.slice(0, 6)}...${wallet.slice(-4)}` : "",
-      role: ADMIN_EMAILS.has(normalizedEmail) ? "admin" : "user",
-      rank: profile?.rank ?? MOCK_USER.rank,
+      rank: profile.rank?.trim() || "—",
+      tier: "",
+      verified: true,
+      avatarInitials: data.username.slice(0, 2).toUpperCase(),
+      preferredGame: "CS2",
+      arenaId: data.arena_id ?? profile.arena_id ?? "",
+      memberSince: "—",
+      status: "active",
+      avatar: profile.avatar ?? "initials",
+      avatarBg: profile.avatar_bg ?? "default",
+      equippedBadgeIcon: profile.equipped_badge_icon ?? undefined,
+      unlockedForgeItemIds: profile.forge_unlocked_item_ids ?? [],
+      vipExpiresAt: profile.vip_expires_at ?? undefined,
       stats: {
-        ...MOCK_USER.stats,
-        wins: profile?.wins ?? 0,
-        losses: profile?.losses ?? 0,
-        xp: profile?.xp ?? 0,
+        matches: 0,
+        wins,
+        losses,
+        winRate: wins + losses > 0 ? Math.round((wins / (wins + losses)) * 1000) / 10 : 0,
+        totalEarnings: 0,
+        inEscrow: 0,
+        xp: profile.xp ?? 0,
       },
-      avatar: profile?.avatar ? profile.avatar : MOCK_USER.avatar,
-      avatarBg: profile?.avatar_bg ?? MOCK_USER.avatarBg,
-      equippedBadgeIcon: profile?.equipped_badge_icon ?? MOCK_USER.equippedBadgeIcon,
-      unlockedForgeItemIds: profile?.forge_unlocked_item_ids ?? MOCK_USER.unlockedForgeItemIds,
-      vipExpiresAt: profile?.vip_expires_at ?? undefined,
-      steamId: profile?.steam_id?.trim() || null,
-      riotId: profile?.riot_id?.trim() || null,
+      balance: { total: 0, available: 0, inEscrow: 0 },
+      atBalance: profile.at_balance,
     };
 
     set({
@@ -171,6 +191,7 @@ export const useUserStore = create<UserState>((set, get) => ({
       showLoginGreeting: true,
       greetingType: "login",
     });
+    hydrateWalletForgeAfterAuth(user);
     scheduleSyncForgePurchasesToProfile();
     return true;
   },
@@ -193,48 +214,107 @@ export const useUserStore = create<UserState>((set, get) => ({
       };
     }
     const data = reg.data;
+    const profile = await apiGetMe(data.access_token);
 
     const initials = data.username.slice(0, 2).toUpperCase();
     const normalizedEmail = data.email.trim().toLowerCase();
+    const wallet = profile?.wallet_address ?? data.wallet_address ?? null;
+    const wins = profile?.wins ?? 0;
+    const losses = profile?.losses ?? 0;
 
     const user: UserProfile = {
-      ...MOCK_USER,
-      role: "user",
       id: data.user_id,
+      role: "user",
       username: data.username,
       email: normalizedEmail,
-      arenaId: data.arena_id ?? "",
-      walletAddress: data.wallet_address ?? null,
-      walletShort: data.wallet_address
-        ? `${data.wallet_address.slice(0, 6)}...${data.wallet_address.slice(-4)}`
-        : "",
-      steamId: gameAccounts?.steamId?.trim() || null,
-      riotId: gameAccounts?.riotId?.trim() || null,
+      arenaId: data.arena_id ?? profile?.arena_id ?? "",
+      walletAddress: wallet,
+      walletShort: wallet ? `${wallet.slice(0, 6)}...${wallet.slice(-4)}` : "",
+      steamId: gameAccounts?.steamId?.trim() || profile?.steam_id?.trim() || null,
+      riotId: gameAccounts?.riotId?.trim() || profile?.riot_id?.trim() || null,
       avatarInitials: initials,
-      stats: { matches: 0, wins: 0, losses: 0, winRate: 0, totalEarnings: 0, inEscrow: 0, xp: 0 },
+      rank: profile?.rank?.trim() || "—",
+      tier: "",
+      verified: true,
+      preferredGame: "CS2",
+      memberSince: "—",
+      status: "active",
+      avatar: profile?.avatar ?? "initials",
+      avatarBg: profile?.avatar_bg ?? "default",
+      equippedBadgeIcon: profile?.equipped_badge_icon ?? undefined,
+      unlockedForgeItemIds: profile?.forge_unlocked_item_ids ?? [],
+      vipExpiresAt: profile?.vip_expires_at ?? undefined,
+      stats: {
+        matches: 0,
+        wins,
+        losses,
+        winRate: wins + losses > 0 ? Math.round((wins / (wins + losses)) * 1000) / 10 : 0,
+        totalEarnings: 0,
+        inEscrow: 0,
+        xp: profile?.xp ?? 0,
+      },
       balance: { total: 0, available: 0, inEscrow: 0 },
+      atBalance: profile?.at_balance ?? 0,
     };
 
     set({
       user,
       token: data.access_token,
       isAuthenticated: true,
-      walletConnected: false,
+      walletConnected: !!wallet,
       showLoginGreeting: true,
       greetingType: "signup",
     });
+    hydrateWalletForgeAfterAuth(user);
     setPendingClientSetupAfterSignup();
     scheduleSyncForgePurchasesToProfile();
     return { ok: true as const };
   },
 
   loginWithGoogle: () => {
-    set({ user: { ...MOCK_USER, role: "user" }, isAuthenticated: true, walletConnected: true, showLoginGreeting: true, greetingType: "google" });
+    const u: UserProfile = { ...MOCK_USER, role: "user" };
+    set({ user: u, isAuthenticated: true, walletConnected: true, showLoginGreeting: true, greetingType: "google" });
+    hydrateWalletForgeAfterAuth(u);
     scheduleSyncForgePurchasesToProfile();
   },
 
   logout: () => {
+    resetWalletForgeForLogout();
     set({ user: null, token: null, isAuthenticated: false, walletConnected: false, showLoginGreeting: false, greetingType: null });
+  },
+
+  refreshProfileFromServer: async () => {
+    const { token, user } = get();
+    if (!token || !user) return;
+    const profile = await apiGetMe(token);
+    if (!profile) return;
+    const wins = profile.wins ?? 0;
+    const losses = profile.losses ?? 0;
+    const w = profile.wallet_address ?? null;
+    const next: UserProfile = {
+      ...user,
+      username: profile.username,
+      steamId: profile.steam_id?.trim() || null,
+      riotId: profile.riot_id?.trim() || null,
+      walletAddress: w,
+      walletShort: w ? `${w.slice(0, 6)}...${w.slice(-4)}` : "",
+      rank: profile.rank?.trim() || user.rank,
+      avatar: profile.avatar ?? user.avatar,
+      avatarBg: profile.avatar_bg ?? user.avatarBg,
+      equippedBadgeIcon: profile.equipped_badge_icon ?? user.equippedBadgeIcon,
+      unlockedForgeItemIds: profile.forge_unlocked_item_ids ?? user.unlockedForgeItemIds,
+      vipExpiresAt: profile.vip_expires_at ?? user.vipExpiresAt,
+      stats: {
+        ...user.stats,
+        wins,
+        losses,
+        winRate: wins + losses > 0 ? Math.round((wins / (wins + losses)) * 1000) / 10 : 0,
+        xp: profile.xp ?? user.stats.xp,
+      },
+      atBalance: profile.at_balance,
+    };
+    set({ user: next, walletConnected: !!w });
+    hydrateWalletForgeAfterAuth(next);
   },
 
   restoreSession: async (): Promise<void> => {

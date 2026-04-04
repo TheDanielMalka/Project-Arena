@@ -70,6 +70,8 @@ export interface UserProfile {
   status: UserStatus;
   stats: UserStats;
   balance: UserBalance;
+  /** DB: users.at_balance — from GET /auth/me as `at_balance` (int, always present) */
+  atBalance: number;
 }
 
 export interface UserStats {
