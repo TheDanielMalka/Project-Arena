@@ -9,7 +9,7 @@ module.exports = {
     },
   },
   paths: {
-    sources:   ".",        // ArenaEscrow.sol lives directly here
+    sources:   "./src",    // ArenaEscrow.sol lives in src/ — keeps node_modules out of compile scope
     tests:     "./test",
     cache:     "./cache",
     artifacts: "./artifacts",
