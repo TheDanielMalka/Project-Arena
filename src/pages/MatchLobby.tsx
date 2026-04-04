@@ -228,11 +228,14 @@ const LiveTicker = ({ matches }: { matches: Match[] }) => {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 const MatchLobby = () => {
-  const { user, token } = useUserStore();
+  const { user, token, connectWallet: syncProfileWalletConnected } = useUserStore();
   const websiteUserId = user?.id;
   const { matches, addMatch, joinMatch, leaveMatch, updateMatchStatus, getMatchByCode, deleteMatch, expireOldMatches } = useMatchStore();
-  const { lockEscrow, cancelEscrow } = useWalletStore();
+  const { lockEscrow, cancelEscrow, connectedAddress, connectWallet: linkMetaMaskForMatch } = useWalletStore();
   const canPlay      = useClientStore((s) => s.canPlayForUser(websiteUserId));
+  const canPlayStaked = canPlay && !!connectedAddress;
+  const stakedActionTitle =
+    !connectedAddress ? "Connect Wallet (MetaMask, BSC Testnet)" : !canPlay ? "Arena Client not connected" : undefined;
   const clientStatus = useClientStore((s) => s.status);
   const clientVersion = useClientStore((s) => s.version);
   const clientStatusLabel = useClientStore((s) => s.statusLabel);
@@ -264,6 +267,7 @@ const MatchLobby = () => {
   const [leaveConfirmOpen,      setLeaveConfirmOpen]      = useState(false);
   const [deleteRoomConfirmOpen, setDeleteRoomConfirmOpen] = useState(false);
   const [playerPopover,         setPlayerPopover]         = useState<{ slotValue: string; rect: DOMRect } | null>(null);
+  const [walletLinkBusy, setWalletLinkBusy]               = useState(false);
 
   const publicMatches = matches.filter(m => m.type === "public");
   const customMatches = matches.filter(m => m.type === "custom");
@@ -274,6 +278,17 @@ const MatchLobby = () => {
     const maxPerTeam = Math.max(1, Math.ceil(match.maxPlayers / 2));
     return { maxPerTeam, teamA: match.players.slice(0, maxPerTeam), teamB: match.players.slice(maxPerTeam, maxPerTeam * 2) };
   };
+
+  /** MetaMask on BSC Testnet — required for create/join (Issue #23). */
+  const guardWalletConnected = useCallback((): boolean => {
+    if (useWalletStore.getState().connectedAddress) return true;
+    useNotificationStore.getState().addNotification({
+      type: "system",
+      title: "Connect Wallet",
+      message: "Connect MetaMask on BNB Smart Chain Testnet before creating or joining a match.",
+    });
+    return false;
+  }, []);
 
   /** Same rules as Join buttons — blocks programmatic / race paths until client is ready AND bound to this user. */
   const guardCanPlay = useCallback((): boolean => {
@@ -291,6 +306,7 @@ const MatchLobby = () => {
 
   const handleJoinPublic = (matchId: string, betAmount?: number) => {
     if (!user) return;
+    if (!guardWalletConnected()) return;
     if (!guardCanPlay()) return;
     const bet = betAmount ?? selectedBet;
     if (!bet) return;
@@ -303,6 +319,7 @@ const MatchLobby = () => {
   };
   const handleOpenPublicLobby = (matchId: string) => setSelectedPublicLobbyId(matchId);
   const handleJoinCustom = (matchId: string, bet: number, team?: "A" | "B") => {
+    if (!guardWalletConnected()) return;
     if (!guardCanPlay()) return;
     setPasswordPrompt({ matchId, bet, team }); setPasswordInput(""); setPasswordError(false); setShowPassword(false);
   };
@@ -310,6 +327,7 @@ const MatchLobby = () => {
     if (!passwordPrompt) return;
     const match = customMatches.find(m => m.id === passwordPrompt.matchId);
     if (match && passwordInput === match.password) {
+      if (!guardWalletConnected()) return;
       if (!guardCanPlay()) return;
       setPasswordPrompt(null); setPasswordInput("");
       setDepositConfirm({ match, team: passwordPrompt.team });
@@ -318,6 +336,7 @@ const MatchLobby = () => {
   };
   const handleDepositConfirm = () => {
     if (!depositConfirm || !user) return;
+    if (!guardWalletConnected()) return;
     if (!guardCanPlay()) return;
     setDepositStep("verifying");
     // Simulates contract pre-check (wallet + identity + amount).
@@ -326,6 +345,7 @@ const MatchLobby = () => {
   };
   const handleDepositFinal = async () => {
     if (!depositConfirm || !user) return;
+    if (!guardWalletConnected()) return;
     if (!guardCanPlay()) return;
     const { match, team } = depositConfirm;
     if (token && looksLikeServerMatchId(match.id)) {
@@ -710,10 +730,10 @@ const MatchLobby = () => {
                 <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-border">
                   <p className="text-xs text-muted-foreground">{selectedPublicLobby.players.length}/{selectedPublicLobby.maxPlayers} players in lobby</p>
                   <Button
-                    disabled={selectedPublicLobby.status !== "waiting" || selectedPublicLobby.players.length >= selectedPublicLobby.maxPlayers || !canPlay}
+                    disabled={selectedPublicLobby.status !== "waiting" || selectedPublicLobby.players.length >= selectedPublicLobby.maxPlayers || !canPlayStaked}
                     onClick={() => { setSelectedPublicLobbyId(null); handleJoinPublic(selectedPublicLobby.id, selectedPublicLobby.betAmount); }}
                     className="font-display"
-                    title={!canPlay ? "Arena Client not connected" : undefined}
+                    title={stakedActionTitle}
                     style={cfg ? { boxShadow: `0 0 16px ${cfg.color}40` } : {}}>
                     <Swords className="mr-1.5 h-4 w-4" /> Join This Lobby
                   </Button>
@@ -1075,10 +1095,10 @@ const MatchLobby = () => {
                       </Badge>
                       <span className="font-display text-sm font-bold text-arena-gold">${match.betAmount}</span>
                       {canJoin ? (
-                        <Button size="sm" disabled={depositConfirm !== null || !canPlay}
+                        <Button size="sm" disabled={depositConfirm !== null || !canPlayStaked}
                           onClick={(e) => { e.stopPropagation(); handleJoinPublic(match.id, match.betAmount); }}
                           className="font-display text-xs"
-                          title={!canPlay ? "Arena Client not connected" : undefined}
+                          title={stakedActionTitle}
                           style={glowing && cfg ? { boxShadow: `0 0 12px ${cfg.color}60` } : {}}>
                           <Swords className="mr-1 h-3 w-3" /> Join
                         </Button>
@@ -1114,16 +1134,61 @@ const MatchLobby = () => {
             <p className="text-[10px] text-muted-foreground uppercase tracking-[0.18em] flex items-center gap-1.5">
               <span className="w-1 h-3 rounded-full bg-arena-cyan inline-block" /> Join or Create
             </p>
+            {user && !connectedAddress && (
+              <div className="rounded-xl border border-arena-gold/30 bg-arena-gold/5 px-3 py-2.5 flex flex-col sm:flex-row sm:items-center gap-2">
+                <div className="flex items-start gap-2 flex-1 min-w-0">
+                  <Wallet className="h-4 w-4 text-arena-gold shrink-0 mt-0.5" />
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    <span className="font-medium text-foreground">Connect Wallet</span>
+                    {" — "}
+                    Link MetaMask on BNB Smart Chain Testnet to create or join staked matches.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="font-display shrink-0 gap-1.5"
+                  disabled={walletLinkBusy || !token}
+                  onClick={() => {
+                    void (async () => {
+                      setWalletLinkBusy(true);
+                      try {
+                        const r = await linkMetaMaskForMatch();
+                        if (r.ok) {
+                          syncProfileWalletConnected();
+                          useNotificationStore.getState().addNotification({
+                            type: "system",
+                            title: "Wallet connected",
+                            message: "You can create or join staked matches.",
+                          });
+                        } else {
+                          useNotificationStore.getState().addNotification({
+                            type: "system",
+                            title: "Wallet",
+                            message: r.error,
+                          });
+                        }
+                      } finally {
+                        setWalletLinkBusy(false);
+                      }
+                    })();
+                  }}
+                >
+                  {walletLinkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wallet className="h-3.5 w-3.5" />}
+                  Connect Wallet
+                </Button>
+              </div>
+            )}
             <div>
               <label className="text-xs text-muted-foreground mb-1.5 block uppercase tracking-wider">Join by Game ID</label>
               <div className="flex gap-2">
                 <Input placeholder="Enter match code (e.g. ARENA-7X2K)" value={customCode}
                   onChange={(e) => setCustomCode(e.target.value.toUpperCase())}
                   className="font-mono bg-secondary border-border placeholder:text-muted-foreground/40" />
-                <Button disabled={!customCode || !canPlay}
+                <Button disabled={!customCode || !canPlayStaked}
                   onClick={() => { const found = customMatches.find(m => m.code === customCode); if (found) handleJoinCustom(found.id, found.betAmount); }}
                   className="font-display shrink-0"
-                  title={!canPlay ? "Arena Client not connected" : undefined}>
+                  title={stakedActionTitle}>
                   <Search className="mr-2 h-4 w-4" /> Find
                 </Button>
               </div>
@@ -1135,11 +1200,11 @@ const MatchLobby = () => {
             </div>
             {!createMode ? (
               <button
-                onClick={() => canPlay && setCreateMode(true)}
-                disabled={!canPlay}
-                title={!canPlay ? "Arena Client not connected" : undefined}
+                onClick={() => canPlayStaked && setCreateMode(true)}
+                disabled={!canPlayStaked}
+                title={stakedActionTitle}
                 className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border font-display text-sm font-semibold transition-colors ${
-                  canPlay
+                  canPlayStaked
                     ? "border-arena-purple/30 text-arena-purple hover:bg-arena-purple/10"
                     : "border-border/30 text-muted-foreground/40 cursor-not-allowed"
                 }`}>
@@ -1222,7 +1287,7 @@ const MatchLobby = () => {
                 </div>
                 <div className="flex gap-2 pt-1">
                   <Button
-                    disabled={!newMatchGame || !newMatchBet || !newMatchPassword || !newMatchMode || !canPlay}
+                    disabled={!newMatchGame || !newMatchBet || !newMatchPassword || !newMatchMode || !canPlayStaked}
                     onClick={() => {
                       void (async () => {
                         if (!newMatchGame || !newMatchBet || !newMatchMode || !user) return;
@@ -1369,7 +1434,7 @@ const MatchLobby = () => {
                               <p key={i} className="text-xs text-muted-foreground/30 italic pl-5">Empty slot</p>
                             ))}
                           </div>
-                          {canJoin && !full && canPlay && (
+                          {canJoin && !full && canPlayStaked && (
                             <button onClick={() => handleJoinCustom(match.id, match.betAmount, isA ? "A" : "B")}
                               className={`mt-1.5 w-full flex items-center justify-center gap-1 py-1 rounded-lg border ${joinBorder} ${joinText} ${joinHover} transition-colors text-xs font-display`}>
                               <UserPlus className="h-3 w-3" /> Join {label}

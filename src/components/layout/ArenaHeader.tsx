@@ -7,6 +7,7 @@ import { useWalletStore } from "@/stores/walletStore";
 import { useEngineStatus } from "@/hooks/useEngineStatus";
 import { useClientStore } from "@/stores/clientStore";
 import { useNavigate } from "react-router-dom";
+import { useToast } from "@/hooks/use-toast";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,7 +32,10 @@ const CLIENT_STATUS_CONFIG = {
 } as const;
 
 export function ArenaHeader() {
-  const { user, isAuthenticated, walletConnected, connectWallet, logout } = useUserStore();
+  const { toast } = useToast();
+  const { user, isAuthenticated, walletConnected, connectWallet: connectUserWalletFlag, logout } = useUserStore();
+  const chainConnectedAddress = useWalletStore((s) => s.connectedAddress);
+  const connectMetaMaskWallet = useWalletStore((s) => s.connectWallet);
   // DB-ready: wagmi useBalance() — live on-chain USDT balance
   const totalBalance = useWalletStore((s) => s.usdtBalance);
   const clientStatus = useClientStore((s) => s.status);
@@ -132,7 +136,7 @@ export function ArenaHeader() {
         )}
 
         {/* Balance Quick View */}
-        {isAuthenticated && walletConnected && (
+        {isAuthenticated && !!chainConnectedAddress && (
           <Button
             variant="ghost"
             size="sm"
@@ -152,8 +156,10 @@ export function ArenaHeader() {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="border-primary/30 text-primary hover:bg-primary/10 gap-2">
-                {walletConnected ? (
-                  <><Wallet className="h-4 w-4" /><span className="hidden sm:inline font-mono text-xs">{user.walletShort}</span></>
+                {chainConnectedAddress ? (
+                  <><Wallet className="h-4 w-4" /><span className="hidden sm:inline font-mono text-xs">
+                    {`${chainConnectedAddress.slice(0, 6)}...${chainConnectedAddress.slice(-4)}`}
+                  </span></>
                 ) : (
                   <><Wallet className="h-4 w-4" /><span className="hidden sm:inline">Connect Wallet</span></>
                 )}
@@ -166,8 +172,21 @@ export function ArenaHeader() {
                 <p className="text-xs text-muted-foreground">{user.email}</p>
               </div>
               <DropdownMenuSeparator />
-              {!walletConnected && (
-                <DropdownMenuItem onClick={() => connectWallet()} className="cursor-pointer">
+              {!chainConnectedAddress && (
+                <DropdownMenuItem
+                  onClick={() => {
+                    void (async () => {
+                      const r = await connectMetaMaskWallet();
+                      if (r.ok) {
+                        connectUserWalletFlag();
+                        toast({ title: "Wallet linked", description: "Your wallet is connected and saved to your profile." });
+                      } else {
+                        toast({ variant: "destructive", title: "Wallet", description: r.error });
+                      }
+                    })();
+                  }}
+                  className="cursor-pointer"
+                >
                   <Wallet className="mr-2 h-4 w-4" /> Connect Wallet
                 </DropdownMenuItem>
               )}

@@ -456,3 +456,20 @@ export async function apiPatchMe(
     return false;
   }
 }
+
+/**
+ * PATCH /users/me — set `wallet_address` after client-side signature (Issue #23).
+ * Backend `PatchUserRequest` must include `wallet_address` (Claude) or the field is ignored.
+ */
+export async function apiPatchMeWalletAddress(token: string, wallet_address: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/users/me`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ wallet_address }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}

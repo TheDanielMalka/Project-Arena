@@ -1,5 +1,12 @@
 import { create } from "zustand";
 import type { Transaction, TransactionType, TransactionStatus, Network } from "@/types";
+import { useUserStore } from "@/stores/userStore";
+import { apiPatchMeWalletAddress } from "@/lib/engine-api";
+import { connectMetaMaskAndSignOwnership } from "@/lib/metamaskBsc";
+
+export type ConnectWalletResult =
+  | { ok: true }
+  | { ok: false; error: string };
 
 // ─── Architecture note ──────────────────────────────────────────────────────
 // Arena is NON-CUSTODIAL. The platform never holds user funds.
@@ -52,8 +59,8 @@ interface WalletState {
   setDailyBettingLimit: (limit: number) => void;
   // DB-ready: wagmi useBalance() — returns live chain value; this is the local preview
   getAvailableBalance: () => number;
-  // DB-ready: wagmi useAccount() / useConnect()
-  connectWallet: (address: string, network: Network) => void;
+  /** MetaMask (EIP-1193) on BSC Testnet — sign ownership message, then PATCH /users/me `wallet_address`. */
+  connectWallet: () => Promise<ConnectWalletResult>;
   disconnectWallet: () => void;
   /** DB-ready: POST /api/wallet/buy-at — mock deducts USDT, credits atBalance; returns false if insufficient */
   buyArenaTokens: (atAmount: number, totalUsdtCost: number) => boolean;
@@ -123,8 +130,8 @@ const SEED_TRANSACTIONS: Transaction[] = [
 ];
 
 export const useWalletStore = create<WalletState>((set, get) => ({
-  // DB-ready: from wagmi useAccount()
-  connectedAddress: "0x7a3F9c2E1b8D4a5C6f7e8d9B0c1A2b3C4d5E6f7A",
+  // DB-ready: from wagmi useAccount(); null until MetaMask link succeeds
+  connectedAddress: null,
   selectedNetwork: "bsc",
 
   // DB-ready: from wagmi useBalance() — USDT on BSC
@@ -138,13 +145,41 @@ export const useWalletStore = create<WalletState>((set, get) => ({
   dailyBettingUsed: 200,
   transactions: SEED_TRANSACTIONS,
 
-  connectWallet: (address, network) => {
-    // DB-ready: wagmi useConnect() + POST /api/auth/wallet-connect { address, network }
-    set({ connectedAddress: address, selectedNetwork: network });
+  connectWallet: async () => {
+    try {
+      const token = useUserStore.getState().token;
+      if (!token) {
+        return { ok: false as const, error: "Sign in to link your wallet." };
+      }
+      const { address } = await connectMetaMaskAndSignOwnership();
+      const saved = await apiPatchMeWalletAddress(token, address);
+      if (!saved) {
+        return {
+          ok: false as const,
+          error:
+            "Could not save wallet to your profile. The server may not accept wallet_address on PATCH /users/me yet.",
+        };
+      }
+      set({ connectedAddress: address, selectedNetwork: "bsc" });
+      return { ok: true as const };
+    } catch (e: unknown) {
+      const err = e as { code?: string; message?: string };
+      if (err.code === "ACTION_REJECTED" || /user rejected|denied transaction/i.test(err.message ?? "")) {
+        return { ok: false as const, error: "Request was cancelled in the wallet." };
+      }
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/wallet_switchEthereumChain|chain/i.test(msg)) {
+        return {
+          ok: false as const,
+          error: "Switch to BNB Smart Chain Testnet (chain 97) in your wallet and try again.",
+        };
+      }
+      return { ok: false as const, error: msg || "Could not connect wallet." };
+    }
   },
 
   disconnectWallet: () => {
-    // DB-ready: wagmi useDisconnect() + POST /api/auth/wallet-disconnect
+    // DB-ready: wagmi useDisconnect() + optional PATCH wallet_address null
     set({ connectedAddress: null });
   },
 

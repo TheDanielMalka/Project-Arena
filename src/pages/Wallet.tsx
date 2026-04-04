@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useUserStore } from "@/stores/userStore";
 import { Link } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,6 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useWalletStore } from "@/stores/walletStore";
-import { useUserStore } from "@/stores/userStore";
 import { useForgeStore } from "@/stores/forgeStore";
 import type { TransactionType, TransactionStatus } from "@/types";
 import { cn } from "@/lib/utils";
@@ -52,12 +52,12 @@ const TX_PER_PAGE = 8;
 
 const WalletPage = () => {
   const { toast } = useToast();
-  const { user } = useUserStore();
+  const { user, connectWallet: syncProfileWalletConnected } = useUserStore();
   const {
     connectedAddress, selectedNetwork,
     usdtBalance, atBalance,
     dailyBettingLimit, dailyBettingUsed, platformBettingMax,
-    transactions, setDailyBettingLimit,
+    transactions, setDailyBettingLimit, connectWallet: linkMetaMaskWallet,
   } = useWalletStore();
   const { arenaTokens: forgeAT } = useForgeStore();
 
@@ -67,6 +67,7 @@ const WalletPage = () => {
   const [txSearch, setTxSearch]             = useState("");
   const [txPage, setTxPage]                 = useState(1);
   const [buyATOpen, setBuyATOpen]           = useState(false);
+  const [walletLinkBusy, setWalletLinkBusy] = useState(false);
 
   // Derived
   const networkCfg      = NETWORKS[selectedNetwork];
@@ -124,9 +125,32 @@ const WalletPage = () => {
             <p className="text-sm font-medium text-arena-gold">No wallet connected</p>
             <p className="text-xs text-muted-foreground">Connect MetaMask or WalletConnect to join matches</p>
           </div>
-          <Button size="sm" className="font-display text-xs shrink-0">
-            <Wallet className="mr-1.5 h-3.5 w-3.5" /> Connect Wallet
-            {/* DB-ready: wagmi useConnect() → opens wallet selection modal */}
+          <Button
+            size="sm"
+            className="font-display text-xs shrink-0"
+            disabled={walletLinkBusy || !user}
+            onClick={() => {
+              void (async () => {
+                setWalletLinkBusy(true);
+                try {
+                  const r = await linkMetaMaskWallet();
+                  if (r.ok) {
+                    syncProfileWalletConnected();
+                    toast({
+                      title: "Wallet linked",
+                      description: "MetaMask on BSC Testnet — address saved to your profile.",
+                    });
+                  } else {
+                    toast({ variant: "destructive", title: "Wallet", description: r.error });
+                  }
+                } finally {
+                  setWalletLinkBusy(false);
+                }
+              })();
+            }}
+          >
+            <Wallet className="mr-1.5 h-3.5 w-3.5" />
+            {walletLinkBusy ? "Connecting…" : "Connect Wallet"}
           </Button>
         </div>
       )}
