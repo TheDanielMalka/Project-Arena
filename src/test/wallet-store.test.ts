@@ -1,5 +1,28 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useWalletStore, PLATFORM_BETTING_MAX } from "@/stores/walletStore";
+
+vi.mock("@/lib/engine-api", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/lib/engine-api")>();
+  return {
+    ...mod,
+    apiGetMatchStatus: vi.fn().mockResolvedValue({
+      match_id: "MATCH-001",
+      status: "waiting",
+      winner_id: null,
+      on_chain_match_id: "42",
+      stake_per_player: 0.01,
+      your_team: 0 as const,
+    }),
+  };
+});
+
+vi.mock("@/lib/metamaskBsc", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/lib/metamaskBsc")>();
+  return {
+    ...mod,
+    depositToEscrow: vi.fn().mockResolvedValue("0xdeadbeef1234567890"),
+  };
+});
 
 // Non-custodial wallet — no deposit/withdraw, only escrow + AT activity
 
@@ -50,45 +73,45 @@ describe("walletStore — non-custodial model", () => {
     expect(state.getAvailableBalance()).toBe(state.usdtBalance);
   });
 
-  it("getAvailableBalance decreases after lockEscrow", () => {
+  it("getAvailableBalance decreases after lockEscrow", async () => {
     const before = useWalletStore.getState().getAvailableBalance();
-    useWalletStore.getState().lockEscrow(50, "MATCH-TEST");
+    await useWalletStore.getState().lockEscrow(50, "MATCH-TEST");
     expect(useWalletStore.getState().getAvailableBalance()).toBe(before - 50);
   });
 
   // ── lockEscrow ────────────────────────────────────────────────────────────
-  it("lockEscrow returns a transaction on success", () => {
-    const tx = useWalletStore.getState().lockEscrow(50, "MATCH-001");
+  it("lockEscrow returns a transaction on success", async () => {
+    const tx = await useWalletStore.getState().lockEscrow(50, "MATCH-001");
     expect(tx).not.toBeNull();
     expect(tx?.type).toBe("escrow_lock");
     expect(tx?.amount).toBe(-50);
   });
 
-  it("lockEscrow deducts from usdtBalance", () => {
+  it("lockEscrow deducts from usdtBalance", async () => {
     const before = useWalletStore.getState().usdtBalance;
-    useWalletStore.getState().lockEscrow(100, "MATCH-002");
+    await useWalletStore.getState().lockEscrow(100, "MATCH-002");
     expect(useWalletStore.getState().usdtBalance).toBe(before - 100);
   });
 
-  it("lockEscrow increments dailyBettingUsed", () => {
-    useWalletStore.getState().lockEscrow(75, "MATCH-003");
+  it("lockEscrow increments dailyBettingUsed", async () => {
+    await useWalletStore.getState().lockEscrow(75, "MATCH-003");
     expect(useWalletStore.getState().dailyBettingUsed).toBe(75);
   });
 
-  it("lockEscrow returns null when daily limit exceeded", () => {
+  it("lockEscrow returns null when daily limit exceeded", async () => {
     useWalletStore.setState({ dailyBettingUsed: 450 });
-    const tx = useWalletStore.getState().lockEscrow(100, "MATCH-OVER");
+    const tx = await useWalletStore.getState().lockEscrow(100, "MATCH-OVER");
     expect(tx).toBeNull();
   });
 
-  it("lockEscrow returns null when usdtBalance insufficient", () => {
-    const tx = useWalletStore.getState().lockEscrow(999999, "MATCH-BIG");
+  it("lockEscrow returns null when usdtBalance insufficient", async () => {
+    const tx = await useWalletStore.getState().lockEscrow(999999, "MATCH-BIG");
     expect(tx).toBeNull();
   });
 
   // ── cancelEscrow ─────────────────────────────────────────────────────────
-  it("cancelEscrow refunds usdtBalance and decrements dailyBettingUsed", () => {
-    useWalletStore.getState().lockEscrow(100, "MATCH-CX");
+  it("cancelEscrow refunds usdtBalance and decrements dailyBettingUsed", async () => {
+    await useWalletStore.getState().lockEscrow(100, "MATCH-CX");
     const balAfterLock = useWalletStore.getState().usdtBalance;
     const usedAfterLock = useWalletStore.getState().dailyBettingUsed;
 
@@ -97,8 +120,8 @@ describe("walletStore — non-custodial model", () => {
     expect(useWalletStore.getState().dailyBettingUsed).toBe(usedAfterLock - 100);
   });
 
-  it("cancelEscrow creates a refund transaction", () => {
-    useWalletStore.getState().lockEscrow(60, "MATCH-CX2");
+  it("cancelEscrow creates a refund transaction", async () => {
+    await useWalletStore.getState().lockEscrow(60, "MATCH-CX2");
     useWalletStore.getState().cancelEscrow("MATCH-CX2");
     const refund = useWalletStore.getState().transactions.find(
       (tx) => tx.type === "refund" && tx.matchId === "MATCH-CX2"
@@ -113,22 +136,22 @@ describe("walletStore — non-custodial model", () => {
   });
 
   // ── releaseEscrow ─────────────────────────────────────────────────────────
-  it("releaseEscrow on win adds to usdtBalance", () => {
-    useWalletStore.getState().lockEscrow(50, "MATCH-WIN");
+  it("releaseEscrow on win adds to usdtBalance", async () => {
+    await useWalletStore.getState().lockEscrow(50, "MATCH-WIN");
     const balAfterLock = useWalletStore.getState().usdtBalance;
     useWalletStore.getState().releaseEscrow(95, "MATCH-WIN", true);
     expect(useWalletStore.getState().usdtBalance).toBe(balAfterLock + 95);
   });
 
-  it("releaseEscrow on loss does not add to usdtBalance", () => {
-    useWalletStore.getState().lockEscrow(50, "MATCH-LOSS");
+  it("releaseEscrow on loss does not add to usdtBalance", async () => {
+    await useWalletStore.getState().lockEscrow(50, "MATCH-LOSS");
     const balAfterLock = useWalletStore.getState().usdtBalance;
     useWalletStore.getState().releaseEscrow(50, "MATCH-LOSS", false);
     expect(useWalletStore.getState().usdtBalance).toBe(balAfterLock);
   });
 
-  it("releaseEscrow creates match_win transaction on win", () => {
-    useWalletStore.getState().lockEscrow(50, "MATCH-WIN2");
+  it("releaseEscrow creates match_win transaction on win", async () => {
+    await useWalletStore.getState().lockEscrow(50, "MATCH-WIN2");
     useWalletStore.getState().releaseEscrow(95, "MATCH-WIN2", true);
     const winTx = useWalletStore.getState().transactions.find(
       (tx) => tx.type === "match_win" && tx.matchId === "MATCH-WIN2"

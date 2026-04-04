@@ -1,4 +1,4 @@
-import { BrowserProvider, getAddress } from "ethers";
+import { BrowserProvider, Contract, getAddress } from "ethers";
 
 /** EIP-155 chain id — default BSC Testnet (97). Override with `VITE_CHAIN_ID`. */
 export function getArenaTargetChainId(): number {
@@ -79,6 +79,31 @@ export function buildWalletOwnershipMessage(walletAddress: string): string {
     `contract: ${contract}`,
     `nonce: ${nonce}`,
   ].join("\n");
+}
+
+/** ArenaEscrow.deposit — native BNB/tBNB `value` must match stake for this match/team. */
+export async function depositToEscrow(
+  onChainMatchId: bigint,
+  team: 0 | 1,
+  stakeWei: bigint,
+): Promise<string> {
+  const addr = import.meta.env.VITE_CONTRACT_ADDRESS;
+  if (!addr || String(addr).trim() === "") {
+    throw new Error("VITE_CONTRACT_ADDRESS is not set");
+  }
+  const eth = getInjectedEthereum();
+  if (!eth) throw new Error("MetaMask not found");
+  await ensureTargetChain(eth);
+  const provider = new BrowserProvider(eth);
+  const signer = await provider.getSigner();
+  const contract = new Contract(
+    addr,
+    ["function deposit(uint256 matchId, uint8 team) payable"],
+    signer,
+  );
+  const tx = await contract.deposit(onChainMatchId, team, { value: stakeWei });
+  await tx.wait();
+  return tx.hash;
 }
 
 export async function connectMetaMaskAndSignOwnership(): Promise<{ address: string; signature: string }> {

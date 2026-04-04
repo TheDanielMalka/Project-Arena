@@ -361,8 +361,18 @@ const MatchLobby = () => {
         return;
       }
     }
-    // DB-ready: replace with wagmi writeContract(joinMatch, { value: stakePerPlayer }) in Issue #Frontend-Wallet
-    lockEscrow(match.betAmount, match.id);
+    const escrowTx = await lockEscrow(match.betAmount, match.id);
+    if (!escrowTx) {
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "Escrow deposit failed",
+        message:
+          "Could not complete the on-chain deposit. Sign in, ensure this match exists on-chain (on_chain_match_id), confirm in MetaMask, and try again.",
+      });
+      setDepositConfirm(null);
+      setDepositStep("idle");
+      return;
+    }
     joinMatch(match.id, user.username, team);
     setMyRoomMatchId(match.id);
     setRoomLocked(false);
@@ -1331,7 +1341,16 @@ const MatchLobby = () => {
                           teamSize,
                           depositsReceived: 1,
                         });
-                        lockEscrow(newMatchBet, created.id);
+                        const escrowTx = await lockEscrow(newMatchBet, created.id);
+                        if (!escrowTx) {
+                          useNotificationStore.getState().addNotification({
+                            type: "system",
+                            title: "Escrow deposit failed",
+                            message:
+                              "Match was created but the on-chain deposit did not complete. Check MetaMask and VITE_CONTRACT_ADDRESS, then try joining again if needed.",
+                          });
+                          return;
+                        }
                         setMyRoomMatchId(created.id);
                         setRoomLocked(false);
                         const { addNotification } = useNotificationStore.getState();

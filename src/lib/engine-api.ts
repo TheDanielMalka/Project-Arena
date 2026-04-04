@@ -63,6 +63,16 @@ export interface EngineMatchStatus {
   winnerId?: string;
 }
 
+/** Raw GET /match/:id/status — includes escrow fields for MetaMask deposit. */
+export interface MatchStatusApiResponse {
+  match_id:            string;
+  status:              string;
+  winner_id?:          string | null;
+  on_chain_match_id:   string | number | null;
+  stake_per_player:    number | null;
+  your_team:           0 | 1 | null;
+}
+
 // ── Config ────────────────────────────────────────────────────────────────────
 const ENGINE_BASE =
   (import.meta.env.VITE_ENGINE_API_URL as string | undefined)?.trim() ?? "/api";
@@ -164,18 +174,63 @@ export async function getClientStatus(
   }
 }
 
+function engineAuthHeaders(userToken?: string | null): HeadersInit {
+  const headers: HeadersInit = {};
+  if (userToken) headers["Authorization"] = `Bearer ${userToken}`;
+  else if (ENGINE_TOKEN) headers["Authorization"] = `Bearer ${ENGINE_TOKEN}`;
+  return headers;
+}
+
+/**
+ * GET /match/:id/status — full JSON (optional Bearer for `your_team`).
+ * DB-ready: matches + match_players; CONTRACT-ready: on_chain_match_id → deposit().
+ */
+export async function apiGetMatchStatus(
+  matchId: string,
+  token?: string | null,
+): Promise<MatchStatusApiResponse | null> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(
+      `${ENGINE_BASE}/match/${encodeURIComponent(matchId)}/status`,
+      { signal: controller.signal, headers: engineAuthHeaders(token) },
+    );
+    clearTimeout(tid);
+    if (!res.ok) return null;
+    return (await res.json()) as MatchStatusApiResponse;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeEngineMatchStatus(status: string): EngineMatchStatus["status"] {
+  if (status === "pending") return "in_progress";
+  const allowed: EngineMatchStatus["status"][] = [
+    "waiting",
+    "in_progress",
+    "completed",
+    "cancelled",
+    "disputed",
+  ];
+  return (allowed.includes(status as EngineMatchStatus["status"])
+    ? status
+    : "in_progress") as EngineMatchStatus["status"];
+}
+
 /**
  * GET /match/:id/status
  * Called by useMatchPolling during an active match to check for results.
  * DB-ready: Vision Engine writes result → triggers declareWinner() on smart contract.
  */
 export async function getMatchStatus(matchId: string): Promise<EngineMatchStatus> {
-  const data = await safeFetch<{
-    status?:    EngineMatchStatus["status"];
-    winner_id?: string;
-  }>(`/match/${encodeURIComponent(matchId)}/status`);
+  const data = await apiGetMatchStatus(matchId, null);
   if (!data?.status) return { id: matchId, status: "in_progress" };
-  return { id: matchId, status: data.status, winnerId: data.winner_id };
+  return {
+    id:       matchId,
+    status:   normalizeEngineMatchStatus(data.status),
+    winnerId: data.winner_id ?? undefined,
+  };
 }
 
 // ── Auth / Identity (Phase 3: real website auth) ──────────────────────────────

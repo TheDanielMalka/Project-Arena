@@ -442,46 +442,46 @@ describe("forgeStore — claimChallenge", () => {
 describe("forgeStore — joinEvent", () => {
   beforeEach(() => { resetForge(); resetWallet(); });
 
-  it("successfully joins a free active event (Weekend Warrior ev-002)", () => {
+  it("successfully joins a free active event (Weekend Warrior ev-002)", async () => {
     // ev-002 is already joined=true in seed; use a free upcoming event instead
     // ev-004 Free Friday is upcoming and free
-    const result = useForgeStore.getState().joinEvent("ev-004");
+    const result = await useForgeStore.getState().joinEvent("ev-004");
     expect(result.success).toBe(true);
   });
 
-  it("increments participant count after joining", () => {
+  it("increments participant count after joining", async () => {
     const before = useForgeStore.getState().events.find((e) => e.id === "ev-004")!.participants;
-    useForgeStore.getState().joinEvent("ev-004");
+    await useForgeStore.getState().joinEvent("ev-004");
     const after = useForgeStore.getState().events.find((e) => e.id === "ev-004")!.participants;
     expect(after).toBe(before + 1);
   });
 
-  it("marks event as joined after joining", () => {
-    useForgeStore.getState().joinEvent("ev-004");
+  it("marks event as joined after joining", async () => {
+    await useForgeStore.getState().joinEvent("ev-004");
     const ev = useForgeStore.getState().events.find((e) => e.id === "ev-004");
     expect(ev?.joined).toBe(true);
   });
 
-  it("fails if already joined (ev-002 Weekend Warrior already joined in seed)", () => {
-    const result = useForgeStore.getState().joinEvent("ev-002");
+  it("fails if already joined (ev-002 Weekend Warrior already joined in seed)", async () => {
+    const result = await useForgeStore.getState().joinEvent("ev-002");
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/already joined/i);
   });
 
-  it("fails for nonexistent event id", () => {
-    const result = useForgeStore.getState().joinEvent("ev-999");
+  it("fails for nonexistent event id", async () => {
+    const result = await useForgeStore.getState().joinEvent("ev-999");
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/not found/i);
   });
 
-  it("succeeds for paid event (ev-001 CS2 Grand Prix $50 entry) when wallet has funds", () => {
+  it("succeeds for paid event (ev-001 CS2 Grand Prix $50 entry) when wallet has funds", async () => {
     // ev-001 has entryFee=50 and joined=false in seed
-    const result = useForgeStore.getState().joinEvent("ev-001");
+    const result = await useForgeStore.getState().joinEvent("ev-001");
     expect(result.success).toBe(true);
   });
 
-  it("locks escrow when joining paid event", () => {
-    useForgeStore.getState().joinEvent("ev-001"); // $50 entry
+  it("locks escrow when joining paid event", async () => {
+    await useForgeStore.getState().joinEvent("ev-001"); // $50 entry
     const escrowTx = useWalletStore.getState().transactions.find((tx) => tx.type === "escrow_lock");
     expect(escrowTx).toBeDefined();
     expect(Math.abs(escrowTx!.amount)).toBe(50);
