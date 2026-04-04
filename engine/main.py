@@ -15,6 +15,7 @@ import jwt as _jwt
 from src.config import DATABASE_URL, ENVIRONMENT, MIN_CLIENT_VERSION
 from src.vision.capture import capture_screen, crop_roi
 from src.vision.engine import VisionEngine, VisionEngineConfig
+from src.contract import build_escrow_client
 import src.auth as auth
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -27,6 +28,12 @@ logger = logging.getLogger("arena.engine")
 
 db_engine = create_engine(DB_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=db_engine)
+
+# ── Escrow client (Phase 6) ───────────────────────────────────────────────────
+# Initialised in lifespan after DB check. None when env vars are missing
+# (local dev / CI without blockchain config) — engine runs without escrow.
+# CONTRACT-ready: EscrowClient.declare_winner() releases payout on-chain.
+_escrow_client = None
 
 
 @asynccontextmanager
@@ -70,6 +77,14 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Arena Engine connected to DB")
     except Exception as exc:
         logger.warning("⚠️  DB not available at startup: %s", exc)
+
+    # Escrow client — optional, requires BLOCKCHAIN_RPC_URL + CONTRACT_ADDRESS + PRIVATE_KEY
+    global _escrow_client
+    _escrow_client = build_escrow_client(SessionLocal)
+    if _escrow_client:
+        logger.info("✅ EscrowClient initialised (contract=%s)", _escrow_client.contract.address)
+    else:
+        logger.info("ℹ️  EscrowClient disabled — blockchain env vars not set")
     yield
 
 
@@ -396,7 +411,22 @@ async def submit_result(result: MatchResult, token: dict = Depends(verify_token)
     except Exception as exc:
         logger.error("submit_result db error: %s", exc)
         # Non-fatal: return accepted so client doesn't retry endlessly
-        # CONTRACT-ready: retry queue for escrow release
+        # Non-fatal: DB record is source of truth
+
+    # ── On-chain payout (Phase 6) ─────────────────────────────────────────────
+    # If escrow client is live AND a winner was declared → release funds on-chain.
+    # Errors are non-fatal: the listener loop will retry if the tx was not sent.
+    if _escrow_client and result.winner_id:
+        try:
+            tx_hash = _escrow_client.declare_winner(
+                str(result.match_id), str(result.winner_id)
+            )
+            logger.info("declareWinner tx: match=%s tx=%s", result.match_id, tx_hash)
+        except Exception as exc:
+            logger.error(
+                "declareWinner failed (non-fatal): match=%s error=%s",
+                result.match_id, exc,
+            )
 
     return {
         "accepted": True,

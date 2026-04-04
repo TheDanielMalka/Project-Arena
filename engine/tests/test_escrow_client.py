@@ -1,0 +1,261 @@
+"""Tests for engine/src/contract/escrow_client.py - Web3 stubbed via sys.modules."""
+from __future__ import annotations
+import os, sys, uuid
+from contextlib import contextmanager
+from unittest.mock import MagicMock
+import pytest
+
+if "web3" not in sys.modules:
+    _s = MagicMock()
+    _s.Web3.HTTPProvider = MagicMock()
+    _s.Web3.to_checksum_address = lambda x: x
+    _s.Web3.from_wei = lambda v, u: v / 10**18
+    _s.exceptions.ContractLogicError = Exception
+    sys.modules["web3"] = _s
+    sys.modules["web3.exceptions"] = _s.exceptions
+    sys.modules["web3.middleware"] = MagicMock()
+    sys.modules["web3.types"] = MagicMock()
+
+
+def _sf(fns=None, fas=None):
+    sess = MagicMock()
+    fns = list(fns or []); fas = list(fas or [])
+    fi = {"n": 0}; ai = {"n": 0}
+
+    def _ex(q, p=None):
+        r = MagicMock()
+        def fn():
+            v = fns[fi["n"]] if fi["n"] < len(fns) else None
+            fi["n"] += 1; return v
+        def fa():
+            v = fas[ai["n"]] if ai["n"] < len(fas) else []
+            ai["n"] += 1; return v
+        r.fetchone.side_effect = fn; r.fetchall.side_effect = fa; return r
+    sess.execute.side_effect = _ex
+
+    @contextmanager
+    def factory(): yield sess
+    return factory, sess
+
+
+def _client(fns=None, fas=None):
+    from src.contract.escrow_client import EscrowClient
+    w3 = MagicMock(); w3.is_connected.return_value = True
+    w3.eth.chain_id = 97; w3.eth.block_number = 100
+    ct = MagicMock()
+    ct.address = "0x47bB9861263A1AB7dAF2353765e0fd3118b71d38"
+    ct.functions.isPaused.return_value.call.return_value = False
+    acc = MagicMock(); acc.address = "0xOracle"
+    f, s = _sf(fns, fas)
+    c = object.__new__(EscrowClient)
+    c._w3 = w3; c._contract = ct; c._account = acc; c._session_factory = f
+    return c, w3, ct, s
+
+
+class TestBuildEscrowClient:
+    def _clean(self):
+        for k in ("BLOCKCHAIN_RPC_URL", "CONTRACT_ADDRESS", "PRIVATE_KEY"):
+            os.environ.pop(k, None)
+
+    def test_none_missing_rpc(self):
+        from src.contract.escrow_client import build_escrow_client
+        f, _ = _sf(); self._clean()
+        os.environ["CONTRACT_ADDRESS"] = "0xA"
+        os.environ["PRIVATE_KEY"] = "aa" * 32
+        assert build_escrow_client(f) is None
+
+    def test_none_missing_contract(self):
+        from src.contract.escrow_client import build_escrow_client
+        f, _ = _sf(); self._clean()
+        os.environ["BLOCKCHAIN_RPC_URL"] = "http://x"
+        os.environ["PRIVATE_KEY"] = "aa" * 32
+        assert build_escrow_client(f) is None
+
+    def test_none_missing_key(self):
+        from src.contract.escrow_client import build_escrow_client
+        f, _ = _sf(); self._clean()
+        os.environ["BLOCKCHAIN_RPC_URL"] = "http://x"
+        os.environ["CONTRACT_ADDRESS"] = "0xA"
+        assert build_escrow_client(f) is None
+
+    def test_returns_client(self):
+        from src.contract.escrow_client import build_escrow_client, EscrowClient
+        f, _ = _sf(); self._clean()
+        os.environ["BLOCKCHAIN_RPC_URL"] = "http://x"
+        os.environ["CONTRACT_ADDRESS"] = "0x47bB9861263A1AB7dAF2353765e0fd3118b71d38"
+        os.environ["PRIVATE_KEY"] = "aa" * 32
+        assert isinstance(build_escrow_client(f), EscrowClient)
+
+
+class TestIsHealthy:
+    def test_true(self):
+        c, *_ = _client(); assert c.is_healthy() is True
+
+    def test_false_disconnected(self):
+        c, w3, *_ = _client(); w3.is_connected.return_value = False
+        assert c.is_healthy() is False
+
+    def test_false_paused(self):
+        c, _, ct, _ = _client()
+        ct.functions.isPaused.return_value.call.return_value = True
+        assert c.is_healthy() is False
+
+    def test_false_exception(self):
+        c, w3, *_ = _client(); w3.is_connected.side_effect = Exception("x")
+        assert c.is_healthy() is False
+
+
+class TestDeclareWinner:
+    def test_team_a_passes_0(self):
+        c, _, ct, _ = _client(fns=[(42,), ("A",)])
+        c._send_tx = MagicMock(return_value="0xTX")
+        c.declare_winner(str(uuid.uuid4()), str(uuid.uuid4()))
+        ct.functions.declareWinner.assert_called_once_with(42, 0)
+
+    def test_team_b_passes_1(self):
+        c, _, ct, _ = _client(fns=[(7,), ("B",)])
+        c._send_tx = MagicMock(return_value="0xTX")
+        c.declare_winner(str(uuid.uuid4()), str(uuid.uuid4()))
+        ct.functions.declareWinner.assert_called_once_with(7, 1)
+
+    def test_returns_tx_hash(self):
+        c, *_ = _client(fns=[(5,), ("A",)])
+        c._send_tx = MagicMock(return_value="0xHASH")
+        assert c.declare_winner(str(uuid.uuid4()), str(uuid.uuid4())) == "0xHASH"
+
+    def test_raises_match_not_found(self):
+        c, *_ = _client(fns=[None])
+        with pytest.raises(ValueError, match="not found in DB"):
+            c.declare_winner(str(uuid.uuid4()), str(uuid.uuid4()))
+
+    def test_raises_no_on_chain_id(self):
+        c, *_ = _client(fns=[(None,)])
+        with pytest.raises(ValueError, match="no on_chain_match_id"):
+            c.declare_winner(str(uuid.uuid4()), str(uuid.uuid4()))
+
+    def test_raises_winner_not_in_players(self):
+        c, *_ = _client(fns=[(42,), None])
+        with pytest.raises(ValueError, match="not found in match_players"):
+            c.declare_winner(str(uuid.uuid4()), str(uuid.uuid4()))
+
+
+class TestCancelMatch:
+    def test_happy(self):
+        c, _, ct, _ = _client(fns=[(9,)])
+        c._send_tx = MagicMock(return_value="0xC")
+        assert c.cancel_match_on_chain(str(uuid.uuid4())) == "0xC"
+        ct.functions.cancelMatch.assert_called_once_with(9)
+
+    def test_raises_not_found(self):
+        c, *_ = _client(fns=[None])
+        with pytest.raises(ValueError, match="no on_chain_match_id"):
+            c.cancel_match_on_chain(str(uuid.uuid4()))
+
+
+class TestGetOnChainMatch:
+    def test_returns_all_keys(self):
+        c, _, ct, _ = _client()
+        ct.functions.getMatch.return_value.call.return_value = ([], [], 0, 1, 0, 0, 0, 0)
+        r = c.get_on_chain_match(1)
+        assert set(r) == {"teamA", "teamB", "stakePerPlayer", "teamSize",
+                          "depositsTeamA", "depositsTeamB", "state", "winningTeam"}
+
+    def test_passes_id(self):
+        c, _, ct, _ = _client()
+        ct.functions.getMatch.return_value.call.return_value = ([], [], 0, 1, 0, 0, 0, 0)
+        c.get_on_chain_match(99)
+        ct.functions.getMatch.assert_called_once_with(99)
+
+
+class TestProcessEvents:
+    def _setup(self, c, logs_by_name):
+        for h in ["_handle_match_created", "_handle_player_deposited",
+                  "_handle_match_active", "_handle_winner_declared",
+                  "_handle_match_refunded", "_handle_match_cancelled"]:
+            setattr(c, h, MagicMock())
+        for name in ["MatchCreated", "PlayerDeposited", "MatchActive",
+                     "WinnerDeclared", "MatchRefunded", "MatchCancelled"]:
+            ev = MagicMock()
+            ev.get_logs.return_value = logs_by_name.get(name, [])
+            setattr(c._contract.events, name, ev)
+
+    def test_counts(self):
+        c, *_ = _client(); self._setup(c, {"MatchCreated": [{}] * 3})
+        assert c.process_events(1, 100) == 3
+
+    def test_zero(self):
+        c, *_ = _client(); self._setup(c, {})
+        assert c.process_events(1, 100) == 0
+
+    def test_continues_on_handler_error(self):
+        c, *_ = _client(); self._setup(c, {"MatchCreated": [{}]})
+        c._handle_match_created.side_effect = RuntimeError("boom")
+        assert c.process_events(1, 100) == 0
+
+    def test_continues_on_filter_error(self):
+        c, *_ = _client(); self._setup(c, {})
+        for name in ["MatchCreated", "PlayerDeposited", "MatchActive",
+                     "WinnerDeclared", "MatchRefunded", "MatchCancelled"]:
+            ev = MagicMock(); ev.get_logs.side_effect = Exception("rpc")
+            setattr(c._contract.events, name, ev)
+        assert c.process_events(1, 100) == 0
+
+
+class TestHandleMatchActive:
+    def test_commits(self):
+        c, _, _, s = _client()
+        c._handle_match_active({"args": {"matchId": 7}})
+        s.commit.assert_called_once()
+
+
+class TestHandleMatchCreated:
+    def _ev(self):
+        return {"args": {"matchId": 1, "creator": "0xDEAD",
+                         "teamSize": 1, "stakePerPlayer": 10**17}}
+
+    def test_skip_unknown_wallet(self):
+        c, _, _, s = _client(fns=[None])
+        c._handle_match_created(self._ev()); s.commit.assert_not_called()
+
+    def test_skip_no_waiting_match(self):
+        c, _, _, s = _client(fns=[(str(uuid.uuid4()),), None])
+        c._handle_match_created(self._ev()); s.commit.assert_not_called()
+
+    def test_commits_on_success(self):
+        uid = str(uuid.uuid4()); mid = str(uuid.uuid4())
+        c, _, _, s = _client(fns=[(uid,), (mid,)])
+        c._handle_match_created(self._ev()); s.commit.assert_called_once()
+
+
+class TestHandleWinnerDeclared:
+    def _ev(self, wt=0):
+        return {"args": {"matchId": 10, "winningTeam": wt,
+                         "payoutPerWinner": 95 * 10**15, "fee": 5 * 10**15}}
+
+    def test_skip_match_not_found(self):
+        c, _, _, s = _client(fns=[None])
+        c._handle_winner_declared(self._ev()); s.commit.assert_not_called()
+
+    def test_commits_with_players(self):
+        mid = str(uuid.uuid4()); w = str(uuid.uuid4()); lo = str(uuid.uuid4())
+        c, _, _, s = _client(fns=[(mid,)], fas=[[(w, "A"), (lo, "B")]])
+        c._handle_winner_declared(self._ev(0)); s.commit.assert_called_once()
+
+
+class TestMappings:
+    def test_team_to_int(self):
+        from src.contract.escrow_client import _TEAM_TO_INT
+        assert _TEAM_TO_INT == {"A": 0, "B": 1}
+
+    def test_int_to_team(self):
+        from src.contract.escrow_client import _INT_TO_TEAM
+        assert _INT_TO_TEAM == {0: "A", 1: "B"}
+
+    def test_team_size_to_mode(self):
+        from src.contract.escrow_client import _TEAM_SIZE_TO_MODE
+        assert _TEAM_SIZE_TO_MODE == {1: "1v1", 2: "2v2", 4: "4v4", 5: "5v5"}
+
+    def test_roundtrip(self):
+        from src.contract.escrow_client import _TEAM_TO_INT, _INT_TO_TEAM
+        for letter in ("A", "B"):
+            assert _INT_TO_TEAM[_TEAM_TO_INT[letter]] == letter
