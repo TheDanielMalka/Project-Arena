@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity 0.8.28;
 
 /**
  * @title  ArenaEscrow
@@ -11,8 +11,9 @@ pragma solidity ^0.8.20;
  *   2. Players call joinMatch(matchId, team) → each deposits same stake
  *   3. When all (teamSize × 2) players deposited → state = ACTIVE automatically
  *   4. Vision Engine calls declareWinner(matchId, winningTeam) → distributes to all winners
- *   5. Timeout fallback: any player calls claimRefund() → all refunded
- *   6. No-show fallback: creator calls cancelMatch() → all depositors refunded
+ *   5. Timeout fallback: any player calls claimRefund() → all refunded (ACTIVE → REFUNDED)
+ *   6. No-show fallback: creator calls cancelMatch() OR any depositor calls cancelWaiting()
+ *      after WAITING_TIMEOUT → all depositors refunded (WAITING → CANCELLED)
  *
  * Trust model:
  *   - No one (including ARENA) can touch funds mid-match
@@ -20,6 +21,15 @@ pragma solidity ^0.8.20;
  *   - Each player deposits individually — verified against their SteamID/wallet link
  *   - Players can always recover funds via refund or cancel
  *   - All logic is public and verifiable on-chain
+ *
+ * Security notes (audit 2026-04-04):
+ *   - Reentrancy: custom nonReentrant guard on all state-changing functions
+ *   - CEI: state updated before all external calls; events emitted before transfers
+ *   - Transfer: .call() used instead of .transfer() — removes hard 2300-gas limit
+ *     that could DoS payouts if any player/owner is a contract with an expensive fallback
+ *   - WAITING escape hatch: cancelWaiting() added — any depositor can cancel after
+ *     WAITING_TIMEOUT if creator disappears and not all slots are filled
+ *   - teamSize validated to {1,2,4,5} only; 3 is rejected
  *
  * ── Supported formats ──────────────────────────────────────────────────────────
  *   teamSize = 1 → 1v1  (2  players total)
@@ -32,7 +42,7 @@ pragma solidity ^0.8.20;
  *   MatchState.ACTIVE    → 'in_progress'
  *   MatchState.FINISHED  → 'completed'
  *   MatchState.REFUNDED  → 'cancelled'   (timeout — vision engine offline)
- *   MatchState.CANCELLED → 'cancelled'   (creator cancelled before start)
+ *   MatchState.CANCELLED → 'cancelled'   (creator cancelled OR waiting timeout)
  *
  * ── DB alignment (transactions.tx_type) ────────────────────────────────────────
  *   MatchCreated    event → 'escrow_lock'  for creator (teamA[0])
@@ -53,9 +63,10 @@ contract ArenaEscrow {
 
     // ── Constants ────────────────────────────────────────────────────────────
 
-    uint256 public constant TIMEOUT     = 2 hours;
-    uint256 public constant FEE_PERCENT = 5;     // matches platform_settings.fee_percent
-    uint8   public constant MAX_TEAM    = 5;     // maximum players per team (5v5)
+    uint256 public constant TIMEOUT         = 2 hours;   // ACTIVE match timeout (rage-quit guard)
+    uint256 public constant WAITING_TIMEOUT = 1 hours;   // WAITING match timeout (creator no-show guard)
+    uint256 public constant FEE_PERCENT     = 5;         // matches platform_settings.fee_percent
+    uint8   public constant MAX_TEAM        = 5;         // maximum players per team (5v5)
 
     // ── Match states ─────────────────────────────────────────────────────────
 
@@ -64,7 +75,7 @@ contract ArenaEscrow {
         ACTIVE,     // all players deposited, match in progress       → DB: 'in_progress'
         FINISHED,   // winner declared, funds paid out               → DB: 'completed'
         REFUNDED,   // timeout — stakes returned to all players      → DB: 'cancelled'
-        CANCELLED   // creator cancelled before all joined           → DB: 'cancelled'
+        CANCELLED   // creator cancelled OR waiting timeout          → DB: 'cancelled'
     }
 
     // ── Match data ───────────────────────────────────────────────────────────
@@ -76,16 +87,17 @@ contract ArenaEscrow {
         uint8   teamSize;       // players per team (1,2,4,5) — DB: matches.max_per_team
         uint8   depositsTeamA;  // how many teamA players deposited — DB: COUNT(match_players WHERE team='A' AND has_deposited=TRUE)
         uint8   depositsTeamB;  // how many teamB players deposited
-        uint256 startTime;      // block.timestamp when ACTIVE — DB: matches.started_at
+        uint256 createdAt;      // block.timestamp when createMatch was called — used for WAITING_TIMEOUT
+        uint256 startTime;      // block.timestamp when match became ACTIVE — DB: matches.started_at, used for TIMEOUT
         MatchState state;       // DB: matches.status
         uint8   winningTeam;    // 0=teamA, 1=teamB, 255=undecided — DB: matches.winner_id (via wallet lookup)
     }
 
     // ── Storage ───────────────────────────────────────────────────────────────
 
-    address public owner;    // ARENA platform wallet (receives fees)
-    address public oracle;   // Vision Engine wallet (declares winners)
-    bool    public paused;   // DB: platform_settings.kill_switch_active
+    address public immutable owner;  // ARENA platform wallet (receives fees) — set once in constructor
+    address public oracle;           // Vision Engine wallet (declares winners)
+    bool    public paused;           // DB: platform_settings.kill_switch_active
 
     uint256 public matchCount;
     mapping(uint256 => Match) public matches;
@@ -152,6 +164,28 @@ contract ArenaEscrow {
         _status = _NOT_ENTERED;
     }
 
+    // ── Internal helpers ─────────────────────────────────────────────────────
+
+    /**
+     * @dev Sends `amount` wei to `recipient` using .call() instead of .transfer().
+     *      .transfer() forwards only 2300 gas which can fail if recipient is a contract
+     *      with a fallback that needs more gas (e.g. a multisig wallet or any ERC-4337
+     *      account abstraction). Using .call() removes this hard limit.
+     *      The nonReentrant guard on every caller prevents reentrancy.
+     */
+    function _sendEth(address recipient, uint256 amount) internal {
+        (bool success, ) = payable(recipient).call{value: amount}("");
+        require(success, "ETH transfer failed");
+    }
+
+    /**
+     * @dev Validates that teamSize is one of the four supported match formats.
+     *      Rejects teamSize=3 which passes the range check (1-5) but has no DB mapping.
+     */
+    function _validTeamSize(uint8 teamSize) internal pure returns (bool) {
+        return teamSize == 1 || teamSize == 2 || teamSize == 4 || teamSize == 5;
+    }
+
     // ── Player actions ───────────────────────────────────────────────────────
 
     /**
@@ -176,7 +210,7 @@ contract ArenaEscrow {
         nonReentrant
         returns (uint256 matchId)
     {
-        require(teamSize >= 1 && teamSize <= MAX_TEAM, "Invalid team size (1-5)");
+        require(_validTeamSize(teamSize), "Invalid team size (1,2,4,5)");
         require(msg.value > 0, "Stake must be greater than zero");
 
         matchId = matchCount++;
@@ -186,7 +220,8 @@ contract ArenaEscrow {
         m.teamSize       = teamSize;
         m.depositsTeamA  = 1;
         m.depositsTeamB  = 0;
-        m.startTime      = 0;
+        m.createdAt      = block.timestamp;  // used for WAITING_TIMEOUT reference
+        m.startTime      = 0;               // set when match becomes ACTIVE
         m.state          = MatchState.WAITING;
         m.winningTeam    = 255; // 255 = undecided
         m.teamA.push(msg.sender);
@@ -243,7 +278,7 @@ contract ArenaEscrow {
 
         // All players deposited → activate match
         if (m.depositsTeamA == m.teamSize && m.depositsTeamB == m.teamSize) {
-            m.startTime = block.timestamp;
+            m.startTime = block.timestamp;   // TIMEOUT reference starts from when match is ACTIVE
             m.state     = MatchState.ACTIVE;
             emit MatchActive(matchId);
         }
@@ -273,19 +308,57 @@ contract ArenaEscrow {
         require(m.state == MatchState.WAITING,  "Match already started or resolved");
         require(msg.sender == m.teamA[0],        "Only match creator can cancel");
 
-        // Checks-Effects-Interactions: update state before transfers
+        // Checks-Effects-Interactions: update state and emit before transfers
         m.state = MatchState.CANCELLED;
+        emit MatchCancelled(matchId, msg.sender);
 
         // Refund all teamA depositors
         for (uint8 i = 0; i < m.depositsTeamA; i++) {
-            payable(m.teamA[i]).transfer(m.stakePerPlayer);
+            _sendEth(m.teamA[i], m.stakePerPlayer);
         }
         // Refund all teamB depositors (if any joined)
         for (uint8 i = 0; i < m.depositsTeamB; i++) {
-            payable(m.teamB[i]).transfer(m.stakePerPlayer);
+            _sendEth(m.teamB[i], m.stakePerPlayer);
         }
+    }
 
+    /**
+     * @notice Any deposited player can cancel a WAITING match after WAITING_TIMEOUT.
+     *         Protects non-creator depositors if the creator disappears before the
+     *         match is full. Refunds everyone who has already deposited. No fee.
+     *
+     * Security note: adds an escape hatch that .cancelMatch() lacks — creators can
+     * abandon a WAITING match and leave teamB depositors locked. This function
+     * allows any depositor (including teamB) to rescue funds after 1 hour.
+     *
+     * DB side (Vision Engine handles on MatchCancelled event):
+     *   Same as cancelMatch — UPDATE matches SET status='cancelled' + refund transactions
+     *
+     * @param matchId  The on_chain_match_id of the stuck WAITING match.
+     */
+    function cancelWaiting(uint256 matchId)
+        external
+        nonReentrant
+        matchExists(matchId)
+    {
+        Match storage m = matches[matchId];
+
+        require(m.state == MatchState.WAITING,              "Match not in WAITING state");
+        require(hasDeposited[matchId][msg.sender],          "Not a depositor in this match");
+        require(block.timestamp >= m.createdAt + WAITING_TIMEOUT, "Waiting timeout not reached yet");
+
+        // Checks-Effects-Interactions: update state and emit before transfers
+        m.state = MatchState.CANCELLED;
         emit MatchCancelled(matchId, msg.sender);
+
+        // Refund all teamA depositors
+        for (uint8 i = 0; i < m.depositsTeamA; i++) {
+            _sendEth(m.teamA[i], m.stakePerPlayer);
+        }
+        // Refund all teamB depositors (if any joined)
+        for (uint8 i = 0; i < m.depositsTeamB; i++) {
+            _sendEth(m.teamB[i], m.stakePerPlayer);
+        }
     }
 
     // ── Oracle action ────────────────────────────────────────────────────────
@@ -317,25 +390,24 @@ contract ArenaEscrow {
         require(m.state == MatchState.ACTIVE,        "Match not active");
         require(winningTeam == 0 || winningTeam == 1, "Winning team must be 0 (A) or 1 (B)");
 
-        uint256 totalPot      = m.stakePerPlayer * m.teamSize * 2;
-        uint256 fee           = (totalPot * FEE_PERCENT) / 100;
-        uint256 totalPayout   = totalPot - fee;
+        uint256 totalPot        = m.stakePerPlayer * m.teamSize * 2;
+        uint256 fee             = (totalPot * FEE_PERCENT) / 100;
+        uint256 totalPayout     = totalPot - fee;
         uint256 payoutPerWinner = totalPayout / m.teamSize;
         // Dust from integer division goes to first winner — avoids locked funds
-        uint256 dust          = totalPayout - (payoutPerWinner * m.teamSize);
+        uint256 dust            = totalPayout - (payoutPerWinner * m.teamSize);
 
-        // Checks-Effects-Interactions: update state before transfers
+        // Checks-Effects-Interactions: update state and emit before transfers
         m.state       = MatchState.FINISHED;
         m.winningTeam = winningTeam;
+        emit WinnerDeclared(matchId, winningTeam, payoutPerWinner, fee);
 
         address[] storage winners = winningTeam == 0 ? m.teamA : m.teamB;
         for (uint8 i = 0; i < m.teamSize; i++) {
             uint256 amount = (i == 0) ? payoutPerWinner + dust : payoutPerWinner;
-            payable(winners[i]).transfer(amount);
+            _sendEth(winners[i], amount);
         }
-        payable(owner).transfer(fee);
-
-        emit WinnerDeclared(matchId, winningTeam, payoutPerWinner, fee);
+        _sendEth(owner, fee);
     }
 
     // ── Timeout refund ───────────────────────────────────────────────────────
@@ -363,15 +435,14 @@ contract ArenaEscrow {
         require(hasDeposited[matchId][msg.sender],         "Not a player in this match");
         require(block.timestamp >= m.startTime + TIMEOUT,  "Timeout not reached yet");
 
-        // Checks-Effects-Interactions: update state before transfers
+        // Checks-Effects-Interactions: update state and emit before transfers
         m.state = MatchState.REFUNDED;
+        emit MatchRefunded(matchId);
 
         for (uint8 i = 0; i < m.teamSize; i++) {
-            payable(m.teamA[i]).transfer(m.stakePerPlayer);
-            payable(m.teamB[i]).transfer(m.stakePerPlayer);
+            _sendEth(m.teamA[i], m.stakePerPlayer);
+            _sendEth(m.teamB[i], m.stakePerPlayer);
         }
-
-        emit MatchRefunded(matchId);
     }
 
     // ── Admin ────────────────────────────────────────────────────────────────

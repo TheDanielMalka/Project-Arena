@@ -142,14 +142,22 @@ describe("ArenaEscrow", function () {
       const { escrow, players } = await loadFixture(deployFixture);
       await expect(
         escrow.connect(players[0]).createMatch(0, { value: STAKE })
-      ).to.be.revertedWith("Invalid team size (1-5)");
+      ).to.be.revertedWith("Invalid team size (1,2,4,5)");
     });
 
     it("reverts with teamSize = 6 (above MAX_TEAM)", async function () {
       const { escrow, players } = await loadFixture(deployFixture);
       await expect(
         escrow.connect(players[0]).createMatch(6, { value: STAKE })
-      ).to.be.revertedWith("Invalid team size (1-5)");
+      ).to.be.revertedWith("Invalid team size (1,2,4,5)");
+    });
+
+    it("reverts with teamSize = 3 (not a supported format)", async function () {
+      // Security fix: 3 was previously accepted by range check (1-5) but has no DB mapping.
+      const { escrow, players } = await loadFixture(deployFixture);
+      await expect(
+        escrow.connect(players[0]).createMatch(3, { value: STAKE })
+      ).to.be.revertedWith("Invalid team size (1,2,4,5)");
     });
 
     it("reverts with zero ETH value", async function () {
@@ -774,7 +782,96 @@ describe("ArenaEscrow", function () {
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  // 11. View helpers
+  // 11. cancelWaiting — escape hatch for stuck WAITING matches
+  //
+  //  Security fix: non-creator depositors were permanently locked if the
+  //  creator disappeared. cancelWaiting() lets any depositor recover funds
+  //  after WAITING_TIMEOUT (1 hour).
+  // ══════════════════════════════════════════════════════════════════════════
+  describe("cancelWaiting", function () {
+
+    const WAITING_TIMEOUT = 1 * 60 * 60; // 1 hour — mirrors contract constant
+
+    it("creator can cancel a stuck WAITING match after timeout", async function () {
+      const { escrow, players } = await loadFixture(create1v1Fixture);
+      await time.increase(WAITING_TIMEOUT + 1);
+
+      const tx = escrow.connect(players[0]).cancelWaiting(0);
+      await expect(tx)
+        .to.emit(escrow, "MatchCancelled")
+        .withArgs(0n, players[0].address);
+      await expect(tx)
+        .to.changeEtherBalance(players[0], STAKE);
+
+      const [, , , , , , state] = await escrow.getMatch(0);
+      expect(state).to.equal(STATE.CANCELLED);
+    });
+
+    it("non-creator teamB depositor can cancel after timeout (the key protection)", async function () {
+      // 2v2: creator (p0) in teamA, p2 in teamB; p1 never joins teamA and p3 never joins teamB
+      const { escrow, players } = await loadFixture(deployFixture);
+      await escrow.connect(players[0]).createMatch(2, { value: STAKE }); // creator joins teamA
+      await escrow.connect(players[2]).joinMatch(0, 1, { value: STAKE }); // p2 joins teamB
+
+      await time.increase(WAITING_TIMEOUT + 1);
+
+      // players[2] (teamB, non-creator) triggers the rescue
+      const tx = escrow.connect(players[2]).cancelWaiting(0);
+      await expect(tx)
+        .to.emit(escrow, "MatchCancelled")
+        .withArgs(0n, players[2].address);
+      // Both depositors should be refunded
+      await expect(tx)
+        .to.changeEtherBalances([players[0], players[2]], [STAKE, STAKE]);
+    });
+
+    it("reverts before WAITING_TIMEOUT elapses", async function () {
+      const { escrow, players } = await loadFixture(create1v1Fixture);
+      // Only 30 min has elapsed — timeout is 1 hour
+      await time.increase(WAITING_TIMEOUT / 2);
+      await expect(
+        escrow.connect(players[0]).cancelWaiting(0)
+      ).to.be.revertedWith("Waiting timeout not reached yet");
+    });
+
+    it("reverts if caller has not deposited", async function () {
+      const { escrow, players } = await loadFixture(create1v1Fixture);
+      await time.increase(WAITING_TIMEOUT + 1);
+      // players[5] never deposited in this match
+      await expect(
+        escrow.connect(players[5]).cancelWaiting(0)
+      ).to.be.revertedWith("Not a depositor in this match");
+    });
+
+    it("reverts if match is already ACTIVE (use claimRefund instead)", async function () {
+      const { escrow, players } = await loadFixture(active1v1Fixture);
+      await time.increase(WAITING_TIMEOUT + 1);
+      await expect(
+        escrow.connect(players[0]).cancelWaiting(0)
+      ).to.be.revertedWith("Match not in WAITING state");
+    });
+
+    it("reverts for non-existent matchId", async function () {
+      const { escrow, players } = await loadFixture(deployFixture);
+      await expect(
+        escrow.connect(players[0]).cancelWaiting(99)
+      ).to.be.revertedWith("Match does not exist");
+    });
+
+    it("second call after successful cancelWaiting reverts (state = CANCELLED)", async function () {
+      const { escrow, players } = await loadFixture(create1v1Fixture);
+      await time.increase(WAITING_TIMEOUT + 1);
+      await escrow.connect(players[0]).cancelWaiting(0);
+
+      await expect(
+        escrow.connect(players[0]).cancelWaiting(0)
+      ).to.be.revertedWith("Match not in WAITING state");
+    });
+
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 12. View helpers
   // ══════════════════════════════════════════════════════════════════════════
   describe("View helpers", function () {
 
