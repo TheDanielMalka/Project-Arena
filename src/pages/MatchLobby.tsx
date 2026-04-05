@@ -23,7 +23,14 @@ import { useClientStore }  from "@/stores/clientStore";
 import { GAME_MODES, getDefaultMode, getTeamSize, getTotalPlayers, isGameActive } from "@/config/gameModes";
 import { PlayerPopoverLayer } from "@/components/players/PlayerCardPopover";
 import { ClientReadinessStrip } from "@/components/match/ClientReadinessStrip";
-import { apiCreateMatch, apiJoinMatch } from "@/lib/engine-api";
+import {
+  apiCreateMatch,
+  apiJoinMatch,
+  apiGetActiveMatch,
+  apiInviteToMatch,
+  apiListFriends,
+  type ApiFriendRow,
+} from "@/lib/engine-api";
 import { looksLikeServerMatchId } from "@/lib/gameAccounts";
 import { friendlyChainErrorMessage } from "@/lib/friendlyChainError";
 import { createMatchOnChain, getBnbBalance } from "@/lib/metamaskBsc";
@@ -271,6 +278,17 @@ const MatchLobby = () => {
     void refreshMatchesFromServer(token ?? null);
   }, [token, refreshMatchesFromServer]);
 
+  // ── Restore active lobby on mount (lobby persistence) ─────────────────────
+  useEffect(() => {
+    if (!token || myRoomMatchId) return;
+    apiGetActiveMatch(token).then((res) => {
+      if (res?.match) {
+        setMyRoomMatchId(res.match.match_id);
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
   const [selectedBet, setSelectedBet] = useState<number | null>(null);
   const [customCode, setCustomCode] = useState("");
   const [selectedGame, setSelectedGame] = useState<string>("");
@@ -304,6 +322,13 @@ const MatchLobby = () => {
   const [deleteRoomConfirmOpen, setDeleteRoomConfirmOpen] = useState(false);
   const [playerPopover,         setPlayerPopover]         = useState<{ slotValue: string; rect: DOMRect } | null>(null);
   const [walletLinkBusy, setWalletLinkBusy]               = useState(false);
+
+  // ── Invite friends modal state ─────────────────────────────────────────────
+  const [inviteModalOpen,    setInviteModalOpen]    = useState(false);
+  const [inviteFriends,      setInviteFriends]      = useState<ApiFriendRow[]>([]);
+  const [inviteFriendsLoading, setInviteFriendsLoading] = useState(false);
+  const [invitingFriendId,   setInvitingFriendId]   = useState<string | null>(null);
+  const [invitedFriendIds,   setInvitedFriendIds]   = useState<Set<string>>(new Set());
 
   const publicMatches = matches.filter(m => m.type === "public");
   const customMatches = matches.filter(m => m.type === "custom");
@@ -610,6 +635,37 @@ const MatchLobby = () => {
       message: `Match room closed. Your ${formatMatchStakeShort(myActiveRoom)} deposit has been refunded.`,
     });
   }, [myActiveRoom, user, cancelEscrow, deleteMatch]);
+
+  const handleOpenInviteModal = useCallback(async () => {
+    if (!token) return;
+    setInviteModalOpen(true);
+    setInvitedFriendIds(new Set());
+    setInviteFriendsLoading(true);
+    const friends = await apiListFriends(token);
+    setInviteFriends(friends ?? []);
+    setInviteFriendsLoading(false);
+  }, [token]);
+
+  const handleInviteFriend = useCallback(async (friendId: string) => {
+    if (!token || !myRoomMatchId) return;
+    setInvitingFriendId(friendId);
+    const result = await apiInviteToMatch(token, myRoomMatchId, friendId);
+    setInvitingFriendId(null);
+    if (result.ok) {
+      setInvitedFriendIds((prev) => new Set(prev).add(friendId));
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "Invite Sent",
+        message: "Your friend will see the invite in their notifications.",
+      });
+    } else {
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "Invite Failed",
+        message: result.detail ?? "Could not send invite. Try again.",
+      });
+    }
+  }, [token, myRoomMatchId]);
 
   return (
     <div className="space-y-5">
@@ -995,7 +1051,16 @@ const MatchLobby = () => {
                             >
                               {player}
                             </button>
-                          ) : <span className="text-muted-foreground/40">{`Slot ${i + 1}`}</span>}
+                          ) : (
+                            <button
+                              className="flex items-center gap-1 text-muted-foreground/40 hover:text-primary transition-colors w-full"
+                              onClick={(e) => { e.stopPropagation(); void handleOpenInviteModal(); }}
+                              title="Invite a friend"
+                            >
+                              <UserPlus className="h-3 w-3 shrink-0" />
+                              <span>{`Slot ${i + 1}`}</span>
+                            </button>
+                          )}
                         </div>
                       );
                     })}
@@ -1022,7 +1087,16 @@ const MatchLobby = () => {
                             >
                               {player}
                             </button>
-                          ) : <span className="text-muted-foreground/40">{`Slot ${i + 1}`}</span>}
+                          ) : (
+                            <button
+                              className="flex items-center gap-1 text-muted-foreground/40 hover:text-primary transition-colors w-full"
+                              onClick={(e) => { e.stopPropagation(); void handleOpenInviteModal(); }}
+                              title="Invite a friend"
+                            >
+                              <UserPlus className="h-3 w-3 shrink-0" />
+                              <span>{`Slot ${i + 1}`}</span>
+                            </button>
+                          )}
                         </div>
                       );
                     })}
@@ -1797,6 +1871,94 @@ const MatchLobby = () => {
         onLeaveRoom={() => { setPlayerPopover(null); setLeaveConfirmOpen(true); }}
         enableLeaveRoom
       />
+
+      {/* ── Invite Friends Modal ──────────────────────────────────────── */}
+      {inviteModalOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4"
+          onClick={() => setInviteModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl border border-border bg-card shadow-2xl p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <UserPlus className="h-4 w-4 text-primary" />
+                </div>
+                <h3 className="font-display text-sm font-bold">Invite a Friend</h3>
+              </div>
+              <button
+                className="text-muted-foreground hover:text-foreground transition-colors"
+                onClick={() => setInviteModalOpen(false)}
+              >
+                <XCircle className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Friend list */}
+            <div className="max-h-64 overflow-y-auto space-y-1.5 pr-1">
+              {inviteFriendsLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : inviteFriends.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-6">
+                  No friends yet. Add friends from the Hub!
+                </p>
+              ) : (
+                inviteFriends.map((friend) => {
+                  const sent = invitedFriendIds.has(friend.user_id);
+                  const loading = invitingFriendId === friend.user_id;
+                  return (
+                    <div
+                      key={friend.user_id}
+                      className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-secondary/30 border border-border/30"
+                    >
+                      {/* Avatar */}
+                      <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center shrink-0 text-[10px] font-bold text-primary overflow-hidden">
+                        {friend.avatar ? (
+                          <img src={friend.avatar} alt={friend.username} className="w-full h-full object-cover" />
+                        ) : (
+                          friend.username.slice(0, 2).toUpperCase()
+                        )}
+                      </div>
+                      {/* Name */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold truncate">{friend.username}</p>
+                        {friend.arena_id && (
+                          <p className="text-[10px] text-muted-foreground truncate">{friend.arena_id}</p>
+                        )}
+                      </div>
+                      {/* Invite button */}
+                      <button
+                        disabled={sent || loading}
+                        onClick={() => void handleInviteFriend(friend.user_id)}
+                        className={cn(
+                          "shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all",
+                          sent
+                            ? "bg-green-500/10 border border-green-500/30 text-green-500 cursor-default"
+                            : "bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20"
+                        )}
+                      >
+                        {loading ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : sent ? (
+                          <><CheckCircle className="h-3 w-3" /> Sent</>
+                        ) : (
+                          <><UserPlus className="h-3 w-3" /> Invite</>
+                        )}
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
