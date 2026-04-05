@@ -330,8 +330,8 @@ const MatchLobby = () => {
   const [invitingFriendId,     setInvitingFriendId]     = useState<string | null>(null);
   const [invitedFriendIds,     setInvitedFriendIds]     = useState<Set<string>>(new Set());
 
-  const publicMatches = matches.filter(m => m.type === "public");
-  const customMatches = matches.filter(m => m.type === "custom");
+  const publicMatches = matches.filter(m => m.type === "public" && (m.status === "waiting" || m.status === "in_progress"));
+  const customMatches = matches.filter(m => m.type === "custom" && (m.status === "waiting" || m.status === "in_progress"));
   const selectedPublicLobby = selectedPublicLobbyId
     ? publicMatches.find(m => m.id === selectedPublicLobbyId) ?? null : null;
 
