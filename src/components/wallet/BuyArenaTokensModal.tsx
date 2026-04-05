@@ -59,10 +59,17 @@ export function BuyArenaTokensModal({ open, onClose }: BuyArenaTokensModalProps)
       const res = await apiGetAtPackages();
       if (cancelled) return;
       if (res?.packages?.length) {
-        setPackages(res.packages);
+        // Deduplicate by at_amount — guard against duplicate DB rows
+        const seen = new Set<number>();
+        const deduped = res.packages.filter((p) => {
+          if (seen.has(p.at_amount)) return false;
+          seen.add(p.at_amount);
+          return true;
+        });
+        setPackages(deduped);
         setSelectedPkg((prev) => {
-          if (prev && res.packages.some((p) => p.at_amount === prev.at_amount)) return prev;
-          return res.packages[0] ?? null;
+          if (prev && deduped.some((p) => p.at_amount === prev.at_amount)) return prev;
+          return deduped[0] ?? null;
         });
         setPackagesStatus("ok");
       } else {

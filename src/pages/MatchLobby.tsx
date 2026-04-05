@@ -23,7 +23,11 @@ import { useClientStore }  from "@/stores/clientStore";
 import { GAME_MODES, getDefaultMode, getTeamSize, getTotalPlayers, isGameActive } from "@/config/gameModes";
 import { PlayerPopoverLayer } from "@/components/players/PlayerCardPopover";
 import { ClientReadinessStrip } from "@/components/match/ClientReadinessStrip";
-import { apiCreateMatch, apiJoinMatch } from "@/lib/engine-api";
+import {
+  apiCreateMatch, apiJoinMatch,
+  apiGetActiveMatch, apiInviteToMatch,
+  apiListFriends, type ApiFriendRow,
+} from "@/lib/engine-api";
 import { looksLikeServerMatchId } from "@/lib/gameAccounts";
 import { friendlyChainErrorMessage } from "@/lib/friendlyChainError";
 import { createMatchOnChain, getBnbBalance } from "@/lib/metamaskBsc";
@@ -271,6 +275,17 @@ const MatchLobby = () => {
     void refreshMatchesFromServer(token ?? null);
   }, [token, refreshMatchesFromServer]);
 
+  // ── Lobby persistence: restore active room on mount / login ────────────────
+  useEffect(() => {
+    if (!token) return;
+    void (async () => {
+      const active = await apiGetActiveMatch(token);
+      if (active?.match_id) {
+        setMyRoomMatchId(active.match_id);
+      }
+    })();
+  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [selectedBet, setSelectedBet] = useState<number | null>(null);
   const [customCode, setCustomCode] = useState("");
   const [selectedGame, setSelectedGame] = useState<string>("");
@@ -304,6 +319,11 @@ const MatchLobby = () => {
   const [deleteRoomConfirmOpen, setDeleteRoomConfirmOpen] = useState(false);
   const [playerPopover,         setPlayerPopover]         = useState<{ slotValue: string; rect: DOMRect } | null>(null);
   const [walletLinkBusy, setWalletLinkBusy]               = useState(false);
+  const [inviteModalOpen,    setInviteModalOpen]    = useState(false);
+  const [inviteFriends,      setInviteFriends]      = useState<ApiFriendRow[]>([]);
+  const [inviteFriendsLoading, setInviteFriendsLoading] = useState(false);
+  const [invitingFriendId,   setInvitingFriendId]   = useState<string | null>(null);
+  const [invitedFriendIds,   setInvitedFriendIds]   = useState<Set<string>>(new Set());
 
   const publicMatches = matches.filter(m => m.type === "public");
   const customMatches = matches.filter(m => m.type === "custom");
@@ -610,6 +630,32 @@ const MatchLobby = () => {
       message: `Match room closed. Your ${formatMatchStakeShort(myActiveRoom)} deposit has been refunded.`,
     });
   }, [myActiveRoom, user, cancelEscrow, deleteMatch]);
+
+  const handleOpenInviteModal = useCallback(async () => {
+    if (!token) return;
+    setInviteModalOpen(true);
+    setInviteFriendsLoading(true);
+    setInvitedFriendIds(new Set());
+    const friends = await apiListFriends(token);
+    setInviteFriends(friends ?? []);
+    setInviteFriendsLoading(false);
+  }, [token]);
+
+  const handleInviteFriend = useCallback(async (friendId: string) => {
+    if (!token || !myRoomMatchId) return;
+    setInvitingFriendId(friendId);
+    const result = await apiInviteToMatch(token, myRoomMatchId, friendId);
+    setInvitingFriendId(null);
+    if (result.ok) {
+      setInvitedFriendIds((prev) => new Set([...prev, friendId]));
+    } else {
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "Invite failed",
+        message: result.detail ?? "Could not send invite.",
+      });
+    }
+  }, [token, myRoomMatchId]);
 
   return (
     <div className="space-y-5">
@@ -1047,7 +1093,7 @@ const MatchLobby = () => {
           </div>
 
           {/* Action row */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Button
               size="sm"
               variant="outline"
@@ -1060,6 +1106,18 @@ const MatchLobby = () => {
               <LogOut className="mr-1.5 h-3 w-3" />
               Leave Room
             </Button>
+
+            {token && myActiveRoom.status === "waiting" && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-xs border-arena-purple/40 text-arena-purple hover:bg-arena-purple/10"
+                onClick={() => void handleOpenInviteModal()}
+              >
+                <UserPlus className="mr-1.5 h-3 w-3" />
+                Invite Friends
+              </Button>
+            )}
 
             {countdown !== null && (
               <p className="text-[10px] text-muted-foreground flex items-center gap-1">
@@ -1522,13 +1580,24 @@ const MatchLobby = () => {
                             stake_currency: createStakeCurrency,
                           });
                           if (apiRes.ok === false) {
-                            useNotificationStore.getState().addNotification({
-                              type: "system",
-                              title: "Could not create match",
-                              message:
-                                apiRes.detail ??
-                                "Check your Steam / Riot ID on your account and try again.",
-                            });
+                            if (apiRes.status === 409) {
+                              // 409 = user already has an active room — restore it
+                              const active = await apiGetActiveMatch(token!);
+                              if (active?.match_id) setMyRoomMatchId(active.match_id);
+                              useNotificationStore.getState().addNotification({
+                                type: "system",
+                                title: "Room restored",
+                                message: apiRes.detail ?? "You already have an active match room.",
+                              });
+                            } else {
+                              useNotificationStore.getState().addNotification({
+                                type: "system",
+                                title: "Could not create match",
+                                message:
+                                  apiRes.detail ??
+                                  "Check your Steam / Riot ID on your account and try again.",
+                              });
+                            }
                             return;
                           }
                           serverMatchId = apiRes.data.match_id;
@@ -1784,6 +1853,80 @@ const MatchLobby = () => {
                 Cancel
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Invite Friends Modal ──────────────────────────────────────── */}
+      {inviteModalOpen && myActiveRoom && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm rounded-2xl border border-arena-purple/40 bg-card shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-arena-purple/10 flex items-center justify-center shrink-0">
+                  <UserPlus className="h-5 w-5 text-arena-purple" />
+                </div>
+                <div>
+                  <h3 className="font-display text-base font-bold">Invite Friends</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {myActiveRoom.game} · {myActiveRoom.code ?? myActiveRoom.id}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setInviteModalOpen(false)}
+                className="text-muted-foreground hover:text-foreground transition-colors text-lg leading-none"
+              >
+                ✕
+              </button>
+            </div>
+
+            {inviteFriendsLoading ? (
+              <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading friends…
+              </div>
+            ) : inviteFriends.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-6">
+                No friends to invite yet. Add friends from your profile!
+              </p>
+            ) : (
+              <div className="space-y-1.5 max-h-64 overflow-y-auto pr-0.5">
+                {inviteFriends.map((f) => {
+                  const sent = invitedFriendIds.has(f.user_id);
+                  const sending = invitingFriendId === f.user_id;
+                  return (
+                    <div key={f.user_id}
+                      className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-secondary/20 px-3 py-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <MatchRosterAvatar slotValue={f.username} size={14} highlightSelf={false} className="border-2 border-card shrink-0" />
+                        <span className="text-sm truncate">{f.username}</span>
+                        {f.arena_id && <span className="text-[10px] text-muted-foreground font-mono truncate">{f.arena_id}</span>}
+                      </div>
+                      <Button
+                        size="sm"
+                        variant={sent ? "outline" : "default"}
+                        disabled={sent || sending}
+                        className={cn(
+                          "font-display text-xs shrink-0",
+                          sent && "border-primary/30 text-primary"
+                        )}
+                        onClick={() => void handleInviteFriend(f.user_id)}
+                      >
+                        {sending
+                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                          : sent
+                            ? <><CheckCircle className="h-3 w-3 mr-1" />Sent</>
+                            : "Invite"}
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <Button variant="outline" className="w-full font-display text-sm border-border/60" onClick={() => setInviteModalOpen(false)}>
+              Close
+            </Button>
           </div>
         </div>
       )}
