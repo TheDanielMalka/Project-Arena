@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { useUserStore } from "@/stores/userStore";
 import { useMatchStore } from "@/stores/matchStore";
-import { useWalletStore } from "@/stores/walletStore";
+import { consumeLastLockEscrowFailureMessage, useWalletStore } from "@/stores/walletStore";
 import { useMatchPolling } from "@/hooks/useMatchPolling";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +25,7 @@ import { PlayerPopoverLayer } from "@/components/players/PlayerCardPopover";
 import { ClientReadinessStrip } from "@/components/match/ClientReadinessStrip";
 import { apiCreateMatch, apiJoinMatch } from "@/lib/engine-api";
 import { looksLikeServerMatchId } from "@/lib/gameAccounts";
+import { friendlyChainErrorMessage } from "@/lib/friendlyChainError";
 import { createMatchOnChain, getBnbBalance } from "@/lib/metamaskBsc";
 
 // ─── Game configs ─────────────────────────────────────────────────────────────
@@ -413,11 +414,13 @@ const MatchLobby = () => {
     }
     const escrowTx = await lockEscrow(match.betAmount, match.id);
     if (!escrowTx) {
+      const escrowHint = consumeLastLockEscrowFailureMessage();
       useNotificationStore.getState().addNotification({
         type: "system",
         title: "Escrow deposit failed",
         message:
-          "Could not complete the on-chain deposit. Sign in, ensure this match exists on-chain (on_chain_match_id), confirm in MetaMask, and try again.",
+          escrowHint ??
+          "Could not complete the deposit. Check BNB balance, that the match exists on-chain, and approve the transaction in your wallet.",
       });
       setDepositConfirm(null);
       setDepositStep("idle");
@@ -1405,11 +1408,8 @@ const MatchLobby = () => {
                           } catch (e: unknown) {
                             useNotificationStore.getState().addNotification({
                               type: "system",
-                              title: "On-chain match creation failed",
-                              message:
-                                e instanceof Error
-                                  ? e.message
-                                  : "MetaMask transaction was rejected or failed.",
+                              title: "Could not create match on-chain",
+                              message: friendlyChainErrorMessage(e),
                             });
                             return;
                           }
@@ -1461,11 +1461,13 @@ const MatchLobby = () => {
                         } else {
                           const escrowTx = await lockEscrow(newMatchBet, created.id);
                           if (!escrowTx) {
+                            const hint = consumeLastLockEscrowFailureMessage();
                             useNotificationStore.getState().addNotification({
                               type: "system",
                               title: "Escrow deposit failed",
                               message:
-                                "Match was created but the on-chain deposit did not complete. Check MetaMask and VITE_CONTRACT_ADDRESS, then try joining again if needed.",
+                                hint ??
+                                "Match was created locally but the on-chain deposit did not finish. Check BNB, MetaMask, and contract settings.",
                             });
                             return;
                           }
