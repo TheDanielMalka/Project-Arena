@@ -293,18 +293,18 @@ describe("forgeStore — purchaseItem with AT", () => {
     resetWallet();
   });
 
-  it("succeeds when user has enough AT (Emerald Samurai costs 320, user has 500)", () => {
-    const result = useForgeStore.getState().purchaseItem("item-004", "AT");
+  it("succeeds when user has enough AT (Emerald Samurai costs 320, user has 500)", async () => {
+    const result = await useForgeStore.getState().purchaseItem("item-004", "AT");
     expect(result.success).toBe(true);
   });
 
-  it("deducts correct AT amount after successful purchase", () => {
-    useForgeStore.getState().purchaseItem("item-004", "AT"); // -320 AT
+  it("deducts correct AT amount after successful purchase", async () => {
+    await useForgeStore.getState().purchaseItem("item-004", "AT"); // -320 AT
     expect(useForgeStore.getState().arenaTokens).toBe(180);
   });
 
-  it("records purchase in purchases array", () => {
-    useForgeStore.getState().purchaseItem("item-004", "AT");
+  it("records purchase in purchases array", async () => {
+    await useForgeStore.getState().purchaseItem("item-004", "AT");
     const purchases = useForgeStore.getState().purchases;
     expect(purchases).toHaveLength(1);
     expect(purchases[0].itemName).toBe("Emerald Samurai");
@@ -312,25 +312,25 @@ describe("forgeStore — purchaseItem with AT", () => {
     expect(purchases[0].amount).toBe(320);
   });
 
-  it("fails when user has insufficient AT (Vermilion Edge costs 3200, user has 500)", () => {
-    const result = useForgeStore.getState().purchaseItem("item-001", "AT");
+  it("fails when user has insufficient AT (Vermilion Edge costs 3200, user has 500)", async () => {
+    const result = await useForgeStore.getState().purchaseItem("item-001", "AT");
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/insufficient at/i);
   });
 
-  it("AT balance does not change on failed purchase", () => {
-    useForgeStore.getState().purchaseItem("item-001", "AT"); // should fail
+  it("AT balance does not change on failed purchase", async () => {
+    await useForgeStore.getState().purchaseItem("item-001", "AT"); // should fail
     expect(useForgeStore.getState().arenaTokens).toBe(500);
   });
 
-  it("fails for items that have no AT price (Founder's Badge is USDT-only)", () => {
-    const result = useForgeStore.getState().purchaseItem("item-005", "AT");
+  it("fails for items that have no AT price (Founder's Badge is USDT-only)", async () => {
+    const result = await useForgeStore.getState().purchaseItem("item-005", "AT");
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/not available for at/i);
   });
 
-  it("fails for unknown item id", () => {
-    const result = useForgeStore.getState().purchaseItem("nonexistent-item", "AT");
+  it("fails for unknown item id", async () => {
+    const result = await useForgeStore.getState().purchaseItem("nonexistent-item", "AT");
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/not found/i);
   });
@@ -345,20 +345,20 @@ describe("forgeStore — purchaseItem with USDT", () => {
     resetWallet();
   });
 
-  it("succeeds for Founder's Badge ($9.99 USDT) when wallet has balance", () => {
-    const result = useForgeStore.getState().purchaseItem("item-005", "USDT");
+  it("succeeds for Founder's Badge ($9.99 USDT) when wallet has balance", async () => {
+    const result = await useForgeStore.getState().purchaseItem("item-005", "USDT");
     expect(result.success).toBe(true);
   });
 
-  it("records purchase in purchases array with USDT currency", () => {
-    useForgeStore.getState().purchaseItem("item-005", "USDT");
+  it("records purchase in purchases array with USDT currency", async () => {
+    await useForgeStore.getState().purchaseItem("item-005", "USDT");
     const purchases = useForgeStore.getState().purchases;
     expect(purchases[0].currency).toBe("USDT");
     expect(purchases[0].amount).toBe(9.99);
   });
 
-  it("records at_purchase transaction in wallet on successful USDT purchase", () => {
-    useForgeStore.getState().purchaseItem("item-005", "USDT");
+  it("records at_purchase transaction in wallet on successful USDT purchase", async () => {
+    await useForgeStore.getState().purchaseItem("item-005", "USDT");
     const atTx = useWalletStore.getState().transactions.find((tx) => tx.type === "at_purchase");
     expect(atTx).toBeDefined();
     expect(atTx?.token).toBe("USDT");
@@ -367,15 +367,15 @@ describe("forgeStore — purchaseItem with USDT", () => {
   it("merges unlock + badge onto logged-in user after USDT purchase", async () => {
     await useUserStore.getState().login("player@arena.gg", "pw");
     useWalletStore.setState({ usdtBalance: 1247.5 });
-    const result = useForgeStore.getState().purchaseItem("item-005", "USDT");
+    const result = await useForgeStore.getState().purchaseItem("item-005", "USDT");
     expect(result.success).toBe(true);
     const u = useUserStore.getState().user;
     expect(u?.unlockedForgeItemIds).toContain("item-005");
     expect(u?.equippedBadgeIcon).toBe("badge:founders");
   });
 
-  it("fails for items that have no USDT price (Champion's Seal is AT-only)", () => {
-    const result = useForgeStore.getState().purchaseItem("item-006", "USDT");
+  it("fails for items that have no USDT price (Champion's Seal is AT-only)", async () => {
+    const result = await useForgeStore.getState().purchaseItem("item-006", "USDT");
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/not available for usdt/i);
   });
