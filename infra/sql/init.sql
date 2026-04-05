@@ -747,3 +747,21 @@ CREATE TABLE match_evidence (
 CREATE INDEX idx_evidence_match   ON match_evidence(match_id, submitted_at DESC);
 CREATE INDEX idx_evidence_wallet  ON match_evidence(wallet_address);
 CREATE INDEX idx_evidence_result  ON match_evidence(match_id, result, accepted);
+
+-- ── Oracle Sync State ─────────────────────────────────────────────────────────
+-- Single-row table tracking the last blockchain block processed by the
+-- EscrowClient event listener.  On engine restart the listener resumes from
+-- last_block instead of re-scanning the full lookback window, preventing
+-- missed WinnerDeclared / PlayerDeposited / MatchRefunded events.
+--
+-- Written by: EscrowClient._save_last_block()
+-- Read by:    EscrowClient._load_last_block()
+CREATE TABLE IF NOT EXISTS oracle_sync_state (
+    id           VARCHAR(20)  PRIMARY KEY DEFAULT 'singleton',
+    last_block   BIGINT       NOT NULL DEFAULT 0,
+    last_sync_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO oracle_sync_state (id, last_block)
+VALUES ('singleton', 0)
+ON CONFLICT (id) DO NOTHING;

@@ -285,22 +285,85 @@ class EscrowClient:
                 logger.error("Error fetching %s logs: %s", event_name, exc)
         return total
 
+    # ── Oracle sync state — persistent last_block ────────────────────────────
+
+    def _load_last_block(self) -> int:
+        """
+        Load the last processed block number from oracle_sync_state in DB.
+
+        Returns the saved value when > 0 (listener resumes from there).
+        Returns 0 when the table is empty or DB is unavailable — caller
+        falls back to eth.block_number - lookback_blocks.
+
+        DB-ready: reads oracle_sync_state (migration 007).
+        """
+        try:
+            with self._session_factory() as session:
+                row = session.execute(
+                    text("SELECT last_block FROM oracle_sync_state WHERE id = 'singleton'")
+                ).fetchone()
+                return int(row[0]) if row and row[0] else 0
+        except Exception as exc:
+            logger.warning("_load_last_block failed (fallback to lookback): %s", exc)
+            return 0
+
+    def _save_last_block(self, block: int) -> None:
+        """
+        Persist the last successfully processed block number to DB.
+
+        Uses an UPSERT on oracle_sync_state so the row always exists after
+        migration 007 is applied.  Errors are non-fatal — the listener
+        continues running; next successful save will catch up.
+
+        DB-ready: writes oracle_sync_state (migration 007).
+        """
+        try:
+            with self._session_factory() as session:
+                session.execute(
+                    text(
+                        "INSERT INTO oracle_sync_state (id, last_block, last_sync_at) "
+                        "VALUES ('singleton', :block, NOW()) "
+                        "ON CONFLICT (id) DO UPDATE "
+                        "  SET last_block = EXCLUDED.last_block, "
+                        "      last_sync_at = NOW()"
+                    ),
+                    {"block": block},
+                )
+                session.commit()
+        except Exception as exc:
+            logger.warning("_save_last_block failed (non-fatal): %s", exc)
+
     def listen(self, poll_interval: int = 15, lookback_blocks: int = 100) -> None:
         """
         Main polling loop — runs forever, polling for new contract events.
         Start this in a background thread or process alongside the FastAPI engine.
 
         poll_interval:   seconds between polls (default 15s — ~5 BSC blocks)
-        lookback_blocks: blocks to look back on startup (catches missed events)
+        lookback_blocks: blocks to look back on first-ever start (no saved state)
+
+        Resume logic:
+          - On startup: reads oracle_sync_state.last_block from DB.
+          - If saved > 0: resumes from there (no missed events after restart).
+          - If 0 (first run): falls back to current_block - lookback_blocks.
+          - After every successful poll: saves current_block to DB.
 
         DB-ready: processes all events and syncs to DB in real time.
         CONTRACT-ready: this is the escrow ↔ DB sync backbone for Issue #28.
         """
-        logger.info(
-            "EscrowClient listener starting | poll=%ss lookback=%s blocks",
-            poll_interval, lookback_blocks,
-        )
-        last_block = max(0, self._w3.eth.block_number - lookback_blocks)
+        # ── Determine starting block ──────────────────────────────────────────
+        saved_block = self._load_last_block()
+        if saved_block > 0:
+            last_block = saved_block
+            logger.info(
+                "EscrowClient listener resuming | from_block=%d poll=%ss",
+                last_block, poll_interval,
+            )
+        else:
+            last_block = max(0, self._w3.eth.block_number - lookback_blocks)
+            logger.info(
+                "EscrowClient listener starting fresh | from_block=%d poll=%ss lookback=%s",
+                last_block, poll_interval, lookback_blocks,
+            )
 
         while True:
             try:
@@ -313,6 +376,7 @@ class EscrowClient:
                             n, last_block + 1, current_block,
                         )
                     last_block = current_block
+                    self._save_last_block(current_block)  # persist resume point
             except Exception as exc:
                 logger.error("Listener poll error: %s", exc)
             time.sleep(poll_interval)
