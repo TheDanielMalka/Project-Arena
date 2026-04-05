@@ -87,8 +87,7 @@ export const useInboxStore = create<InboxState>((set, get) => ({
     if (!sub || !con) return { success: false, error: "Subject and message are required" };
 
     const res = await apiPostInbox(token, { receiver_id: target.id, subject: sub, content: con });
-    if (!res.ok) return { success: false, error: res.error };
-
+    if ("error" in res) return { success: false, error: res.error };
     return { success: true };
   },
 

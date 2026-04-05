@@ -1340,11 +1340,11 @@ export async function apiPostInbox(
     if (!res.ok) {
       const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
       const detail = parseFastApiDetail(raw.detail) ?? `Send failed (${res.status})`;
-      return { ok: false, error: detail, status: res.status };
+      return { ok: false as const, error: detail, status: res.status };
     }
     const raw = (await res.json()) as Record<string, unknown>;
     return {
-      ok: true,
+      ok: true as const,
       id: asStr(raw.id) ?? "",
       sender_id: asStr(raw.sender_id) ?? "",
       receiver_id: asStr(raw.receiver_id) ?? "",
@@ -1352,7 +1352,7 @@ export async function apiPostInbox(
       created_at: asStr(raw.created_at) ?? null,
     };
   } catch {
-    return { ok: false, error: "Network error", status: 0 };
+    return { ok: false as const, error: "Network error", status: 0 };
   }
 }
 
