@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMatchStore } from "@/stores/matchStore";
 import { useUserStore } from "@/stores/userStore";
+import { apiListMatchesHistory } from "@/lib/engine-api";
 import { PlayerPopoverLayer } from "@/components/players/PlayerCardPopover";
 import { slotToProfileUsername } from "@/lib/matchPlayerDisplay";
 import { MatchRosterAvatar } from "@/components/match/MatchRosterAvatar";
@@ -38,17 +39,36 @@ interface RecentMatchesProps {
 
 export function RecentMatches({ showViewAll = true, limit = 5 }: RecentMatchesProps) {
   const navigate = useNavigate();
-  const { user } = useUserStore();
+  const { user, token } = useUserStore();
   const { matches } = useMatchStore();
   const [playerPopover, setPlayerPopover] = useState<{ slotValue: string; rect: DOMRect } | null>(null);
   const [appealMatch, setAppealMatch] = useState<Match | null>(null);
+  /** `undefined` = not loaded yet (use store as interim); array = GET /matches/history?limit= */
+  const [historySlice, setHistorySlice] = useState<Match[] | undefined>(undefined);
 
   const canAppeal = (m: Match) =>
     m.status === "completed" || m.status === "disputed" || m.status === "cancelled";
 
-  // Filter to current user's matches only, exclude waiting
   const myId = user?.id ?? "";
-  const recentMatches = matches
+
+  useEffect(() => {
+    if (!token || !myId) {
+      setHistorySlice(undefined);
+      return;
+    }
+    let cancelled = false;
+    void apiListMatchesHistory(token, { limit }).then((list) => {
+      if (!cancelled) setHistorySlice(list ?? []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, myId, limit]);
+
+  const source = historySlice !== undefined ? historySlice : matches;
+
+  // Filter to current user's matches only, exclude waiting
+  const recentMatches = source
     .filter(m =>
       myId &&
       m.status !== "waiting" &&

@@ -2,12 +2,16 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
 import { MatchRosterAvatar         } from "@/components/match/MatchRosterAvatar";
 import { useUserStore             } from "@/stores/userStore";
+import { usePlayerStore           } from "@/stores/playerStore";
 import { avatarPresetKey, getAvatarImageUrlFromStorage } from "@/lib/avatarPresets";
 
 describe("MatchRosterAvatar", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     useUserStore.getState().logout();
-    useUserStore.getState().login("player@arena.gg", "test");
+    await useUserStore.getState().login("player@arena.gg", "test");
+    usePlayerStore.setState({ players: [] });
+    const tok = useUserStore.getState().token;
+    await usePlayerStore.getState().searchPlayers("", undefined, tok);
   });
 
   it("resolves catalog player by user id and renders preset portrait src", () => {

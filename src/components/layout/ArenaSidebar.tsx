@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   LayoutDashboard, Swords, History, User, ShieldAlert, Wallet, Trophy,
   Settings2, Medal, Shield, Gem, Sparkles, Crown, Users2, Monitor,
@@ -48,15 +48,22 @@ const QUICK_LINKS = [
 
 export function ArenaSidebar() {
   const user    = useUserStore((s) => s.user);
+  const token   = useUserStore((s) => s.token);
   const logout  = useUserStore((s) => s.logout);
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const navigate  = useNavigate();
   const [open, setOpen] = useState(false);
 
-  const inboxUnread   = useInboxStore((s) => s.getTotalUnread)();
+  const inboxUnread   = useInboxStore((s) => s.unreadCount);
+  const refreshInboxBadge = useInboxStore((s) => s.refreshUnreadBadge);
   const chatUnread    = useMessageStore((s) => s.getTotalUnread)();
   const totalUnread   = inboxUnread + chatUnread;
+
+  useEffect(() => {
+    if (!user || !token) return;
+    void refreshInboxBadge(token);
+  }, [user?.id, token, refreshInboxBadge]);
 
   const xpInfo        = getXpInfo(user?.stats.xp ?? 0);
   const XpIcon        = XP_ICON_MAP[xpInfo.iconName] ?? Medal;

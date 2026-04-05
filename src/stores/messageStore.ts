@@ -2,99 +2,101 @@ import { create } from "zustand";
 import type { DirectMessage } from "@/types";
 import { useFriendStore } from "@/stores/friendStore";
 import { useNotificationStore } from "@/stores/notificationStore";
+import { useUserStore } from "@/stores/userStore";
+import {
+  apiGetMessages,
+  apiMarkMessagesRead,
+  apiSendMessage,
+  type ApiDmRow,
+} from "@/lib/engine-api";
 
-// ─── Seed Data ────────────────────────────────────────────────
-// DB-ready: replace with GET /api/messages/:friendId
-
-const SEED_MESSAGES: Record<string, DirectMessage[]> = {
-  "user-002": [
-    {
-      id: "msg-001",
-      senderId: "user-002", senderName: "WingmanPro",
-      receiverId: "user-001",
-      content: "GG! That 2v2 match was intense 🔥",
-      read: true,
-      createdAt: "2026-03-09T10:00:00Z",
-    },
-    {
-      id: "msg-002",
-      senderId: "user-001", senderName: "ArenaPlayer_01",
-      receiverId: "user-002",
-      content: "Yeah! Down for a rematch tonight?",
-      read: true,
-      createdAt: "2026-03-09T10:02:00Z",
-    },
-    {
-      id: "msg-003",
-      senderId: "user-002", senderName: "WingmanPro",
-      receiverId: "user-001",
-      content: "Definitely. Let's go 5v5 this time 👊",
-      read: false,
-      createdAt: "2026-03-09T10:05:00Z",
-    },
-  ],
-  "user-003": [
-    {
-      id: "msg-004",
-      senderId: "user-003", senderName: "ShadowKill3r",
-      receiverId: "user-001",
-      content: "You joining the CS2 tournament next week?",
-      read: true,
-      createdAt: "2026-03-08T16:00:00Z",
-    },
-    {
-      id: "msg-005",
-      senderId: "user-001", senderName: "ArenaPlayer_01",
-      receiverId: "user-003",
-      content: "100% in. What's the buy-in?",
-      read: true,
-      createdAt: "2026-03-08T16:05:00Z",
-    },
-    {
-      id: "msg-006",
-      senderId: "user-001", senderName: "ArenaPlayer_01",
-      receiverId: "user-003",
-      content: "$50 per player. Let me know if you find 2 more for the team",
-      read: true,
-      createdAt: "2026-03-08T16:06:00Z",
-    },
-  ],
-};
-
-// ─── Store ────────────────────────────────────────────────────
+function mapDm(
+  m: ApiDmRow,
+  myId: string,
+  myUsername: string,
+  otherDisplayName: string,
+): DirectMessage {
+  const isMine = m.sender_id === myId;
+  return {
+    id: m.id,
+    senderId: m.sender_id,
+    senderName: isMine ? myUsername : otherDisplayName,
+    receiverId: m.receiver_id,
+    content: m.content,
+    read: m.read,
+    createdAt: m.created_at ?? new Date().toISOString(),
+  };
+}
 
 interface MessageState {
-  // conversations: keyed by the OTHER user's id
   conversations: Record<string, DirectMessage[]>;
 
-  // DB-ready: replace with GET /api/messages/:friendId
   getConversation: (friendId: string) => DirectMessage[];
 
-  // DB-ready: replace with WebSocket / POST /api/messages
-  sendMessage: (params: {
-    myId:       string;
-    myUsername: string;
-    friendId:   string;
-    content:    string;
-  }) => DirectMessage | null;
+  /** GET /messages/:friendId then mark read on server */
+  loadConversationForFriend: (friendId: string) => Promise<void>;
 
-  // DB-ready: replace with PATCH /api/messages/:friendId/read
+  sendMessage: (params: {
+    myId: string;
+    myUsername: string;
+    friendId: string;
+    content: string;
+  }) => Promise<DirectMessage | null>;
+
   markRead: (friendId: string) => void;
 
-  // Count unread messages from a specific friend
   getUnreadCount: (friendId: string) => number;
 
-  // Total unread across all conversations
   getTotalUnread: () => number;
+
+  resetConversationsLocal: () => void;
 }
 
 export const useMessageStore = create<MessageState>((set, get) => ({
-  conversations: SEED_MESSAGES,
+  conversations: {},
 
-  getConversation: (friendId) =>
-    get().conversations[friendId] ?? [],
+  getConversation: (friendId) => get().conversations[friendId] ?? [],
 
-  sendMessage: ({ myId, myUsername, friendId, content }) => {
+  loadConversationForFriend: async (friendId: string) => {
+    const token = useUserStore.getState().token;
+    const me = useUserStore.getState().user;
+    if (!token || !me) return;
+
+    const rows = await apiGetMessages(token, friendId, 100);
+    if (rows === null) {
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "Could not load messages",
+        message: "Try again in a moment.",
+      });
+      return;
+    }
+
+    const friend = useFriendStore.getState().getFriends().find((f) => f.friendId === friendId);
+    const otherName = friend?.friendUsername ?? "Friend";
+    const msgs = rows
+      .map((r) => mapDm(r, me.id, me.username, otherName))
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+    set((s) => ({
+      conversations: { ...s.conversations, [friendId]: msgs },
+    }));
+
+    await apiMarkMessagesRead(token, friendId);
+    set((s) => ({
+      conversations: {
+        ...s.conversations,
+        [friendId]: (s.conversations[friendId] ?? []).map((m) =>
+          m.senderId === friendId && m.receiverId === me.id ? { ...m, read: true } : m,
+        ),
+      },
+    }));
+  },
+
+  sendMessage: async ({ myId, myUsername, friendId, content }) => {
+    const trimmed = content.trim();
+    if (!trimmed) return null;
+
     if (useFriendStore.getState().isIgnored(friendId)) {
       useNotificationStore.getState().addNotification({
         type: "system",
@@ -103,15 +105,37 @@ export const useMessageStore = create<MessageState>((set, get) => ({
       });
       return null;
     }
+
+    const token = useUserStore.getState().token;
+    if (!token) {
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "Sign in required",
+        message: "Log in to send messages.",
+      });
+      return null;
+    }
+
+    const res = await apiSendMessage(token, friendId, trimmed);
+    if (res.ok === false) {
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "Message failed",
+        message: res.detail ?? "Could not send.",
+      });
+      return null;
+    }
+
     const message: DirectMessage = {
-      id:         `msg-${Date.now()}`,
-      senderId:   myId,
+      id: res.id || `msg-${Date.now()}`,
+      senderId: myId,
       senderName: myUsername,
       receiverId: friendId,
-      content:    content.trim(),
-      read:       true, // sender always reads their own
-      createdAt:  new Date().toISOString(),
+      content: trimmed,
+      read: true,
+      createdAt: res.created_at ?? new Date().toISOString(),
     };
+
     set((s) => ({
       conversations: {
         ...s.conversations,
@@ -126,19 +150,22 @@ export const useMessageStore = create<MessageState>((set, get) => ({
       conversations: {
         ...s.conversations,
         [friendId]: (s.conversations[friendId] ?? []).map((m) =>
-          m.receiverId !== friendId ? { ...m, read: true } : m
+          m.receiverId !== friendId ? { ...m, read: true } : m,
         ),
       },
     })),
 
   getUnreadCount: (friendId) =>
-    (get().conversations[friendId] ?? []).filter(
-      (m) => !m.read && m.senderId === friendId
-    ).length,
+    (get().conversations[friendId] ?? []).filter((m) => !m.read && m.senderId === friendId).length,
 
-  getTotalUnread: () =>
-    Object.values(get().conversations).reduce(
-      (total, msgs) => total + msgs.filter((m) => !m.read).length,
-      0
-    ),
+  getTotalUnread: () => {
+    const myId = useUserStore.getState().user?.id;
+    if (!myId) return 0;
+    return Object.values(get().conversations).reduce(
+      (total, msgs) => total + msgs.filter((m) => !m.read && m.receiverId === myId).length,
+      0,
+    );
+  },
+
+  resetConversationsLocal: () => set({ conversations: {} }),
 }));

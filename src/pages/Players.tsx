@@ -1,10 +1,11 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useNavigate } from "react-router-dom";
 import { usePlayerStore } from "@/stores/playerStore";
 import { Search, Users2, ChevronRight } from "lucide-react";
-import type { Game } from "@/types";
+import type { Game, PublicPlayerProfile } from "@/types";
+import { useUserStore } from "@/stores/userStore";
 import { cn } from "@/lib/utils";
 import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
 import { renderForgeShopIcon } from "@/lib/forgeItemIcon";
@@ -36,15 +37,19 @@ const TIER_COLOR: Record<string, string> = {
 
 export default function Players() {
   const navigate      = useNavigate();
+  const token         = useUserStore((s) => s.token);
   const searchPlayers = usePlayerStore((s) => s.searchPlayers);
 
   const [query,      setQuery]      = useState("");
   const [gameFilter, setGameFilter] = useState<Game | "">("");
+  const [results, setResults] = useState<PublicPlayerProfile[]>([]);
 
-  const results = useMemo(
-    () => searchPlayers(query, gameFilter || undefined),
-    [query, gameFilter, searchPlayers]
-  );
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      void searchPlayers(query, gameFilter || undefined, token ?? null).then(setResults);
+    }, 220);
+    return () => clearTimeout(handle);
+  }, [query, gameFilter, token, searchPlayers]);
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">

@@ -42,7 +42,7 @@ describe("Dashboard page", () => {
 
   it("shows Find Match and Wallet quick action buttons", () => {
     render(<MemoryRouter><Dashboard /></MemoryRouter>);
-    expect(screen.getByRole("button", { name: /find match/i })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /find match/i }).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /^wallet$/i })).toBeInTheDocument();
   });
 

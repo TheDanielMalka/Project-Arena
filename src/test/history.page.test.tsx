@@ -4,8 +4,9 @@ import { MemoryRouter } from "react-router-dom";
 import History from "@/pages/History";
 import { useMatchStore } from "@/stores/matchStore";
 import { useUserStore } from "@/stores/userStore";
+import { MATCH_STORE_TEST_FIXTURE } from "@/test/matchStoreFixture";
 
-const seedMatches = useMatchStore.getState().matches;
+const seedMatches = MATCH_STORE_TEST_FIXTURE;
 
 describe("History page", () => {
   beforeEach(async () => {

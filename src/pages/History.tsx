@@ -230,9 +230,9 @@ const GameDropdown = ({ label, icon, games, activeGame, onSelect, comingSoon }: 
 // ─────────────────────────────────────────────────────────────────────────
 const History = () => {
   const navigate = useNavigate();
-  const { user } = useUserStore();
+  const { user, token } = useUserStore();
   const [searchParams] = useSearchParams();
-  const { matches } = useMatchStore();
+  const { matches, refreshMatchesFromServer } = useMatchStore();
   const [timeRange,    setTimeRange]    = useState<TimeRange>("alltime");
   const [search,       setSearch]       = useState("");
   const [gameFilter,   setGameFilter]   = useState<Game | "all">((searchParams.get("game") as Game) ?? "all");
@@ -243,6 +243,11 @@ const History = () => {
   const [appealMatch, setAppealMatch] = useState<Match | null>(null);
 
   const myId = user?.id ?? "";
+
+  useEffect(() => {
+    if (!user || !token) return;
+    void refreshMatchesFromServer(token);
+  }, [user, token, refreshMatchesFromServer]);
 
   const canAppealMatch = (m: Match) =>
     m.status === "completed" || m.status === "disputed" || m.status === "cancelled";

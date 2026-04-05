@@ -1,5 +1,10 @@
 import "@testing-library/jest-dom";
-import { vi } from "vitest";
+import { beforeEach, vi } from "vitest";
+import { friendApiFixture } from "@/test/friendApiFixture";
+
+beforeEach(() => {
+  friendApiFixture.reset();
+});
 
 // Prevent unit tests from making real network calls for auth/profile.
 // We keep the rest of engine-api behavior intact.
@@ -81,6 +86,75 @@ vi.mock("@/lib/engine-api", async () => {
       ok: true as const,
       data: { at_balance: 180, item_slug },
     })),
+    apiListFriends: vi.fn(async () => [...friendApiFixture.friends]),
+    apiListFriendRequests: vi.fn(async () => ({
+      incoming: [...friendApiFixture.incoming],
+      outgoing: [...friendApiFixture.outgoing],
+    })),
+    apiSendFriendRequest: vi.fn(async (_t: string, user_id: string, message?: string | null) => {
+      const username =
+        user_id === "user-003"
+          ? "ShadowKill3r"
+          : user_id === "user-002"
+            ? "WingmanPro"
+            : `user-${user_id}`;
+      const arena_id =
+        user_id === "user-003" ? "ARENA-SK0003" : user_id === "user-002" ? "ARENA-WP0002" : "ARENA-X";
+      friendApiFixture.outgoing.push({
+        request_id: `req-${user_id}-${friendApiFixture.outgoing.length}`,
+        user_id,
+        username,
+        arena_id,
+        avatar: null,
+        message: message ?? null,
+        created_at: new Date().toISOString(),
+      });
+      return { ok: true as const };
+    }),
+    apiAcceptFriendRequest: vi.fn(async () => ({ ok: true as const })),
+    apiRejectFriendRequest: vi.fn(async () => ({ ok: true as const })),
+    apiRemoveFriend: vi.fn(async () => ({ ok: true as const })),
+    apiBlockUser: vi.fn(async () => ({ ok: true as const })),
+    apiChangePassword: vi.fn(async () => ({ ok: true as const })),
+    apiListMatchesOpen: vi.fn(async () => []),
+    apiListMatchesHistory: vi.fn(async () => []),
+    apiGetLeaderboard: vi.fn(async (opts?: { game?: string; limit?: number; range?: string }) => {
+      const { LEADERBOARD_GLOBAL_TEST, LEADERBOARD_BY_GAME_TEST } =
+        await import("@/test/leaderboardTestFixture");
+      const g = opts?.game;
+      if (!g) return [...LEADERBOARD_GLOBAL_TEST];
+      return [...(LEADERBOARD_BY_GAME_TEST[g] ?? [])];
+    }),
+    apiSearchPlayers: vi.fn(async (_token: string | null, q: string, game?: string) => {
+      const { PLAYER_SEARCH_FIXTURE } = await import("@/test/playerStoreFixture");
+      const ql = (q ?? "").trim().toLowerCase();
+      return PLAYER_SEARCH_FIXTURE.filter((p) => {
+        if (game && p.preferredGame !== game) return false;
+        if (!ql) return true;
+        return p.username.toLowerCase().includes(ql) || p.arenaId.toLowerCase().includes(ql);
+      }).map((p) => ({ ...p }));
+    }),
+    apiGetPublicPlayer: vi.fn(async (userId: string) => {
+      const { PLAYER_SEARCH_FIXTURE } = await import("@/test/playerStoreFixture");
+      const hit = PLAYER_SEARCH_FIXTURE.find((p) => p.id === userId);
+      return hit ? { ...hit } : null;
+    }),
+    apiListInbox: vi.fn(async () => {
+      const { INBOX_HUB_TEST_FIXTURE } = await import("@/test/inboxTestFixture");
+      return INBOX_HUB_TEST_FIXTURE.map((m) => ({ ...m }));
+    }),
+    apiGetInboxUnreadCount: vi.fn(async () => 1),
+    apiPostInbox: vi.fn(async () => ({
+      ok: true as const,
+      id: "inb-new",
+      sender_id: "user-001",
+      receiver_id: "user-002",
+      subject: "Test",
+      created_at: new Date().toISOString(),
+    })),
+    apiPatchInboxRead: vi.fn(async () => true),
+    apiPatchInboxReadAll: vi.fn(async () => true),
+    apiDeleteInbox: vi.fn(async () => true),
   };
 });
 

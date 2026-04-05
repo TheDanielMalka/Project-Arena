@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   LogOut,
@@ -50,8 +50,8 @@ export function PlayerCardPopover({
   enableLeaveRoom?: boolean;
 }) {
   const navigate = useNavigate();
-  const { user } = useUserStore();
-  const { players } = usePlayerStore();
+  const { user, token } = useUserStore();
+  const { players, fetchPublicPlayerById } = usePlayerStore();
   const sendMessage = useMessageStore((s) => s.sendMessage);
   const ignoredUsers = useFriendStore((s) => s.ignoredUsers);
   const friendships = useFriendStore((s) => s.friendships);
@@ -67,6 +67,15 @@ export function PlayerCardPopover({
   const msgRef = useRef<HTMLTextAreaElement>(null);
 
   const isOwnSlot = isCurrentUserSlot(slotValue, user?.id, user?.username);
+  const looksLikeUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    slotValue.trim(),
+  );
+
+  useEffect(() => {
+    if (!looksLikeUuid || isOwnSlot) return;
+    void fetchPublicPlayerById(slotValue.trim(), token ?? null);
+  }, [looksLikeUuid, isOwnSlot, slotValue, token, fetchPublicPlayerById]);
+
   const profile = resolveRosterProfile(slotValue, user?.id, user?.username, players);
   const username = rosterDisplayUsername(slotValue, user?.id, user?.username, players);
 
@@ -93,9 +102,9 @@ export function PlayerCardPopover({
     other: "Other",
   };
 
-  const handleAddFriend = () => {
+  const handleAddFriend = async () => {
     if (!user) return;
-    const created = sendFriendRequest({
+    const created = await sendFriendRequest({
       myId: user.id,
       myUsername: user.username,
       myArenaId: user.arenaId,
@@ -141,7 +150,7 @@ export function PlayerCardPopover({
 
   const handleBlockPlayer = () => {
     if (!user) return;
-    blockPlayer({
+    void blockPlayer({
       myId: user.id,
       targetUserId: targetId,
       targetUsername: username,
@@ -173,9 +182,9 @@ export function PlayerCardPopover({
     });
   };
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!user || !msgText.trim()) return;
-    const sent = sendMessage({
+    const sent = await sendMessage({
       myId: user.id,
       myUsername: user.username,
       friendId: targetId,
@@ -246,7 +255,7 @@ export function PlayerCardPopover({
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && msgText.trim()) {
                       e.preventDefault();
-                      handleSendMessage();
+                      void handleSendMessage();
                     }
                   }}
                 />
@@ -265,7 +274,7 @@ export function PlayerCardPopover({
                       size="sm"
                       variant="outline"
                       className="h-7 text-xs shrink-0 border-primary/30 text-primary gap-1"
-                      onClick={handleAddFriend}
+                      onClick={() => void handleAddFriend()}
                     >
                       <UserPlus className="h-3 w-3" /> Add Friend
                     </Button>
@@ -274,7 +283,7 @@ export function PlayerCardPopover({
                     size="sm"
                     className="flex-1 min-w-[6rem] h-7 text-xs gap-1.5"
                     disabled={!msgText.trim()}
-                    onClick={handleSendMessage}
+                    onClick={() => void handleSendMessage()}
                   >
                     <Send className="h-3.5 w-3.5" /> Send
                   </Button>
@@ -336,7 +345,7 @@ export function PlayerCardPopover({
               <button
                 type="button"
                 className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-secondary/60 rounded-lg transition-colors"
-                onClick={handleAddFriend}
+                onClick={() => void handleAddFriend()}
               >
                 <UserPlus className="h-3 w-3 text-primary" /> Add Friend
               </button>

@@ -25,6 +25,7 @@ import { PASSWORD_RULES, isPasswordValid } from "@/lib/passwordValidation";
 import { SupportTicketDialog } from "@/components/support/SupportTicketDialog";
 import { useClientStore } from "@/stores/clientStore";
 import { clearArenaLocalPreferences } from "@/lib/localArenaPrefs";
+import { apiChangePassword } from "@/lib/engine-api";
 
 // ─── Nav sections ──────────────────────────────────────────────
 const SECTIONS = [
@@ -62,7 +63,7 @@ const SectionTitle = ({ icon: Icon, label, color }: { icon: React.ElementType; l
 // ─── Main component ────────────────────────────────────────────
 const SettingsPage = () => {
   const { toast } = useToast();
-  const { user, greetingType } = useUserStore();
+  const { user, greetingType, token, logout } = useUserStore();
   const clientStatusLabel = useClientStore((s) => s.statusLabel);
   const clientVersion = useClientStore((s) => s.version);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -81,6 +82,7 @@ const SettingsPage = () => {
   const [newPw, setNewPw] = useState("");
   const [pwConfirmOpen, setPwConfirmOpen] = useState(false);
   const [pwUpdated, setPwUpdated] = useState(false);
+  const [pwSaving, setPwSaving] = useState(false);
 
   // ── Email change flow ──────────────────────────────────────────
   // Step 1 "verify"  → user enters password to prove identity
@@ -216,13 +218,35 @@ const SettingsPage = () => {
     }
   }, [searchParams, setSearchParams]);
 
-  const handlePasswordUpdate = () => {
-    // DB-ready: PATCH /api/auth/password { currentPassword: currentPw, newPassword: newPw }
-    setPwConfirmOpen(false);
-    setPwUpdated(true);
-    setCurrentPw(""); setNewPw("");
-    toast({ title: "✅ Password updated", description: "Your password has been changed successfully." });
-    setTimeout(() => setPwUpdated(false), 3000);
+  const handlePasswordUpdate = async () => {
+    if (!token) {
+      toast({ title: "Sign in required", description: "Log in to change your password.", variant: "destructive" });
+      return;
+    }
+    setPwSaving(true);
+    try {
+      const res = await apiChangePassword(token, currentPw, newPw);
+      setPwConfirmOpen(false);
+      if (res.ok === false) {
+        toast({
+          title: "Could not update password",
+          description: res.detail ?? "Check your current password and try again.",
+          variant: "destructive",
+        });
+        return;
+      }
+      setPwUpdated(true);
+      setCurrentPw("");
+      setNewPw("");
+      toast({
+        title: "Password updated",
+        description: "You will be signed out — sign in again with your new password.",
+      });
+      setTimeout(() => setPwUpdated(false), 3000);
+      logout();
+    } finally {
+      setPwSaving(false);
+    }
   };
 
   const handleSave = () => {
@@ -1005,9 +1029,10 @@ const SettingsPage = () => {
           <Button
             size="sm"
             className="flex-1 text-xs font-display bg-arena-orange hover:bg-arena-orange/80 text-black font-bold"
-            onClick={handlePasswordUpdate}
+            disabled={pwSaving}
+            onClick={() => void handlePasswordUpdate()}
           >
-            <Lock className="mr-1.5 h-3.5 w-3.5" /> Yes, Update Password
+            <Lock className="mr-1.5 h-3.5 w-3.5" /> {pwSaving ? "Updating…" : "Yes, Update Password"}
           </Button>
         </div>
       </DialogContent>

@@ -232,7 +232,17 @@ const LiveTicker = ({ matches }: { matches: Match[] }) => {
 const MatchLobby = () => {
   const { user, token, connectWallet: syncProfileWalletConnected } = useUserStore();
   const websiteUserId = user?.id;
-  const { matches, addMatch, joinMatch, leaveMatch, updateMatchStatus, getMatchByCode, deleteMatch, expireOldMatches } = useMatchStore();
+  const {
+    matches,
+    addMatch,
+    joinMatch,
+    leaveMatch,
+    updateMatchStatus,
+    getMatchByCode,
+    deleteMatch,
+    expireOldMatches,
+    refreshMatchesFromServer,
+  } = useMatchStore();
   const { lockEscrow, cancelEscrow, connectedAddress, connectWallet: linkMetaMaskForMatch } = useWalletStore();
   const canPlay      = useClientStore((s) => s.canPlayForUser(websiteUserId));
   const canPlayStaked = canPlay && !!connectedAddress;
@@ -244,6 +254,10 @@ const MatchLobby = () => {
   const markInMatch  = useClientStore((s) => s.markInMatch);
   const markIdle     = useClientStore((s) => s.markIdle);
   useMatchPolling({ interval: 5000 });
+
+  useEffect(() => {
+    void refreshMatchesFromServer(token ?? null);
+  }, [token, refreshMatchesFromServer]);
 
   const [selectedBet, setSelectedBet] = useState<number | null>(null);
   const [customCode, setCustomCode] = useState("");

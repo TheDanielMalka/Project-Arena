@@ -185,16 +185,7 @@ const Profile = () => {
     "Fortnite Mobile":  { abbr: "FN",   color: "#38BDF8", bg: "rgba(56,189,248,0.12)", img: "https://play-lh.googleusercontent.com/FxJDPDIDJKlG9C8lOxaS041X27A0SrHAa46SGDIpPusAd4IEJihZTyGf-8rTZ_GpF34aeLvULilVuO0cpCJxTg=s120" },
   };
 
-  // Game stats per connected game (mock data — display only)
-  const gameStats: Record<string, { matches: number; winRate: number; earnings: number; kd: number; rank: string; streak: number }> = {
-    "CS2":         { matches: 89, winRate: 67.4, earnings: 1240, kd: 1.8,  rank: "Gold",     streak: 4 },
-    "Valorant":    { matches: 58, winRate: 61.2, earnings: 1607, kd: 1.4,  rank: "Platinum", streak: 2 },
-    "Fortnite":    { matches: 21, winRate: 47.6, earnings: 310,  kd: 1.1,  rank: "Bronze",   streak: 1 },
-    "PUBG Mobile": { matches: 34, winRate: 52.9, earnings: 0,    kd: 2.1,  rank: "Crown",    streak: 0 },
-    "MLBB":        { matches: 12, winRate: 58.3, earnings: 0,    kd: 1.6,  rank: "Epic",     streak: 3 },
-  };
-
-  // Game Stats tabs: CS2 & Valorant (Arena v1) — account linking is via Steam / Riot / FACEIT in Connections
+  // Game Stats tabs: CS2 & Valorant (Arena v1) — per-game breakdown when API exists; until then show account-wide from profile
   // DB-ready: tab list from backend (per-game stats when user has played / linked platforms)
   const gameStatsTabGames: string[] = ["CS2", "Valorant"];
   const [activeGameTab, setActiveGameTab] = useState<string>(gameStatsTabGames[0] ?? "CS2");
@@ -580,24 +571,26 @@ const Profile = () => {
             })}
           </div>
 
-          {/* Active Game Stats */}
+          {/* Active game tab — no per-game API yet; show account-wide aggregates */}
           {(() => {
-            const stats = gameStats[activeGameTab];
-            const cfg = gameConfig[activeGameTab] ?? { abbr: activeGameTab?.slice(0,2) ?? "??", color: "#888", bg: "rgba(136,136,136,0.1)" };
-            if (!stats) return (
-              <div className="text-center py-4 text-muted-foreground text-xs font-display">No stats available for {activeGameTab}</div>
-            );
-            const winColor = stats.winRate >= 65 ? "#22C55E" : stats.winRate >= 55 ? "#F59E0B" : stats.winRate >= 45 ? "#F97316" : "#EF4444";
+            const matches = user?.stats.matches ?? 0;
+            const winRate = user?.stats.winRate ?? 0;
+            const wins = user?.stats.wins ?? 0;
+            const losses = user?.stats.losses ?? 0;
+            const earnings = user?.stats.totalEarnings ?? 0;
+            const winColor = winRate >= 65 ? "#22C55E" : winRate >= 55 ? "#F59E0B" : winRate >= 45 ? "#F97316" : "#EF4444";
             const segments = 20;
-            const filled = Math.round((stats.winRate / 100) * segments);
+            const filled = Math.round((winRate / 100) * segments);
             return (
               <div className="space-y-3">
-                {/* Win Rate + Bar */}
+                <p className="text-[10px] text-muted-foreground font-display text-center leading-snug px-1">
+                  Per-game stats for {activeGameTab} are not available yet. Numbers below are your overall Arena record.
+                </p>
                 <div className="flex items-end justify-between gap-3">
                   <div>
-                    <div className="text-[10px] font-display uppercase tracking-widest text-muted-foreground mb-0.5">Win Rate</div>
+                    <div className="text-[10px] font-display uppercase tracking-widest text-muted-foreground mb-0.5">Win rate (overall)</div>
                     <div className="font-display font-bold text-3xl leading-none" style={{ color: winColor }}>
-                      {stats.winRate}%
+                      {winRate}%
                     </div>
                   </div>
                   <div className="flex-1 space-y-1">
@@ -608,17 +601,16 @@ const Profile = () => {
                       ))}
                     </div>
                     <div className="text-[10px] text-muted-foreground font-mono text-right">
-                      {Math.round(stats.matches * stats.winRate / 100)}W – {Math.round(stats.matches * (1 - stats.winRate / 100))}L
+                      {wins}W – {losses}L
                     </div>
                   </div>
                 </div>
-                {/* Stats Row */}
                 <div className="grid grid-cols-4 gap-1.5">
                   {[
-                    { label: "Matches", value: stats.matches,          icon: "⚔" },
-                    { label: "K/D",     value: stats.kd.toFixed(1),    icon: "🎯" },
-                    { label: "Rank",    value: stats.rank,             icon: "🏅" },
-                    { label: "Streak",  value: stats.streak > 0 ? `${stats.streak}🔥` : "—", icon: "⚡" },
+                    { label: "Matches", value: matches, icon: "⚔" },
+                    { label: "K/D", value: "—", icon: "🎯" },
+                    { label: "Rank", value: user?.rank ?? "—", icon: "🏅" },
+                    { label: "Streak", value: "—", icon: "⚡" },
                   ].map(({ label, value, icon }) => (
                     <div key={label} className="rounded-md p-2 text-center" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
                       <div className="text-sm">{icon}</div>
@@ -627,11 +619,10 @@ const Profile = () => {
                     </div>
                   ))}
                 </div>
-                {/* Earnings */}
-                {stats.earnings > 0 && (
+                {earnings > 0 && (
                   <div className="flex items-center justify-between px-2 py-1.5 rounded-md" style={{ background: "rgba(34,197,94,0.06)", border: "1px solid rgba(34,197,94,0.15)" }}>
-                    <span className="text-[10px] font-display uppercase tracking-widest text-muted-foreground">Earned in {activeGameTab}</span>
-                    <span className="font-display font-bold text-sm text-green-400">${stats.earnings.toLocaleString()}</span>
+                    <span className="text-[10px] font-display uppercase tracking-widest text-muted-foreground">Total earnings</span>
+                    <span className="font-display font-bold text-sm text-green-400">${earnings.toLocaleString()}</span>
                   </div>
                 )}
               </div>

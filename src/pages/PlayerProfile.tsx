@@ -20,7 +20,7 @@ import { useReportStore } from "@/stores/reportStore";
 import { useUserStore } from "@/stores/userStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { ignoredRefMatchesContext, useFriendStore } from "@/stores/friendStore";
-import type { TicketReason } from "@/types";
+import type { PublicPlayerProfile, TicketReason } from "@/types";
 import { cn } from "@/lib/utils";
 import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
 import { renderForgeShopIcon } from "@/lib/forgeItemIcon";
@@ -232,7 +232,7 @@ function FriendRequestModal({ open, targetUsername, targetArenaId, onClose, onCo
   };
 
   const handleConfirm = () => {
-    onConfirm(message.trim());
+    void onConfirm(message.trim());
     setMessage("");
   };
 
@@ -287,8 +287,9 @@ function FriendRequestModal({ open, targetUsername, targetArenaId, onClose, onCo
 export default function PlayerProfile() {
   const { username }       = useParams<{ username: string }>();
   const navigate           = useNavigate();
-  const getPlayerByUsername = usePlayerStore((s) => s.getPlayerByUsername);
+  const fetchPublicPlayerByUsername = usePlayerStore((s) => s.fetchPublicPlayerByUsername);
   const currentUser        = useUserStore((s) => s.user);
+  const token              = useUserStore((s) => s.token);
   const getRelationship   = useFriendStore((s) => s.getRelationship);
   const sendFriendRequest = useFriendStore((s) => s.sendFriendRequest);
   const friendships       = useFriendStore((s) => s.friendships);
@@ -299,8 +300,28 @@ export default function PlayerProfile() {
   const addNotif           = useNotificationStore((s) => s.addNotification);
   const [reportOpen, setReportOpen] = useState(false);
   const [frModalOpen, setFrModalOpen] = useState(false);
+  const [player, setPlayer] = useState<PublicPlayerProfile | null | undefined>(undefined);
 
-  const player = getPlayerByUsername(username ?? "");
+  useEffect(() => {
+    const name = username?.trim();
+    if (!name) {
+      setPlayer(null);
+      return;
+    }
+    const cached = usePlayerStore.getState().getPlayerByUsername(name);
+    if (cached) {
+      setPlayer(cached);
+      return;
+    }
+    setPlayer(undefined);
+    let cancelled = false;
+    void fetchPublicPlayerByUsername(name, token).then((p) => {
+      if (!cancelled) setPlayer(p ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [username, token, fetchPublicPlayerByUsername]);
 
   const profileIgnoreCtx = useMemo(() => {
     if (!player) return null;
@@ -317,6 +338,14 @@ export default function PlayerProfile() {
     return ignoredUsers.some((u) => ignoredRefMatchesContext(profileIgnoreCtx, u));
   }, [ignoredUsers, profileIgnoreCtx]);
 
+  if (player === undefined) {
+    return (
+      <div className="p-6 max-w-2xl mx-auto text-center py-24">
+        <p className="text-muted-foreground text-sm">Loading…</p>
+      </div>
+    );
+  }
+
   if (!player) {
     return (
       <div className="p-6 max-w-2xl mx-auto text-center py-24">
@@ -332,9 +361,9 @@ export default function PlayerProfile() {
   const isSelf      = currentUser?.username === player.username;
   const isInactive  = player.status !== "active";
 
-  const handleFrConfirm = (message: string) => {
+  const handleFrConfirm = async (message: string) => {
     if (!currentUser || !player) return;
-    const created = sendFriendRequest({
+    const created = await sendFriendRequest({
       myId: currentUser.id, myUsername: currentUser.username,
       myArenaId: currentUser.arenaId, myAvatarInitials: currentUser.avatarInitials,
       myRank: currentUser.rank, myTier: currentUser.tier, myPreferredGame: currentUser.preferredGame,
@@ -442,7 +471,7 @@ export default function PlayerProfile() {
                     title="Ignore player"
                     onClick={() => {
                       if (!currentUser) return;
-                      blockPlayer({
+                      void blockPlayer({
                         myId: currentUser.id,
                         targetUserId: player.id,
                         targetUsername: player.username,
@@ -532,7 +561,7 @@ export default function PlayerProfile() {
                       variant="outline"
                       size="sm"
                       className="border-border/50 text-muted-foreground hover:text-destructive hover:border-destructive/40 gap-1.5"
-                      onClick={() => f && declineRequest(f.id)}
+                      onClick={() => f && void declineRequest(f.id)}
                       title="Cancel friend request"
                     >
                       <Clock className="h-3.5 w-3.5" /> Pending ×
@@ -573,7 +602,7 @@ export default function PlayerProfile() {
                     size="sm"
                     className="border-destructive/30 text-destructive hover:bg-destructive/10 gap-1.5"
                     onClick={() =>
-                      blockPlayer({
+                      void blockPlayer({
                         myId: currentUser.id,
                         targetUserId: player.id,
                         targetUsername: player.username,

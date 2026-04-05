@@ -143,6 +143,11 @@ function scheduleSyncForgePurchasesToProfile() {
   void import("@/stores/forgeStore").then((m) => m.syncForgePurchasesToUserProfile());
 }
 
+function scheduleSocialSyncAfterAuth() {
+  if (import.meta.env.VITEST) return;
+  void import("@/stores/friendStore").then((m) => m.syncFriendsFromServer());
+}
+
 export const useUserStore = create<UserState>((set, get) => ({
   user: null,
   token: null,
@@ -185,7 +190,7 @@ export const useUserStore = create<UserState>((set, get) => ({
       unlockedForgeItemIds: profile.forge_unlocked_item_ids ?? [],
       vipExpiresAt: profile.vip_expires_at ?? undefined,
       stats: {
-        matches: 0,
+        matches: wins + losses,
         wins,
         losses,
         winRate: wins + losses > 0 ? Math.round((wins / (wins + losses)) * 1000) / 10 : 0,
@@ -207,6 +212,7 @@ export const useUserStore = create<UserState>((set, get) => ({
     });
     hydrateWalletForgeAfterAuth(user);
     scheduleSyncForgePurchasesToProfile();
+    scheduleSocialSyncAfterAuth();
     return true;
   },
 
@@ -259,7 +265,7 @@ export const useUserStore = create<UserState>((set, get) => ({
       unlockedForgeItemIds: profile?.forge_unlocked_item_ids ?? [],
       vipExpiresAt: profile?.vip_expires_at ?? undefined,
       stats: {
-        matches: 0,
+        matches: wins + losses,
         wins,
         losses,
         winRate: wins + losses > 0 ? Math.round((wins / (wins + losses)) * 1000) / 10 : 0,
@@ -282,6 +288,7 @@ export const useUserStore = create<UserState>((set, get) => ({
     hydrateWalletForgeAfterAuth(user);
     setPendingClientSetupAfterSignup();
     scheduleSyncForgePurchasesToProfile();
+    scheduleSocialSyncAfterAuth();
     return { ok: true as const };
   },
 
@@ -294,6 +301,9 @@ export const useUserStore = create<UserState>((set, get) => ({
 
   logout: () => {
     resetWalletForgeForLogout();
+    void import("@/stores/friendStore").then((m) => m.useFriendStore.getState().resetSocialLocal());
+    void import("@/stores/messageStore").then((m) => m.useMessageStore.getState().resetConversationsLocal());
+    void import("@/stores/inboxStore").then((m) => m.useInboxStore.getState().resetInboxLocal());
     set({ user: null, token: null, isAuthenticated: false, walletConnected: false, showLoginGreeting: false, greetingType: null });
   },
 
@@ -321,6 +331,7 @@ export const useUserStore = create<UserState>((set, get) => ({
       vipExpiresAt: profile.vip_expires_at ?? user.vipExpiresAt,
       stats: {
         ...user.stats,
+        matches: wins + losses,
         wins,
         losses,
         winRate: wins + losses > 0 ? Math.round((wins / (wins + losses)) * 1000) / 10 : 0,

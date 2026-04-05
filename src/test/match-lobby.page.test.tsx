@@ -3,12 +3,13 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import MatchLobby from "@/pages/MatchLobby";
 import { useMatchStore } from "@/stores/matchStore";
+import { MATCH_STORE_TEST_FIXTURE } from "@/test/matchStoreFixture";
 
 vi.mock("@/hooks/useMatchPolling", () => ({
   useMatchPolling: () => ({ pollNow: vi.fn(), resetEngineCheck: vi.fn() }),
 }));
 
-const seedMatches = useMatchStore.getState().matches;
+const seedMatches = MATCH_STORE_TEST_FIXTURE;
 
 describe("MatchLobby page", () => {
   beforeEach(() => {
