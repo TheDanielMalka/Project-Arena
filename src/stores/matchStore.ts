@@ -46,12 +46,32 @@ export const useMatchStore = create<MatchState>((set, get) => ({
       typeof presetId === "string" && presetId.trim().length > 0
         ? presetId.trim()
         : `m-${++matchCounter}`;
+
+    // Idempotent: if a match with this ID already exists, update it in-place
+    // rather than prepending a duplicate entry (important for lobby persistence
+    // useEffect which fires on every remount when myRoomMatchId is null).
+    const existing = get().matches.find((m) => m.id === id);
+    if (existing) {
+      const updated: Match = {
+        ...existing,
+        ...rest,
+        id,
+        // Never overwrite a real server code with a locally-generated one
+        code: rest.code ?? existing.code,
+      };
+      set((state) => ({
+        matches: state.matches.map((m) => (m.id === id ? updated : m)),
+      }));
+      return updated;
+    }
+
     const newMatch: Match = {
       ...rest,
       id,
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-      code: rest.type === "custom" ? generateCode() : undefined,
+      // Use server-provided code when available; generate one only for new custom rooms
+      code: rest.code ?? (rest.type === "custom" ? generateCode() : undefined),
     };
     set((state) => ({ matches: [newMatch, ...state.matches] }));
     return newMatch;
@@ -135,7 +155,9 @@ export const useMatchStore = create<MatchState>((set, get) => ({
     if (match.type === "custom") {
       const inA = (match.teamA ?? []).includes(playerId);
       const inB = (match.teamB ?? []).includes(playerId);
-      if (!inA && !inB) return false;
+      // Fallback: after navigation rehydration, teamA/B may be empty but players[] has IDs
+      const inPlayers = match.players.includes(playerId);
+      if (!inA && !inB && !inPlayers) return false;
 
       const newTeamA = inA ? (match.teamA ?? []).filter((p) => p !== playerId) : (match.teamA ?? []);
       const newTeamB = inB ? (match.teamB ?? []).filter((p) => p !== playerId) : (match.teamB ?? []);
@@ -148,6 +170,7 @@ export const useMatchStore = create<MatchState>((set, get) => ({
                 ...m,
                 teamA: newTeamA,
                 teamB: newTeamB,
+                players: m.players.filter((p) => p !== playerId),
                 depositsReceived: newDeposits,
                 lockCountdownStart: undefined,  // room no longer full
               }
@@ -157,7 +180,7 @@ export const useMatchStore = create<MatchState>((set, get) => ({
       return true;
     }
 
-    // Public match
+    // Public match — remove from players list
     if (!match.players.includes(playerId)) return false;
     set((state) => ({
       matches: state.matches.map((m) =>

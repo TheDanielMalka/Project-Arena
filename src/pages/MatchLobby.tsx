@@ -657,7 +657,8 @@ const MatchLobby = () => {
     const matchId    = myActiveRoom.id;
     const stakeLabel = formatMatchStakeShort(myActiveRoom);
     // Optimistic: clear local state immediately
-    leaveMatch(matchId, user.username);
+    // Must pass user.id (UUID) — teamA/players arrays contain IDs, not usernames
+    leaveMatch(matchId, user.id);
     cancelEscrow(matchId);
     setMyRoomMatchId(null);
     setCountdown(null);
@@ -1180,18 +1181,21 @@ const MatchLobby = () => {
 
           {/* Action row */}
           <div className="flex items-center gap-2 flex-wrap">
-            <Button
-              size="sm"
-              variant="outline"
-              className={cn(
-                "text-xs border-destructive/40 text-destructive hover:bg-destructive/10 hover:border-destructive/70",
-                countdown !== null && countdown <= 3 && "animate-pulse"
-              )}
-              onClick={() => setLeaveConfirmOpen(true)}
-            >
-              <LogOut className="mr-1.5 h-3 w-3" />
-              Leave Room
-            </Button>
+            {/* Leave Room — only for non-host players. Host uses Delete Room below. */}
+            {myActiveRoom.hostId !== user?.id && (
+              <Button
+                size="sm"
+                variant="outline"
+                className={cn(
+                  "text-xs border-destructive/40 text-destructive hover:bg-destructive/10 hover:border-destructive/70",
+                  countdown !== null && countdown <= 3 && "animate-pulse"
+                )}
+                onClick={() => setLeaveConfirmOpen(true)}
+              >
+                <LogOut className="mr-1.5 h-3 w-3" />
+                Leave Room
+              </Button>
+            )}
 
             {token && myActiveRoom.status === "waiting" && (
               <Button
@@ -1873,8 +1877,8 @@ const MatchLobby = () => {
         </TabsContent>
       </Tabs>
 
-      {/* ── Leave Room Confirmation ────────────────────────────────── */}
-      {leaveConfirmOpen && myActiveRoom && (
+      {/* ── Leave Room Confirmation — only non-host players ──────────── */}
+      {leaveConfirmOpen && myActiveRoom && myActiveRoom.hostId !== user?.id && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
           <div className="w-full max-w-sm rounded-2xl border border-destructive/40 bg-card shadow-2xl p-6 space-y-4">
             <div className="flex items-center gap-3">
