@@ -667,7 +667,7 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "waiting", None),  # match lookup
+            ("CS2", "waiting", None, "CRYPTO"),  # match lookup
             self._user_steam(),      # user lookup
             None,                    # already-joined check → not joined yet
         ]
@@ -683,7 +683,7 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "waiting", None),  # match lookup
+            ("CS2", "waiting", None, "CRYPTO"),  # match lookup
             self._user_none(),   # user lookup → no steam_id → 403
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -698,7 +698,7 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("Valorant", "waiting", None),  # match lookup
+            ("Valorant", "waiting", None, "CRYPTO"),  # match lookup
             self._user_none(),         # user lookup → no riot_id → 403
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -723,7 +723,7 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "in_progress", None),  # match is already started → 409
+            ("CS2", "in_progress", None, "CRYPTO"),  # match is already started → 409
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
@@ -736,7 +736,7 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "waiting", None),   # match lookup
+            ("CS2", "waiting", None, "CRYPTO"),   # match lookup
             self._user_steam(),   # user lookup
             (1,),                 # already-joined check → duplicate
         ]
@@ -756,8 +756,8 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "waiting", None),         # match lookup
-            self._user_steam_no_wallet(),  # user has steam but no wallet
+            ("CS2", "waiting", None, "CRYPTO"),   # match lookup
+            self._user_steam_no_wallet(),          # user has steam but no wallet
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
