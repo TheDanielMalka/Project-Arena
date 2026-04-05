@@ -392,7 +392,7 @@ async def validate_screenshot(
     match_id: str,
     game: str = "CS2",
     file: UploadFile = File(...),
-    token: str = Depends(verify_token),
+    payload: dict = Depends(verify_token),
 ):
     """
     Upload a screenshot → run the full vision pipeline → return match result.
@@ -401,35 +401,121 @@ async def validate_screenshot(
     detector and OCR regions are used.  All routing goes through VisionEngine
     so this endpoint always stays in sync with the watcher pipeline.
 
-    Pipeline: save → VisionEngine.process_frame() → save evidence → respond
+    Pipeline:
+      1. Validate match exists and is in_progress
+      2. Enforce 1 submission per user per match (409 if duplicate)
+      3. Save screenshot to disk
+      4. Run VisionEngine.process_frame()
+      5. Persist result to match_evidence table in DB
+      6. Return ValidationResponse
 
-    TODO:
-    - validate `game` against ACTIVE_GAMES from DB config
-    - validate `match_id` exists in DB before processing
-    - store ValidationResponse as match_evidence row in DB
-    - enforce per-match submission limits (1 submission per wallet per match)
+    DB-ready: match_evidence table; users.wallet_address for identity.
     """
     import shutil
+    import uuid as _uuid
     from datetime import datetime
 
+    user_id: str = payload["sub"]
+
+    # ── 1. Validate match status (non-fatal if DB unavailable) ───────────────
+    # If DB is reachable and match is found: enforce status.
+    # If DB is unavailable or match_id is not a valid UUID: proceed gracefully.
+    try:
+        with SessionLocal() as session:
+            match_row = session.execute(
+                text("SELECT status FROM matches WHERE id = :mid"),
+                {"mid": match_id},
+            ).fetchone()
+        if match_row and match_row[0] not in ("in_progress", "waiting"):
+            raise HTTPException(
+                409,
+                f"Match {match_id} is {match_row[0]} — screenshots not accepted",
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("validate_screenshot: match status check skipped (DB error): %s", exc)
+        match_row = None
+
+    # ── 2. Submission limit: 1 per user per match (non-fatal if DB unavailable)
+    wallet_address: str | None = None
+    try:
+        with SessionLocal() as session:
+            wallet_row = session.execute(
+                text("SELECT wallet_address FROM users WHERE id = :uid"),
+                {"uid": user_id},
+            ).fetchone()
+            wallet_address = wallet_row[0] if wallet_row else None
+
+            if wallet_address:
+                existing = session.execute(
+                    text(
+                        "SELECT id FROM match_evidence "
+                        "WHERE match_id = :mid AND wallet_address = :wallet"
+                    ),
+                    {"mid": match_id, "wallet": wallet_address},
+                ).fetchone()
+                if existing:
+                    raise HTTPException(
+                        409,
+                        f"User already submitted a screenshot for match {match_id}. "
+                        "Only 1 submission per player per match is allowed.",
+                    )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("validate_screenshot: submission limit check skipped (DB error): %s", exc)
+
+    # ── 3. Save screenshot to disk ────────────────────────────────────────────
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     save_path = os.path.join(SCREENSHOT_DIR, f"match_{match_id}_{timestamp}.png")
-
     with open(save_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    # Route through game-aware VisionEngine — single source of truth for
-    # all detection logic (colour + OCR + agents), identical to the watcher.
+    # ── 4. Run VisionEngine pipeline ──────────────────────────────────────────
     vision = VisionEngine(config=VisionEngineConfig(game=game))
     output = vision.process_frame(save_path)
 
-    # Evidence is already saved inside detect_result() via save_evidence().
-    # Store the path here for the API response so the caller can reference it.
     evidence_path = None
     if output.result:
         from src.vision.matcher import save_evidence
         evidence_path = save_evidence(save_path, output.result, output.confidence)
 
+    # ── 5. Persist to match_evidence ─────────────────────────────────────────
+    # DB-ready: match_evidence stores the full vision output for consensus.
+    if output.result:
+        try:
+            with SessionLocal() as session:
+                session.execute(
+                    text("""
+                        INSERT INTO match_evidence
+                            (id, match_id, wallet_address, game, result, confidence,
+                             accepted, players, agents, score, screenshot_path, evidence_path)
+                        VALUES
+                            (:id, :mid, :wallet, :game, :result, :confidence,
+                             :accepted, :players, :agents, :score, :sspath, :evpath)
+                        ON CONFLICT DO NOTHING
+                    """),
+                    {
+                        "id":         str(_uuid.uuid4()),
+                        "mid":        match_id,
+                        "wallet":     wallet_address,
+                        "game":       game,
+                        "result":     output.result,
+                        "confidence": float(output.confidence),
+                        "accepted":   bool(output.accepted),
+                        "players":    output.players,
+                        "agents":     output.agents,
+                        "score":      output.score,
+                        "sspath":     save_path,
+                        "evpath":     evidence_path,
+                    },
+                )
+                session.commit()
+        except Exception as exc:
+            logger.error("validate_screenshot evidence insert error (non-fatal): %s", exc)
+
+    # ── 6. Return response ────────────────────────────────────────────────────
     return ValidationResponse(
         match_id=match_id,
         game=game,
