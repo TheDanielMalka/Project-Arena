@@ -418,11 +418,14 @@ async def submit_result(result: MatchResult, token: dict = Depends(verify_token)
     Writes to match_evidence and updates matches.status/winner_id.
     CONTRACT-ready: winner_id → ArenaEscrow.declareWinner() (Phase 6).
     """
-    # ── Persist result ────────────────────────────────────────────────────────
+    # ── Persist result + update user_stats ───────────────────────────────────
     # match_evidence rows are written by POST /validate/screenshot (VisionEngine
-    # pipeline). This endpoint only updates matches.status / winner_id so the
-    # frontend and escrow layer can react.
+    # pipeline). This endpoint updates matches.status / winner_id AND increments
+    # user_stats so wins/losses/xp accumulate in DB for every completed match.
     # CONTRACT-ready: declareWinner() call replaces this UPDATE in Phase 6.
+    #
+    # XP formula: winner +100 XP, all other players +25 XP (participation).
+    # win_rate is recalculated as wins / matches * 100 after each update.
     try:
         with SessionLocal() as session:
             # Update match status to completed + set winner if provided
@@ -440,6 +443,45 @@ async def submit_result(result: MatchResult, token: dict = Depends(verify_token)
                     text("UPDATE matches SET status = 'completed', ended_at = NOW() WHERE id = :match_id"),
                     {"match_id": result.match_id},
                 )
+
+            # ── Update user_stats for all players in this match ───────────────
+            # DB-ready: match_players JOIN → update each participant's row.
+            if result.winner_id:
+                player_rows = session.execute(
+                    text("SELECT user_id FROM match_players WHERE match_id = :mid"),
+                    {"mid": result.match_id},
+                ).fetchall()
+
+                for (uid,) in player_rows:
+                    uid_str = str(uid)
+                    is_winner = uid_str == str(result.winner_id)
+                    xp_gain   = 100 if is_winner else 25
+                    session.execute(
+                        text("""
+                            UPDATE user_stats
+                            SET matches  = matches  + 1,
+                                wins     = wins     + :wins,
+                                losses   = losses   + :losses,
+                                xp       = xp       + :xp,
+                                win_rate = CASE
+                                    WHEN (matches + 1) > 0
+                                    THEN ROUND((wins + :wins)::NUMERIC / (matches + 1) * 100, 2)
+                                    ELSE 0
+                                END
+                            WHERE user_id = :uid
+                        """),
+                        {
+                            "wins":   1 if is_winner else 0,
+                            "losses": 0 if is_winner else 1,
+                            "xp":     xp_gain,
+                            "uid":    uid_str,
+                        },
+                    )
+                    logger.info(
+                        "user_stats updated: user=%s win=%s xp+%d",
+                        uid_str, is_winner, xp_gain,
+                    )
+
             session.commit()
         logger.info("match_evidence saved: match=%s winner=%s", result.match_id, result.winner_id)
     except Exception as exc:
@@ -2278,3 +2320,433 @@ async def mark_messages_read(friend_id: str, payload: dict = Depends(verify_toke
 #
 # DB-ready: all stat updates write to user_stats table (user_id FK → users.id).
 # CONTRACT-ready: WinnerDeclared event listener triggers stat writes.
+
+
+# ── Match history ──────────────────────────────────────────────────────────────
+
+@app.get("/matches/history")
+async def match_history(
+    game: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    payload: dict = Depends(verify_token),
+):
+    """
+    Return the authenticated user's match history from DB.
+
+    Optional filters:
+      ?game=CS2|Valorant  — filter by game
+      ?status=completed|cancelled|disputed  — filter by status
+      ?limit=N            — max rows (1–100, default 20)
+
+    Returns matches ordered newest-first, including opponent info and result.
+    DB-ready: matches JOIN match_players JOIN users.
+    """
+    user_id: str = payload["sub"]
+
+    conditions = ["mp.user_id = :uid", "m.status != 'waiting'", "m.status != 'in_progress'"]
+    params: dict = {"uid": user_id, "lim": limit}
+
+    if game:
+        conditions.append("m.game = :game")
+        params["game"] = _normalize_game(game)
+    if status:
+        conditions.append("m.status = :status")
+        params["status"] = status
+
+    where = " AND ".join(conditions)
+
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(
+                text(f"""
+                    SELECT
+                        m.id,
+                        m.game,
+                        m.mode,
+                        m.status,
+                        m.bet_amount,
+                        m.winner_id,
+                        m.created_at,
+                        m.ended_at,
+                        -- opponent: first other player in the match
+                        (SELECT u2.username
+                         FROM match_players mp2
+                         JOIN users u2 ON u2.id = mp2.user_id
+                         WHERE mp2.match_id = m.id AND mp2.user_id != :uid
+                         LIMIT 1),
+                        (SELECT u2.id
+                         FROM match_players mp2
+                         JOIN users u2 ON u2.id = mp2.user_id
+                         WHERE mp2.match_id = m.id AND mp2.user_id != :uid
+                         LIMIT 1),
+                        (SELECT u2.avatar
+                         FROM match_players mp2
+                         JOIN users u2 ON u2.id = mp2.user_id
+                         WHERE mp2.match_id = m.id AND mp2.user_id != :uid
+                         LIMIT 1)
+                    FROM matches m
+                    JOIN match_players mp ON mp.match_id = m.id
+                    WHERE {where}
+                    ORDER BY m.created_at DESC
+                    LIMIT :lim
+                """),
+                params,
+            ).fetchall()
+    except Exception as exc:
+        logger.error("match_history error: %s", exc)
+        raise HTTPException(500, "Failed to load match history")
+
+    return {
+        "matches": [
+            {
+                "id":              str(r[0]),
+                "game":            r[1],
+                "mode":            r[2],
+                "status":          r[3],
+                "bet_amount":      float(r[4]) if r[4] is not None else 0.0,
+                "result":          (
+                    "win"  if r[5] and str(r[5]) == user_id else
+                    "loss" if r[5] else
+                    "draw"
+                ),
+                "winner_id":       str(r[5]) if r[5] else None,
+                "created_at":      r[6].isoformat() if r[6] else None,
+                "ended_at":        r[7].isoformat() if r[7] else None,
+                "opponent":        r[8],
+                "opponent_id":     str(r[9])  if r[9]  else None,
+                "opponent_avatar": r[10],
+            }
+            for r in rows
+        ]
+    }
+
+
+# ── Available matches (lobby) ──────────────────────────────────────────────────
+
+@app.get("/matches")
+async def list_matches(
+    game: str | None = Query(default=None),
+    mode: str | None = Query(default=None),
+    match_type: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    token: dict | None = Depends(optional_token),
+):
+    """
+    List open (waiting) matches available to join.
+
+    Optional filters:
+      ?game=CS2|Valorant     — filter by game
+      ?mode=1v1|2v2|4v4|5v5  — filter by mode
+      ?match_type=public|custom
+      ?limit=N               — max rows (1–100, default 20)
+
+    Returns matches with host info and current player count.
+    DB-ready: matches JOIN match_players JOIN users.
+    """
+    conditions = ["m.status = 'waiting'"]
+    params: dict = {"lim": limit}
+
+    if game:
+        conditions.append("m.game = :game")
+        params["game"] = _normalize_game(game)
+    if mode:
+        conditions.append("m.mode = :mode")
+        params["mode"] = mode.strip()
+    if match_type:
+        conditions.append("m.type = :mtype")
+        params["mtype"] = match_type.strip()
+
+    where = " AND ".join(conditions)
+
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(
+                text(f"""
+                    SELECT
+                        m.id,
+                        m.game,
+                        m.mode,
+                        m.type,
+                        m.bet_amount,
+                        m.status,
+                        m.code,
+                        m.created_at,
+                        m.max_players,
+                        u.username   AS host_username,
+                        u.id         AS host_id,
+                        u.avatar     AS host_avatar,
+                        COUNT(mp.user_id) AS player_count
+                    FROM matches m
+                    JOIN users u ON u.id = m.host_id
+                    LEFT JOIN match_players mp ON mp.match_id = m.id
+                    WHERE {where}
+                    GROUP BY m.id, u.id
+                    ORDER BY m.created_at DESC
+                    LIMIT :lim
+                """),
+                params,
+            ).fetchall()
+    except Exception as exc:
+        logger.error("list_matches error: %s", exc)
+        raise HTTPException(500, "Failed to load matches")
+
+    return {
+        "matches": [
+            {
+                "id":             str(r[0]),
+                "game":           r[1],
+                "mode":           r[2],
+                "type":           r[3],
+                "bet_amount":     float(r[4]) if r[4] is not None else 0.0,
+                "status":         r[5],
+                "code":           r[6],
+                "created_at":     r[7].isoformat() if r[7] else None,
+                "max_players":    r[8],
+                "host_username":  r[9],
+                "host_id":        str(r[10]) if r[10] else None,
+                "host_avatar":    r[11],
+                "player_count":   int(r[12]),
+            }
+            for r in rows
+        ]
+    }
+
+
+# ── Leaderboard ────────────────────────────────────────────────────────────────
+
+@app.get("/leaderboard")
+async def leaderboard(
+    game: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    token: dict | None = Depends(optional_token),
+):
+    """
+    Return the top players ranked by wins then xp.
+
+    Optional filters:
+      ?game=CS2|Valorant  — per-game leaderboard (filtered by matches played in that game)
+      ?limit=N            — top N players (1–200, default 50)
+
+    Returns user profile fields + stats for leaderboard display.
+    DB-ready: users JOIN user_stats ORDER BY wins DESC, xp DESC.
+    """
+    params: dict = {"lim": limit}
+
+    # Per-game filter: only include users who have played ≥1 match in that game.
+    game_filter = ""
+    if game:
+        game_filter = """
+            AND u.id IN (
+                SELECT DISTINCT mp.user_id FROM match_players mp
+                JOIN matches m ON m.id = mp.match_id
+                WHERE m.game = :game
+            )
+        """
+        params["game"] = _normalize_game(game)
+
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(
+                text(f"""
+                    SELECT
+                        u.id,
+                        u.username,
+                        u.arena_id,
+                        u.avatar,
+                        u.equipped_badge_icon,
+                        u.rank,
+                        COALESCE(s.wins,    0) AS wins,
+                        COALESCE(s.losses,  0) AS losses,
+                        COALESCE(s.matches, 0) AS matches,
+                        COALESCE(s.win_rate, 0) AS win_rate,
+                        COALESCE(s.xp,      0) AS xp,
+                        COALESCE(s.total_earnings, 0) AS total_earnings
+                    FROM users u
+                    LEFT JOIN user_stats s ON s.user_id = u.id
+                    WHERE TRUE {game_filter}
+                    ORDER BY wins DESC, xp DESC
+                    LIMIT :lim
+                """),
+                params,
+            ).fetchall()
+    except Exception as exc:
+        logger.error("leaderboard error: %s", exc)
+        raise HTTPException(500, "Failed to load leaderboard")
+
+    return {
+        "leaderboard": [
+            {
+                "rank":            idx + 1,
+                "user_id":         str(r[0]),
+                "username":        r[1],
+                "arena_id":        r[2],
+                "avatar":          r[3],
+                "equipped_badge":  r[4],
+                "tier":            r[5],
+                "wins":            int(r[6]),
+                "losses":          int(r[7]),
+                "matches":         int(r[8]),
+                "win_rate":        float(r[9]),
+                "xp":              int(r[10]),
+                "total_earnings":  float(r[11]),
+            }
+            for idx, r in enumerate(rows)
+        ]
+    }
+
+
+# ── Player search ──────────────────────────────────────────────────────────────
+
+@app.get("/players")
+async def search_players(
+    q: str | None = Query(default=None),
+    game: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=50),
+    token: dict | None = Depends(optional_token),
+):
+    """
+    Search players by username or ArenaID.
+
+    Query params:
+      ?q=<string>           — case-insensitive search on username / arena_id
+      ?game=CS2|Valorant    — filter to players who have a steam_id (CS2) or riot_id (Valorant)
+      ?limit=N              — max results (1–50, default 20)
+
+    Returns public profile fields + summary stats (no email, no wallet).
+    DB-ready: users LEFT JOIN user_stats WHERE username ILIKE or arena_id ILIKE.
+    """
+    conditions: list[str] = []
+    params: dict = {"lim": limit}
+
+    if q and q.strip():
+        q_clean = q.strip()
+        conditions.append(
+            "(u.username ILIKE :q OR u.arena_id ILIKE :q)"
+        )
+        params["q"] = f"%{q_clean}%"
+
+    if game:
+        g = _normalize_game(game)
+        if g == "CS2":
+            conditions.append("u.steam_id IS NOT NULL")
+        elif g == "Valorant":
+            conditions.append("u.riot_id IS NOT NULL")
+
+    where = "WHERE " + " AND ".join(conditions) if conditions else ""
+
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(
+                text(f"""
+                    SELECT
+                        u.id,
+                        u.username,
+                        u.arena_id,
+                        u.avatar,
+                        u.equipped_badge_icon,
+                        u.rank,
+                        COALESCE(s.wins,    0),
+                        COALESCE(s.losses,  0),
+                        COALESCE(s.matches, 0),
+                        COALESCE(s.win_rate, 0),
+                        COALESCE(s.xp,      0)
+                    FROM users u
+                    LEFT JOIN user_stats s ON s.user_id = u.id
+                    {where}
+                    ORDER BY s.wins DESC NULLS LAST
+                    LIMIT :lim
+                """),
+                params,
+            ).fetchall()
+    except Exception as exc:
+        logger.error("search_players error: %s", exc)
+        raise HTTPException(500, "Player search failed")
+
+    return {
+        "players": [
+            {
+                "user_id":        str(r[0]),
+                "username":       r[1],
+                "arena_id":       r[2],
+                "avatar":         r[3],
+                "equipped_badge": r[4],
+                "rank":           r[5],
+                "wins":           int(r[6]),
+                "losses":         int(r[7]),
+                "matches":        int(r[8]),
+                "win_rate":       float(r[9]),
+                "xp":             int(r[10]),
+            }
+            for r in rows
+        ]
+    }
+
+
+# ── Public player profile ──────────────────────────────────────────────────────
+
+@app.get("/players/{user_id}")
+async def get_player_profile(
+    user_id: str,
+    token: dict | None = Depends(optional_token),
+):
+    """
+    Fetch a public player profile by user_id.
+
+    Returns public fields only — no email, no wallet address.
+    DB-ready: users LEFT JOIN user_stats.
+    """
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("""
+                    SELECT
+                        u.id,
+                        u.username,
+                        u.arena_id,
+                        u.avatar,
+                        u.avatar_bg,
+                        u.equipped_badge_icon,
+                        u.rank,
+                        COALESCE(s.wins,    0),
+                        COALESCE(s.losses,  0),
+                        COALESCE(s.matches, 0),
+                        COALESCE(s.win_rate, 0),
+                        COALESCE(s.xp,      0),
+                        COALESCE(s.total_earnings, 0),
+                        u.forge_unlocked_item_ids,
+                        u.vip_expires_at,
+                        u.steam_id,
+                        u.riot_id
+                    FROM users u
+                    LEFT JOIN user_stats s ON s.user_id = u.id
+                    WHERE u.id = :uid
+                """),
+                {"uid": user_id},
+            ).fetchone()
+    except Exception as exc:
+        logger.error("get_player_profile error: %s", exc)
+        raise HTTPException(500, "Profile fetch failed")
+
+    if not row:
+        raise HTTPException(404, "Player not found")
+
+    return {
+        "user_id":              str(row[0]),
+        "username":             row[1],
+        "arena_id":             row[2],
+        "avatar":               row[3],
+        "avatar_bg":            row[4],
+        "equipped_badge_icon":  row[5],
+        "rank":                 row[6],
+        "wins":                 int(row[7]),
+        "losses":               int(row[8]),
+        "matches":              int(row[9]),
+        "win_rate":             float(row[10]),
+        "xp":                   int(row[11]),
+        "total_earnings":       float(row[12]),
+        "forge_unlocked_item_ids": list(row[13]) if row[13] else [],
+        "vip_expires_at":       row[14].isoformat() if row[14] else None,
+        "has_steam":            row[15] is not None,
+        "has_riot":             row[16] is not None,
+    }
