@@ -215,6 +215,78 @@ export async function apiGetMatchStatus(
   }
 }
 
+/** Shape returned by GET /match/active */
+export type ActiveMatchPlayer = {
+  user_id: string;
+  username: string;
+  avatar: string | null;
+  arena_id: string | null;
+  team: number; // 0 = Team A, 1 = Team B
+};
+export type ActiveMatchResponse = {
+  match: {
+    match_id:       string;
+    game:           string;
+    status:         "waiting" | "in_progress";
+    bet_amount:     string | null;
+    stake_currency: "CRYPTO" | "AT";
+    type:           string;
+    code:           string | null;
+    created_at:     string | null;
+    players:        ActiveMatchPlayer[];
+  } | null;
+};
+
+/**
+ * GET /match/active — returns caller's current active match (waiting or in_progress).
+ * Used by MatchLobby to restore lobby state after page navigation.
+ * DB-ready: matches JOIN match_players WHERE status IN ('waiting','in_progress')
+ */
+export async function apiGetActiveMatch(
+  token: string,
+): Promise<ActiveMatchResponse | null> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/match/active`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as ActiveMatchResponse;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * POST /matches/{matchId}/invite — sends match_invite notification to an accepted friend.
+ * DB-ready: inserts into notifications with type='match_invite' and metadata.
+ */
+export async function apiInviteToMatch(
+  token: string,
+  matchId: string,
+  friendId: string,
+): Promise<{ ok: true } | { ok: false; detail: string | null }> {
+  try {
+    const res = await fetch(
+      `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/invite`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ friend_id: friendId }),
+      },
+    );
+    if (!res.ok) {
+      const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
+      return { ok: false, detail: parseFastApiDetail(raw.detail) };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, detail: null };
+  }
+}
+
 function normalizeEngineMatchStatus(status: string): EngineMatchStatus["status"] {
   if (status === "pending") return "in_progress";
   const allowed: EngineMatchStatus["status"][] = [
@@ -1483,72 +1555,3 @@ export async function apiDeleteInbox(token: string, messageId: string): Promise<
   }
 }
 
-// ── Active Match ───────────────────────────────────────────────────────────────
-
-export interface ActiveMatchResponse {
-  match_id:       string;
-  game:           string;
-  status:         string;
-  bet_amount:     number;
-  stake_currency: "CRYPTO" | "AT";
-  type:           "public" | "custom";
-  code:           string | null;
-  created_at:     string | null;
-}
-
-/**
- * GET /match/active — returns the authenticated user's active (waiting/in_progress) match.
- * Returns null when no active room or on network error.
- * DB-ready: queries matches JOIN match_players WHERE status IN ('waiting','in_progress')
- */
-export async function apiGetActiveMatch(token: string): Promise<ActiveMatchResponse | null> {
-  try {
-    const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 8_000);
-    const res = await fetch(`${ENGINE_BASE}/match/active`, {
-      signal: controller.signal,
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    clearTimeout(tid);
-    if (!res.ok) return null;
-    return (await res.json()) as ActiveMatchResponse;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * POST /matches/:matchId/invite — invite a friend to your active match room.
- * DB-ready: inserts a notification row for the invited friend.
- */
-export async function apiInviteToMatch(
-  token: string,
-  matchId: string,
-  friendId: string,
-): Promise<{ ok: boolean; detail?: string }> {
-  try {
-    const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 8_000);
-    const res = await fetch(
-      `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/invite`,
-      {
-        method: "POST",
-        signal: controller.signal,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ friend_id: friendId }),
-      },
-    );
-    clearTimeout(tid);
-    if (!res.ok) {
-      const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
-      const detail = parseFastApiDetail(raw.detail) ?? "Invite failed";
-      return { ok: false, detail };
-    }
-    return { ok: true };
-  } catch {
-    return { ok: false, detail: "Network error" };
-  }
-}
