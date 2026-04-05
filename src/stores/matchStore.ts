@@ -4,6 +4,15 @@ import { apiListMatchesHistory, apiListMatchesOpen } from "@/lib/engine-api";
 
 interface MatchState {
   matches: Match[];
+
+  /**
+   * The match ID the current user is actively hosting or joined — persisted
+   * in Zustand so it survives React navigation (unlike useState which resets
+   * on component unmount). This is the source of truth for "am I in a room".
+   */
+  activeRoomId: string | null;
+  setActiveRoomId: (id: string | null) => void;
+
   // DB-ready: replace with POST /api/matches — pass `id` when server returned match UUID
   addMatch: (match: Omit<Match, "id" | "createdAt"> & { id?: string }) => Match;
   // DB-ready: replace with POST /api/matches/:id/join
@@ -39,6 +48,8 @@ function generateCode(): string {
 
 export const useMatchStore = create<MatchState>((set, get) => ({
   matches: [],
+  activeRoomId: null,
+  setActiveRoomId: (id) => set({ activeRoomId: id }),
 
   addMatch: (matchData) => {
     const { id: presetId, ...rest } = matchData;
@@ -229,8 +240,22 @@ export const useMatchStore = create<MatchState>((set, get) => ({
     const serverList = [...byId.values()];
     set((s) => {
       const serverIds = new Set(serverList.map((m) => m.id));
+      // Keep local-only matches (created but not yet on server, or filtered out)
       const locals = s.matches.filter((m) => !serverIds.has(m.id));
-      return { matches: [...serverList, ...locals] };
+      // Merge: list_matches returns player_count only — no individual player UUIDs.
+      // If the existing store entry has richer player data (from get_active_match),
+      // preserve it so the room panel doesn't lose its roster after a refresh poll.
+      const merged = serverList.map((srv) => {
+        const existing = s.matches.find((m) => m.id === srv.id);
+        if (!existing) return srv;
+        return {
+          ...srv,
+          players:  srv.players.length  > 0 ? srv.players  : existing.players,
+          teamA:   (srv.teamA?.length   ?? 0) > 0 ? srv.teamA  : existing.teamA,
+          teamB:   (srv.teamB?.length   ?? 0) > 0 ? srv.teamB  : existing.teamB,
+        };
+      });
+      return { matches: [...merged, ...locals] };
     });
   },
 }));
