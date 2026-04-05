@@ -278,11 +278,11 @@ const MatchLobby = () => {
     void refreshMatchesFromServer(token ?? null);
   }, [token, refreshMatchesFromServer]);
 
-  // ── Restore active lobby on mount (lobby persistence) ─────────────────────
+  // ── Lobby persistence: restore active room on mount / login ────────────────
   useEffect(() => {
     if (!token || myRoomMatchId) return;
     apiGetActiveMatch(token).then((res) => {
-      if (res?.match) {
+      if (res?.match?.match_id) {
         setMyRoomMatchId(res.match.match_id);
       }
     });
@@ -322,13 +322,11 @@ const MatchLobby = () => {
   const [deleteRoomConfirmOpen, setDeleteRoomConfirmOpen] = useState(false);
   const [playerPopover,         setPlayerPopover]         = useState<{ slotValue: string; rect: DOMRect } | null>(null);
   const [walletLinkBusy, setWalletLinkBusy]               = useState(false);
-
-  // ── Invite friends modal state ─────────────────────────────────────────────
-  const [inviteModalOpen,    setInviteModalOpen]    = useState(false);
-  const [inviteFriends,      setInviteFriends]      = useState<ApiFriendRow[]>([]);
+  const [inviteModalOpen,      setInviteModalOpen]      = useState(false);
+  const [inviteFriends,        setInviteFriends]        = useState<ApiFriendRow[]>([]);
   const [inviteFriendsLoading, setInviteFriendsLoading] = useState(false);
-  const [invitingFriendId,   setInvitingFriendId]   = useState<string | null>(null);
-  const [invitedFriendIds,   setInvitedFriendIds]   = useState<Set<string>>(new Set());
+  const [invitingFriendId,     setInvitingFriendId]     = useState<string | null>(null);
+  const [invitedFriendIds,     setInvitedFriendIds]     = useState<Set<string>>(new Set());
 
   const publicMatches = matches.filter(m => m.type === "public");
   const customMatches = matches.filter(m => m.type === "custom");
@@ -659,7 +657,6 @@ const MatchLobby = () => {
         message: "Your friend will see the invite in their notifications.",
       });
     } else {
-      // result is narrowed to { ok: false; detail: string | null } here
       const failResult = result as { ok: false; detail: string | null };
       useNotificationStore.getState().addNotification({
         type: "system",
@@ -1123,7 +1120,7 @@ const MatchLobby = () => {
           </div>
 
           {/* Action row */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Button
               size="sm"
               variant="outline"
@@ -1136,6 +1133,18 @@ const MatchLobby = () => {
               <LogOut className="mr-1.5 h-3 w-3" />
               Leave Room
             </Button>
+
+            {token && myActiveRoom.status === "waiting" && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-xs border-arena-purple/40 text-arena-purple hover:bg-arena-purple/10"
+                onClick={() => void handleOpenInviteModal()}
+              >
+                <UserPlus className="mr-1.5 h-3 w-3" />
+                Invite Friends
+              </Button>
+            )}
 
             {countdown !== null && (
               <p className="text-[10px] text-muted-foreground flex items-center gap-1">
@@ -1598,13 +1607,24 @@ const MatchLobby = () => {
                             stake_currency: createStakeCurrency,
                           });
                           if (apiRes.ok === false) {
-                            useNotificationStore.getState().addNotification({
-                              type: "system",
-                              title: "Could not create match",
-                              message:
-                                apiRes.detail ??
-                                "Check your Steam / Riot ID on your account and try again.",
-                            });
+                            if (apiRes.status === 409) {
+                              // 409 = user already has an active room — restore it
+                              const active = await apiGetActiveMatch(token!);
+                              if (active?.match?.match_id) setMyRoomMatchId(active.match.match_id);
+                              useNotificationStore.getState().addNotification({
+                                type: "system",
+                                title: "Room restored",
+                                message: apiRes.detail ?? "You already have an active match room.",
+                              });
+                            } else {
+                              useNotificationStore.getState().addNotification({
+                                type: "system",
+                                title: "Could not create match",
+                                message:
+                                  apiRes.detail ??
+                                  "Check your Steam / Riot ID on your account and try again.",
+                              });
+                            }
                             return;
                           }
                           serverMatchId = apiRes.data.match_id;

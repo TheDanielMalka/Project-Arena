@@ -596,8 +596,9 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            self._user_steam(),  # user lookup
-            (match_id,),         # INSERT matches RETURNING id
+            self._user_steam(),  # 1st: user lookup
+            None,                # 2nd: duplicate-room check → no active room
+            (match_id,),         # 3rd: INSERT matches RETURNING id
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
@@ -624,8 +625,9 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            self._user_riot(),  # user lookup
-            (match_id,),        # INSERT matches RETURNING id
+            self._user_riot(),  # 1st: user lookup
+            None,               # 2nd: duplicate-room check → no active room
+            (match_id,),        # 3rd: INSERT matches RETURNING id
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(

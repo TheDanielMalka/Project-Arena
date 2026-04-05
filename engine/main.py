@@ -44,6 +44,39 @@ _escrow_client = None
 _listener_task = None  # background thread task — EscrowClient.listen()
 
 
+async def _expired_match_cleanup_loop(interval: int = 300) -> None:
+    """
+    Background task: every `interval` seconds (default 5 min), cancel
+    all 'waiting' matches whose expires_at has passed.
+
+    For AT matches: refunds stake to all players.
+    For CRYPTO matches: no on-chain action needed (no deposits taken yet).
+
+    DB-ready: matches.expires_at set to created_at + 1 hour via DB trigger.
+    """
+    import asyncio as _asyncio
+    while True:
+        try:
+            await _asyncio.sleep(interval)
+            with SessionLocal() as session:
+                expired = session.execute(
+                    text(
+                        "UPDATE matches SET status = 'cancelled', ended_at = NOW() "
+                        "WHERE status = 'waiting' AND expires_at < NOW() "
+                        "RETURNING id, stake_currency"
+                    )
+                ).fetchall()
+                session.commit()
+
+            for (match_id, sc) in expired:
+                mid = str(match_id)
+                logger.info("Expired match cancelled: match=%s currency=%s", mid, sc)
+                if sc == "AT":
+                    _refund_at_match(mid)
+        except Exception as exc:
+            logger.error("_expired_match_cleanup_loop error: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Create runtime directories at startup, not at import time.
@@ -110,10 +143,17 @@ async def lifespan(app: FastAPI):
         )
         logger.info("✅ EscrowClient event listener started")
 
+    # Expired match cleanup — runs every 5 minutes.
+    # Cancels 'waiting' rooms whose expires_at has passed (1 hour after creation).
+    # AT matches: refunds stake to all players. CRYPTO: non-deposited → no on-chain action.
+    _cleanup_task = asyncio.create_task(_expired_match_cleanup_loop())
+    logger.info("✅ Expired match cleanup task started")
+
     yield
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
     _rq_task.cancel()
+    _cleanup_task.cancel()
     if _listener_task:
         _listener_task.cancel()
         try:
@@ -968,12 +1008,9 @@ async def client_active_match(wallet_address: str):
 async def get_active_match(payload: dict = Depends(verify_token)):
     """
     Return the calling user's current active match (status 'waiting' or 'in_progress').
+    Used by MatchLobby to restore lobby state after page navigation.
 
-    Used by the frontend Match Lobby to restore lobby state after page navigation.
-    Returns full match details needed to re-render the lobby card.
-
-    DB-ready: matches JOIN match_players ON mp.user_id = :uid
-              WHERE m.status IN ('waiting','in_progress')
+    DB-ready: matches JOIN match_players WHERE status IN ('waiting','in_progress')
     """
     user_id: str = payload["sub"]
     try:
@@ -981,7 +1018,7 @@ async def get_active_match(payload: dict = Depends(verify_token)):
             row = session.execute(
                 text(
                     "SELECT m.id, m.game, m.status, m.bet_amount, m.stake_currency, "
-                    "       m.match_type, m.room_code, m.created_at "
+                    "       m.type, m.code, m.created_at "
                     "FROM matches m "
                     "JOIN match_players mp ON mp.match_id = m.id "
                     "WHERE mp.user_id = :uid "
@@ -994,15 +1031,12 @@ async def get_active_match(payload: dict = Depends(verify_token)):
                 return {"match": None}
 
             match_id = str(row[0])
-
-            # Fetch all players in this match
             players = session.execute(
                 text(
                     "SELECT u.id, u.username, u.avatar, u.arena_id, mp.team "
                     "FROM match_players mp "
                     "JOIN users u ON u.id = mp.user_id "
-                    "WHERE mp.match_id = :mid "
-                    "ORDER BY mp.team, mp.joined_at"
+                    "WHERE mp.match_id = :mid ORDER BY mp.team, mp.joined_at"
                 ),
                 {"mid": match_id},
             ).fetchall()
@@ -1014,17 +1048,12 @@ async def get_active_match(payload: dict = Depends(verify_token)):
                     "status":         row[2],
                     "bet_amount":     str(row[3]) if row[3] is not None else None,
                     "stake_currency": row[4],
-                    "match_type":     row[5],
-                    "room_code":      row[6],
+                    "type":           row[5],
+                    "code":           row[6],
                     "created_at":     row[7].isoformat() if row[7] else None,
                     "players": [
-                        {
-                            "user_id":  str(p[0]),
-                            "username": p[1],
-                            "avatar":   p[2],
-                            "arena_id": p[3],
-                            "team":     p[4],
-                        }
+                        {"user_id": str(p[0]), "username": p[1], "avatar": p[2],
+                         "arena_id": p[3], "team": p[4]}
                         for p in players
                     ],
                 }
@@ -1786,15 +1815,38 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
             steam_id, riot_id, wallet_address = user_row
             _assert_game_account(game, steam_id, riot_id)
 
+            # ── Block duplicate rooms: 1 active room per user ─────────────────
+            active_room = session.execute(
+                text(
+                    "SELECT id FROM matches m "
+                    "JOIN match_players mp ON mp.match_id = m.id "
+                    "WHERE mp.user_id = :uid AND m.status IN ('waiting','in_progress') "
+                    "LIMIT 1"
+                ),
+                {"uid": user_id},
+            ).fetchone()
+            if active_room:
+                raise HTTPException(
+                    409,
+                    "You already have an active match room. "
+                    "Leave or finish your current room before opening a new one.",
+                )
+
             # ── AT balance check (before creating the match row) ──────────────
             if stake_currency == "AT":
                 _assert_at_balance(session, user_id, at_stake)
 
+            # ── Generate unique room code ─────────────────────────────────────
+            import secrets as _secrets
+            import string as _string
+            _chars = _string.ascii_uppercase + _string.digits
+            room_code = "ARENA-" + "".join(_secrets.choice(_chars) for _ in range(5))
+
             # ── Create match ──────────────────────────────────────────────────
             match_row = session.execute(
                 text(
-                    "INSERT INTO matches (type, game, host_id, mode, bet_amount, stake_currency) "
-                    "VALUES (:mtype, :g, :host, :mode, :bet, :sc) "
+                    "INSERT INTO matches (type, game, host_id, mode, bet_amount, stake_currency, code) "
+                    "VALUES (:mtype, :g, :host, :mode, :bet, :sc, :code) "
                     "RETURNING id"
                 ),
                 {
@@ -1804,6 +1856,7 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
                     "mode":  mode,
                     "bet":   bet_amount,
                     "sc":    stake_currency,
+                    "code":  room_code,
                 },
             ).fetchone()
             match_id = str(match_row[0])
@@ -1837,6 +1890,7 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
         "status":          "waiting",
         "stake_amount":    bet_amount,
         "stake_currency":  stake_currency,
+        "code":            room_code,
     }
 
 
@@ -1952,31 +2006,22 @@ async def invite_to_match(
     payload: dict = Depends(verify_token),
 ):
     """
-    Send a match_invite notification to a friend.
+    Send a match_invite notification to an accepted friend.
 
     Rules:
-      - match must exist and be in 'waiting' status.
-      - inviter must be a player in the match.
-      - friend_id must be an accepted friend of the inviter.
-      - Inserts a 'match_invite' notification row for the friend.
-
-    DB-ready: notifications table, type='match_invite',
-              metadata={ match_id, inviter_username, room_code, game, bet_amount, stake_currency }
+      - match must exist and be 'waiting'
+      - inviter must be a player in the match
+      - friend_id must be an accepted friend of the inviter
+    DB-ready: notifications table, type='match_invite'
     """
     user_id: str = payload["sub"]
-    friend_id: str = req.friend_id
-
-    if user_id == friend_id:
+    if user_id == req.friend_id:
         raise HTTPException(400, "Cannot invite yourself")
 
     try:
         with SessionLocal() as session:
-            # Verify match exists and is waiting
             match_row = session.execute(
-                text(
-                    "SELECT m.game, m.status, m.bet_amount, m.stake_currency, m.room_code "
-                    "FROM matches m WHERE m.id = :mid"
-                ),
+                text("SELECT m.game, m.status, m.bet_amount, m.stake_currency, m.code FROM matches m WHERE m.id = :mid"),
                 {"mid": match_id},
             ).fetchone()
             if not match_row:
@@ -1984,7 +2029,6 @@ async def invite_to_match(
             if match_row[1] != "waiting":
                 raise HTTPException(409, "Match is no longer open")
 
-            # Verify inviter is in this match
             in_match = session.execute(
                 text("SELECT 1 FROM match_players WHERE match_id = :mid AND user_id = :uid"),
                 {"mid": match_id, "uid": user_id},
@@ -1992,7 +2036,6 @@ async def invite_to_match(
             if not in_match:
                 raise HTTPException(403, "You are not in this match")
 
-            # Verify friendship (accepted, either direction)
             friendship = session.execute(
                 text(
                     "SELECT 1 FROM friendships "
@@ -2000,22 +2043,16 @@ async def invite_to_match(
                     "  AND ((initiator_id = :me AND receiver_id = :them) "
                     "    OR (initiator_id = :them AND receiver_id = :me))"
                 ),
-                {"me": user_id, "them": friend_id},
+                {"me": user_id, "them": req.friend_id},
             ).fetchone()
             if not friendship:
                 raise HTTPException(403, "Not friends with this user")
 
-            # Get inviter username for notification text
             inviter = session.execute(
                 text("SELECT username FROM users WHERE id = :uid"),
                 {"uid": user_id},
             ).fetchone()
             inviter_name = inviter[0] if inviter else "A player"
-
-            game      = match_row[0]
-            bet       = str(match_row[2]) if match_row[2] else "0"
-            currency  = match_row[3]
-            room_code = match_row[4]
 
             import json as _json
             session.execute(
@@ -2024,29 +2061,28 @@ async def invite_to_match(
                     "VALUES (:uid, 'match_invite', :title, :msg, :meta::jsonb)"
                 ),
                 {
-                    "uid":   friend_id,
+                    "uid":   req.friend_id,
                     "title": f"{inviter_name} invited you to a match",
-                    "msg":   f"Join {game} · {bet} {currency} · Room {room_code}",
+                    "msg":   f"Join {match_row[0]} · {match_row[2]} {match_row[3]} · Room {match_row[4]}",
                     "meta":  _json.dumps({
                         "match_id":         match_id,
                         "inviter_id":       user_id,
                         "inviter_username": inviter_name,
-                        "room_code":        room_code,
-                        "game":             game,
-                        "bet_amount":       bet,
-                        "stake_currency":   currency,
+                        "code":             match_row[4],
+                        "game":             match_row[0],
+                        "bet_amount":       str(match_row[2]),
+                        "stake_currency":   match_row[3],
                     }),
                 },
             )
             session.commit()
-
     except HTTPException:
         raise
     except Exception as exc:
         logger.error("invite_to_match error: %s", exc)
         raise HTTPException(500, "Invite failed")
 
-    return {"invited": True, "match_id": match_id, "friend_id": friend_id}
+    return {"invited": True, "match_id": match_id, "friend_id": req.friend_id}
 
 
 # ── Arena Token purchase ───────────────────────────────────────────────────────
@@ -2140,8 +2176,8 @@ async def get_at_packages():
         with SessionLocal() as session:
             rows = session.execute(
                 text(
-                    "SELECT at_amount, usdt_price, discount_pct "
-                    "FROM at_packages WHERE active = TRUE ORDER BY at_amount"
+                    "SELECT DISTINCT ON (at_amount) at_amount, usdt_price, discount_pct "
+                    "FROM at_packages WHERE active = TRUE ORDER BY at_amount, id"
                 )
             ).fetchall()
     except Exception as exc:

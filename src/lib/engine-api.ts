@@ -225,15 +225,15 @@ export type ActiveMatchPlayer = {
 };
 export type ActiveMatchResponse = {
   match: {
-    match_id: string;
-    game: string;
-    status: "waiting" | "in_progress";
-    bet_amount: string | null;
+    match_id:       string;
+    game:           string;
+    status:         "waiting" | "in_progress";
+    bet_amount:     string | null;
     stake_currency: "CRYPTO" | "AT";
-    match_type: string;
-    room_code: string | null;
-    created_at: string | null;
-    players: ActiveMatchPlayer[];
+    type:           string;
+    code:           string | null;
+    created_at:     string | null;
+    players:        ActiveMatchPlayer[];
   } | null;
 };
 
@@ -1554,3 +1554,4 @@ export async function apiDeleteInbox(token: string, messageId: string): Promise<
     return false;
   }
 }
+

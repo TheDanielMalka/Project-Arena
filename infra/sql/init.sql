@@ -634,7 +634,7 @@ ALTER TABLE matches
 CREATE OR REPLACE FUNCTION set_match_expires_at()
 RETURNS TRIGGER AS $$
 BEGIN
-    NEW.expires_at := NEW.created_at + INTERVAL '30 minutes';
+    NEW.expires_at := NEW.created_at + INTERVAL '1 hour';
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -777,7 +777,8 @@ CREATE TABLE IF NOT EXISTS at_packages (
     at_amount    INTEGER         NOT NULL,
     usdt_price   NUMERIC(10,2)  NOT NULL,
     discount_pct NUMERIC(5,2)   NOT NULL DEFAULT 0,
-    active       BOOLEAN         NOT NULL DEFAULT TRUE
+    active       BOOLEAN         NOT NULL DEFAULT TRUE,
+    CONSTRAINT uq_at_packages_amount UNIQUE (at_amount)
 );
 
 INSERT INTO at_packages (at_amount, usdt_price, discount_pct) VALUES
