@@ -659,10 +659,12 @@ const MatchLobby = () => {
         message: "Your friend will see the invite in their notifications.",
       });
     } else {
+      // result is narrowed to { ok: false; detail: string | null } here
+      const failResult = result as { ok: false; detail: string | null };
       useNotificationStore.getState().addNotification({
         type: "system",
         title: "Invite Failed",
-        message: result.detail ?? "Could not send invite. Try again.",
+        message: failResult.detail ?? "Could not send invite. Try again.",
       });
     }
   }, [token, myRoomMatchId]);
