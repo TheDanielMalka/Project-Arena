@@ -545,20 +545,33 @@ async def submit_result(result: MatchResult, token: dict = Depends(verify_token)
         # Non-fatal: return accepted so client doesn't retry endlessly
         # Non-fatal: DB record is source of truth
 
-    # ── On-chain payout (Phase 6) ─────────────────────────────────────────────
-    # If escrow client is live AND a winner was declared → release funds on-chain.
-    # Errors are non-fatal: the listener loop will retry if the tx was not sent.
-    if _escrow_client and result.winner_id:
+    # ── Payout ───────────────────────────────────────────────────────────────
+    if result.winner_id:
         try:
-            tx_hash = _escrow_client.declare_winner(
-                str(result.match_id), str(result.winner_id)
-            )
-            logger.info("declareWinner tx: match=%s tx=%s", result.match_id, tx_hash)
-        except Exception as exc:
-            logger.error(
-                "declareWinner failed (non-fatal): match=%s error=%s",
-                result.match_id, exc,
-            )
+            with SessionLocal() as _s:
+                _sc_row = _s.execute(
+                    text("SELECT stake_currency FROM matches WHERE id = :mid"),
+                    {"mid": result.match_id},
+                ).fetchone()
+                _stake_currency = (_sc_row[0] if _sc_row else "CRYPTO") or "CRYPTO"
+        except Exception:
+            _stake_currency = "CRYPTO"
+
+        if _stake_currency == "AT":
+            # AT match: settle off-chain — distribute AT to winner minus 5% fee
+            _settle_at_match(str(result.match_id), str(result.winner_id))
+        elif _escrow_client:
+            # CRYPTO match: release funds on-chain via escrow contract
+            try:
+                tx_hash = _escrow_client.declare_winner(
+                    str(result.match_id), str(result.winner_id)
+                )
+                logger.info("declareWinner tx: match=%s tx=%s", result.match_id, tx_hash)
+            except Exception as exc:
+                logger.error(
+                    "declareWinner failed (non-fatal): match=%s error=%s",
+                    result.match_id, exc,
+                )
 
     return {
         "accepted": True,
@@ -1419,10 +1432,151 @@ class CreateMatchRequest(BaseModel):
     DB-ready: writes to matches + match_players tables.
     CONTRACT-ready: stake_amount → ArenaEscrow.lockStake() once wallet is linked.
     """
-    game: str = "CS2"           # "CS2" | "Valorant"
-    stake_amount: float = 1.0   # CONTRACT-ready: USDT per player; bet_amount > 0 enforced by DB
-    mode: str = "1v1"           # "1v1" | "2v2" | "4v4" | "5v5"
-    match_type: str = "custom"  # "public" | "custom"
+    game: str = "CS2"                # "CS2" | "Valorant"
+    stake_amount: float = 1.0        # stake per player (USDT for CRYPTO, AT tokens for AT)
+    mode: str = "1v1"                # "1v1" | "2v2" | "4v4" | "5v5"
+    match_type: str = "custom"       # "public" | "custom"
+    stake_currency: str = "CRYPTO"   # "CRYPTO" (ETH/BNB via escrow) | "AT" (Arena Tokens)
+
+
+_VALID_CURRENCIES = {"CRYPTO", "AT"}
+_AT_FEE_PCT = 0.05  # 5% platform fee on AT match winnings — mirrors ArenaEscrow fee
+
+
+def _assert_at_balance(session, user_id: str, required: int) -> None:
+    """Raise 402 if user's at_balance < required AT."""
+    row = session.execute(
+        text("SELECT at_balance FROM users WHERE id = :uid"),
+        {"uid": user_id},
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "User not found")
+    if int(row[0]) < required:
+        raise HTTPException(
+            402,
+            f"Insufficient Arena Tokens — you need {required} AT but have {int(row[0])} AT.",
+        )
+
+
+def _deduct_at(session, user_id: str, amount: int, match_id: str, tx_type: str = "escrow_lock") -> None:
+    """Deduct AT from user and record transaction. Called inside an open session (caller commits)."""
+    session.execute(
+        text("UPDATE users SET at_balance = at_balance - :amt WHERE id = :uid"),
+        {"amt": amount, "uid": user_id},
+    )
+    session.execute(
+        text(
+            "INSERT INTO transactions (user_id, type, amount, token, status, match_id) "
+            "VALUES (:uid, :ttype, :amt, 'AT', 'completed', :mid)"
+        ),
+        {"uid": user_id, "ttype": tx_type, "amt": amount, "mid": match_id},
+    )
+
+
+def _credit_at(session, user_id: str, amount: int, match_id: str, tx_type: str = "match_win") -> None:
+    """Credit AT to user and record transaction. Called inside an open session (caller commits)."""
+    session.execute(
+        text("UPDATE users SET at_balance = at_balance + :amt WHERE id = :uid"),
+        {"amt": amount, "uid": user_id},
+    )
+    session.execute(
+        text(
+            "INSERT INTO transactions (user_id, type, amount, token, status, match_id) "
+            "VALUES (:uid, :ttype, :amt, 'AT', 'completed', :mid)"
+        ),
+        {"uid": user_id, "ttype": tx_type, "amt": amount, "mid": match_id},
+    )
+
+
+def _settle_at_match(match_id: str, winner_id: str) -> None:
+    """
+    Distribute AT for a completed AT-currency match.
+
+    Flow (mirrors ArenaEscrow.declareWinner):
+      1. Read all players and their AT stake from the match.
+      2. Compute pot = stake_per_player * player_count.
+      3. Deduct 5% fee → winner receives 95% of pot.
+      4. Credit winner, log fee transaction, commit.
+
+    DB-ready: uses users.at_balance + transactions table.
+    """
+    try:
+        with SessionLocal() as session:
+            match_row = session.execute(
+                text(
+                    "SELECT stake_currency, bet_amount FROM matches WHERE id = :mid"
+                ),
+                {"mid": match_id},
+            ).fetchone()
+
+            if not match_row or match_row[0] != "AT":
+                return  # not an AT match — nothing to do
+
+            stake_per_player = int(match_row[1])
+            player_rows = session.execute(
+                text("SELECT user_id FROM match_players WHERE match_id = :mid"),
+                {"mid": match_id},
+            ).fetchall()
+
+            player_count = len(player_rows)
+            if player_count == 0:
+                return
+
+            pot = stake_per_player * player_count
+            fee = int(pot * _AT_FEE_PCT)
+            winner_payout = pot - fee
+
+            _credit_at(session, winner_id, winner_payout, match_id, "match_win")
+
+            # Fee transaction (platform revenue — no user credited)
+            session.execute(
+                text(
+                    "INSERT INTO transactions (user_id, type, amount, token, status, match_id) "
+                    "VALUES (:uid, 'fee', :amt, 'AT', 'completed', :mid)"
+                ),
+                {"uid": winner_id, "amt": fee, "mid": match_id},
+            )
+            session.commit()
+            logger.info(
+                "_settle_at_match: match=%s winner=%s payout=%d AT fee=%d AT",
+                match_id, winner_id, winner_payout, fee,
+            )
+    except Exception as exc:
+        logger.error("_settle_at_match error (non-fatal): match=%s error=%s", match_id, exc)
+
+
+def _refund_at_match(match_id: str) -> None:
+    """
+    Refund all AT stakes for a cancelled AT-currency match.
+    Returns stake_per_player AT to every player in match_players.
+    DB-ready: uses users.at_balance + transactions table.
+    """
+    try:
+        with SessionLocal() as session:
+            match_row = session.execute(
+                text("SELECT stake_currency, bet_amount FROM matches WHERE id = :mid"),
+                {"mid": match_id},
+            ).fetchone()
+
+            if not match_row or match_row[0] != "AT":
+                return
+
+            stake_per_player = int(match_row[1])
+            player_rows = session.execute(
+                text("SELECT user_id FROM match_players WHERE match_id = :mid"),
+                {"mid": match_id},
+            ).fetchall()
+
+            for (uid,) in player_rows:
+                _credit_at(session, str(uid), stake_per_player, match_id, "refund")
+
+            session.commit()
+            logger.info(
+                "_refund_at_match: match=%s refunded %d players %d AT each",
+                match_id, len(player_rows), stake_per_player,
+            )
+    except Exception as exc:
+        logger.error("_refund_at_match error (non-fatal): match=%s error=%s", match_id, exc)
 
 
 @app.post("/matches", status_code=201)
@@ -1454,8 +1608,13 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
     if match_type not in ("public", "custom"):
         raise HTTPException(400, "match_type must be 'public' or 'custom'")
 
+    stake_currency = req.stake_currency.upper().strip()
+    if stake_currency not in _VALID_CURRENCIES:
+        raise HTTPException(400, "stake_currency must be 'CRYPTO' or 'AT'")
+
     # bet_amount has CHECK > 0 in DB; clamp to minimum to prevent constraint error
     bet_amount = max(float(req.stake_amount), 0.01)
+    at_stake = int(bet_amount) if stake_currency == "AT" else 0
 
     try:
         with SessionLocal() as session:
@@ -1471,14 +1630,15 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
             steam_id, riot_id, wallet_address = user_row
             _assert_game_account(game, steam_id, riot_id)
 
-            # ── Create match (column names match infra/sql/init.sql exactly) ──
-            # host_id  = creator of the room (users.id FK, NOT NULL)
-            # bet_amount = stake per player (NUMERIC NOT NULL, CHECK > 0)
-            # type, mode = required enums (match_type, match_mode)
+            # ── AT balance check (before creating the match row) ──────────────
+            if stake_currency == "AT":
+                _assert_at_balance(session, user_id, at_stake)
+
+            # ── Create match ──────────────────────────────────────────────────
             match_row = session.execute(
                 text(
-                    "INSERT INTO matches (type, game, host_id, mode, bet_amount) "
-                    "VALUES (:mtype, :g, :host, :mode, :bet) "
+                    "INSERT INTO matches (type, game, host_id, mode, bet_amount, stake_currency) "
+                    "VALUES (:mtype, :g, :host, :mode, :bet, :sc) "
                     "RETURNING id"
                 ),
                 {
@@ -1487,6 +1647,7 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
                     "host":  user_id,
                     "mode":  mode,
                     "bet":   bet_amount,
+                    "sc":    stake_currency,
                 },
             ).fetchone()
             match_id = str(match_row[0])
@@ -1499,6 +1660,11 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
                 ),
                 {"mid": match_id, "uid": user_id, "w": wallet_address},
             )
+
+            # ── Lock creator's AT stake ───────────────────────────────────────
+            if stake_currency == "AT":
+                _deduct_at(session, user_id, at_stake, match_id, "escrow_lock")
+
             session.commit()
 
     except HTTPException:
@@ -1508,12 +1674,13 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
         raise HTTPException(500, "Match creation failed")
 
     return {
-        "match_id":     match_id,
-        "game":         game,
-        "mode":         mode,
-        "match_type":   match_type,
-        "status":       "waiting",
-        "stake_amount": bet_amount,
+        "match_id":        match_id,
+        "game":            game,
+        "mode":            mode,
+        "match_type":      match_type,
+        "status":          "waiting",
+        "stake_amount":    bet_amount,
+        "stake_currency":  stake_currency,
     }
 
 
@@ -1536,15 +1703,19 @@ async def join_match(match_id: str, payload: dict = Depends(verify_token)):
         with SessionLocal() as session:
             # ── Verify match exists and is open ───────────────────────────────
             match_row = session.execute(
-                text("SELECT game, status, stake_amount FROM matches WHERE id = :mid"),
+                text(
+                    "SELECT game, status, bet_amount, stake_currency "
+                    "FROM matches WHERE id = :mid"
+                ),
                 {"mid": match_id},
             ).fetchone()
 
             if not match_row:
                 raise HTTPException(404, "Match not found")
 
-            game, status, stake_amount = match_row
+            game, status, stake_amount, stake_currency = match_row
             game = _normalize_game(game or "CS2")
+            stake_currency = (stake_currency or "CRYPTO").upper()
 
             if status != "waiting":
                 raise HTTPException(409, f"Match is not open for joining (status: {status})")
@@ -1561,19 +1732,21 @@ async def join_match(match_id: str, payload: dict = Depends(verify_token)):
             steam_id, riot_id, wallet_address = user_row
             _assert_game_account(game, steam_id, riot_id)
 
-            # ── Wallet must be linked before joining a staked match ───────────
-            if not wallet_address:
-                raise HTTPException(
-                    400,
-                    "You must link a wallet before joining a staked match. "
-                    "Go to Profile → Wallet and connect your MetaMask."
-                )
-
-            # ── On-chain USDT balance check ───────────────────────────────────
-            # CONTRACT-ready: verifies wallet holds >= stake_amount USDT on BSC.
-            # Skipped if BLOCKCHAIN_RPC_URL / USDT_CONTRACT_ADDRESS not configured.
-            if stake_amount:
-                _assert_usdt_balance(wallet_address, float(stake_amount))
+            # ── Currency-specific balance checks ──────────────────────────────
+            if stake_currency == "AT":
+                # AT match: check arena token balance (no wallet needed)
+                at_stake = int(stake_amount or 0)
+                _assert_at_balance(session, user_id, at_stake)
+            else:
+                # CRYPTO match: wallet must be linked + on-chain balance check
+                if not wallet_address:
+                    raise HTTPException(
+                        400,
+                        "You must link a wallet before joining a staked match. "
+                        "Go to Profile → Wallet and connect your MetaMask."
+                    )
+                if stake_amount:
+                    _assert_usdt_balance(wallet_address, float(stake_amount))
 
             # ── Duplicate join guard ──────────────────────────────────────────
             already = session.execute(
@@ -1595,6 +1768,11 @@ async def join_match(match_id: str, payload: dict = Depends(verify_token)):
                 ),
                 {"mid": match_id, "uid": user_id, "w": wallet_address},
             )
+
+            # ── Lock joiner's AT stake ────────────────────────────────────────
+            if stake_currency == "AT":
+                _deduct_at(session, user_id, int(stake_amount or 0), match_id, "escrow_lock")
+
             session.commit()
 
     except HTTPException:
@@ -1603,7 +1781,7 @@ async def join_match(match_id: str, payload: dict = Depends(verify_token)):
         logger.error("join_match error: %s", exc)
         raise HTTPException(500, "Join failed")
 
-    return {"joined": True, "match_id": match_id, "game": game}
+    return {"joined": True, "match_id": match_id, "game": game, "stake_currency": stake_currency}
 
 
 # ── Arena Token purchase ───────────────────────────────────────────────────────
@@ -1675,6 +1853,129 @@ async def buy_arena_tokens(req: BuyAtRequest, payload: dict = Depends(verify_tok
         "at_balance":  new_balance,
         "at_credited": at_to_credit,
         "usdt_spent":  req.usdt_amount,
+    }
+
+
+# ── AT packages ───────────────────────────────────────────────────────────────
+
+
+@app.get("/wallet/at-packages")
+async def get_at_packages():
+    """
+    Return all active AT purchase packages with discount info.
+
+    DB-ready: reads at_packages table (seeded in migration 008).
+    Response per package:
+      at_amount    — tokens received
+      usdt_price   — full price in USDT
+      discount_pct — discount percentage
+      final_price  — USDT after discount (usdt_price * (1 - discount_pct/100))
+    """
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(
+                text(
+                    "SELECT at_amount, usdt_price, discount_pct "
+                    "FROM at_packages WHERE active = TRUE ORDER BY at_amount"
+                )
+            ).fetchall()
+    except Exception as exc:
+        logger.error("get_at_packages error: %s", exc)
+        raise HTTPException(500, "Failed to load packages")
+
+    packages = []
+    for at_amount, usdt_price, discount_pct in rows:
+        disc = float(discount_pct or 0)
+        final = round(float(usdt_price) * (1 - disc / 100), 2)
+        packages.append({
+            "at_amount":    int(at_amount),
+            "usdt_price":   float(usdt_price),
+            "discount_pct": disc,
+            "final_price":  final,
+        })
+
+    return {"packages": packages}
+
+
+class BuyAtPackageRequest(BaseModel):
+    """
+    POST /wallet/buy-at-package — buy a fixed AT package (with discount).
+
+    tx_hash    — MetaMask USDT transfer proof
+    at_amount  — must match one of the active at_packages rows exactly
+    """
+    tx_hash: str
+    at_amount: int
+
+
+@app.post("/wallet/buy-at-package")
+async def buy_at_package(req: BuyAtPackageRequest, payload: dict = Depends(verify_token)):
+    """
+    Credit Arena Tokens for a pre-defined discounted package purchase.
+
+    Flow:
+      1. User transfers USDT (final_price) to platform wallet via MetaMask.
+      2. Frontend sends tx_hash + at_amount.
+      3. Backend validates at_amount matches a package, credits AT.
+
+    CONTRACT-ready: tx_hash should be verified on-chain before crediting.
+    DB-ready: UPDATE users SET at_balance + :at; INSERT transactions.
+    """
+    user_id: str = payload["sub"]
+
+    try:
+        with SessionLocal() as session:
+            pkg = session.execute(
+                text(
+                    "SELECT at_amount, usdt_price, discount_pct "
+                    "FROM at_packages WHERE at_amount = :amt AND active = TRUE"
+                ),
+                {"amt": req.at_amount},
+            ).fetchone()
+
+            if not pkg:
+                raise HTTPException(404, f"No active package for {req.at_amount} AT")
+
+            at_amount, usdt_price, discount_pct = pkg
+            disc = float(discount_pct or 0)
+            final_price = round(float(usdt_price) * (1 - disc / 100), 2)
+
+            result = session.execute(
+                text(
+                    "UPDATE users SET at_balance = at_balance + :at "
+                    "WHERE id = :uid RETURNING at_balance"
+                ),
+                {"at": int(at_amount), "uid": user_id},
+            ).fetchone()
+
+            if not result:
+                raise HTTPException(404, "User not found")
+
+            session.execute(
+                text(
+                    "INSERT INTO transactions (user_id, type, amount, token, status) "
+                    "VALUES (:uid, 'at_purchase', :amt, 'AT', 'completed')"
+                ),
+                {"uid": user_id, "amt": int(at_amount)},
+            )
+            session.commit()
+            new_balance = int(result[0])
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("buy_at_package error: %s", exc)
+        raise HTTPException(500, "Purchase failed")
+
+    logger.info(
+        "buy_at_package: user=%s pkg=%d AT final=%.2f USDT tx=%s",
+        user_id, req.at_amount, final_price, req.tx_hash,
+    )
+    return {
+        "at_balance":   new_balance,
+        "at_credited":  req.at_amount,
+        "usdt_spent":   final_price,
+        "discount_pct": disc,
     }
 
 

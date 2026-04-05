@@ -765,3 +765,25 @@ CREATE TABLE IF NOT EXISTS oracle_sync_state (
 INSERT INTO oracle_sync_state (id, last_block)
 VALUES ('singleton', 0)
 ON CONFLICT (id) DO NOTHING;
+
+-- ── AT Staking ────────────────────────────────────────────────────────────────
+-- stake_currency on matches: 'CRYPTO' (ETH/BNB via escrow contract) | 'AT'
+ALTER TABLE matches
+    ADD COLUMN IF NOT EXISTS stake_currency VARCHAR(10) NOT NULL DEFAULT 'CRYPTO';
+
+-- AT purchase packages with tiered discounts
+CREATE TABLE IF NOT EXISTS at_packages (
+    id           SERIAL PRIMARY KEY,
+    at_amount    INTEGER         NOT NULL,
+    usdt_price   NUMERIC(10,2)  NOT NULL,
+    discount_pct NUMERIC(5,2)   NOT NULL DEFAULT 0,
+    active       BOOLEAN         NOT NULL DEFAULT TRUE
+);
+
+INSERT INTO at_packages (at_amount, usdt_price, discount_pct) VALUES
+    (500,    5.00,   0.00),
+    (1000,  10.00,   5.00),
+    (2500,  25.00,   8.00),
+    (5000,  50.00,  12.00),
+    (10000, 100.00, 15.00)
+ON CONFLICT DO NOTHING;
