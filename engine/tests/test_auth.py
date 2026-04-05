@@ -788,6 +788,144 @@ class TestMatchGating:
         assert resp.status_code == 400
         assert "wallet" in resp.json()["detail"].lower()
 
+    # ── DELETE /matches/{match_id} ────────────────────────────────────────────
+
+    def test_cancel_match_by_host_returns_200(self):
+        """Host deletes a waiting room → 200 + cancelled:True."""
+        match_id = str(uuid.uuid4())
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.return_value = (
+            FAKE_UUID, "waiting", "CRYPTO"  # host_id, status, stake_currency
+        )
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.delete(
+                f"/matches/{match_id}",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["cancelled"] is True
+
+    def test_cancel_match_not_found_returns_404(self):
+        ctx, session = _make_session_mock(fetchone_return=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.delete(
+                f"/matches/{uuid.uuid4()}",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 404
+
+    def test_cancel_match_by_non_host_returns_403(self):
+        """Non-host cannot delete the room."""
+        match_id = str(uuid.uuid4())
+        other_user = str(uuid.uuid4())  # different from FAKE_UUID
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.return_value = (
+            other_user, "waiting", "CRYPTO"
+        )
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.delete(
+                f"/matches/{match_id}",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 403
+        assert "host" in resp.json()["detail"].lower()
+
+    def test_cancel_match_already_started_returns_409(self):
+        """Cannot cancel a match that is already in_progress."""
+        match_id = str(uuid.uuid4())
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.return_value = (
+            FAKE_UUID, "in_progress", "CRYPTO"
+        )
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.delete(
+                f"/matches/{match_id}",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 409
+
+    def test_cancel_match_no_token_returns_422(self):
+        resp = client.delete(f"/matches/{uuid.uuid4()}")
+        assert resp.status_code == 422
+
+    # ── POST /matches/{match_id}/leave ────────────────────────────────────────
+
+    def test_leave_match_by_non_host_returns_200(self):
+        """Non-host player leaves a waiting room → 200 + left:True."""
+        match_id = str(uuid.uuid4())
+        other_host = str(uuid.uuid4())  # different from FAKE_UUID
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            (other_host, "waiting", "CRYPTO", "10"),  # match lookup
+            (1,),                                      # in_match check → player is in match
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{match_id}/leave",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["left"] is True
+
+    def test_leave_match_not_found_returns_404(self):
+        ctx, session = _make_session_mock(fetchone_return=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{uuid.uuid4()}/leave",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 404
+
+    def test_leave_match_as_host_returns_400(self):
+        """Host cannot use /leave — must use DELETE /matches/{id}."""
+        match_id = str(uuid.uuid4())
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.return_value = (
+            FAKE_UUID, "waiting", "CRYPTO", "10"  # host_id == FAKE_UUID (the caller)
+        )
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{match_id}/leave",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 400
+        assert "host" in resp.json()["detail"].lower()
+
+    def test_leave_match_already_started_returns_409(self):
+        """Cannot leave a match that is in_progress."""
+        match_id = str(uuid.uuid4())
+        other_host = str(uuid.uuid4())
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.return_value = (
+            other_host, "in_progress", "CRYPTO", "10"
+        )
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{match_id}/leave",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 409
+
+    def test_leave_match_not_in_match_returns_400(self):
+        """Player tries to leave a match they are not in."""
+        match_id = str(uuid.uuid4())
+        other_host = str(uuid.uuid4())
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            (other_host, "waiting", "CRYPTO", "10"),  # match lookup
+            None,                                      # in_match check → not in match
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{match_id}/leave",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 400
+
+    def test_leave_match_no_token_returns_422(self):
+        resp = client.post(f"/matches/{uuid.uuid4()}/leave")
+        assert resp.status_code == 422
+
 # ─── POST /wallet/buy-at ──────────────────────────────────────────────────────
 
 class TestBuyArenaTokens:
