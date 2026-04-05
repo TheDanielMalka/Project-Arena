@@ -234,6 +234,12 @@ export type ActiveMatchResponse = {
     code:           string | null;
     created_at:     string | null;
     players:        ActiveMatchPlayer[];
+    // Added in get_active_match v2 — lobby persistence fix
+    mode:           string | null;
+    host_id:        string | null;
+    host_username:  string | null;
+    max_players:    number | null;
+    max_per_team:   number | null;
   } | null;
 };
 

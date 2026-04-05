@@ -31,6 +31,7 @@ import {
   apiLeaveMatch,
   apiInviteToMatch,
   apiListFriends,
+  mapApiMatchRowToMatch,
   type ApiFriendRow,
 } from "@/lib/engine-api";
 import { looksLikeServerMatchId } from "@/lib/gameAccounts";
@@ -284,9 +285,34 @@ const MatchLobby = () => {
   useEffect(() => {
     if (!token || myRoomMatchId) return;
     apiGetActiveMatch(token).then((res) => {
-      if (res?.match?.match_id) {
-        setMyRoomMatchId(res.match.match_id);
+      if (!res?.match?.match_id) return;
+      const m = res.match;
+      // Convert the API response to a full Match object and inject into the
+      // Zustand store so that `myActiveRoom = matches.find(m.id)` resolves
+      // correctly after navigation (BUG 1 fix).
+      const matchObj = mapApiMatchRowToMatch({
+        id:             m.match_id,
+        match_id:       m.match_id,
+        game:           m.game,
+        status:         m.status,
+        bet_amount:     m.bet_amount,
+        stake_currency: m.stake_currency,
+        type:           m.type,
+        code:           m.code,
+        created_at:     m.created_at,
+        mode:           m.mode,
+        host_id:        m.host_id,
+        host_username:  m.host_username,
+        max_players:    m.max_players,
+        max_per_team:   m.max_per_team,
+        // players array contains full player objects — extract for match_players
+        match_players:  m.players,
+      });
+      if (matchObj) {
+        // addMatch is idempotent: won't duplicate if already in store
+        useMatchStore.getState().addMatch(matchObj);
       }
+      setMyRoomMatchId(m.match_id);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
