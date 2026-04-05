@@ -51,6 +51,7 @@ vi.mock("@/lib/engine-api", async () => {
           forge_unlocked_item_ids: [],
           vip_expires_at: null,
           at_balance: 200,
+          role: "user",
         };
       }
       const isAdmin = token === "token-admin";
@@ -72,6 +73,7 @@ vi.mock("@/lib/engine-api", async () => {
         forge_unlocked_item_ids: [],
         vip_expires_at: null,
         at_balance: isAdmin ? 50_000 : 200,
+        role: isAdmin ? "admin" : "user",
       };
     }),
     apiPatchMe: vi.fn(async () => true),
