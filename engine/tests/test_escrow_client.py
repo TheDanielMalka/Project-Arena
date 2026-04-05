@@ -379,3 +379,74 @@ class TestListenerStartup:
                 pass
 
         c._save_last_block.assert_called_once_with(20)
+
+
+class TestAdminOracleRoutes:
+    """Tests for GET /admin/oracle/status and POST /admin/oracle/sync."""
+
+    def _auth(self):
+        """Return a valid JWT token header for a test user."""
+        import src.auth as auth
+        token = auth.issue_token(str(__import__("uuid").uuid4()), "oracle_test@arena.gg")
+        return {"Authorization": f"Bearer {token}"}
+
+    def test_oracle_status_returns_health(self):
+        """GET /admin/oracle/status returns expected shape when escrow is disabled."""
+        from fastapi.testclient import TestClient
+        import engine.main as main
+        import sys
+        # Ensure no live escrow client interferes
+        original = main._escrow_client
+        main._escrow_client = None
+        try:
+            client = TestClient(main.app, raise_server_exceptions=True)
+            resp = client.get("/admin/oracle/status", headers=self._auth())
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "escrow_enabled" in data
+            assert "listener_active" in data
+            assert "last_block" in data
+            assert data["escrow_enabled"] is False
+            assert data["listener_active"] is False
+        finally:
+            main._escrow_client = original
+
+    def test_oracle_sync_requires_escrow(self):
+        """POST /admin/oracle/sync returns 503 when EscrowClient is not configured."""
+        from fastapi.testclient import TestClient
+        import engine.main as main
+        original = main._escrow_client
+        main._escrow_client = None
+        try:
+            client = TestClient(main.app, raise_server_exceptions=False)
+            resp = client.post("/admin/oracle/sync", headers=self._auth())
+            assert resp.status_code == 503
+        finally:
+            main._escrow_client = original
+
+    def test_oracle_sync_calls_process_events(self):
+        """POST /admin/oracle/sync triggers process_events and saves last_block."""
+        from fastapi.testclient import TestClient
+        from unittest.mock import MagicMock
+        import engine.main as main
+
+        mock_client = MagicMock()
+        mock_client._w3.eth.block_number = 500
+        mock_client._load_last_block.return_value = 450
+        mock_client.process_events.return_value = 3
+
+        original = main._escrow_client
+        main._escrow_client = mock_client
+        try:
+            client = TestClient(main.app, raise_server_exceptions=True)
+            resp = client.post("/admin/oracle/sync", headers=self._auth())
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["synced"] is True
+            assert data["events_processed"] == 3
+            assert data["from_block"] == 451
+            assert data["to_block"] == 500
+            mock_client.process_events.assert_called_once_with(451, 500)
+            mock_client._save_last_block.assert_called_once_with(500)
+        finally:
+            main._escrow_client = original
