@@ -50,12 +50,12 @@ async def _drain_lifespan(app):
 class TestListenerLifespan:
     def setup_method(self):
         """Reset the module-level _listener_task global before each test."""
-        import engine.main as main
+        import main
         main._listener_task = None
 
     def test_listener_task_started_when_escrow_configured(self):
         """When build_escrow_client returns a client, _listener_task must be set."""
-        import engine.main as main
+        import main
 
         mock_client = MagicMock()
         mock_client.contract.address = "0xABC"
@@ -64,9 +64,9 @@ class TestListenerLifespan:
             await asyncio.sleep(9999)
 
         with (
-            patch("engine.main.build_escrow_client", return_value=mock_client),
+            patch("main.build_escrow_client", return_value=mock_client),
             patch("asyncio.to_thread", return_value=_never_end()),
-            patch("engine.main.RageQuitDetector") as MockRQ,
+            patch("main.RageQuitDetector") as MockRQ,
         ):
             MockRQ.return_value.run = AsyncMock()
             _run(_drain_lifespan(main.app))
@@ -75,11 +75,11 @@ class TestListenerLifespan:
 
     def test_listener_task_not_started_without_escrow(self):
         """When build_escrow_client returns None, _listener_task stays None."""
-        import engine.main as main
+        import main
 
         with (
-            patch("engine.main.build_escrow_client", return_value=None),
-            patch("engine.main.RageQuitDetector") as MockRQ,
+            patch("main.build_escrow_client", return_value=None),
+            patch("main.RageQuitDetector") as MockRQ,
         ):
             MockRQ.return_value.run = AsyncMock()
             _run(_drain_lifespan(main.app))
@@ -88,7 +88,7 @@ class TestListenerLifespan:
 
     def test_listener_task_cancelled_on_shutdown(self):
         """On lifespan exit, _listener_task.cancel() must be called."""
-        import engine.main as main
+        import main
 
         mock_client = MagicMock()
         mock_client.contract.address = "0xABC"
@@ -123,10 +123,10 @@ class TestListenerLifespan:
             return _orig_create_task(coro, **kw)
 
         with (
-            patch("engine.main.build_escrow_client", return_value=mock_client),
+            patch("main.build_escrow_client", return_value=mock_client),
             patch("asyncio.to_thread", return_value=_never_end()),
             patch("asyncio.create_task", side_effect=_fake_create_task),
-            patch("engine.main.RageQuitDetector") as MockRQ,
+            patch("main.RageQuitDetector") as MockRQ,
         ):
             MockRQ.return_value.run = AsyncMock()
             _run(_drain_lifespan(main.app))

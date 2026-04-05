@@ -393,7 +393,7 @@ class TestAdminOracleRoutes:
     def test_oracle_status_returns_health(self):
         """GET /admin/oracle/status returns expected shape when escrow is disabled."""
         from fastapi.testclient import TestClient
-        import engine.main as main
+        import main
         import sys
         # Ensure no live escrow client interferes
         original = main._escrow_client
@@ -414,7 +414,7 @@ class TestAdminOracleRoutes:
     def test_oracle_sync_requires_escrow(self):
         """POST /admin/oracle/sync returns 503 when EscrowClient is not configured."""
         from fastapi.testclient import TestClient
-        import engine.main as main
+        import main
         original = main._escrow_client
         main._escrow_client = None
         try:
@@ -428,7 +428,7 @@ class TestAdminOracleRoutes:
         """POST /admin/oracle/sync triggers process_events and saves last_block."""
         from fastapi.testclient import TestClient
         from unittest.mock import MagicMock
-        import engine.main as main
+        import main
 
         mock_client = MagicMock()
         mock_client._w3.eth.block_number = 500
