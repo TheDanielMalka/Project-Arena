@@ -481,6 +481,28 @@ async def submit_result(result: MatchResult, token: dict = Depends(verify_token)
                         "user_stats updated: user=%s win=%s xp+%d",
                         uid_str, is_winner, xp_gain,
                     )
+                    # ── Auto inbox notification ───────────────────────────────
+                    # DB-ready: ARENA_SYSTEM_USER_ID env var must be set to a
+                    # seeded system user row in the users table.
+                    if is_winner:
+                        _send_system_inbox(
+                            session, uid_str,
+                            subject="🏆 Victory — Match Result",
+                            content=(
+                                f"You won match {result.match_id}! "
+                                f"+100 XP added to your profile. "
+                                f"Winnings will be released by the escrow contract."
+                            ),
+                        )
+                    else:
+                        _send_system_inbox(
+                            session, uid_str,
+                            subject="Match Result",
+                            content=(
+                                f"Match {result.match_id} is over. "
+                                f"+25 XP added for participation. Keep grinding!"
+                            ),
+                        )
 
             session.commit()
         logger.info("match_evidence saved: match=%s winner=%s", result.match_id, result.winner_id)
@@ -2750,3 +2772,312 @@ async def get_player_profile(
         "has_steam":            row[15] is not None,
         "has_riot":             row[16] is not None,
     }
+
+
+# ── Inbox ──────────────────────────────────────────────────────────────────────
+#
+# inbox_messages: formal user-to-user messages with a subject line.
+# Different from direct_messages (DMs): inbox = notifications / formal comms.
+# System auto-notifications (match won/lost) are sent here by the engine itself
+# using the ARENA_SYSTEM_USER_ID env var (a seeded platform user UUID).
+# If ARENA_SYSTEM_USER_ID is not set, auto-notifications are silently skipped.
+#
+# DB-ready: inbox_messages table (init.sql).
+# Cursor connects: inboxStore.ts → these endpoints.
+
+_SYSTEM_USER_ID: str | None = os.getenv("ARENA_SYSTEM_USER_ID")
+
+
+def _send_system_inbox(session, receiver_id: str, subject: str, content: str) -> None:
+    """
+    Insert a system notification into inbox_messages.
+    Silently skipped when ARENA_SYSTEM_USER_ID is not configured.
+    DB-ready: requires a seeded 'arena_system' user row in users table.
+    """
+    if not _SYSTEM_USER_ID:
+        return
+    try:
+        session.execute(
+            text(
+                "INSERT INTO inbox_messages (sender_id, receiver_id, subject, content) "
+                "VALUES (:sid, :rid, :sub, :con)"
+            ),
+            {
+                "sid": _SYSTEM_USER_ID,
+                "rid": receiver_id,
+                "sub": subject,
+                "con": content,
+            },
+        )
+    except Exception as exc:
+        logger.warning("_send_system_inbox failed (non-fatal): %s", exc)
+
+
+class SendInboxRequest(BaseModel):
+    """
+    POST /inbox — send a formal inbox message to another user.
+
+    receiver_id: UUID of the recipient.
+    subject:     up to 200 characters.
+    content:     1–5000 characters.
+    """
+    receiver_id: str
+    subject: str
+    content: str
+
+
+@app.post("/inbox", status_code=201)
+async def send_inbox_message(req: SendInboxRequest, payload: dict = Depends(verify_token)):
+    """
+    Send a formal inbox message (with subject) to another user.
+
+    Rules:
+      - Cannot message yourself.
+      - subject: 1–200 chars; content: 1–5000 chars.
+      - Receiver must exist.
+
+    DB-ready: INSERT into inbox_messages.
+    """
+    me: str = payload["sub"]
+
+    if me == req.receiver_id:
+        raise HTTPException(400, "Cannot send an inbox message to yourself")
+
+    subject = req.subject.strip()
+    content = req.content.strip()
+
+    if not subject:
+        raise HTTPException(400, "Subject cannot be empty")
+    if len(subject) > 200:
+        raise HTTPException(400, "Subject exceeds 200 characters")
+    if not content:
+        raise HTTPException(400, "Content cannot be empty")
+    if len(content) > 5000:
+        raise HTTPException(400, "Content exceeds 5000 characters")
+
+    try:
+        with SessionLocal() as session:
+            target = session.execute(
+                text("SELECT id FROM users WHERE id = :uid"),
+                {"uid": req.receiver_id},
+            ).fetchone()
+            if not target:
+                raise HTTPException(404, "Recipient not found")
+
+            row = session.execute(
+                text(
+                    "INSERT INTO inbox_messages (sender_id, receiver_id, subject, content) "
+                    "VALUES (:sid, :rid, :sub, :con) "
+                    "RETURNING id, created_at"
+                ),
+                {
+                    "sid": me,
+                    "rid": req.receiver_id,
+                    "sub": subject,
+                    "con": content,
+                },
+            ).fetchone()
+            session.commit()
+            msg_id    = str(row[0])
+            created_at = row[1].isoformat() if row[1] else None
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("send_inbox_message error: %s", exc)
+        raise HTTPException(500, "Send failed")
+
+    return {
+        "id":          msg_id,
+        "sender_id":   me,
+        "receiver_id": req.receiver_id,
+        "subject":     subject,
+        "created_at":  created_at,
+    }
+
+
+@app.get("/inbox")
+async def get_inbox(
+    unread_only: bool = Query(default=False),
+    limit: int = Query(default=30, ge=1, le=100),
+    payload: dict = Depends(verify_token),
+):
+    """
+    Return the authenticated user's inbox messages (not deleted), newest first.
+
+    Optional:
+      ?unread_only=true  — only unread messages
+      ?limit=N           — max rows (1–100, default 30)
+
+    Returns sender username + avatar alongside message fields.
+    DB-ready: inbox_messages JOIN users.
+    """
+    me: str = payload["sub"]
+    params: dict = {"me": me, "lim": limit}
+    extra = "AND im.read = FALSE" if unread_only else ""
+
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(
+                text(f"""
+                    SELECT
+                        im.id,
+                        im.subject,
+                        im.content,
+                        im.read,
+                        im.created_at,
+                        u.id       AS sender_id,
+                        u.username AS sender_username,
+                        u.avatar   AS sender_avatar,
+                        u.arena_id AS sender_arena_id
+                    FROM inbox_messages im
+                    JOIN users u ON u.id = im.sender_id
+                    WHERE im.receiver_id = :me
+                      AND im.deleted = FALSE
+                      {extra}
+                    ORDER BY im.created_at DESC
+                    LIMIT :lim
+                """),
+                params,
+            ).fetchall()
+    except Exception as exc:
+        logger.error("get_inbox error: %s", exc)
+        raise HTTPException(500, "Failed to load inbox")
+
+    return {
+        "messages": [
+            {
+                "id":              str(r[0]),
+                "subject":         r[1],
+                "content":         r[2],
+                "read":            r[3],
+                "created_at":      r[4].isoformat() if r[4] else None,
+                "sender_id":       str(r[5]),
+                "sender_username": r[6],
+                "sender_avatar":   r[7],
+                "sender_arena_id": r[8],
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.get("/inbox/unread-count")
+async def inbox_unread_count(payload: dict = Depends(verify_token)):
+    """
+    Return the count of unread inbox messages for the badge indicator.
+    DB-ready: COUNT from inbox_messages.
+    """
+    me: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT COUNT(*) FROM inbox_messages "
+                    "WHERE receiver_id = :me AND read = FALSE AND deleted = FALSE"
+                ),
+                {"me": me},
+            ).fetchone()
+            count = int(row[0]) if row else 0
+    except Exception as exc:
+        logger.error("inbox_unread_count error: %s", exc)
+        raise HTTPException(500, "Failed to get count")
+
+    return {"unread_count": count}
+
+
+@app.patch("/inbox/{message_id}/read", status_code=200)
+async def mark_inbox_read(message_id: str, payload: dict = Depends(verify_token)):
+    """
+    Mark a single inbox message as read.
+
+    Only the receiver can mark their own messages.
+    DB-ready: UPDATE inbox_messages SET read = TRUE.
+    """
+    me: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT id FROM inbox_messages "
+                    "WHERE id = :mid AND receiver_id = :me AND deleted = FALSE"
+                ),
+                {"mid": message_id, "me": me},
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "Message not found")
+
+            session.execute(
+                text("UPDATE inbox_messages SET read = TRUE WHERE id = :mid"),
+                {"mid": message_id},
+            )
+            session.commit()
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("mark_inbox_read error: %s", exc)
+        raise HTTPException(500, "Update failed")
+
+    return {"read": True, "id": message_id}
+
+
+@app.patch("/inbox/read-all", status_code=200)
+async def mark_all_inbox_read(payload: dict = Depends(verify_token)):
+    """
+    Mark ALL unread inbox messages as read for the authenticated user.
+    DB-ready: UPDATE inbox_messages SET read = TRUE WHERE receiver_id = :me.
+    """
+    me: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            result = session.execute(
+                text(
+                    "UPDATE inbox_messages SET read = TRUE "
+                    "WHERE receiver_id = :me AND read = FALSE AND deleted = FALSE"
+                ),
+                {"me": me},
+            )
+            session.commit()
+            updated = getattr(result, "rowcount", 0) or 0
+    except Exception as exc:
+        logger.error("mark_all_inbox_read error: %s", exc)
+        raise HTTPException(500, "Update failed")
+
+    return {"marked_read": updated}
+
+
+@app.delete("/inbox/{message_id}", status_code=200)
+async def delete_inbox_message(message_id: str, payload: dict = Depends(verify_token)):
+    """
+    Soft-delete an inbox message (sets deleted = TRUE).
+
+    Only the receiver can delete their own messages.
+    DB-ready: UPDATE inbox_messages SET deleted = TRUE.
+    """
+    me: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT id FROM inbox_messages "
+                    "WHERE id = :mid AND receiver_id = :me AND deleted = FALSE"
+                ),
+                {"mid": message_id, "me": me},
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "Message not found")
+
+            session.execute(
+                text("UPDATE inbox_messages SET deleted = TRUE WHERE id = :mid"),
+                {"mid": message_id},
+            )
+            session.commit()
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("delete_inbox_message error: %s", exc)
+        raise HTTPException(500, "Delete failed")
+
+    return {"deleted": True, "id": message_id}
