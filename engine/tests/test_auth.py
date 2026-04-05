@@ -1671,3 +1671,212 @@ class TestPlayerProfile:
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.get(f"/players/{FAKE_UUID}")
         assert resp.status_code == 200
+
+
+# ─── Inbox ────────────────────────────────────────────────────────────────────
+
+class TestInbox:
+    def _auth_header(self) -> dict:
+        token = auth.issue_token(FAKE_UUID, "me@arena.gg")
+        return {"Authorization": f"Bearer {token}"}
+
+    def _msg_row(self):
+        import datetime as _dt
+        return (
+            str(uuid.uuid4()),                    # id
+            "Match Result",                        # subject
+            "You won! +100 XP",                   # content
+            False,                                 # read
+            _dt.datetime.now(_dt.timezone.utc),   # created_at
+            OTHER_UUID,                            # sender_id
+            "System",                              # sender_username
+            None,                                  # sender_avatar
+            "ARENA-SYS001",                        # sender_arena_id
+        )
+
+    # ── POST /inbox ───────────────────────────────────────────────────────────
+
+    def test_send_inbox_message_success(self):
+        import datetime as _dt
+        msg_id = str(uuid.uuid4())
+        now = _dt.datetime.now(_dt.timezone.utc)
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            (OTHER_UUID,),     # receiver exists
+            (msg_id, now),     # INSERT RETURNING
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/inbox",
+                json={
+                    "receiver_id": OTHER_UUID,
+                    "subject":     "Hello",
+                    "content":     "Welcome to the arena!",
+                },
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["id"] == msg_id
+        assert data["subject"] == "Hello"
+        assert data["sender_id"] == FAKE_UUID
+
+    def test_send_inbox_to_self_returns_400(self):
+        resp = client.post(
+            "/inbox",
+            json={"receiver_id": FAKE_UUID, "subject": "hi", "content": "test"},
+            headers=self._auth_header(),
+        )
+        assert resp.status_code == 400
+
+    def test_send_inbox_empty_subject_returns_400(self):
+        resp = client.post(
+            "/inbox",
+            json={"receiver_id": OTHER_UUID, "subject": "  ", "content": "test"},
+            headers=self._auth_header(),
+        )
+        assert resp.status_code == 400
+
+    def test_send_inbox_subject_too_long_returns_400(self):
+        resp = client.post(
+            "/inbox",
+            json={"receiver_id": OTHER_UUID, "subject": "x" * 201, "content": "ok"},
+            headers=self._auth_header(),
+        )
+        assert resp.status_code == 400
+
+    def test_send_inbox_content_too_long_returns_400(self):
+        resp = client.post(
+            "/inbox",
+            json={"receiver_id": OTHER_UUID, "subject": "hi", "content": "x" * 5001},
+            headers=self._auth_header(),
+        )
+        assert resp.status_code == 400
+
+    def test_send_inbox_receiver_not_found_returns_404(self):
+        ctx, session = _make_session_mock(fetchone_return=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/inbox",
+                json={"receiver_id": OTHER_UUID, "subject": "hi", "content": "test"},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 404
+
+    def test_send_inbox_no_token_returns_422(self):
+        resp = client.post(
+            "/inbox",
+            json={"receiver_id": OTHER_UUID, "subject": "hi", "content": "test"},
+        )
+        assert resp.status_code == 422
+
+    # ── GET /inbox ────────────────────────────────────────────────────────────
+
+    def test_get_inbox_returns_messages(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = [self._msg_row()]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/inbox", headers=self._auth_header())
+        assert resp.status_code == 200
+        msgs = resp.json()["messages"]
+        assert len(msgs) == 1
+        assert msgs[0]["subject"] == "Match Result"
+        assert msgs[0]["read"] is False
+
+    def test_get_inbox_empty(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = []
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/inbox", headers=self._auth_header())
+        assert resp.status_code == 200
+        assert resp.json()["messages"] == []
+
+    def test_get_inbox_unread_only_flag(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = []
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/inbox?unread_only=true", headers=self._auth_header())
+        assert resp.status_code == 200
+
+    def test_get_inbox_no_token_returns_422(self):
+        resp = client.get("/inbox")
+        assert resp.status_code == 422
+
+    # ── GET /inbox/unread-count ───────────────────────────────────────────────
+
+    def test_unread_count_returns_number(self):
+        ctx, session = _make_session_mock(fetchone_return=(5,))
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/inbox/unread-count", headers=self._auth_header())
+        assert resp.status_code == 200
+        assert resp.json()["unread_count"] == 5
+
+    def test_unread_count_no_token_returns_422(self):
+        resp = client.get("/inbox/unread-count")
+        assert resp.status_code == 422
+
+    # ── PATCH /inbox/{id}/read ────────────────────────────────────────────────
+
+    def test_mark_inbox_read_success(self):
+        msg_id = str(uuid.uuid4())
+        ctx, session = _make_session_mock(fetchone_return=(msg_id,))
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.patch(
+                f"/inbox/{msg_id}/read",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["read"] is True
+
+    def test_mark_inbox_read_not_found_returns_404(self):
+        ctx, session = _make_session_mock(fetchone_return=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.patch(
+                f"/inbox/{uuid.uuid4()}/read",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 404
+
+    def test_mark_inbox_read_no_token_returns_422(self):
+        resp = client.patch(f"/inbox/{uuid.uuid4()}/read")
+        assert resp.status_code == 422
+
+    # ── PATCH /inbox/read-all ─────────────────────────────────────────────────
+
+    def test_mark_all_inbox_read_success(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.rowcount = 4
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.patch("/inbox/read-all", headers=self._auth_header())
+        assert resp.status_code == 200
+        assert "marked_read" in resp.json()
+
+    def test_mark_all_inbox_read_no_token_returns_422(self):
+        resp = client.patch("/inbox/read-all")
+        assert resp.status_code == 422
+
+    # ── DELETE /inbox/{id} ────────────────────────────────────────────────────
+
+    def test_delete_inbox_message_success(self):
+        msg_id = str(uuid.uuid4())
+        ctx, session = _make_session_mock(fetchone_return=(msg_id,))
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.delete(
+                f"/inbox/{msg_id}",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] is True
+
+    def test_delete_inbox_not_found_returns_404(self):
+        ctx, session = _make_session_mock(fetchone_return=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.delete(
+                f"/inbox/{uuid.uuid4()}",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 404
+
+    def test_delete_inbox_no_token_returns_422(self):
+        resp = client.delete(f"/inbox/{uuid.uuid4()}")
+        assert resp.status_code == 422
