@@ -152,6 +152,22 @@ async def verify_token(authorization: str = Header(...)) -> dict:
         raise HTTPException(401, "Invalid token")
 
 
+async def require_admin(payload: dict = Depends(verify_token)) -> dict:
+    """Raises 403 unless the authenticated user has role=admin in user_roles."""
+    user_id = payload.get("sub")
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("SELECT 1 FROM user_roles WHERE user_id = :uid AND role = 'admin'"),
+                {"uid": user_id},
+            ).fetchone()
+    except Exception:
+        row = None
+    if not row:
+        raise HTTPException(403, "Admin only")
+    return payload
+
+
 async def optional_token(authorization: str | None = Header(default=None)) -> dict | None:
     """Like verify_token but returns None instead of 401 when header is absent."""
     if not authorization:
@@ -3105,7 +3121,7 @@ async def delete_inbox_message(message_id: str, payload: dict = Depends(verify_t
 
 
 @app.get("/admin/oracle/status")
-async def admin_oracle_status(payload: dict = Depends(verify_token)):
+async def admin_oracle_status(payload: dict = Depends(require_admin)):
     """
     Return the current state of the EscrowClient oracle listener.
 
@@ -3148,7 +3164,7 @@ async def admin_oracle_status(payload: dict = Depends(verify_token)):
 
 
 @app.post("/admin/oracle/sync", status_code=200)
-async def admin_oracle_sync(payload: dict = Depends(verify_token)):
+async def admin_oracle_sync(payload: dict = Depends(require_admin)):
     """
     Manually trigger a one-off event scan from last_block to current chain head.
 

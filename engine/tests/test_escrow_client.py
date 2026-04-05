@@ -384,23 +384,29 @@ class TestListenerStartup:
 class TestAdminOracleRoutes:
     """Tests for GET /admin/oracle/status and POST /admin/oracle/sync."""
 
-    def _auth(self):
-        """Return a valid JWT token header for a test user."""
-        import src.auth as auth
-        token = auth.issue_token(str(__import__("uuid").uuid4()), "oracle_test@arena.gg")
-        return {"Authorization": f"Bearer {token}"}
+    def _admin_payload(self):
+        import uuid
+        return {"sub": str(uuid.uuid4()), "role": "admin"}
+
+    def _patch_admin(self, main):
+        """Override require_admin so tests don't need a real DB admin row."""
+        from unittest.mock import patch as _patch
+        payload = self._admin_payload()
+        return _patch.object(main.app, "dependency_overrides",
+                             {main.require_admin: lambda: payload})
 
     def test_oracle_status_returns_health(self):
         """GET /admin/oracle/status returns expected shape when escrow is disabled."""
         from fastapi.testclient import TestClient
+        from unittest.mock import patch as _patch
         import main
-        import sys
-        # Ensure no live escrow client interferes
         original = main._escrow_client
         main._escrow_client = None
+        payload = self._admin_payload()
+        main.app.dependency_overrides[main.require_admin] = lambda: payload
         try:
             client = TestClient(main.app, raise_server_exceptions=True)
-            resp = client.get("/admin/oracle/status", headers=self._auth())
+            resp = client.get("/admin/oracle/status")
             assert resp.status_code == 200
             data = resp.json()
             assert "escrow_enabled" in data
@@ -409,6 +415,7 @@ class TestAdminOracleRoutes:
             assert data["escrow_enabled"] is False
             assert data["listener_active"] is False
         finally:
+            main.app.dependency_overrides.pop(main.require_admin, None)
             main._escrow_client = original
 
     def test_oracle_sync_requires_escrow(self):
@@ -417,11 +424,14 @@ class TestAdminOracleRoutes:
         import main
         original = main._escrow_client
         main._escrow_client = None
+        payload = self._admin_payload()
+        main.app.dependency_overrides[main.require_admin] = lambda: payload
         try:
             client = TestClient(main.app, raise_server_exceptions=False)
-            resp = client.post("/admin/oracle/sync", headers=self._auth())
+            resp = client.post("/admin/oracle/sync")
             assert resp.status_code == 503
         finally:
+            main.app.dependency_overrides.pop(main.require_admin, None)
             main._escrow_client = original
 
     def test_oracle_sync_calls_process_events(self):
@@ -437,9 +447,11 @@ class TestAdminOracleRoutes:
 
         original = main._escrow_client
         main._escrow_client = mock_client
+        payload = self._admin_payload()
+        main.app.dependency_overrides[main.require_admin] = lambda: payload
         try:
             client = TestClient(main.app, raise_server_exceptions=True)
-            resp = client.post("/admin/oracle/sync", headers=self._auth())
+            resp = client.post("/admin/oracle/sync")
             assert resp.status_code == 200
             data = resp.json()
             assert data["synced"] is True
@@ -449,4 +461,18 @@ class TestAdminOracleRoutes:
             mock_client.process_events.assert_called_once_with(451, 500)
             mock_client._save_last_block.assert_called_once_with(500)
         finally:
+            main.app.dependency_overrides.pop(main.require_admin, None)
             main._escrow_client = original
+
+    def test_oracle_sync_requires_admin_role(self):
+        """POST /admin/oracle/sync returns 403 for non-admin user."""
+        from fastapi.testclient import TestClient
+        import src.auth as auth
+        import main
+        token = auth.issue_token(str(__import__("uuid").uuid4()), "user@arena.gg")
+        # No dependency override — require_admin will hit DB and find no admin row → 403
+        main.app.dependency_overrides.pop(main.require_admin, None)
+        client = TestClient(main.app, raise_server_exceptions=False)
+        resp = client.post("/admin/oracle/sync",
+                           headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 403
