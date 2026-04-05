@@ -340,20 +340,6 @@ const MatchLobby = () => {
     return { maxPerTeam, teamA: match.players.slice(0, maxPerTeam), teamB: match.players.slice(maxPerTeam, maxPerTeam * 2) };
   };
 
-  /** True whenever the player is in an active room (waiting OR in_progress). */
-  const isInActiveRoom = !!myActiveRoom || roomLocked;
-
-  /** Blocks join/create when already in a room — covers both waiting and in_progress. */
-  const guardNotInRoom = useCallback((): boolean => {
-    if (!isInActiveRoom) return true;
-    useNotificationStore.getState().addNotification({
-      type: "system",
-      title: "Already in a room",
-      message: "Leave or finish your current match before joining or creating another.",
-    });
-    return false;
-  }, [isInActiveRoom]);
-
   /** MetaMask on BSC Testnet — required for create/join (Issue #23). */
   const guardWalletConnected = useCallback((): boolean => {
     if (useWalletStore.getState().connectedAddress) return true;
@@ -559,6 +545,20 @@ const MatchLobby = () => {
   const myActiveRoom = myRoomMatchId
     ? matches.find((m) => m.id === myRoomMatchId) ?? null
     : null;
+
+  /** True whenever the player is in an active room (waiting OR in_progress). */
+  const isInActiveRoom = !!myActiveRoom || roomLocked;
+
+  /** Blocks join/create when already in a room — covers both waiting and in_progress. */
+  const guardNotInRoom = useCallback((): boolean => {
+    if (!isInActiveRoom) return true;
+    useNotificationStore.getState().addNotification({
+      type: "system",
+      title: "Already in a room",
+      message: "Leave or finish your current match before joining or creating another.",
+    });
+    return false;
+  }, [isInActiveRoom]);
 
   useEffect(() => {
     if (!myActiveRoom?.lockCountdownStart) {
