@@ -17,7 +17,8 @@ import { useWalletStore } from "@/stores/walletStore";
 import { useForgeStore } from "@/stores/forgeStore";
 import type { TransactionType, TransactionStatus } from "@/types";
 import { cn } from "@/lib/utils";
-import { BuyArenaTokensModal } from "@/components/wallet/BuyArenaTokensModal";
+import { BuyArenaTokensModal }  from "@/components/wallet/BuyArenaTokensModal";
+import { WithdrawATModal }       from "@/components/wallet/WithdrawATModal";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -37,6 +38,7 @@ const txTypeConfig: Record<TransactionType, { label: string; color: string; sign
   escrow_release: { label: "Escrow Released", color: "text-arena-green",   sign: "+", icon: "🔓" },
   at_purchase:    { label: "AT Purchased",    color: "text-arena-purple",  sign: "−", icon: "⚡" },
   at_spend:       { label: "AT Spent",        color: "text-arena-orange",  sign: "−", icon: "🛒" },
+  at_withdrawal:  { label: "AT Withdrawal",   color: "text-arena-cyan",    sign: "−", icon: "🔥" },
 };
 
 const txStatusConfig: Record<TransactionStatus, { label: string; color: string }> = {
@@ -68,6 +70,7 @@ const WalletPage = () => {
   const [txSearch, setTxSearch]             = useState("");
   const [txPage, setTxPage]                 = useState(1);
   const [buyATOpen, setBuyATOpen]           = useState(false);
+  const [withdrawATOpen, setWithdrawATOpen] = useState(false);
   const [walletLinkBusy, setWalletLinkBusy] = useState(false);
   const [walletUnlinkBusy, setWalletUnlinkBusy] = useState(false);
 
@@ -316,6 +319,17 @@ const WalletPage = () => {
               >
                 <Zap className="mr-1.5 h-3.5 w-3.5" /> Buy Arena Tokens
               </Button>
+              {/* Withdraw AT → BNB */}
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full text-xs font-display border-arena-cyan/30 text-arena-cyan hover:bg-arena-cyan/10"
+                disabled={!connectedAddress}
+                title={!connectedAddress ? "Connect wallet to withdraw" : undefined}
+                onClick={() => setWithdrawATOpen(true)}
+              >
+                <Flame className="mr-1.5 h-3.5 w-3.5" /> Withdraw (AT → BNB)
+              </Button>
               {/* Secondary — open store */}
               <Link to="/forge">
                 <Button size="sm" variant="outline" className="w-full text-xs font-display border-arena-purple/30 text-arena-purple hover:bg-arena-purple/10">
@@ -410,7 +424,7 @@ const WalletPage = () => {
                   />
                 </div>
                 <div className="flex gap-1 flex-wrap">
-                  {(["all", "escrow_lock", "match_win", "match_loss", "refund", "at_purchase", "at_spend"] as const).map((f) => (
+                  {(["all", "escrow_lock", "match_win", "match_loss", "refund", "at_purchase", "at_spend", "at_withdrawal"] as const).map((f) => (
                     <button
                       key={f}
                       onClick={() => { setTxFilter(f); setTxPage(1); }}
@@ -519,6 +533,9 @@ const WalletPage = () => {
 
       {/* ── Buy Arena Tokens Modal ── */}
       <BuyArenaTokensModal open={buyATOpen} onClose={() => setBuyATOpen(false)} />
+
+      {/* ── Withdraw AT Modal ── */}
+      <WithdrawATModal open={withdrawATOpen} onClose={() => setWithdrawATOpen(false)} />
     </div>
   );
 };

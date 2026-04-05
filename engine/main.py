@@ -2306,6 +2306,183 @@ async def buy_arena_tokens(req: BuyAtRequest, payload: dict = Depends(verify_tok
     }
 
 
+# ── AT Withdrawal ─────────────────────────────────────────────────────────────
+
+
+class WithdrawAtRequest(BaseModel):
+    """POST /wallet/withdraw-at body."""
+    at_amount: int       # AT to burn (must be multiple of 95 or 110 depending on discount)
+    use_discount: bool = False  # True → 950 AT = $10, False → 1100 AT = $10
+
+
+@app.post("/wallet/withdraw-at", status_code=200)
+async def withdraw_arena_tokens(req: WithdrawAtRequest, payload: dict = Depends(verify_token)):
+    """
+    POST /wallet/withdraw-at — burn AT and send equivalent BNB to user's wallet.
+
+    Rates (per $10 USDT equivalent):
+      Standard:  1100 AT → $10 USDT → sent as BNB to user wallet
+      Discounted:  950 AT → $10 USDT → sent as BNB to user wallet
+
+    Rules:
+      - User must have a linked wallet_address.
+      - at_amount must be divisible by the base unit (950 or 1100).
+      - Daily limit: 10,000 AT per user per calendar day (UTC).
+      - Burns AT from DB; CONTRACT-ready: sends BNB from platform wallet.
+
+    DB-ready:
+      - Deducts at_balance, records at_daily_withdrawn.
+      - Inserts into transactions (type='at_withdrawal').
+    CONTRACT-ready:
+      - Platform wallet sends BNB equivalent to user wallet via web3.
+    """
+    from src.config import (
+        AT_PER_USDT_WITHDRAW,
+        AT_PER_USDT_WITHDRAW_DISCOUNT,
+        AT_DAILY_WITHDRAW_LIMIT,
+        BLOCKCHAIN_RPC_URL,
+        PLATFORM_WALLET_ADDRESS,
+    )
+    from datetime import timezone
+
+    user_id: str = payload["sub"]
+    at_amount = req.at_amount
+
+    if at_amount <= 0:
+        raise HTTPException(400, "at_amount must be greater than 0")
+
+    # Rate: AT per $1 USDT
+    rate = AT_PER_USDT_WITHDRAW_DISCOUNT if req.use_discount else AT_PER_USDT_WITHDRAW
+
+    # Must be a whole number of $1 units
+    if at_amount % rate != 0:
+        unit_label = f"{rate * 10} AT" if rate == AT_PER_USDT_WITHDRAW else f"{rate * 10} AT"
+        raise HTTPException(
+            400,
+            f"at_amount must be a multiple of {rate} "
+            f"({'discounted' if req.use_discount else 'standard'} rate: {rate} AT = $1 USDT). "
+            f"Smallest withdrawal: {rate * 10} AT = $10 USDT.",
+        )
+
+    usdt_value = at_amount / rate          # USDT equivalent
+    if usdt_value < 10.0:
+        raise HTTPException(400, f"Minimum withdrawal is $10 USDT equivalent ({rate * 10} AT).")
+
+    try:
+        with SessionLocal() as session:
+            # ── Fetch user ────────────────────────────────────────────────────
+            row = session.execute(
+                text(
+                    "SELECT at_balance, wallet_address, at_daily_withdrawn, at_withdrawal_reset_at "
+                    "FROM users WHERE id = :uid"
+                ),
+                {"uid": user_id},
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "User not found")
+
+            at_balance, wallet_address, daily_withdrawn, reset_at = row
+
+            if not wallet_address:
+                raise HTTPException(
+                    400, "You must link a wallet before withdrawing. Connect MetaMask in your profile."
+                )
+
+            # ── Reset daily counter if it's a new UTC day ─────────────────────
+            now_utc = datetime.now(timezone.utc)
+            if reset_at is None or reset_at.date() < now_utc.date():
+                daily_withdrawn = 0
+                session.execute(
+                    text(
+                        "UPDATE users SET at_daily_withdrawn = 0, at_withdrawal_reset_at = :now "
+                        "WHERE id = :uid"
+                    ),
+                    {"now": now_utc, "uid": user_id},
+                )
+
+            # ── Daily limit check ─────────────────────────────────────────────
+            if daily_withdrawn + at_amount > AT_DAILY_WITHDRAW_LIMIT:
+                remaining = AT_DAILY_WITHDRAW_LIMIT - daily_withdrawn
+                raise HTTPException(
+                    429,
+                    f"Daily withdrawal limit reached. You can withdraw {remaining} more AT today "
+                    f"(limit: {AT_DAILY_WITHDRAW_LIMIT} AT / day).",
+                )
+
+            # ── Balance check ─────────────────────────────────────────────────
+            if int(at_balance) < at_amount:
+                raise HTTPException(
+                    402,
+                    f"Insufficient Arena Tokens. You have {int(at_balance)} AT, "
+                    f"withdrawal requires {at_amount} AT.",
+                )
+
+            # ── Burn AT ───────────────────────────────────────────────────────
+            session.execute(
+                text(
+                    "UPDATE users "
+                    "SET at_balance = at_balance - :amt, "
+                    "    at_daily_withdrawn = at_daily_withdrawn + :amt "
+                    "WHERE id = :uid"
+                ),
+                {"amt": at_amount, "uid": user_id},
+            )
+
+            # ── Record transaction ────────────────────────────────────────────
+            session.execute(
+                text(
+                    "INSERT INTO transactions (user_id, type, amount, token, status, reference) "
+                    "VALUES (:uid, 'at_withdrawal', :amt, 'AT', 'pending', :ref)"
+                ),
+                {
+                    "uid":  user_id,
+                    "amt":  at_amount,
+                    "ref":  f"withdraw_{at_amount}_AT_to_{wallet_address[:10]}",
+                },
+            )
+
+            new_balance_row = session.execute(
+                text("SELECT at_balance FROM users WHERE id = :uid"),
+                {"uid": user_id},
+            ).fetchone()
+            new_balance = int(new_balance_row[0])
+
+            session.commit()
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("withdraw_at error: %s", exc)
+        raise HTTPException(500, "Withdrawal failed")
+
+    # CONTRACT-ready: send BNB to wallet_address from platform wallet
+    # When BLOCKCHAIN_RPC_URL + PLATFORM_WALLET_ADDRESS are set:
+    #   w3 = Web3(Web3.HTTPProvider(BLOCKCHAIN_RPC_URL))
+    #   bnb_amount = usdt_value / bnb_price_usd
+    #   tx = w3.eth.send_transaction({from: PLATFORM_WALLET_ADDRESS, to: wallet_address, value: bnb_amount})
+    tx_hash_placeholder = None
+    if BLOCKCHAIN_RPC_URL and PLATFORM_WALLET_ADDRESS:
+        logger.info(
+            "withdraw_at: CONTRACT-ready — would send %.4f USDT in BNB to %s",
+            usdt_value, wallet_address,
+        )
+
+    logger.info(
+        "withdraw_at: user=%s burned %d AT → $%.2f USDT to %s",
+        user_id, at_amount, usdt_value, wallet_address,
+    )
+
+    return {
+        "at_burned":      at_amount,
+        "usdt_value":     round(usdt_value, 2),
+        "wallet_address": wallet_address,
+        "at_balance":     new_balance,
+        "tx_hash":        tx_hash_placeholder,
+        "rate":           f"{rate} AT = $1 USDT",
+        "daily_remaining": AT_DAILY_WITHDRAW_LIMIT - (daily_withdrawn + at_amount),
+    }
+
+
 # ── AT packages ───────────────────────────────────────────────────────────────
 
 
