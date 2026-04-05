@@ -459,6 +459,7 @@ export type ApiCreateMatchSuccess = {
   game: string;
   status: string;
   stake_amount: number;
+  stake_currency: "CRYPTO" | "AT";
 };
 
 export type ApiMatchMutationResult =
@@ -468,7 +469,7 @@ export type ApiMatchMutationResult =
 /** POST /matches — Bearer auth; CS2 needs steam_id on user, Valorant needs riot_id */
 export async function apiCreateMatch(
   token: string,
-  body: { game: string; stake_amount: number },
+  body: { game: string; stake_amount: number; stake_currency?: "CRYPTO" | "AT" },
 ): Promise<ApiMatchMutationResult> {
   try {
     const res = await fetch(`${ENGINE_BASE}/matches`, {
@@ -485,7 +486,79 @@ export async function apiCreateMatch(
       game?: string;
       status?: string;
       stake_amount?: number;
+      stake_currency?: unknown;
     };
+    if (!res.ok) {
+      return {
+        ok: false as const,
+        status: res.status,
+        detail: parseFastApiDetail(raw.detail),
+      };
+    }
+    const scRaw = String(raw.stake_currency ?? body.stake_currency ?? "CRYPTO").toUpperCase();
+    const stake_currency: "CRYPTO" | "AT" = scRaw === "AT" ? "AT" : "CRYPTO";
+    return {
+      ok: true as const,
+      data: {
+        match_id: String(raw.match_id ?? ""),
+        game: String(raw.game ?? body.game),
+        status: String(raw.status ?? "waiting"),
+        stake_amount: typeof raw.stake_amount === "number" ? raw.stake_amount : body.stake_amount,
+        stake_currency,
+      },
+    };
+  } catch {
+    return { ok: false as const, status: 0, detail: null };
+  }
+}
+
+export type AtPackageRow = {
+  at_amount: number;
+  usdt_price: number;
+  discount_pct: number;
+  final_price: number;
+};
+
+/** GET /wallet/at-packages */
+export async function apiGetAtPackages(): Promise<{ packages: AtPackageRow[] } | null> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/wallet/at-packages`);
+    if (!res.ok) return null;
+    const raw = (await res.json()) as { packages?: unknown };
+    const rows = Array.isArray(raw.packages) ? raw.packages : [];
+    const packages: AtPackageRow[] = rows
+      .filter((p): p is Record<string, unknown> => p !== null && typeof p === "object")
+      .map((p) => ({
+        at_amount: asNum(p.at_amount) ?? 0,
+        usdt_price: asNum(p.usdt_price) ?? 0,
+        discount_pct: asNum(p.discount_pct) ?? 0,
+        final_price: asNum(p.final_price) ?? 0,
+      }))
+      .filter((p) => p.at_amount > 0);
+    return { packages };
+  } catch {
+    return null;
+  }
+}
+
+/** POST /wallet/buy-at-package */
+export async function apiBuyAtPackage(
+  token: string,
+  body: { tx_hash: string; at_amount: number },
+): Promise<
+  | { ok: true; at_balance: number; at_credited: number; usdt_spent: number; discount_pct: number }
+  | { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/wallet/buy-at-package`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) {
       return {
         ok: false as const,
@@ -495,15 +568,13 @@ export async function apiCreateMatch(
     }
     return {
       ok: true as const,
-      data: {
-        match_id: String(raw.match_id ?? ""),
-        game: String(raw.game ?? body.game),
-        status: String(raw.status ?? "waiting"),
-        stake_amount: typeof raw.stake_amount === "number" ? raw.stake_amount : body.stake_amount,
-      },
+      at_balance: asNum(raw.at_balance) ?? 0,
+      at_credited: asNum(raw.at_credited) ?? 0,
+      usdt_spent: asNum(raw.usdt_spent) ?? 0,
+      discount_pct: asNum(raw.discount_pct) ?? 0,
     };
   } catch {
-    return { ok: false as const, status: 0, detail: null };
+    return { ok: false as const, status: 0, detail: "Network error" };
   }
 }
 
@@ -926,6 +997,10 @@ export function mapApiMatchRowToMatch(row: Record<string, unknown>): Match | nul
     asNum(row.stake_per_player) ??
     0;
 
+  const scRaw = asStr(row.stake_currency ?? row.stakeCurrency)?.toUpperCase();
+  const stakeCurrency: Match["stakeCurrency"] | undefined =
+    scRaw === "AT" ? "AT" : scRaw === "CRYPTO" ? "CRYPTO" : undefined;
+
   const status = normalizeMatchListStatus(asStr(row.status));
   const typeRaw = (asStr(row.type ?? row.match_type) ?? "public").toLowerCase();
   const type = typeRaw === "custom" ? "custom" : "public";
@@ -994,6 +1069,7 @@ export function mapApiMatchRowToMatch(row: Record<string, unknown>): Match | nul
     ...(timeLeft ? { timeLeft } : {}),
     ...(lockCountdownStart ? { lockCountdownStart } : {}),
     ...(expiresAt ? { expiresAt } : {}),
+    ...(stakeCurrency ? { stakeCurrency } : {}),
   };
 
   return base;

@@ -118,6 +118,21 @@ vi.mock("@/lib/engine-api", async () => {
     apiChangePassword: vi.fn(async () => ({ ok: true as const })),
     apiListMatchesOpen: vi.fn(async () => []),
     apiListMatchesHistory: vi.fn(async () => []),
+    apiGetAtPackages: vi.fn(async () => ({
+      packages: [
+        { at_amount: 500, usdt_price: 5, discount_pct: 0, final_price: 5 },
+        { at_amount: 1000, usdt_price: 10, discount_pct: 5, final_price: 9.5 },
+        { at_amount: 2500, usdt_price: 25, discount_pct: 5, final_price: 23.75 },
+        { at_amount: 5000, usdt_price: 50, discount_pct: 10, final_price: 45 },
+      ],
+    })),
+    apiBuyAtPackage: vi.fn(async () => ({
+      ok: true as const,
+      at_balance: 5200,
+      at_credited: 1000,
+      usdt_spent: 9.5,
+      discount_pct: 5,
+    })),
     apiGetLeaderboard: vi.fn(async (opts?: { game?: string; limit?: number; range?: string }) => {
       const { LEADERBOARD_GLOBAL_TEST, LEADERBOARD_BY_GAME_TEST } =
         await import("@/test/leaderboardTestFixture");
