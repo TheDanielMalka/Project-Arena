@@ -671,6 +671,7 @@ class TestMatchGating:
         session.execute.return_value.fetchone.side_effect = [
             ("CS2", "waiting", None, "CRYPTO"),  # match lookup
             self._user_steam(),      # user lookup
+            None,                    # active-room guard → no active room
             None,                    # already-joined check → not joined yet
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -680,6 +681,23 @@ class TestMatchGating:
             )
         assert resp.status_code == 200
         assert resp.json()["joined"] is True
+
+    def test_join_match_when_already_in_active_room_returns_409(self):
+        """Player already in another active room → 409 before joining."""
+        match_id = str(uuid.uuid4())
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            ("CS2", "waiting", None, "CRYPTO"),  # match lookup
+            self._user_steam(),                  # user lookup
+            (str(uuid.uuid4()),),                # active-room guard → already in a room
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{match_id}/join",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 409
+        assert "active" in resp.json()["detail"].lower()
 
     def test_join_cs2_match_without_steam_returns_403(self):
         match_id = str(uuid.uuid4())
@@ -740,7 +758,8 @@ class TestMatchGating:
         session.execute.return_value.fetchone.side_effect = [
             ("CS2", "waiting", None, "CRYPTO"),   # match lookup
             self._user_steam(),   # user lookup
-            (1,),                 # already-joined check → duplicate
+            None,                 # active-room guard → no other active room
+            (1,),                 # already-joined check → duplicate in same match
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(

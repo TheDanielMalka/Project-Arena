@@ -1958,7 +1958,26 @@ async def join_match(match_id: str, payload: dict = Depends(verify_token)):
                 if stake_amount:
                     _assert_usdt_balance(wallet_address, float(stake_amount))
 
-            # ── Duplicate join guard ──────────────────────────────────────────
+            # ── One active room per player (join path) ────────────────────────
+            active_room = session.execute(
+                text(
+                    "SELECT m.id FROM matches m "
+                    "JOIN match_players mp ON mp.match_id = m.id "
+                    "WHERE mp.user_id = :uid "
+                    "  AND m.status IN ('waiting','in_progress') "
+                    "LIMIT 1"
+                ),
+                {"uid": user_id},
+            ).fetchone()
+
+            if active_room:
+                raise HTTPException(
+                    409,
+                    "You are already in an active match room. "
+                    "Leave or finish your current room before joining another.",
+                )
+
+            # ── Duplicate join guard (same match) ─────────────────────────────
             already = session.execute(
                 text(
                     "SELECT 1 FROM match_players "
