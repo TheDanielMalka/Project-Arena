@@ -271,3 +271,111 @@ class TestMappings:
         from src.contract.escrow_client import _TEAM_TO_INT, _INT_TO_TEAM
         for letter in ("A", "B"):
             assert _INT_TO_TEAM[_TEAM_TO_INT[letter]] == letter
+
+
+class TestLoadSaveLastBlock:
+    def test_load_returns_saved_value(self):
+        """DB has a row → returns last_block integer."""
+        c, *_ = _client(fns=[(42,)])
+        assert c._load_last_block() == 42
+
+    def test_load_returns_zero_on_empty(self):
+        """DB row is None (empty table) → returns 0 (cold-start fallback)."""
+        c, *_ = _client(fns=[None])
+        assert c._load_last_block() == 0
+
+    def test_load_returns_zero_on_db_error(self):
+        """DB raises → returns 0, never propagates."""
+        c, *_ = _client()
+        c._session_factory = None  # forces AttributeError inside _load_last_block
+        assert c._load_last_block() == 0
+
+    def test_save_calls_commit(self):
+        """_save_last_block() must commit the session."""
+        c, _, _, s = _client()
+        c._save_last_block(999)
+        s.commit.assert_called_once()
+
+    def test_save_non_fatal_on_error(self):
+        """DB commit raises → no exception propagated."""
+        c, _, _, s = _client()
+        s.commit.side_effect = RuntimeError("db down")
+        c._save_last_block(1)  # must not raise
+
+    def test_save_passes_correct_block(self):
+        """UPSERT receives the exact block number we pass."""
+        import re
+        c, _, _, s = _client()
+        c._save_last_block(12345)
+        call_args = s.execute.call_args
+        params = call_args[0][1] if len(call_args[0]) > 1 else call_args[1].get("parameters", {})
+        assert params.get("block") == 12345
+
+
+class TestListenerStartup:
+    def test_listen_resumes_from_saved_block(self):
+        """When DB has last_block=50, listener starts from 51 (not from lookback)."""
+        import time
+        c, w3, *_ = _client(fns=[(50,)])  # _load_last_block → 50
+        w3.eth.block_number = 55
+
+        processed = []
+
+        def fake_process(frm, to):
+            processed.append((frm, to))
+            return 0
+
+        c.process_events = fake_process
+        c._save_last_block = MagicMock()
+
+        calls = []
+        _orig_sleep = time.sleep
+
+        def _one_iteration(secs):
+            # Stop after the first poll by raising StopIteration
+            raise StopIteration
+
+        import unittest.mock as um
+        with um.patch("time.sleep", side_effect=_one_iteration):
+            try:
+                c.listen(poll_interval=1, lookback_blocks=10)
+            except StopIteration:
+                pass
+
+        # First poll must scan from saved_block+1 = 51, not from 55-10 = 45
+        assert processed and processed[0][0] == 51
+
+    def test_listen_cold_start_uses_lookback(self):
+        """When DB returns 0, listener falls back to current_block - lookback_blocks."""
+        import time, unittest.mock as um
+        c, w3, *_ = _client(fns=[None])  # _load_last_block → 0
+        w3.eth.block_number = 200
+
+        processed = []
+        c.process_events = lambda f, t: processed.append((f, t)) or 0
+        c._save_last_block = MagicMock()
+
+        with um.patch("time.sleep", side_effect=StopIteration):
+            try:
+                c.listen(poll_interval=1, lookback_blocks=50)
+            except StopIteration:
+                pass
+
+        # Cold start: from = 200 - 50 = 150
+        assert processed and processed[0][0] == 151  # last_block=150 → scan 151..200
+
+    def test_listen_saves_block_after_poll(self):
+        """After each poll cycle, _save_last_block is called with current_block."""
+        import time, unittest.mock as um
+        c, w3, *_ = _client(fns=[(10,)])
+        w3.eth.block_number = 20
+        c.process_events = MagicMock(return_value=0)
+        c._save_last_block = MagicMock()
+
+        with um.patch("time.sleep", side_effect=StopIteration):
+            try:
+                c.listen(poll_interval=1)
+            except StopIteration:
+                pass
+
+        c._save_last_block.assert_called_once_with(20)
