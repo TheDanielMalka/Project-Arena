@@ -340,6 +340,20 @@ const MatchLobby = () => {
     return { maxPerTeam, teamA: match.players.slice(0, maxPerTeam), teamB: match.players.slice(maxPerTeam, maxPerTeam * 2) };
   };
 
+  /** True whenever the player is in an active room (waiting OR in_progress). */
+  const isInActiveRoom = !!myActiveRoom || roomLocked;
+
+  /** Blocks join/create when already in a room — covers both waiting and in_progress. */
+  const guardNotInRoom = useCallback((): boolean => {
+    if (!isInActiveRoom) return true;
+    useNotificationStore.getState().addNotification({
+      type: "system",
+      title: "Already in a room",
+      message: "Leave or finish your current match before joining or creating another.",
+    });
+    return false;
+  }, [isInActiveRoom]);
+
   /** MetaMask on BSC Testnet — required for create/join (Issue #23). */
   const guardWalletConnected = useCallback((): boolean => {
     if (useWalletStore.getState().connectedAddress) return true;
@@ -367,6 +381,7 @@ const MatchLobby = () => {
 
   const handleJoinPublic = (matchId: string, betAmount?: number) => {
     if (!user) return;
+    if (!guardNotInRoom()) return;
     const bet = betAmount ?? selectedBet;
     if (!bet) return;
     setSelectedBet(bet);
@@ -381,6 +396,7 @@ const MatchLobby = () => {
   };
   const handleOpenPublicLobby = (matchId: string) => setSelectedPublicLobbyId(matchId);
   const handleJoinCustom = (matchId: string, bet: number, team?: "A" | "B") => {
+    if (!guardNotInRoom()) return;
     const m = customMatches.find((x) => x.id === matchId);
     if (m && matchStakeCurrency(m) !== "AT" && !guardWalletConnected()) return;
     if (!guardCanPlay()) return;
@@ -458,6 +474,11 @@ const MatchLobby = () => {
     if (token && looksLikeServerMatchId(match.id)) {
       const jr = await apiJoinMatch(token, match.id);
       if (jr.ok === false) {
+        // 409 = already in another room → restore it
+        if (jr.status === 409 && token) {
+          const active = await apiGetActiveMatch(token);
+          if (active?.match?.match_id) setMyRoomMatchId(active.match.match_id);
+        }
         useNotificationStore.getState().addNotification({
           type: "system",
           title: "Could not join match",
@@ -968,7 +989,7 @@ const MatchLobby = () => {
                 <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-border">
                   <p className="text-xs text-muted-foreground">{selectedPublicLobby.players.length}/{selectedPublicLobby.maxPlayers} players in lobby</p>
                   <Button
-                    disabled={selectedPublicLobby.status !== "waiting" || selectedPublicLobby.players.length >= selectedPublicLobby.maxPlayers || !(matchStakeCurrency(selectedPublicLobby) === "AT" ? canJoinAtStake : canPlayStaked)}
+                    disabled={isInActiveRoom || selectedPublicLobby.status !== "waiting" || selectedPublicLobby.players.length >= selectedPublicLobby.maxPlayers || !(matchStakeCurrency(selectedPublicLobby) === "AT" ? canJoinAtStake : canPlayStaked)}
                     onClick={() => { setSelectedPublicLobbyId(null); handleJoinPublic(selectedPublicLobby.id, selectedPublicLobby.betAmount); }}
                     className="font-display"
                     title={matchStakeCurrency(selectedPublicLobby) === "AT" ? (!canPlay ? "Arena Client not connected" : undefined) : stakedActionTitle}
@@ -1363,10 +1384,10 @@ const MatchLobby = () => {
                       </Badge>
                       <span className="font-display text-sm font-bold text-arena-gold">{formatMatchStakeShort(match)}</span>
                       {canJoin ? (
-                        <Button size="sm" disabled={depositConfirm !== null || !(matchStakeCurrency(match) === "AT" ? canJoinAtStake : canPlayStaked)}
+                        <Button size="sm" disabled={isInActiveRoom || depositConfirm !== null || !(matchStakeCurrency(match) === "AT" ? canJoinAtStake : canPlayStaked)}
                           onClick={(e) => { e.stopPropagation(); handleJoinPublic(match.id, match.betAmount); }}
                           className="font-display text-xs"
-                          title={matchStakeCurrency(match) === "AT" ? (!canPlay ? "Arena Client not connected" : undefined) : stakedActionTitle}
+                          title={isInActiveRoom ? "Leave your current room first" : matchStakeCurrency(match) === "AT" ? (!canPlay ? "Arena Client not connected" : undefined) : stakedActionTitle}
                           style={glowing && cfg ? { boxShadow: `0 0 12px ${cfg.color}60` } : {}}>
                           <Swords className="mr-1 h-3 w-3" /> Join
                         </Button>
@@ -1453,10 +1474,10 @@ const MatchLobby = () => {
                 <Input placeholder="Enter match code (e.g. ARENA-7X2K)" value={customCode}
                   onChange={(e) => setCustomCode(e.target.value.toUpperCase())}
                   className="font-mono bg-secondary border-border placeholder:text-muted-foreground/40" />
-                <Button disabled={!customCode || !canPlay}
+                <Button disabled={isInActiveRoom || !customCode || !canPlay}
                   onClick={() => { const found = customMatches.find(m => m.code === customCode); if (found) handleJoinCustom(found.id, found.betAmount); }}
                   className="font-display shrink-0"
-                  title={!canPlay ? "Arena Client not connected" : stakedActionTitle}>
+                  title={isInActiveRoom ? "Leave your current room first" : !canPlay ? "Arena Client not connected" : stakedActionTitle}>
                   <Search className="mr-2 h-4 w-4" /> Find
                 </Button>
               </div>
@@ -1468,11 +1489,11 @@ const MatchLobby = () => {
             </div>
             {!createMode ? (
               <button
-                onClick={() => canPlay && setCreateMode(true)}
-                disabled={!canPlay}
-                title={!canPlay ? "Arena Client not connected" : !connectedAddress ? "Connect wallet for crypto stakes; AT-only rooms work without MetaMask once you pick Arena Tokens." : undefined}
+                onClick={() => canPlay && !isInActiveRoom && setCreateMode(true)}
+                disabled={!canPlay || isInActiveRoom}
+                title={isInActiveRoom ? "Leave your current room before creating a new one" : !canPlay ? "Arena Client not connected" : !connectedAddress ? "Connect wallet for crypto stakes; AT-only rooms work without MetaMask once you pick Arena Tokens." : undefined}
                 className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border font-display text-sm font-semibold transition-colors ${
-                  canPlay
+                  canPlay && !isInActiveRoom
                     ? "border-arena-purple/30 text-arena-purple hover:bg-arena-purple/10"
                     : "border-border/30 text-muted-foreground/40 cursor-not-allowed"
                 }`}>
@@ -1796,7 +1817,7 @@ const MatchLobby = () => {
                               <p key={i} className="text-xs text-muted-foreground/30 italic pl-5">Empty slot</p>
                             ))}
                           </div>
-                          {canJoin && !full && (matchStakeCurrency(match) === "AT" ? canJoinAtStake : canPlayStaked) && (
+                          {canJoin && !full && !isInActiveRoom && (matchStakeCurrency(match) === "AT" ? canJoinAtStake : canPlayStaked) && (
                             <button onClick={() => handleJoinCustom(match.id, match.betAmount, isA ? "A" : "B")}
                               className={`mt-1.5 w-full flex items-center justify-center gap-1 py-1 rounded-lg border ${joinBorder} ${joinText} ${joinHover} transition-colors text-xs font-display`}>
                               <UserPlus className="h-3 w-3" /> Join {label}
