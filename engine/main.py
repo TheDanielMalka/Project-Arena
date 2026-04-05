@@ -41,6 +41,7 @@ SessionLocal = sessionmaker(bind=db_engine)
 # (local dev / CI without blockchain config) — engine runs without escrow.
 # CONTRACT-ready: EscrowClient.declare_winner() releases payout on-chain.
 _escrow_client = None
+_listener_task = None  # background thread task — EscrowClient.listen()
 
 
 @asynccontextmanager
@@ -99,9 +100,26 @@ async def lifespan(app: FastAPI):
     _rq_task = asyncio.create_task(_rage_quit_detector.run())
     logger.info("✅ RageQuitDetector started")
 
+    # EscrowClient event listener — only when escrow is available.
+    # listen() is a blocking loop (time.sleep) so it runs in a thread pool.
+    # Resumes from oracle_sync_state.last_block on restart — no missed events.
+    global _listener_task
+    if _escrow_client:
+        _listener_task = asyncio.create_task(
+            asyncio.to_thread(_escrow_client.listen, 15)
+        )
+        logger.info("✅ EscrowClient event listener started")
+
     yield
 
+    # ── Shutdown ──────────────────────────────────────────────────────────────
     _rq_task.cancel()
+    if _listener_task:
+        _listener_task.cancel()
+        try:
+            await _listener_task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(
