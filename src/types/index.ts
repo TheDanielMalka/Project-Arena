@@ -97,6 +97,8 @@ export type UserProfilePatch = Omit<Partial<UserProfile>, "stats"> & {
 
 // ─── Matches ─────────────────────────────────────────────────
 
+export type StakeCurrency = "CRYPTO" | "AT";
+
 export interface Match {
   id: string;
   type: MatchType;
@@ -104,6 +106,8 @@ export interface Match {
   hostId: string;
   game: Game;
   mode: MatchMode;
+  /** DB: matches.stake_currency — default CRYPTO when omitted from API */
+  stakeCurrency?: StakeCurrency;
   betAmount: number;         // stake per player — DB: matches.bet_amount
   players: string[];
   maxPlayers: number;        // teamSize * 2 — DB: matches.max_players

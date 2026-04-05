@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MatchRosterAvatar } from "@/components/match/MatchRosterAvatar";
-import type { MatchStatus, Game, Match, MatchMode } from "@/types";
+import type { MatchStatus, Game, Match, MatchMode, StakeCurrency } from "@/types";
 import { useClientStore }  from "@/stores/clientStore";
 import { GAME_MODES, getDefaultMode, getTeamSize, getTotalPlayers, isGameActive } from "@/config/gameModes";
 import { PlayerPopoverLayer } from "@/components/players/PlayerCardPopover";
@@ -62,6 +62,16 @@ const IDENTITY_PROVIDER: Record<string, { name: string; field: string }> = {
 
 const BET_AMOUNTS = [5, 10, 25, 50];
 const CREATE_BET_AMOUNTS = [5, 10, 25, 50, 100];
+const AT_BET_AMOUNTS = [500, 1000, 2500, 5000];
+
+function matchStakeCurrency(m: Pick<Match, "stakeCurrency">): StakeCurrency {
+  return m.stakeCurrency ?? "CRYPTO";
+}
+
+/** List row / badges: "$10" or "1,000 AT" */
+function formatMatchStakeShort(m: Pick<Match, "betAmount" | "stakeCurrency">): string {
+  return matchStakeCurrency(m) === "AT" ? `${m.betAmount.toLocaleString()} AT` : `$${m.betAmount}`;
+}
 
 const statusConfig: Record<MatchStatus, { label: string; color: string; icon: React.ElementType }> = {
   waiting:     { label: "Waiting",   color: "bg-arena-gold/15 text-arena-gold border-arena-gold/30",       icon: Clock },
@@ -217,7 +227,7 @@ const LiveTicker = ({ matches }: { matches: Match[] }) => {
                 onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />}
               <span className="text-foreground font-medium">{winner}</span>
               <span>won</span>
-              <span className="text-arena-gold font-bold">${m.betAmount}</span>
+              <span className="text-arena-gold font-bold">{formatMatchStakeShort(m)}</span>
               <span style={{ color: cfg?.color }}>· {m.game}</span>
               <span className="text-border mx-3">|</span>
             </span>
@@ -245,9 +255,11 @@ const MatchLobby = () => {
   } = useMatchStore();
   const { lockEscrow, cancelEscrow, connectedAddress, connectWallet: linkMetaMaskForMatch } = useWalletStore();
   const canPlay      = useClientStore((s) => s.canPlayForUser(websiteUserId));
+  /** CRYPTO matches need MetaMask; AT stakes use server AT balance (still need client for play). */
   const canPlayStaked = canPlay && !!connectedAddress;
   const stakedActionTitle =
     !connectedAddress ? "Connect Wallet (MetaMask, BSC Testnet)" : !canPlay ? "Arena Client not connected" : undefined;
+  const canJoinAtStake = canPlay;
   const clientStatus = useClientStore((s) => s.status);
   const clientVersion = useClientStore((s) => s.version);
   const clientStatusLabel = useClientStore((s) => s.statusLabel);
@@ -264,6 +276,7 @@ const MatchLobby = () => {
   const [selectedGame, setSelectedGame] = useState<string>("");
   const [createMode, setCreateMode] = useState(false);
   const [newMatchBet, setNewMatchBet] = useState<number | null>(null);
+  const [createStakeCurrency, setCreateStakeCurrency] = useState<StakeCurrency>("CRYPTO");
   const [newMatchGame, setNewMatchGame] = useState<Game | "">("");
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [newMatchMode, setNewMatchMode] = useState<MatchMode | null>(null);
@@ -329,13 +342,13 @@ const MatchLobby = () => {
 
   const handleJoinPublic = (matchId: string, betAmount?: number) => {
     if (!user) return;
-    if (!guardWalletConnected()) return;
-    if (!guardCanPlay()) return;
     const bet = betAmount ?? selectedBet;
     if (!bet) return;
     setSelectedBet(bet);
     const match = publicMatches.find(m => m.id === matchId);
     if (!match) return;
+    if (matchStakeCurrency(match) !== "AT" && !guardWalletConnected()) return;
+    if (!guardCanPlay()) return;
     // No team for public matches — deposit modal handles both public and custom
     setDepositConfirm({ match });
     setDepositStep("idle");
@@ -343,7 +356,8 @@ const MatchLobby = () => {
   };
   const handleOpenPublicLobby = (matchId: string) => setSelectedPublicLobbyId(matchId);
   const handleJoinCustom = (matchId: string, bet: number, team?: "A" | "B") => {
-    if (!guardWalletConnected()) return;
+    const m = customMatches.find((x) => x.id === matchId);
+    if (m && matchStakeCurrency(m) !== "AT" && !guardWalletConnected()) return;
     if (!guardCanPlay()) return;
     setPasswordPrompt({ matchId, bet, team }); setPasswordInput(""); setPasswordError(false); setShowPassword(false);
   };
@@ -351,7 +365,7 @@ const MatchLobby = () => {
     if (!passwordPrompt) return;
     const match = customMatches.find(m => m.id === passwordPrompt.matchId);
     if (match && passwordInput === match.password) {
-      if (!guardWalletConnected()) return;
+      if (matchStakeCurrency(match) !== "AT" && !guardWalletConnected()) return;
       if (!guardCanPlay()) return;
       setPasswordPrompt(null); setPasswordInput("");
       setDepositConfirm({ match, team: passwordPrompt.team });
@@ -361,18 +375,18 @@ const MatchLobby = () => {
   };
   const handleDepositConfirm = async () => {
     if (!depositConfirm || !user) return;
-    if (!guardWalletConnected()) return;
-    if (!guardCanPlay()) return;
     const { match } = depositConfirm;
+    if (matchStakeCurrency(match) !== "AT" && !guardWalletConnected()) return;
+    if (!guardCanPlay()) return;
     setDepositStep("verifying");
     setCheckResults(null);
 
     // 1. Arena Client — same gate as Join (desktop client + version_ok + user binding).
     const clientOk = useClientStore.getState().canPlayForUser(websiteUserId);
 
-    // 2. Wallet — linked in session (MetaMask address).
+    // 2. Wallet — MetaMask for CRYPTO; AT stakes skip (balance checked in step 4).
     const walletAddr = useWalletStore.getState().connectedAddress;
-    const walletOk = !!walletAddr;
+    const walletOk = matchStakeCurrency(match) === "AT" ? true : !!walletAddr;
 
     // 3. Identity — game account on profile (matches create/join API gates).
     const isCs2 = match.game === "CS2";
@@ -382,10 +396,14 @@ const MatchLobby = () => {
         ? !!user.riotId
         : !!(user.steamId || user.riotId);
 
-    // 4. Balance — native BNB on configured chain ≥ stake amount (numeric same as match.betAmount / contract stake).
+    // 4. Balance — AT (DB) or native BNB on chain ≥ stake
     let balanceOk = false;
     let balanceDetail = "–";
-    if (walletAddr) {
+    if (matchStakeCurrency(match) === "AT") {
+      const atBal = user.atBalance ?? 0;
+      balanceOk = atBal >= match.betAmount;
+      balanceDetail = `${atBal.toLocaleString()} AT (need ≥${match.betAmount.toLocaleString()})`;
+    } else if (walletAddr) {
       try {
         const bnb = await getBnbBalance(walletAddr);
         balanceOk = bnb >= match.betAmount;
@@ -409,9 +427,9 @@ const MatchLobby = () => {
   };
   const handleDepositFinal = async () => {
     if (!depositConfirm || !user) return;
-    if (!guardWalletConnected()) return;
-    if (!guardCanPlay()) return;
     const { match, team } = depositConfirm;
+    if (matchStakeCurrency(match) !== "AT" && !guardWalletConnected()) return;
+    if (!guardCanPlay()) return;
     if (token && looksLikeServerMatchId(match.id)) {
       const jr = await apiJoinMatch(token, match.id);
       if (jr.ok === false) {
@@ -425,6 +443,20 @@ const MatchLobby = () => {
         setCheckResults(null);
         return;
       }
+    }
+    if (matchStakeCurrency(match) === "AT") {
+      joinMatch(match.id, user.username, team);
+      setMyRoomMatchId(match.id);
+      setRoomLocked(false);
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "🔒 Stake confirmed",
+        message: `${match.betAmount.toLocaleString()} AT locked for ${match.game} ${match.mode}. Waiting for all players.`,
+      });
+      setDepositConfirm(null);
+      setDepositStep("idle");
+      setCheckResults(null);
+      return;
     }
     const escrowTx = await lockEscrow(match.betAmount, match.id);
     if (!escrowTx) {
@@ -462,7 +494,10 @@ const MatchLobby = () => {
 
   const filteredCustom = customMatches.filter(m => !selectedGame || m.game === selectedGame);
   const filteredPublicMatches = publicMatches.filter(m => {
-    if (selectedBet !== null && m.betAmount !== selectedBet) return false;
+    if (selectedBet !== null) {
+      if (matchStakeCurrency(m) === "AT") return false;
+      if (m.betAmount !== selectedBet) return false;
+    }
     if (filterGame && m.game !== filterGame) return false;
     if (filterMode && m.mode !== filterMode) return false;
     return true;
@@ -555,7 +590,7 @@ const MatchLobby = () => {
       useNotificationStore.getState().addNotification({
         type: "system",
         title: "↩️ Left Room",
-        message: `You left the match room. Your $${myActiveRoom.betAmount} has been refunded.`,
+        message: `You left the match room. Your ${formatMatchStakeShort(myActiveRoom)} stake has been refunded.`,
       });
     }
   }, [myActiveRoom, user, leaveMatch, cancelEscrow]);
@@ -572,7 +607,7 @@ const MatchLobby = () => {
     useNotificationStore.getState().addNotification({
       type: "system",
       title: "🗑️ Room Deleted",
-      message: `Match room closed. Your $${myActiveRoom.betAmount} deposit has been refunded.`,
+      message: `Match room closed. Your ${formatMatchStakeShort(myActiveRoom)} deposit has been refunded.`,
     });
   }, [myActiveRoom, user, cancelEscrow, deleteMatch]);
 
@@ -652,6 +687,7 @@ const MatchLobby = () => {
         const { match, team } = depositConfirm;
         const cfg = ALL_GAME_CONFIG[match.game];
         const idp = IDENTITY_PROVIDER[match.game] ?? { name: "Platform", field: "Account ID" };
+        const stakeIsAt = matchStakeCurrency(match) === "AT";
         const isVerifying  = depositStep === "verifying";
         const isConfirmed  = depositStep === "confirmed";
         const isFailed     = depositStep === "failed";
@@ -669,10 +705,14 @@ const MatchLobby = () => {
           },
           {
             icon: Wallet,
-            label: "Wallet connected",
-            detail: connectedAddress
-              ? `${connectedAddress.slice(0, 6)}...${connectedAddress.slice(-4)}`
-              : "Not connected",
+            label: stakeIsAt ? "Wallet (optional for AT)" : "Wallet connected",
+            detail: stakeIsAt
+              ? connectedAddress
+                ? `${connectedAddress.slice(0, 6)}...${connectedAddress.slice(-4)}`
+                : "AT stake uses your Arena balance"
+              : connectedAddress
+                ? `${connectedAddress.slice(0, 6)}...${connectedAddress.slice(-4)}`
+                : "Not connected",
             ok: checkResults?.wallet ?? null,
           },
           {
@@ -683,8 +723,8 @@ const MatchLobby = () => {
           },
           {
             icon: CheckCircle,
-            label: "Sufficient BNB for stake",
-            detail: checkResults?.balanceDetail ?? `≥ ${match.betAmount} BNB`,
+            label: stakeIsAt ? "Sufficient AT for stake" : "Sufficient BNB for stake",
+            detail: checkResults?.balanceDetail ?? (stakeIsAt ? `≥ ${match.betAmount.toLocaleString()} AT` : `≥ ${match.betAmount} BNB`),
             ok: checkResults?.balance ?? null,
           },
         ];
@@ -714,12 +754,12 @@ const MatchLobby = () => {
                       {match.code ? ` · ${match.code}` : ` · #${match.id}`}
                     </p>
                   </div>
-                  <span className="font-display text-lg font-bold text-arena-gold shrink-0">${match.betAmount}</span>
+                  <span className="font-display text-lg font-bold text-arena-gold shrink-0">{formatMatchStakeShort(match)}</span>
                 </div>
                 {/* Verification checklist */}
                 <div className="space-y-2">
                   <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground flex items-center gap-1.5">
-                    <span className="w-1 h-3 rounded-full bg-arena-cyan inline-block" /> Contract Verification
+                    <span className="w-1 h-3 rounded-full bg-arena-cyan inline-block" /> {stakeIsAt ? "Pre-join checks" : "Contract Verification"}
                   </p>
                   {checks.map(({ icon: Icon, label, detail, ok }) => (
                     <div key={label} className="flex items-center gap-3 rounded-lg border border-border/60 bg-secondary/20 px-3 py-2">
@@ -757,13 +797,26 @@ const MatchLobby = () => {
                       All checks passed — ready to lock funds
                     </p>
                     <p className="text-xs text-muted-foreground leading-relaxed">
-                      Pressing <span className="text-foreground font-semibold">Confirm &amp; Lock</span> will open MetaMask
-                      and lock <span className="text-arena-gold font-bold">{match.betAmount} BNB</span> (stake) into escrow.
-                      This action cannot be undone until the match resolves.
+                      {stakeIsAt ? (
+                        <>
+                          Pressing <span className="text-foreground font-semibold">Confirm &amp; Lock</span> will lock{" "}
+                          <span className="text-arena-gold font-bold">{match.betAmount.toLocaleString()} AT</span> for this match
+                          (server-side). This action cannot be undone until the match resolves.
+                        </>
+                      ) : (
+                        <>
+                          Pressing <span className="text-foreground font-semibold">Confirm &amp; Lock</span> will open MetaMask
+                          and lock <span className="text-arena-gold font-bold">{match.betAmount} BNB</span> (stake) into escrow.
+                          This action cannot be undone until the match resolves.
+                        </>
+                      )}
                     </p>
                     <div className="flex gap-2">
-                      <Button onClick={handleDepositFinal} className="flex-1 font-display glow-green">
-                        <Lock className="mr-2 h-4 w-4" /> Confirm &amp; Lock {match.betAmount} BNB
+                      <Button onClick={() => void handleDepositFinal()} className="flex-1 font-display glow-green">
+                        <Lock className="mr-2 h-4 w-4" />{" "}
+                        {stakeIsAt
+                          ? <>Confirm &amp; Lock {match.betAmount.toLocaleString()} AT</>
+                          : <>Confirm &amp; Lock {match.betAmount} BNB</>}
                       </Button>
                       <Button variant="outline" onClick={() => { setDepositConfirm(null); setDepositStep("idle"); setCheckResults(null); }}>
                         Cancel
@@ -820,7 +873,7 @@ const MatchLobby = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className="font-display text-xl font-bold text-arena-gold">${selectedPublicLobby.betAmount}</span>
+                    <span className="font-display text-xl font-bold text-arena-gold">Stakes: {formatMatchStakeShort(selectedPublicLobby)}</span>
                     <button onClick={() => setSelectedPublicLobbyId(null)}
                       className="px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors font-display">
                       Close
@@ -848,10 +901,10 @@ const MatchLobby = () => {
                 <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-border">
                   <p className="text-xs text-muted-foreground">{selectedPublicLobby.players.length}/{selectedPublicLobby.maxPlayers} players in lobby</p>
                   <Button
-                    disabled={selectedPublicLobby.status !== "waiting" || selectedPublicLobby.players.length >= selectedPublicLobby.maxPlayers || !canPlayStaked}
+                    disabled={selectedPublicLobby.status !== "waiting" || selectedPublicLobby.players.length >= selectedPublicLobby.maxPlayers || !(matchStakeCurrency(selectedPublicLobby) === "AT" ? canJoinAtStake : canPlayStaked)}
                     onClick={() => { setSelectedPublicLobbyId(null); handleJoinPublic(selectedPublicLobby.id, selectedPublicLobby.betAmount); }}
                     className="font-display"
-                    title={stakedActionTitle}
+                    title={matchStakeCurrency(selectedPublicLobby) === "AT" ? (!canPlay ? "Arena Client not connected" : undefined) : stakedActionTitle}
                     style={cfg ? { boxShadow: `0 0 16px ${cfg.color}40` } : {}}>
                     <Swords className="mr-1.5 h-4 w-4" /> Join This Lobby
                   </Button>
@@ -908,7 +961,7 @@ const MatchLobby = () => {
             <span>·</span>
             <span>{myActiveRoom.mode}</span>
             <span>·</span>
-            <span className="text-arena-gold font-bold">${myActiveRoom.betAmount} stake</span>
+            <span className="text-arena-gold font-bold">Stakes: {formatMatchStakeShort(myActiveRoom)}</span>
             {myActiveRoom.code && (
               <>
                 <span>·</span>
@@ -1211,12 +1264,12 @@ const MatchLobby = () => {
                       <Badge className={`${status.color} border text-xs gap-1`}>
                         <StatusIcon className="h-3 w-3" />{status.label}
                       </Badge>
-                      <span className="font-display text-sm font-bold text-arena-gold">${match.betAmount}</span>
+                      <span className="font-display text-sm font-bold text-arena-gold">{formatMatchStakeShort(match)}</span>
                       {canJoin ? (
-                        <Button size="sm" disabled={depositConfirm !== null || !canPlayStaked}
+                        <Button size="sm" disabled={depositConfirm !== null || !(matchStakeCurrency(match) === "AT" ? canJoinAtStake : canPlayStaked)}
                           onClick={(e) => { e.stopPropagation(); handleJoinPublic(match.id, match.betAmount); }}
                           className="font-display text-xs"
-                          title={stakedActionTitle}
+                          title={matchStakeCurrency(match) === "AT" ? (!canPlay ? "Arena Client not connected" : undefined) : stakedActionTitle}
                           style={glowing && cfg ? { boxShadow: `0 0 12px ${cfg.color}60` } : {}}>
                           <Swords className="mr-1 h-3 w-3" /> Join
                         </Button>
@@ -1303,10 +1356,10 @@ const MatchLobby = () => {
                 <Input placeholder="Enter match code (e.g. ARENA-7X2K)" value={customCode}
                   onChange={(e) => setCustomCode(e.target.value.toUpperCase())}
                   className="font-mono bg-secondary border-border placeholder:text-muted-foreground/40" />
-                <Button disabled={!customCode || !canPlayStaked}
+                <Button disabled={!customCode || !canPlay}
                   onClick={() => { const found = customMatches.find(m => m.code === customCode); if (found) handleJoinCustom(found.id, found.betAmount); }}
                   className="font-display shrink-0"
-                  title={stakedActionTitle}>
+                  title={!canPlay ? "Arena Client not connected" : stakedActionTitle}>
                   <Search className="mr-2 h-4 w-4" /> Find
                 </Button>
               </div>
@@ -1318,11 +1371,11 @@ const MatchLobby = () => {
             </div>
             {!createMode ? (
               <button
-                onClick={() => canPlayStaked && setCreateMode(true)}
-                disabled={!canPlayStaked}
-                title={stakedActionTitle}
+                onClick={() => canPlay && setCreateMode(true)}
+                disabled={!canPlay}
+                title={!canPlay ? "Arena Client not connected" : !connectedAddress ? "Connect wallet for crypto stakes; AT-only rooms work without MetaMask once you pick Arena Tokens." : undefined}
                 className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border font-display text-sm font-semibold transition-colors ${
-                  canPlayStaked
+                  canPlay
                     ? "border-arena-purple/30 text-arena-purple hover:bg-arena-purple/10"
                     : "border-border/30 text-muted-foreground/40 cursor-not-allowed"
                 }`}>
@@ -1377,18 +1430,43 @@ const MatchLobby = () => {
                     )}
                   </div>
                 )}
-                {/* Bet */}
+                {/* Stake currency + amount */}
                 <div>
-                  <label className="text-xs text-muted-foreground mb-2 block uppercase tracking-wider">Bet Amount</label>
+                  <label className="text-xs text-muted-foreground mb-2 block uppercase tracking-wider">Stake currency</label>
+                  <div className="flex gap-2 flex-wrap mb-3">
+                    <button
+                      type="button"
+                      onClick={() => { setCreateStakeCurrency("CRYPTO"); setNewMatchBet(null); }}
+                      className={`px-4 py-1.5 rounded-xl border font-display text-xs font-bold transition-all ${
+                        createStakeCurrency === "CRYPTO"
+                          ? "border-arena-gold bg-arena-gold/15 text-arena-gold"
+                          : "border-border bg-secondary/40 text-muted-foreground hover:border-arena-gold/40"
+                      }`}
+                    >
+                      Crypto (BNB)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setCreateStakeCurrency("AT"); setNewMatchBet(null); }}
+                      className={`px-4 py-1.5 rounded-xl border font-display text-xs font-bold transition-all ${
+                        createStakeCurrency === "AT"
+                          ? "border-arena-purple bg-arena-purple/15 text-arena-purple"
+                          : "border-border bg-secondary/40 text-muted-foreground hover:border-arena-purple/40"
+                      }`}
+                    >
+                      Arena Tokens (AT)
+                    </button>
+                  </div>
+                  <label className="text-xs text-muted-foreground mb-2 block uppercase tracking-wider">Bet amount</label>
                   <div className="flex gap-2 flex-wrap">
-                    {CREATE_BET_AMOUNTS.map((a) => (
+                    {(createStakeCurrency === "AT" ? AT_BET_AMOUNTS : CREATE_BET_AMOUNTS).map((a) => (
                       <button key={a} onClick={() => setNewMatchBet(a)}
                         className={`px-4 py-1.5 rounded-xl border font-display text-sm font-bold transition-all ${
                           newMatchBet === a
                             ? "border-primary bg-primary/15 text-primary shadow-[0_0_12px_rgba(var(--primary-rgb),0.3)]"
                             : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"
                         }`}>
-                        ${a}
+                        {createStakeCurrency === "AT" ? `${a.toLocaleString()} AT` : `$${a}`}
                       </button>
                     ))}
                   </div>
@@ -1405,32 +1483,43 @@ const MatchLobby = () => {
                 </div>
                 <div className="flex gap-2 pt-1">
                   <Button
-                    disabled={!newMatchGame || !newMatchBet || !newMatchPassword || !newMatchMode || !canPlayStaked}
+                    disabled={
+                      !newMatchGame ||
+                      !newMatchBet ||
+                      !newMatchPassword ||
+                      !newMatchMode ||
+                      !canPlay ||
+                      (createStakeCurrency === "CRYPTO" && !connectedAddress)
+                    }
                     onClick={() => {
                       void (async () => {
                         if (!newMatchGame || !newMatchBet || !newMatchMode || !user) return;
+                        if (createStakeCurrency === "CRYPTO" && !connectedAddress) return;
                         const teamSize = getTeamSize(newMatchMode);
                         let serverMatchId: string | undefined;
+                        let stakeCurrencyResolved: StakeCurrency = createStakeCurrency;
                         const useServerApi =
                           !!token &&
                           (newMatchGame === "CS2" || newMatchGame === "Valorant");
 
                         if (useServerApi) {
-                          // Step 1: Create match on-chain (host pays stake here — no separate deposit for host)
-                          try {
-                            await createMatchOnChain(teamSize, newMatchBet);
-                          } catch (e: unknown) {
-                            useNotificationStore.getState().addNotification({
-                              type: "system",
-                              title: "Could not create match on-chain",
-                              message: friendlyChainErrorMessage(e),
-                            });
-                            return;
+                          if (createStakeCurrency === "CRYPTO") {
+                            try {
+                              await createMatchOnChain(teamSize, newMatchBet);
+                            } catch (e: unknown) {
+                              useNotificationStore.getState().addNotification({
+                                type: "system",
+                                title: "Could not create match on-chain",
+                                message: friendlyChainErrorMessage(e),
+                              });
+                              return;
+                            }
                           }
 
                           const apiRes = await apiCreateMatch(token, {
                             game: newMatchGame,
                             stake_amount: newMatchBet,
+                            stake_currency: createStakeCurrency,
                           });
                           if (apiRes.ok === false) {
                             useNotificationStore.getState().addNotification({
@@ -1443,6 +1532,7 @@ const MatchLobby = () => {
                             return;
                           }
                           serverMatchId = apiRes.data.match_id;
+                          stakeCurrencyResolved = apiRes.data.stake_currency ?? createStakeCurrency;
                         }
 
                         const created = addMatch({
@@ -1453,6 +1543,7 @@ const MatchLobby = () => {
                           game: newMatchGame as Game,
                           mode: newMatchMode,
                           betAmount: newMatchBet,
+                          stakeCurrency: stakeCurrencyResolved,
                           players: [],
                           maxPlayers: getTotalPlayers(newMatchMode),
                           status: "waiting",
@@ -1465,12 +1556,20 @@ const MatchLobby = () => {
                         });
 
                         if (useServerApi) {
-                          // Host's stake was paid in createMatchOnChain() — no second deposit needed.
-                          // EscrowClient will detect MatchCreated event and mark host's deposit in DB.
+                          const stakeLabel =
+                            stakeCurrencyResolved === "AT"
+                              ? `${newMatchBet.toLocaleString()} AT`
+                              : `$${newMatchBet} BNB`;
                           useNotificationStore.getState().addNotification({
                             type: "system",
                             title: "⚔️ Match Created",
-                            message: `Your ${newMatchGame} ${newMatchMode} ($${newMatchBet} BNB) is live on-chain! Code: ${created.code}`,
+                            message: `Your ${newMatchGame} ${newMatchMode} (${stakeLabel}) is live! Code: ${created.code}`,
+                          });
+                        } else if (createStakeCurrency === "AT") {
+                          useNotificationStore.getState().addNotification({
+                            type: "match_invite",
+                            title: "⚔️ Match Created",
+                            message: `Your ${newMatchGame} ${newMatchMode} (${newMatchBet.toLocaleString()} AT) is live! Code: ${created.code}`,
                           });
                         } else {
                           const escrowTx = await lockEscrow(newMatchBet, created.id);
@@ -1499,12 +1598,13 @@ const MatchLobby = () => {
                         setNewMatchGame("");
                         setNewMatchBet(null);
                         setNewMatchMode(null);
+                        setCreateStakeCurrency("CRYPTO");
                       })();
                     }}
                     className="glow-green font-display">
                     <Swords className="mr-2 h-4 w-4" /> Create {newMatchMode ?? ""} Match
                   </Button>
-                  <Button variant="outline" onClick={() => { setCreateMode(false); setNewMatchPassword(""); setNewMatchMode(null); }}>Cancel</Button>
+                  <Button variant="outline" onClick={() => { setCreateMode(false); setNewMatchPassword(""); setNewMatchMode(null); setCreateStakeCurrency("CRYPTO"); setNewMatchBet(null); }}>Cancel</Button>
                 </div>
               </div>
             )}
@@ -1570,7 +1670,7 @@ const MatchLobby = () => {
                           <Copy className="h-3 w-3" />
                           {copiedCode === match.code ? "Copied!" : match.code}
                         </button>
-                        <span className="font-display text-sm font-bold text-arena-gold">${match.betAmount}</span>
+                        <span className="font-display text-sm font-bold text-arena-gold">{formatMatchStakeShort(match)}</span>
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2.5">
@@ -1588,7 +1688,7 @@ const MatchLobby = () => {
                               <p key={i} className="text-xs text-muted-foreground/30 italic pl-5">Empty slot</p>
                             ))}
                           </div>
-                          {canJoin && !full && canPlayStaked && (
+                          {canJoin && !full && (matchStakeCurrency(match) === "AT" ? canJoinAtStake : canPlayStaked) && (
                             <button onClick={() => handleJoinCustom(match.id, match.betAmount, isA ? "A" : "B")}
                               className={`mt-1.5 w-full flex items-center justify-center gap-1 py-1 rounded-lg border ${joinBorder} ${joinText} ${joinHover} transition-colors text-xs font-display`}>
                               <UserPlus className="h-3 w-3" /> Join {label}
@@ -1629,7 +1729,7 @@ const MatchLobby = () => {
               <div>
                 <h3 className="font-display text-base font-bold">Leave Room?</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Your <span className="text-arena-gold font-semibold">${myActiveRoom.betAmount}</span> deposit will be fully refunded.
+                  Your <span className="text-arena-gold font-semibold">{formatMatchStakeShort(myActiveRoom)}</span> deposit will be fully refunded.
                 </p>
               </div>
             </div>
