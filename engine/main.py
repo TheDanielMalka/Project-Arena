@@ -1801,6 +1801,11 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
     bet_amount = max(float(req.stake_amount), 0.01)
     at_stake = int(bet_amount) if stake_currency == "AT" else 0
 
+    # Derive max_players and max_per_team from mode
+    _mode_sizes = {"1v1": 1, "2v2": 2, "4v4": 4, "5v5": 5}
+    team_size   = _mode_sizes.get(mode, 1)
+    max_players = team_size * 2
+
     try:
         with SessionLocal() as session:
             # ── Look up creator's game accounts ───────────────────────────────
@@ -1845,8 +1850,8 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
             # ── Create match ──────────────────────────────────────────────────
             match_row = session.execute(
                 text(
-                    "INSERT INTO matches (type, game, host_id, mode, bet_amount, stake_currency, code) "
-                    "VALUES (:mtype, :g, :host, :mode, :bet, :sc, :code) "
+                    "INSERT INTO matches (type, game, host_id, mode, bet_amount, stake_currency, code, max_players, max_per_team) "
+                    "VALUES (:mtype, :g, :host, :mode, :bet, :sc, :code, :maxp, :mpt) "
                     "RETURNING id"
                 ),
                 {
@@ -1857,6 +1862,8 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
                     "bet":   bet_amount,
                     "sc":    stake_currency,
                     "code":  room_code,
+                    "maxp":  max_players,
+                    "mpt":   team_size,
                 },
             ).fetchone()
             match_id = str(match_row[0])
@@ -1891,6 +1898,8 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
         "stake_amount":    bet_amount,
         "stake_currency":  stake_currency,
         "code":            room_code,
+        "max_players":     max_players,
+        "max_per_team":    team_size,
     }
 
 
@@ -3274,7 +3283,9 @@ async def list_matches(
                         u.username   AS host_username,
                         u.id         AS host_id,
                         u.avatar     AS host_avatar,
-                        COUNT(mp.user_id) AS player_count
+                        COUNT(mp.user_id) AS player_count,
+                        m.max_per_team,
+                        m.stake_currency
                     FROM matches m
                     JOIN users u ON u.id = m.host_id
                     LEFT JOIN match_players mp ON mp.match_id = m.id
@@ -3305,6 +3316,8 @@ async def list_matches(
                 "host_id":        str(r[10]) if r[10] else None,
                 "host_avatar":    r[11],
                 "player_count":   int(r[12]),
+                "max_per_team":   r[13],
+                "stake_currency": r[14],
             }
             for r in rows
         ]

@@ -1647,6 +1647,8 @@ class TestListMatches:
             str(uuid.uuid4()),    # host_id
             None,                 # host_avatar
             1,                    # player_count
+            1,                    # max_per_team
+            "CRYPTO",             # stake_currency
         )
 
     def test_list_matches_returns_open_lobbies(self):
