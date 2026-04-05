@@ -1348,3 +1348,326 @@ class TestDirectMessages:
     def test_mark_messages_read_no_token_returns_422(self):
         resp = client.post(f"/messages/{OTHER_UUID}/read")
         assert resp.status_code == 422
+
+
+# ─── POST /match/result — stats update ────────────────────────────────────────
+
+class TestMatchResultStatsUpdate:
+    """
+    Verify that POST /match/result updates user_stats (wins/losses/xp)
+    for all players in the match when a winner_id is provided.
+    """
+    def _auth_header(self) -> dict:
+        token = auth.issue_token(FAKE_UUID, "test@arena.gg")
+        return {"Authorization": f"Bearer {token}"}
+
+    def test_submit_result_with_winner_calls_stat_updates(self):
+        """When winner_id is set, DB must update user_stats rows."""
+        match_id  = str(uuid.uuid4())
+        winner_id = str(uuid.uuid4())
+        loser_id  = str(uuid.uuid4())
+
+        ctx, session = _make_session_mock()
+        # Side effects: UPDATE matches → no fetchone needed; match_players query
+        session.execute.return_value.fetchall.return_value = [
+            (winner_id,),
+            (loser_id,),
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/match/result",
+                json={
+                    "match_id":  match_id,
+                    "winner_id": winner_id,
+                    "game":      "CS2",
+                },
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["accepted"] is True
+
+    def test_submit_result_without_winner_accepted(self):
+        """No winner_id → still accepted; no stat updates triggered."""
+        ctx, session = _make_session_mock()
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/match/result",
+                json={"match_id": str(uuid.uuid4()), "winner_id": "", "game": "CS2"},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["accepted"] is True
+
+
+# ─── GET /matches/history ─────────────────────────────────────────────────────
+
+class TestMatchHistory:
+    def _auth_header(self) -> dict:
+        token = auth.issue_token(FAKE_UUID, "test@arena.gg")
+        return {"Authorization": f"Bearer {token}"}
+
+    def _match_row(self):
+        import datetime as _dt
+        return (
+            str(uuid.uuid4()),     # id
+            "CS2",                 # game
+            "1v1",                 # mode
+            "completed",           # status
+            10.00,                 # bet_amount
+            FAKE_UUID,             # winner_id  (me = winner)
+            _dt.datetime.now(_dt.timezone.utc),  # created_at
+            _dt.datetime.now(_dt.timezone.utc),  # ended_at
+            "Opponent",            # opponent username
+            str(uuid.uuid4()),     # opponent id
+            None,                  # opponent avatar
+        )
+
+    def test_match_history_returns_list(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = [self._match_row()]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/matches/history", headers=self._auth_header())
+        assert resp.status_code == 200
+        matches = resp.json()["matches"]
+        assert isinstance(matches, list)
+        assert len(matches) == 1
+        assert matches[0]["result"] == "win"    # winner_id == FAKE_UUID (current user)
+        assert matches[0]["game"] == "CS2"
+
+    def test_match_history_empty_returns_empty_list(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = []
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/matches/history", headers=self._auth_header())
+        assert resp.status_code == 200
+        assert resp.json()["matches"] == []
+
+    def test_match_history_result_loss_when_other_wins(self):
+        row = list(self._match_row())
+        row[5] = str(uuid.uuid4())   # winner_id != FAKE_UUID → loss
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = [tuple(row)]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/matches/history", headers=self._auth_header())
+        assert resp.json()["matches"][0]["result"] == "loss"
+
+    def test_match_history_no_winner_is_draw(self):
+        row = list(self._match_row())
+        row[5] = None   # no winner → draw
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = [tuple(row)]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/matches/history", headers=self._auth_header())
+        assert resp.json()["matches"][0]["result"] == "draw"
+
+    def test_match_history_no_token_returns_422(self):
+        resp = client.get("/matches/history")
+        assert resp.status_code == 422
+
+    def test_match_history_limit_out_of_range_returns_422(self):
+        resp = client.get("/matches/history?limit=200", headers=self._auth_header())
+        assert resp.status_code == 422
+
+
+# ─── GET /matches ─────────────────────────────────────────────────────────────
+
+class TestListMatches:
+    def _match_row(self):
+        import datetime as _dt
+        return (
+            str(uuid.uuid4()),    # id
+            "CS2",                # game
+            "1v1",                # mode
+            "public",             # type
+            10.00,                # bet_amount
+            "waiting",            # status
+            None,                 # code
+            _dt.datetime.now(_dt.timezone.utc),  # created_at
+            2,                    # max_players
+            "Host",               # host_username
+            str(uuid.uuid4()),    # host_id
+            None,                 # host_avatar
+            1,                    # player_count
+        )
+
+    def test_list_matches_returns_open_lobbies(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = [self._match_row()]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/matches")
+        assert resp.status_code == 200
+        matches = resp.json()["matches"]
+        assert isinstance(matches, list)
+        assert matches[0]["status"] == "waiting"
+
+    def test_list_matches_empty_lobby(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = []
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/matches")
+        assert resp.status_code == 200
+        assert resp.json()["matches"] == []
+
+    def test_list_matches_no_auth_required(self):
+        """Public endpoint — should return 200 without auth."""
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = []
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/matches")
+        assert resp.status_code == 200
+
+
+# ─── GET /leaderboard ─────────────────────────────────────────────────────────
+
+class TestLeaderboard:
+    def _player_row(self, rank_wins=10):
+        return (
+            str(uuid.uuid4()),   # user_id
+            "Player1",           # username
+            "ARENA-ABC123",      # arena_id
+            None,                # avatar
+            None,                # equipped_badge_icon
+            "Gold",              # rank (tier)
+            rank_wins,           # wins
+            3,                   # losses
+            13,                  # matches
+            76.92,               # win_rate
+            500,                 # xp
+            25.50,               # total_earnings
+        )
+
+    def test_leaderboard_returns_ranked_list(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = [
+            self._player_row(20),
+            self._player_row(10),
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/leaderboard")
+        assert resp.status_code == 200
+        data = resp.json()["leaderboard"]
+        assert len(data) == 2
+        assert data[0]["rank"] == 1
+        assert data[1]["rank"] == 2
+
+    def test_leaderboard_has_required_fields(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = [self._player_row()]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/leaderboard")
+        entry = resp.json()["leaderboard"][0]
+        for field in ("rank", "user_id", "username", "wins", "losses", "xp", "win_rate"):
+            assert field in entry, f"Missing field: {field}"
+
+    def test_leaderboard_empty_returns_empty_list(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = []
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/leaderboard")
+        assert resp.json()["leaderboard"] == []
+
+    def test_leaderboard_no_auth_required(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = []
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/leaderboard")
+        assert resp.status_code == 200
+
+
+# ─── GET /players ──────────────────────────────────────────────────────────────
+
+class TestSearchPlayers:
+    def _player_row(self):
+        return (
+            str(uuid.uuid4()),  # user_id
+            "Player1",          # username
+            "ARENA-PL001",      # arena_id
+            None,               # avatar
+            None,               # equipped_badge_icon
+            "Silver",           # rank
+            5,                  # wins
+            3,                  # losses
+            8,                  # matches
+            62.50,              # win_rate
+            200,                # xp
+        )
+
+    def test_search_players_returns_list(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = [self._player_row()]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/players?q=Player")
+        assert resp.status_code == 200
+        players = resp.json()["players"]
+        assert len(players) == 1
+        assert players[0]["username"] == "Player1"
+
+    def test_search_players_empty_query_returns_all(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = []
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/players")
+        assert resp.status_code == 200
+        assert isinstance(resp.json()["players"], list)
+
+    def test_search_players_no_auth_required(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = []
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/players?q=anyone")
+        assert resp.status_code == 200
+
+    def test_search_players_limit_enforced(self):
+        resp = client.get("/players?limit=100")
+        assert resp.status_code == 422
+
+
+# ─── GET /players/{user_id} ────────────────────────────────────────────────────
+
+class TestPlayerProfile:
+    def _profile_row(self):
+        import datetime as _dt
+        return (
+            FAKE_UUID,           # user_id
+            "Player1",           # username
+            "ARENA-PL001",       # arena_id
+            None,                # avatar
+            "default",           # avatar_bg
+            None,                # equipped_badge_icon
+            "Gold",              # rank
+            10,                  # wins
+            3,                   # losses
+            13,                  # matches
+            76.92,               # win_rate
+            500,                 # xp
+            25.50,               # total_earnings
+            [],                  # forge_unlocked_item_ids
+            None,                # vip_expires_at
+            "76561198000000001", # steam_id
+            None,                # riot_id
+        )
+
+    def test_get_player_profile_returns_public_fields(self):
+        ctx, session = _make_session_mock(fetchone_return=self._profile_row())
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get(f"/players/{FAKE_UUID}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["username"] == "Player1"
+        assert data["wins"] == 10
+        assert data["has_steam"] is True
+        assert data["has_riot"] is False
+        assert "email" not in data
+        assert "wallet_address" not in data
+
+    def test_get_player_profile_not_found_returns_404(self):
+        ctx, session = _make_session_mock(fetchone_return=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get(f"/players/{uuid.uuid4()}")
+        assert resp.status_code == 404
+
+    def test_get_player_profile_no_auth_required(self):
+        ctx, session = _make_session_mock(fetchone_return=self._profile_row())
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get(f"/players/{FAKE_UUID}")
+        assert resp.status_code == 200
