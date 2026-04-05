@@ -3,8 +3,18 @@ import { parseEther } from "ethers";
 import type { Transaction, TransactionType, TransactionStatus, Network } from "@/types";
 import { useUserStore } from "@/stores/userStore";
 import { apiGetMatchStatus, apiPatchMeWalletAddress, apiUnlinkMeWalletAddress } from "@/lib/engine-api";
+import { friendlyChainErrorMessage } from "@/lib/friendlyChainError";
 import { connectMetaMaskAndSignOwnership, depositToEscrow } from "@/lib/metamaskBsc";
 import { publishAtToWalletAndForge } from "@/lib/sessionAtSync";
+
+let lastLockEscrowFailureMessage: string | null = null;
+
+/** After `lockEscrow` returns null, call once for a user-readable chain error (then cleared). */
+export function consumeLastLockEscrowFailureMessage(): string | null {
+  const m = lastLockEscrowFailureMessage;
+  lastLockEscrowFailureMessage = null;
+  return m;
+}
 
 export type ConnectWalletResult =
   | { ok: true }
@@ -116,7 +126,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
           error: "Switch to BNB Smart Chain Testnet (chain 97) in your wallet and try again.",
         };
       }
-      return { ok: false as const, error: msg || "Could not connect wallet." };
+      return { ok: false as const, error: friendlyChainErrorMessage(e) };
     }
   },
 
@@ -153,6 +163,8 @@ export const useWalletStore = create<WalletState>((set, get) => ({
   },
 
   lockEscrow: async (amount, matchId) => {
+    lastLockEscrowFailureMessage = null;
+
     const legacyLock = (): Transaction | null => {
       const state = get();
       if (amount + state.dailyBettingUsed > state.dailyBettingLimit) return null;
@@ -205,7 +217,8 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         status.your_team,
         stakeWei,
       );
-    } catch {
+    } catch (e) {
+      lastLockEscrowFailureMessage = friendlyChainErrorMessage(e);
       return null;
     }
 
