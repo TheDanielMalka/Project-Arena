@@ -398,6 +398,48 @@ export async function apiGetMe(token: string): Promise<{
   }
 }
 
+export type ApiForgePurchaseResult =
+  | { ok: true; data: { at_balance: number; item_slug: string } }
+  | { ok: false; status: number; detail: string | null };
+
+/** POST /forge/purchase — spend AT; body matches engine `ForgePurchaseRequest` */
+export async function apiForgePurchase(
+  token: string,
+  item_slug: string,
+): Promise<ApiForgePurchaseResult> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/forge/purchase`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ item_slug }),
+    });
+    const raw = (await res.json().catch(() => ({}))) as {
+      detail?: unknown;
+      at_balance?: number;
+      item_slug?: string;
+    };
+    if (!res.ok) {
+      return {
+        ok: false as const,
+        status: res.status,
+        detail: parseFastApiDetail(raw.detail),
+      };
+    }
+    return {
+      ok: true as const,
+      data: {
+        at_balance: typeof raw.at_balance === "number" ? raw.at_balance : 0,
+        item_slug: String(raw.item_slug ?? item_slug),
+      },
+    };
+  } catch {
+    return { ok: false as const, status: 0, detail: "Network error" };
+  }
+}
+
 export type ApiCreateMatchSuccess = {
   match_id: string;
   game: string;

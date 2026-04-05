@@ -458,6 +458,8 @@ export type ForgeDropType    = "season_pass" | "bundle" | "flash";
 
 export interface ForgeItem {
   id: string;
+  /** DB: forge_items.slug — sent as `item_slug` in POST /forge/purchase; defaults to `id` if omitted */
+  forgeSlug?: string;
   name: string;
   description: string;
   category: ForgeCategory;

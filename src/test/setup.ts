@@ -75,6 +75,10 @@ vi.mock("@/lib/engine-api", async () => {
       };
     }),
     apiPatchMe: vi.fn(async () => true),
+    apiForgePurchase: vi.fn(async (_token: string, item_slug: string) => ({
+      ok: true as const,
+      data: { at_balance: 180, item_slug },
+    })),
   };
 });
 

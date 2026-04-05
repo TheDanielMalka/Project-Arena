@@ -7,6 +7,7 @@ import type {
 import { useWalletStore } from "@/stores/walletStore";
 import { useUserStore } from "@/stores/userStore";
 import { publishAtToWalletAndForge } from "@/lib/sessionAtSync";
+import { apiForgePurchase } from "@/lib/engine-api";
 
 // ─── Seed Data ────────────────────────────────────────────────
 // DB-ready: replace with GET /api/forge/items
@@ -88,8 +89,10 @@ interface ForgeState {
   // DB-ready: replace with GET /api/forge/items?featured=true
   getFeaturedItem: () => ForgeItem | undefined;
 
-  // DB-ready: replace with POST /api/forge/purchase
-  purchaseItem: (itemId: string, currency: "AT" | "USDT") => { success: boolean; error?: string };
+  purchaseItem: (
+    itemId: string,
+    currency: "AT" | "USDT",
+  ) => Promise<{ success: boolean; error?: string }>;
   // DB-ready: replace with POST /api/forge/drops/:id/purchase
   purchaseDrop: (dropId: string) => { success: boolean; error?: string };
   // DB-ready: replace with POST /api/forge/challenges/:id/claim
@@ -133,15 +136,62 @@ export const useForgeStore = create<ForgeState>()(
     useUserStore.setState((s) => (s.user ? { user: { ...s.user, atBalance: next } } : {}));
   },
 
-  purchaseItem: (itemId, currency) => {
+  purchaseItem: async (itemId, currency) => {
     const item = get().items.find((i) => i.id === itemId);
     if (!item) return { success: false, error: "Item not found" };
     if (item.freeBadge) return { success: false, error: "Starter badge — already in your locker" };
 
     if (currency === "AT") {
       if (item.priceAT == null || item.priceAT <= 0) return { success: false, error: "Not available for AT" };
-      if (get().arenaTokens < item.priceAT) return { success: false, error: `Insufficient AT — need ${item.priceAT} AT` };
-      const purchase: ForgePurchase = { id: `pur-${Date.now()}`, itemId, itemName: item.name, currency: "AT", amount: item.priceAT, purchasedAt: new Date().toISOString() };
+
+      const token = useUserStore.getState().token;
+      const itemSlug = item.forgeSlug ?? item.id;
+
+      if (token) {
+        const res = await apiForgePurchase(token, itemSlug);
+        if (!res.ok) {
+          if (res.status === 400) {
+            return {
+              success: false,
+              error: res.detail ?? "Insufficient Arena Tokens",
+            };
+          }
+          if (res.status === 409) {
+            return {
+              success: false,
+              error: res.detail ?? "You already own this item",
+            };
+          }
+          return {
+            success: false,
+            error: res.detail ?? "Purchase failed",
+          };
+        }
+        const purchase: ForgePurchase = {
+          id: `pur-${Date.now()}`,
+          itemId,
+          itemName: item.name,
+          currency: "AT",
+          amount: item.priceAT,
+          purchasedAt: new Date().toISOString(),
+        };
+        set((s) => ({ purchases: [purchase, ...s.purchases] }));
+        await useUserStore.getState().refreshProfileFromServer();
+        useUserStore.getState().applyForgePurchase({ itemId: item.id, category: item.category, icon: item.icon });
+        return { success: true };
+      }
+
+      if (get().arenaTokens < item.priceAT) {
+        return { success: false, error: `Insufficient AT — need ${item.priceAT} AT` };
+      }
+      const purchase: ForgePurchase = {
+        id: `pur-${Date.now()}`,
+        itemId,
+        itemName: item.name,
+        currency: "AT",
+        amount: item.priceAT,
+        purchasedAt: new Date().toISOString(),
+      };
       const nextAt = get().arenaTokens - item.priceAT!;
       set((s) => ({ arenaTokens: nextAt, purchases: [purchase, ...s.purchases] }));
       publishAtToWalletAndForge(nextAt);
@@ -152,11 +202,25 @@ export const useForgeStore = create<ForgeState>()(
 
     if (currency === "USDT") {
       if (!item.priceUSDT) return { success: false, error: "Not available for USDT" };
-      // DB-ready: POST /api/forge/purchase → wagmi writeContract(deductUSDT) → server credits AT
       const wallet = useWalletStore.getState();
       if (wallet.usdtBalance < item.priceUSDT) return { success: false, error: "Insufficient USDT balance" };
-      wallet.addTransaction({ userId: "user-001", type: "at_purchase", amount: -item.priceUSDT, token: "USDT", usdValue: item.priceUSDT, status: "completed", note: `Purchased ${item.name} — Forge` });
-      const purchase: ForgePurchase = { id: `pur-${Date.now()}`, itemId, itemName: item.name, currency: "USDT", amount: item.priceUSDT, purchasedAt: new Date().toISOString() };
+      wallet.addTransaction({
+        userId: "user-001",
+        type: "at_purchase",
+        amount: -item.priceUSDT,
+        token: "USDT",
+        usdValue: item.priceUSDT,
+        status: "completed",
+        note: `Purchased ${item.name} — Forge`,
+      });
+      const purchase: ForgePurchase = {
+        id: `pur-${Date.now()}`,
+        itemId,
+        itemName: item.name,
+        currency: "USDT",
+        amount: item.priceUSDT,
+        purchasedAt: new Date().toISOString(),
+      };
       set((s) => ({ purchases: [purchase, ...s.purchases] }));
       useUserStore.getState().applyForgePurchase({ itemId: item.id, category: item.category, icon: item.icon });
       return { success: true };

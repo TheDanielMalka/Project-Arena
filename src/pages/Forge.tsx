@@ -659,7 +659,7 @@ function ShopTab() {
       currency,
       itemCategory: item.category,
       label: `Forge Shop · ${item.rarity.charAt(0).toUpperCase() + item.rarity.slice(1)}`,
-      onConfirm: () => {
+      onConfirm: async () => {
         setErrorItem(null);
         return purchaseItem(itemId, currency);
       },
