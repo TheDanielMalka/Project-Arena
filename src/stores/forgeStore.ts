@@ -149,7 +149,7 @@ export const useForgeStore = create<ForgeState>()(
 
       if (token) {
         const res = await apiForgePurchase(token, itemSlug);
-        if (!res.ok) {
+        if (res.ok === false) {
           if (res.status === 400) {
             return {
               success: false,
