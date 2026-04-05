@@ -212,6 +212,110 @@ class TestValidationResponseAccepted:
         assert not missing, f"Missing fields in ValidationResponse: {missing}"
 
 
+# ── POST /validate/screenshot — submission limit ──────────────────────────────
+
+class TestSubmissionLimit:
+    """
+    1 screenshot submission per wallet per match.
+    Second submission by the same user → 409.
+    """
+
+    @pytest.fixture
+    def grey_png(self, tmp_path):
+        import cv2
+        import numpy as np
+        grey = np.full((200, 400, 3), 128, dtype=np.uint8)
+        path = str(tmp_path / "grey.png")
+        cv2.imwrite(path, grey)
+        with open(path, "rb") as f:
+            return f.read()
+
+    def test_second_submission_returns_409(self, grey_png, tmp_path):
+        """
+        When the same wallet submits twice for the same match, the second
+        call must return 409.
+        """
+        match_id = "LIMIT-MATCH-001"
+        wallet   = "0xdeadbeef00000001"
+
+        with patch("main.SCREENSHOT_DIR", str(tmp_path)), \
+             patch("main.SessionLocal") as mock_session_cls:
+
+            session_cm = mock_session_cls.return_value.__enter__.return_value
+
+            # First call: no existing submission, wallet resolved
+            session_cm.execute.return_value.fetchone.side_effect = [
+                None,          # match status check → None (skip)
+                (wallet,),     # wallet_address lookup
+                None,          # no existing evidence
+            ]
+
+            resp1 = client.post(
+                f"/validate/screenshot?match_id={match_id}&game=CS2",
+                files={"file": ("g.png", io.BytesIO(grey_png), "image/png")},
+                headers=_AUTH_HEADER,
+            )
+            assert resp1.status_code == 200
+
+            # Second call: existing submission found
+            session_cm.execute.return_value.fetchone.side_effect = [
+                None,               # match status check
+                (wallet,),          # wallet_address lookup
+                (str(uuid.uuid4()),),  # existing evidence row → duplicate
+            ]
+
+            resp2 = client.post(
+                f"/validate/screenshot?match_id={match_id}&game=CS2",
+                files={"file": ("g.png", io.BytesIO(grey_png), "image/png")},
+                headers=_AUTH_HEADER,
+            )
+            assert resp2.status_code == 409
+            assert "already submitted" in resp2.json()["detail"].lower()
+
+    def test_match_completed_returns_409(self, grey_png, tmp_path):
+        """
+        Submitting to a completed match must return 409.
+        """
+        match_id = "DONE-MATCH-001"
+
+        with patch("main.SCREENSHOT_DIR", str(tmp_path)), \
+             patch("main.SessionLocal") as mock_session_cls:
+
+            session_cm = mock_session_cls.return_value.__enter__.return_value
+            session_cm.execute.return_value.fetchone.return_value = ("completed",)
+
+            resp = client.post(
+                f"/validate/screenshot?match_id={match_id}&game=CS2",
+                files={"file": ("g.png", io.BytesIO(grey_png), "image/png")},
+                headers=_AUTH_HEADER,
+            )
+        assert resp.status_code == 409
+        assert "completed" in resp.json()["detail"].lower()
+
+    def test_no_wallet_skips_duplicate_check(self, grey_png, tmp_path):
+        """
+        If the user has no wallet_address in DB, skip the duplicate check
+        and process the screenshot normally.
+        """
+        match_id = "NOWALLET-MATCH-001"
+
+        with patch("main.SCREENSHOT_DIR", str(tmp_path)), \
+             patch("main.SessionLocal") as mock_session_cls:
+
+            session_cm = mock_session_cls.return_value.__enter__.return_value
+            session_cm.execute.return_value.fetchone.side_effect = [
+                None,   # match status check → not found, proceed
+                (None,),  # wallet_address = None → skip duplicate check
+            ]
+
+            resp = client.post(
+                f"/validate/screenshot?match_id={match_id}&game=CS2",
+                files={"file": ("g.png", io.BytesIO(grey_png), "image/png")},
+                headers=_AUTH_HEADER,
+            )
+        assert resp.status_code == 200
+
+
 # ── GET /match/{id}/status — winner_id ───────────────────────────────────────
 
 class TestMatchStatusRoute:
