@@ -27,6 +27,8 @@ import {
   apiCreateMatch,
   apiJoinMatch,
   apiGetActiveMatch,
+  apiCancelMatch,
+  apiLeaveMatch,
   apiInviteToMatch,
   apiListFriends,
   type ApiFriendRow,
@@ -605,34 +607,44 @@ const MatchLobby = () => {
 
   const handleLeaveRoom = useCallback(() => {
     if (!myActiveRoom || !user) return;
-    const left = leaveMatch(myActiveRoom.id, user.username);
-    if (left) {
-      cancelEscrow(myActiveRoom.id);
-      setMyRoomMatchId(null);
-      setCountdown(null);
-      useNotificationStore.getState().addNotification({
-        type: "system",
-        title: "↩️ Left Room",
-        message: `You left the match room. Your ${formatMatchStakeShort(myActiveRoom)} stake has been refunded.`,
-      });
+    const matchId    = myActiveRoom.id;
+    const stakeLabel = formatMatchStakeShort(myActiveRoom);
+    // Optimistic: clear local state immediately
+    leaveMatch(matchId, user.username);
+    cancelEscrow(matchId);
+    setMyRoomMatchId(null);
+    setCountdown(null);
+    useNotificationStore.getState().addNotification({
+      type: "system",
+      title: "↩️ Left Room",
+      message: `You left the match room. Your ${stakeLabel} stake has been refunded.`,
+    });
+    // Sync with server so the room doesn't come back on next page load
+    if (token && looksLikeServerMatchId(matchId)) {
+      void apiLeaveMatch(token, matchId);
     }
-  }, [myActiveRoom, user, leaveMatch, cancelEscrow]);
+  }, [myActiveRoom, user, token, leaveMatch, cancelEscrow]);
 
   const handleDeleteRoom = useCallback(() => {
     if (!myActiveRoom || !user) return;
-    // DB-ready: DELETE /api/matches/:id — server calls ArenaEscrow.cancelMatch()
-    // Contract: MatchState must be WAITING. Emits MatchCancelled + MatchRefunded events.
-    cancelEscrow(myActiveRoom.id);
-    deleteMatch(myActiveRoom.id);
+    const matchId    = myActiveRoom.id;
+    const stakeLabel = formatMatchStakeShort(myActiveRoom);
+    // Optimistic: clear local state immediately so UI feels instant
+    cancelEscrow(matchId);
+    deleteMatch(matchId);
     setMyRoomMatchId(null);
     setDeleteRoomConfirmOpen(false);
     setCountdown(null);
     useNotificationStore.getState().addNotification({
       type: "system",
       title: "🗑️ Room Deleted",
-      message: `Match room closed. Your ${formatMatchStakeShort(myActiveRoom)} deposit has been refunded.`,
+      message: `Match room closed. Your ${stakeLabel} deposit has been refunded.`,
     });
-  }, [myActiveRoom, user, cancelEscrow, deleteMatch]);
+    // Sync with server — marks match cancelled in DB so it never restores on refresh
+    if (token && looksLikeServerMatchId(matchId)) {
+      void apiCancelMatch(token, matchId);
+    }
+  }, [myActiveRoom, user, token, cancelEscrow, deleteMatch]);
 
   const handleOpenInviteModal = useCallback(async () => {
     if (!token) return;

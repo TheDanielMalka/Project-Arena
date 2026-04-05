@@ -1994,6 +1994,127 @@ async def join_match(match_id: str, payload: dict = Depends(verify_token)):
     return {"joined": True, "match_id": match_id, "game": game, "stake_currency": stake_currency}
 
 
+@app.delete("/matches/{match_id}", status_code=200)
+async def cancel_match(match_id: str, payload: dict = Depends(verify_token)):
+    """
+    DELETE /matches/{match_id} — host cancels a waiting match room.
+
+    Rules:
+      - Match must exist and be in 'waiting' status.
+      - Caller must be the host (host_id = user_id).
+      - Sets status → 'cancelled', refunds AT for all players.
+
+    DB-ready: UPDATE matches SET status='cancelled'; refund AT via at_transactions.
+    """
+    user_id: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            match_row = session.execute(
+                text(
+                    "SELECT host_id, status, stake_currency FROM matches "
+                    "WHERE id = :mid"
+                ),
+                {"mid": match_id},
+            ).fetchone()
+            if not match_row:
+                raise HTTPException(404, "Match not found")
+            host_id, status, stake_currency = match_row
+            if str(host_id) != user_id:
+                raise HTTPException(403, "Only the host can delete this room")
+            if status != "waiting":
+                raise HTTPException(409, f"Cannot cancel a match with status '{status}'")
+
+            # Refund AT for all players if AT stake
+            if stake_currency == "AT":
+                _refund_at_match(match_id)
+
+            session.execute(
+                text(
+                    "UPDATE matches SET status = 'cancelled', ended_at = NOW() "
+                    "WHERE id = :mid"
+                ),
+                {"mid": match_id},
+            )
+            session.commit()
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("cancel_match error: %s", exc)
+        raise HTTPException(500, "Cancel failed")
+
+    return {"cancelled": True, "match_id": match_id}
+
+
+@app.post("/matches/{match_id}/leave", status_code=200)
+async def leave_match(match_id: str, payload: dict = Depends(verify_token)):
+    """
+    POST /matches/{match_id}/leave — non-host player leaves a waiting match.
+
+    Rules:
+      - Match must be in 'waiting' status.
+      - Caller must be a player (not the host — host should use DELETE /matches/{id}).
+      - Removes player from match_players, refunds their AT stake.
+
+    DB-ready: DELETE FROM match_players WHERE match_id=:mid AND user_id=:uid.
+    """
+    user_id: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            match_row = session.execute(
+                text(
+                    "SELECT host_id, status, stake_currency, bet_amount "
+                    "FROM matches WHERE id = :mid"
+                ),
+                {"mid": match_id},
+            ).fetchone()
+            if not match_row:
+                raise HTTPException(404, "Match not found")
+            host_id, status, stake_currency, bet_amount = match_row
+
+            if str(host_id) == user_id:
+                raise HTTPException(
+                    400, "Host cannot leave — use DELETE /matches/{id} to close the room"
+                )
+            if status != "waiting":
+                raise HTTPException(409, f"Cannot leave a match with status '{status}'")
+
+            in_match = session.execute(
+                text(
+                    "SELECT 1 FROM match_players "
+                    "WHERE match_id = :mid AND user_id = :uid"
+                ),
+                {"mid": match_id, "uid": user_id},
+            ).fetchone()
+            if not in_match:
+                raise HTTPException(400, "You are not in this match")
+
+            # Remove player
+            session.execute(
+                text(
+                    "DELETE FROM match_players "
+                    "WHERE match_id = :mid AND user_id = :uid"
+                ),
+                {"mid": match_id, "uid": user_id},
+            )
+
+            # Refund AT stake to this player
+            if stake_currency == "AT":
+                at_amount = int(float(bet_amount)) if bet_amount else 0
+                if at_amount > 0:
+                    _credit_at(session, user_id, at_amount, match_id, "escrow_refund_leave")
+
+            session.commit()
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("leave_match error: %s", exc)
+        raise HTTPException(500, "Leave failed")
+
+    return {"left": True, "match_id": match_id}
+
+
 class MatchInviteRequest(BaseModel):
     """POST /matches/{match_id}/invite body."""
     friend_id: str

@@ -257,6 +257,65 @@ export async function apiGetActiveMatch(
 }
 
 /**
+ * DELETE /matches/{matchId} — host cancels the match room.
+ * Sets status → cancelled; refunds AT for all players.
+ * DB-ready: UPDATE matches SET status='cancelled'; at_transactions refund rows.
+ */
+export async function apiCancelMatch(
+  token: string,
+  matchId: string,
+): Promise<{ ok: boolean; detail?: string }> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8_000);
+    const res = await fetch(`${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}`, {
+      method: "DELETE",
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    clearTimeout(tid);
+    if (!res.ok) {
+      const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
+      return { ok: false, detail: parseFastApiDetail(raw.detail) ?? "Cancel failed" };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, detail: "Network error" };
+  }
+}
+
+/**
+ * POST /matches/{matchId}/leave — non-host player leaves a waiting match.
+ * Removes player from match_players; refunds their AT stake.
+ * DB-ready: DELETE FROM match_players; at_transactions refund row.
+ */
+export async function apiLeaveMatch(
+  token: string,
+  matchId: string,
+): Promise<{ ok: boolean; detail?: string }> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8_000);
+    const res = await fetch(
+      `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/leave`,
+      {
+        method: "POST",
+        signal: controller.signal,
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    );
+    clearTimeout(tid);
+    if (!res.ok) {
+      const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
+      return { ok: false, detail: parseFastApiDetail(raw.detail) ?? "Leave failed" };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, detail: "Network error" };
+  }
+}
+
+/**
  * POST /matches/{matchId}/invite — sends match_invite notification to an accepted friend.
  * DB-ready: inserts into notifications with type='match_invite' and metadata.
  */
