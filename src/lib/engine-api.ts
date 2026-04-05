@@ -215,6 +215,78 @@ export async function apiGetMatchStatus(
   }
 }
 
+/** Shape returned by GET /match/active */
+export type ActiveMatchPlayer = {
+  user_id: string;
+  username: string;
+  avatar: string | null;
+  arena_id: string | null;
+  team: number; // 0 = Team A, 1 = Team B
+};
+export type ActiveMatchResponse = {
+  match: {
+    match_id: string;
+    game: string;
+    status: "waiting" | "in_progress";
+    bet_amount: string | null;
+    stake_currency: "CRYPTO" | "AT";
+    match_type: string;
+    room_code: string | null;
+    created_at: string | null;
+    players: ActiveMatchPlayer[];
+  } | null;
+};
+
+/**
+ * GET /match/active — returns caller's current active match (waiting or in_progress).
+ * Used by MatchLobby to restore lobby state after page navigation.
+ * DB-ready: matches JOIN match_players WHERE status IN ('waiting','in_progress')
+ */
+export async function apiGetActiveMatch(
+  token: string,
+): Promise<ActiveMatchResponse | null> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/match/active`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as ActiveMatchResponse;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * POST /matches/{matchId}/invite — sends match_invite notification to an accepted friend.
+ * DB-ready: inserts into notifications with type='match_invite' and metadata.
+ */
+export async function apiInviteToMatch(
+  token: string,
+  matchId: string,
+  friendId: string,
+): Promise<{ ok: true } | { ok: false; detail: string | null }> {
+  try {
+    const res = await fetch(
+      `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/invite`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ friend_id: friendId }),
+      },
+    );
+    if (!res.ok) {
+      const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
+      return { ok: false, detail: parseFastApiDetail(raw.detail) };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, detail: null };
+  }
+}
+
 function normalizeEngineMatchStatus(status: string): EngineMatchStatus["status"] {
   if (status === "pending") return "in_progress";
   const allowed: EngineMatchStatus["status"][] = [
