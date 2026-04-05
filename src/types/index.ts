@@ -5,9 +5,8 @@ export type MatchType = "public" | "custom";
 export type MatchMode = "1v1" | "2v2" | "4v4" | "5v5";
 export type Game = "CS2" | "Valorant" | "Fortnite" | "Apex Legends" | "PUBG" | "COD" | "League of Legends";
 
-// Non-custodial: no deposit/withdrawal — funds move directly wallet ↔ ArenaEscrow contract
-// at_purchase = bought AT with USDT in Forge | at_spend = spent AT in Forge store
-export type TransactionType = "match_win" | "match_loss" | "fee" | "refund" | "escrow_lock" | "escrow_release" | "at_purchase" | "at_spend";
+// at_purchase = bought AT with USDT | at_spend = spent AT in Forge | at_withdrawal = burned AT → BNB sent to wallet
+export type TransactionType = "match_win" | "match_loss" | "fee" | "refund" | "escrow_lock" | "escrow_release" | "at_purchase" | "at_spend" | "at_withdrawal";
 export type TransactionStatus = "completed" | "pending" | "failed" | "cancelled";
 
 export type DisputeStatus = "open" | "reviewing" | "resolved" | "escalated";

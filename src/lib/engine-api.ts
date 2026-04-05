@@ -709,6 +709,50 @@ export async function apiBuyAtPackage(
   }
 }
 
+/**
+ * POST /wallet/withdraw-at — burn AT and receive BNB equivalent to user's linked wallet.
+ *
+ * Rates:
+ *   Standard:   1100 AT = $10 USDT  (use_discount: false)
+ *   Discounted:  950 AT = $10 USDT  (use_discount: true)
+ *
+ * Daily limit: 10,000 AT per user.
+ * CONTRACT-ready: platform wallet sends BNB to user wallet.
+ */
+export async function apiWithdrawAT(
+  token: string,
+  body: { at_amount: number; use_discount: boolean },
+): Promise<
+  | { ok: true; at_burned: number; usdt_value: number; wallet_address: string; at_balance: number; daily_remaining: number; rate: string }
+  | { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/wallet/withdraw-at`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    }
+    return {
+      ok: true as const,
+      at_burned:       asNum(raw.at_burned)       ?? 0,
+      usdt_value:      asNum(raw.usdt_value)       ?? 0,
+      wallet_address:  String(raw.wallet_address   ?? ""),
+      at_balance:      asNum(raw.at_balance)       ?? 0,
+      daily_remaining: asNum(raw.daily_remaining)  ?? 0,
+      rate:            String(raw.rate             ?? ""),
+    };
+  } catch {
+    return { ok: false as const, status: 0, detail: "Network error" };
+  }
+}
+
 export type ApiJoinMatchSuccess = { joined: boolean; match_id: string; game: string };
 
 /** POST /matches/{match_id}/join — Bearer auth */
