@@ -898,3 +898,453 @@ class TestForgePurchase:
     def test_purchase_no_token_returns_422(self):
         resp = client.post("/forge/purchase", json={"item_slug": "avatar-dragon"})
         assert resp.status_code == 422
+
+
+# ─── POST /auth/change-password ───────────────────────────────────────────────
+
+class TestChangePassword:
+    def _auth_header(self) -> dict:
+        token = auth.issue_token(FAKE_UUID, "test@arena.gg")
+        return {"Authorization": f"Bearer {token}"}
+
+    def _mock_session(self, pw_hash: str | None):
+        """Return mocked session that returns (pw_hash,) or None for fetchone."""
+        ctx, session = _make_session_mock(fetchone_return=(pw_hash,) if pw_hash else None)
+        return ctx, session
+
+    def test_change_password_success(self):
+        """Correct current password → 200 {changed: true}."""
+        current = "OldPass123"
+        current_hash = auth.hash_password(current)
+        ctx, session = self._mock_session(current_hash)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/auth/change-password",
+                json={"current_password": current, "new_password": "NewPass999"},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["changed"] is True
+
+    def test_wrong_current_password_returns_400(self):
+        """Wrong current password → 400."""
+        current_hash = auth.hash_password("RealPassword1")
+        ctx, session = self._mock_session(current_hash)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/auth/change-password",
+                json={"current_password": "WrongPassword", "new_password": "NewPass999"},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 400
+        assert "incorrect" in resp.json()["detail"].lower()
+
+    def test_new_password_too_short_returns_400(self):
+        """new_password < 8 chars → 400 before hitting DB."""
+        resp = client.post(
+            "/auth/change-password",
+            json={"current_password": "anything", "new_password": "short"},
+            headers=self._auth_header(),
+        )
+        assert resp.status_code == 400
+        assert "8" in resp.json()["detail"]
+
+    def test_change_password_user_not_found_returns_404(self):
+        """DB returns no user row → 404."""
+        ctx, session = _make_session_mock(fetchone_return=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/auth/change-password",
+                json={"current_password": "anything", "new_password": "ValidPass1"},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 404
+
+    def test_change_password_no_token_returns_422(self):
+        resp = client.post(
+            "/auth/change-password",
+            json={"current_password": "a", "new_password": "b"},
+        )
+        assert resp.status_code == 422
+
+
+# ─── Friendships ──────────────────────────────────────────────────────────────
+
+OTHER_UUID = str(uuid.uuid4())
+
+
+class TestFriendships:
+    def _auth_header(self) -> dict:
+        token = auth.issue_token(FAKE_UUID, "me@arena.gg")
+        return {"Authorization": f"Bearer {token}"}
+
+    # ── POST /friends/request ────────────────────────────────────────────────
+
+    def test_send_friend_request_success(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            (OTHER_UUID,),   # target user exists
+            None,            # no existing friendship
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/friends/request",
+                json={"user_id": OTHER_UUID},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 201
+        assert resp.json()["sent"] is True
+
+    def test_send_request_to_self_returns_400(self):
+        resp = client.post(
+            "/friends/request",
+            json={"user_id": FAKE_UUID},
+            headers=self._auth_header(),
+        )
+        assert resp.status_code == 400
+
+    def test_send_request_user_not_found_returns_404(self):
+        ctx, session = _make_session_mock(fetchone_return=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/friends/request",
+                json={"user_id": OTHER_UUID},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 404
+
+    def test_send_request_already_exists_returns_409(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            (OTHER_UUID,),                       # target user exists
+            (str(uuid.uuid4()), "pending"),      # friendship already exists
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/friends/request",
+                json={"user_id": OTHER_UUID},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 409
+
+    def test_send_request_blocked_returns_403(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            (OTHER_UUID,),                        # target user exists
+            (str(uuid.uuid4()), "blocked"),       # blocked friendship
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/friends/request",
+                json={"user_id": OTHER_UUID},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 403
+
+    def test_send_request_no_token_returns_422(self):
+        resp = client.post("/friends/request", json={"user_id": OTHER_UUID})
+        assert resp.status_code == 422
+
+    # ── GET /friends ─────────────────────────────────────────────────────────
+
+    def test_list_friends_returns_list(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = [
+            (OTHER_UUID, "Player1", "ARENA-ABC123", None, None),
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/friends", headers=self._auth_header())
+        assert resp.status_code == 200
+        friends = resp.json()["friends"]
+        assert isinstance(friends, list)
+        assert friends[0]["username"] == "Player1"
+
+    def test_list_friends_empty_when_no_friends(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = []
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/friends", headers=self._auth_header())
+        assert resp.status_code == 200
+        assert resp.json()["friends"] == []
+
+    def test_list_friends_no_token_returns_422(self):
+        resp = client.get("/friends")
+        assert resp.status_code == 422
+
+    # ── GET /friends/requests ────────────────────────────────────────────────
+
+    def test_list_requests_returns_incoming_and_outgoing(self):
+        import datetime as _dt
+        now = _dt.datetime.now(_dt.timezone.utc)
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.side_effect = [
+            [(str(uuid.uuid4()), OTHER_UUID, "Sender", "ARENA-S", None, "hello", now)],  # incoming
+            [],  # outgoing
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/friends/requests", headers=self._auth_header())
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "incoming" in data
+        assert "outgoing" in data
+        assert len(data["incoming"]) == 1
+        assert data["incoming"][0]["username"] == "Sender"
+
+    def test_list_requests_no_token_returns_422(self):
+        resp = client.get("/friends/requests")
+        assert resp.status_code == 422
+
+    # ── POST /friends/{user_id}/accept ────────────────────────────────────────
+
+    def test_accept_friend_request_success(self):
+        fid = str(uuid.uuid4())
+        ctx, session = _make_session_mock(fetchone_return=(fid,))
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/friends/{OTHER_UUID}/accept",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["accepted"] is True
+
+    def test_accept_nonexistent_request_returns_404(self):
+        ctx, session = _make_session_mock(fetchone_return=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/friends/{OTHER_UUID}/accept",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 404
+
+    def test_accept_no_token_returns_422(self):
+        resp = client.post(f"/friends/{OTHER_UUID}/accept")
+        assert resp.status_code == 422
+
+    # ── POST /friends/{user_id}/reject ────────────────────────────────────────
+
+    def test_reject_friend_request_success(self):
+        fid = str(uuid.uuid4())
+        ctx, session = _make_session_mock(fetchone_return=(fid,))
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/friends/{OTHER_UUID}/reject",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["rejected"] is True
+
+    def test_reject_nonexistent_request_returns_404(self):
+        ctx, session = _make_session_mock(fetchone_return=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/friends/{OTHER_UUID}/reject",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 404
+
+    # ── DELETE /friends/{user_id} ─────────────────────────────────────────────
+
+    def test_remove_friend_success(self):
+        fid = str(uuid.uuid4())
+        ctx, session = _make_session_mock(fetchone_return=(fid,))
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.delete(
+                f"/friends/{OTHER_UUID}",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["removed"] is True
+
+    def test_remove_nonexistent_friend_returns_404(self):
+        ctx, session = _make_session_mock(fetchone_return=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.delete(
+                f"/friends/{OTHER_UUID}",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 404
+
+    def test_remove_friend_no_token_returns_422(self):
+        resp = client.delete(f"/friends/{OTHER_UUID}")
+        assert resp.status_code == 422
+
+    # ── POST /friends/{user_id}/block ─────────────────────────────────────────
+
+    def test_block_user_updates_existing_friendship(self):
+        fid = str(uuid.uuid4())
+        ctx, session = _make_session_mock(fetchone_return=(fid,))
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/friends/{OTHER_UUID}/block",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["blocked"] is True
+
+    def test_block_user_inserts_when_no_friendship(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            None,              # no existing friendship
+            (OTHER_UUID,),     # target user exists
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/friends/{OTHER_UUID}/block",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["blocked"] is True
+
+    def test_block_self_returns_400(self):
+        resp = client.post(
+            f"/friends/{FAKE_UUID}/block",
+            headers=self._auth_header(),
+        )
+        assert resp.status_code == 400
+
+    def test_block_no_token_returns_422(self):
+        resp = client.post(f"/friends/{OTHER_UUID}/block")
+        assert resp.status_code == 422
+
+
+# ─── Direct Messages ──────────────────────────────────────────────────────────
+
+class TestDirectMessages:
+    def _auth_header(self) -> dict:
+        token = auth.issue_token(FAKE_UUID, "me@arena.gg")
+        return {"Authorization": f"Bearer {token}"}
+
+    # ── POST /messages ────────────────────────────────────────────────────────
+
+    def test_send_message_success(self):
+        import datetime as _dt
+        msg_id = str(uuid.uuid4())
+        now = _dt.datetime.now(_dt.timezone.utc)
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            (OTHER_UUID,),     # receiver exists
+            (msg_id, now),     # INSERT RETURNING
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/messages",
+                json={"receiver_id": OTHER_UUID, "content": "Hello!"},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["id"] == msg_id
+        assert data["content"] == "Hello!"
+        assert data["sender_id"] == FAKE_UUID
+        assert data["receiver_id"] == OTHER_UUID
+
+    def test_send_message_to_self_returns_400(self):
+        resp = client.post(
+            "/messages",
+            json={"receiver_id": FAKE_UUID, "content": "hi"},
+            headers=self._auth_header(),
+        )
+        assert resp.status_code == 400
+
+    def test_send_empty_message_returns_400(self):
+        resp = client.post(
+            "/messages",
+            json={"receiver_id": OTHER_UUID, "content": "   "},
+            headers=self._auth_header(),
+        )
+        assert resp.status_code == 400
+
+    def test_send_too_long_message_returns_400(self):
+        resp = client.post(
+            "/messages",
+            json={"receiver_id": OTHER_UUID, "content": "x" * 2001},
+            headers=self._auth_header(),
+        )
+        assert resp.status_code == 400
+
+    def test_send_message_receiver_not_found_returns_404(self):
+        ctx, session = _make_session_mock(fetchone_return=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/messages",
+                json={"receiver_id": OTHER_UUID, "content": "hi"},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 404
+
+    def test_send_message_no_token_returns_422(self):
+        resp = client.post(
+            "/messages",
+            json={"receiver_id": OTHER_UUID, "content": "hi"},
+        )
+        assert resp.status_code == 422
+
+    # ── GET /messages/{friend_id} ─────────────────────────────────────────────
+
+    def test_get_conversation_returns_messages(self):
+        import datetime as _dt
+        now = _dt.datetime.now(_dt.timezone.utc)
+        msg_id = str(uuid.uuid4())
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = [
+            (msg_id, FAKE_UUID, OTHER_UUID, "Hey there", False, now),
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get(
+                f"/messages/{OTHER_UUID}",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        msgs = resp.json()["messages"]
+        assert len(msgs) == 1
+        assert msgs[0]["content"] == "Hey there"
+        assert msgs[0]["read"] is False
+
+    def test_get_conversation_empty(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = []
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get(
+                f"/messages/{OTHER_UUID}",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["messages"] == []
+
+    def test_get_conversation_respects_limit(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = []
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get(
+                f"/messages/{OTHER_UUID}?limit=10",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+
+    def test_get_conversation_limit_out_of_range_returns_422(self):
+        resp = client.get(
+            f"/messages/{OTHER_UUID}?limit=999",
+            headers=self._auth_header(),
+        )
+        assert resp.status_code == 422
+
+    def test_get_conversation_no_token_returns_422(self):
+        resp = client.get(f"/messages/{OTHER_UUID}")
+        assert resp.status_code == 422
+
+    # ── POST /messages/{friend_id}/read ───────────────────────────────────────
+
+    def test_mark_messages_read_success(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.rowcount = 3
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/messages/{OTHER_UUID}/read",
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["marked_read"] is True
+
+    def test_mark_messages_read_no_token_returns_422(self):
+        resp = client.post(f"/messages/{OTHER_UUID}/read")
+        assert resp.status_code == 422

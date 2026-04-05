@@ -1686,3 +1686,595 @@ async def forge_purchase(req: ForgePurchaseRequest, payload: dict = Depends(veri
         "at_balance": new_balance,
         "item_slug":  req.item_slug,
     }
+
+
+# ── Change password ────────────────────────────────────────────────────────────
+
+class ChangePasswordRequest(BaseModel):
+    """
+    POST /auth/change-password — update the authenticated user's password.
+
+    current_password: must match the bcrypt hash stored in users.password_hash.
+    new_password:     minimum 8 characters; bcrypt-hashed before storage.
+    """
+    current_password: str
+    new_password: str
+
+
+@app.post("/auth/change-password", status_code=200)
+async def change_password(req: ChangePasswordRequest, payload: dict = Depends(verify_token)):
+    """
+    Change the authenticated user's password.
+
+    Steps:
+      1. Fetch current password_hash from DB.
+      2. Verify current_password against the stored hash — 400 if wrong.
+      3. Hash new_password and UPDATE users.password_hash.
+
+    DB-ready: reads and writes users.password_hash.
+    """
+    user_id: str = payload["sub"]
+
+    if len(req.new_password) < 8:
+        raise HTTPException(400, "New password must be at least 8 characters")
+
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("SELECT password_hash FROM users WHERE id = :uid"),
+                {"uid": user_id},
+            ).fetchone()
+
+            if not row:
+                raise HTTPException(404, "User not found")
+
+            if not auth.verify_password(req.current_password, row[0]):
+                raise HTTPException(400, "Current password is incorrect")
+
+            new_hash = auth.hash_password(req.new_password)
+            session.execute(
+                text("UPDATE users SET password_hash = :h, updated_at = NOW() WHERE id = :uid"),
+                {"h": new_hash, "uid": user_id},
+            )
+            session.commit()
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("change_password error: %s", exc)
+        raise HTTPException(500, "Password change failed")
+
+    return {"changed": True}
+
+
+# ── Friendships ────────────────────────────────────────────────────────────────
+
+class FriendRequestBody(BaseModel):
+    """
+    POST /friends/request — send a friend request.
+
+    user_id: UUID of the target user.
+    message: optional greeting message (stored in friendships.message).
+    """
+    user_id: str
+    message: str | None = None
+
+
+@app.post("/friends/request", status_code=201)
+async def send_friend_request(req: FriendRequestBody, payload: dict = Depends(verify_token)):
+    """
+    Send a friend request to another user.
+
+    Rules:
+      - Cannot friend yourself.
+      - If a pending/accepted/blocked friendship already exists (either direction) → 409.
+      - Inserts a new row with status='pending'.
+
+    DB-ready: inserts into friendships table.
+    """
+    me: str = payload["sub"]
+
+    if me == req.user_id:
+        raise HTTPException(400, "Cannot send a friend request to yourself")
+
+    try:
+        with SessionLocal() as session:
+            # Check target user exists
+            target = session.execute(
+                text("SELECT id FROM users WHERE id = :uid"),
+                {"uid": req.user_id},
+            ).fetchone()
+            if not target:
+                raise HTTPException(404, "User not found")
+
+            # Check no existing friendship in either direction
+            existing = session.execute(
+                text(
+                    "SELECT id, status FROM friendships "
+                    "WHERE (initiator_id = :me AND receiver_id = :them) "
+                    "   OR (initiator_id = :them AND receiver_id = :me)"
+                ),
+                {"me": me, "them": req.user_id},
+            ).fetchone()
+
+            if existing:
+                status_val = existing[1]
+                if status_val == "blocked":
+                    raise HTTPException(403, "Cannot send a friend request to this user")
+                raise HTTPException(409, "A friend request or friendship already exists")
+
+            session.execute(
+                text(
+                    "INSERT INTO friendships (initiator_id, receiver_id, message) "
+                    "VALUES (:me, :them, :msg)"
+                ),
+                {"me": me, "them": req.user_id, "msg": req.message},
+            )
+            session.commit()
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("send_friend_request error: %s", exc)
+        raise HTTPException(500, "Request failed")
+
+    return {"sent": True, "to": req.user_id}
+
+
+@app.get("/friends")
+async def list_friends(payload: dict = Depends(verify_token)):
+    """
+    List all accepted friends for the authenticated user.
+
+    Returns each friend's basic profile: user_id, username, avatar, arena_id.
+    DB-ready: friendships JOIN users.
+    """
+    me: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(
+                text(
+                    "SELECT u.id, u.username, u.arena_id, u.avatar, u.equipped_badge_icon "
+                    "FROM friendships f "
+                    "JOIN users u ON u.id = CASE "
+                    "  WHEN f.initiator_id = :me THEN f.receiver_id "
+                    "  ELSE f.initiator_id END "
+                    "WHERE (f.initiator_id = :me OR f.receiver_id = :me) "
+                    "  AND f.status = 'accepted' "
+                    "ORDER BY u.username ASC"
+                ),
+                {"me": me},
+            ).fetchall()
+    except Exception as exc:
+        logger.error("list_friends error: %s", exc)
+        raise HTTPException(500, "Failed to load friends")
+
+    return {
+        "friends": [
+            {
+                "user_id":             str(r[0]),
+                "username":            r[1],
+                "arena_id":            r[2],
+                "avatar":              r[3],
+                "equipped_badge_icon": r[4],
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.get("/friends/requests")
+async def list_friend_requests(payload: dict = Depends(verify_token)):
+    """
+    List pending friend requests for the authenticated user.
+
+    Returns:
+      incoming: requests where I am the receiver (I can accept/reject)
+      outgoing: requests I sent (I can cancel)
+
+    DB-ready: friendships JOIN users.
+    """
+    me: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            incoming_rows = session.execute(
+                text(
+                    "SELECT f.id, u.id, u.username, u.arena_id, u.avatar, f.message, f.created_at "
+                    "FROM friendships f "
+                    "JOIN users u ON u.id = f.initiator_id "
+                    "WHERE f.receiver_id = :me AND f.status = 'pending' "
+                    "ORDER BY f.created_at DESC"
+                ),
+                {"me": me},
+            ).fetchall()
+
+            outgoing_rows = session.execute(
+                text(
+                    "SELECT f.id, u.id, u.username, u.arena_id, u.avatar, f.message, f.created_at "
+                    "FROM friendships f "
+                    "JOIN users u ON u.id = f.receiver_id "
+                    "WHERE f.initiator_id = :me AND f.status = 'pending' "
+                    "ORDER BY f.created_at DESC"
+                ),
+                {"me": me},
+            ).fetchall()
+
+    except Exception as exc:
+        logger.error("list_friend_requests error: %s", exc)
+        raise HTTPException(500, "Failed to load friend requests")
+
+    def _fmt(rows: list) -> list:
+        return [
+            {
+                "request_id": str(r[0]),
+                "user_id":    str(r[1]),
+                "username":   r[2],
+                "arena_id":   r[3],
+                "avatar":     r[4],
+                "message":    r[5],
+                "created_at": r[6].isoformat() if r[6] else None,
+            }
+            for r in rows
+        ]
+
+    return {
+        "incoming": _fmt(incoming_rows),
+        "outgoing": _fmt(outgoing_rows),
+    }
+
+
+@app.post("/friends/{user_id}/accept", status_code=200)
+async def accept_friend_request(user_id: str, payload: dict = Depends(verify_token)):
+    """
+    Accept a pending friend request from user_id.
+
+    Only the receiver can accept. Updates status → 'accepted'.
+    DB-ready: UPDATE friendships.
+    """
+    me: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT id FROM friendships "
+                    "WHERE initiator_id = :them AND receiver_id = :me AND status = 'pending'"
+                ),
+                {"them": user_id, "me": me},
+            ).fetchone()
+
+            if not row:
+                raise HTTPException(404, "No pending friend request found from this user")
+
+            session.execute(
+                text(
+                    "UPDATE friendships SET status = 'accepted', updated_at = NOW() "
+                    "WHERE id = :fid"
+                ),
+                {"fid": str(row[0])},
+            )
+            session.commit()
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("accept_friend_request error: %s", exc)
+        raise HTTPException(500, "Accept failed")
+
+    return {"accepted": True, "friend_id": user_id}
+
+
+@app.post("/friends/{user_id}/reject", status_code=200)
+async def reject_friend_request(user_id: str, payload: dict = Depends(verify_token)):
+    """
+    Reject (delete) a pending friend request from user_id.
+
+    Only the receiver can reject. Deletes the friendship row.
+    DB-ready: DELETE FROM friendships.
+    """
+    me: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT id FROM friendships "
+                    "WHERE initiator_id = :them AND receiver_id = :me AND status = 'pending'"
+                ),
+                {"them": user_id, "me": me},
+            ).fetchone()
+
+            if not row:
+                raise HTTPException(404, "No pending friend request found from this user")
+
+            session.execute(
+                text("DELETE FROM friendships WHERE id = :fid"),
+                {"fid": str(row[0])},
+            )
+            session.commit()
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("reject_friend_request error: %s", exc)
+        raise HTTPException(500, "Reject failed")
+
+    return {"rejected": True, "from": user_id}
+
+
+@app.delete("/friends/{user_id}", status_code=200)
+async def remove_friend(user_id: str, payload: dict = Depends(verify_token)):
+    """
+    Remove an accepted friend (either direction).
+
+    Deletes the friendship row regardless of who initiated it.
+    DB-ready: DELETE FROM friendships.
+    """
+    me: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT id FROM friendships "
+                    "WHERE (initiator_id = :me AND receiver_id = :them) "
+                    "   OR (initiator_id = :them AND receiver_id = :me) "
+                    "  AND status = 'accepted'"
+                ),
+                {"me": me, "them": user_id},
+            ).fetchone()
+
+            if not row:
+                raise HTTPException(404, "Friendship not found")
+
+            session.execute(
+                text("DELETE FROM friendships WHERE id = :fid"),
+                {"fid": str(row[0])},
+            )
+            session.commit()
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("remove_friend error: %s", exc)
+        raise HTTPException(500, "Remove failed")
+
+    return {"removed": True, "user_id": user_id}
+
+
+@app.post("/friends/{user_id}/block", status_code=200)
+async def block_user(user_id: str, payload: dict = Depends(verify_token)):
+    """
+    Block a user.
+
+    If a friendship exists (any status, either direction) → update it:
+      set initiator_id=me, receiver_id=blocked_user, status='blocked'.
+    If no friendship → insert a new blocked row.
+
+    DB-ready: UPSERT on friendships.
+    """
+    me: str = payload["sub"]
+
+    if me == user_id:
+        raise HTTPException(400, "Cannot block yourself")
+
+    try:
+        with SessionLocal() as session:
+            existing = session.execute(
+                text(
+                    "SELECT id FROM friendships "
+                    "WHERE (initiator_id = :me AND receiver_id = :them) "
+                    "   OR (initiator_id = :them AND receiver_id = :me)"
+                ),
+                {"me": me, "them": user_id},
+            ).fetchone()
+
+            if existing:
+                # Re-orient: blocker is always initiator, blocked is receiver
+                session.execute(
+                    text(
+                        "UPDATE friendships "
+                        "SET initiator_id = :me, receiver_id = :them, "
+                        "    status = 'blocked', updated_at = NOW() "
+                        "WHERE id = :fid"
+                    ),
+                    {"me": me, "them": user_id, "fid": str(existing[0])},
+                )
+            else:
+                # Check target user exists
+                target = session.execute(
+                    text("SELECT id FROM users WHERE id = :uid"),
+                    {"uid": user_id},
+                ).fetchone()
+                if not target:
+                    raise HTTPException(404, "User not found")
+
+                session.execute(
+                    text(
+                        "INSERT INTO friendships (initiator_id, receiver_id, status) "
+                        "VALUES (:me, :them, 'blocked')"
+                    ),
+                    {"me": me, "them": user_id},
+                )
+            session.commit()
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("block_user error: %s", exc)
+        raise HTTPException(500, "Block failed")
+
+    return {"blocked": True, "user_id": user_id}
+
+
+# ── Direct Messages ────────────────────────────────────────────────────────────
+
+class SendMessageRequest(BaseModel):
+    """
+    POST /messages — send a direct message to another user.
+
+    receiver_id: UUID of the recipient.
+    content:     message text; 1–2000 characters (enforced by DB CHECK constraint).
+    """
+    receiver_id: str
+    content: str
+
+
+@app.post("/messages", status_code=201)
+async def send_message(req: SendMessageRequest, payload: dict = Depends(verify_token)):
+    """
+    Send a direct message to another user.
+
+    Rules:
+      - Cannot message yourself.
+      - content must be 1–2000 characters.
+      - Inserts into direct_messages; returns the new message id.
+
+    DB-ready: INSERT into direct_messages.
+    """
+    me: str = payload["sub"]
+
+    if me == req.receiver_id:
+        raise HTTPException(400, "Cannot send a message to yourself")
+
+    if not req.content or not req.content.strip():
+        raise HTTPException(400, "Message content cannot be empty")
+
+    if len(req.content) > 2000:
+        raise HTTPException(400, "Message content exceeds 2000 characters")
+
+    try:
+        with SessionLocal() as session:
+            # Verify receiver exists
+            target = session.execute(
+                text("SELECT id FROM users WHERE id = :uid"),
+                {"uid": req.receiver_id},
+            ).fetchone()
+            if not target:
+                raise HTTPException(404, "Recipient not found")
+
+            row = session.execute(
+                text(
+                    "INSERT INTO direct_messages (sender_id, receiver_id, content) "
+                    "VALUES (:sender, :receiver, :content) "
+                    "RETURNING id, created_at"
+                ),
+                {"sender": me, "receiver": req.receiver_id, "content": req.content},
+            ).fetchone()
+            session.commit()
+            msg_id = str(row[0])
+            created_at = row[1].isoformat() if row[1] else None
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("send_message error: %s", exc)
+        raise HTTPException(500, "Message send failed")
+
+    return {
+        "id":          msg_id,
+        "sender_id":   me,
+        "receiver_id": req.receiver_id,
+        "content":     req.content,
+        "created_at":  created_at,
+    }
+
+
+@app.get("/messages/{friend_id}")
+async def get_conversation(
+    friend_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    payload: dict = Depends(verify_token),
+):
+    """
+    Get the conversation between the authenticated user and friend_id.
+
+    Returns messages ordered oldest-first (ascending created_at).
+    Optional ?limit= parameter (1–200, default 50).
+
+    DB-ready: SELECT from direct_messages (both directions).
+    """
+    me: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(
+                text(
+                    "SELECT id, sender_id, receiver_id, content, read, created_at "
+                    "FROM direct_messages "
+                    "WHERE (sender_id = :me AND receiver_id = :them) "
+                    "   OR (sender_id = :them AND receiver_id = :me) "
+                    "ORDER BY created_at ASC "
+                    "LIMIT :lim"
+                ),
+                {"me": me, "them": friend_id, "lim": limit},
+            ).fetchall()
+    except Exception as exc:
+        logger.error("get_conversation error: %s", exc)
+        raise HTTPException(500, "Failed to load conversation")
+
+    return {
+        "messages": [
+            {
+                "id":          str(r[0]),
+                "sender_id":   str(r[1]),
+                "receiver_id": str(r[2]),
+                "content":     r[3],
+                "read":        r[4],
+                "created_at":  r[5].isoformat() if r[5] else None,
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.post("/messages/{friend_id}/read", status_code=200)
+async def mark_messages_read(friend_id: str, payload: dict = Depends(verify_token)):
+    """
+    Mark all unread messages from friend_id to the authenticated user as read.
+
+    DB-ready: UPDATE direct_messages SET read = TRUE.
+    """
+    me: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            result = session.execute(
+                text(
+                    "UPDATE direct_messages "
+                    "SET read = TRUE "
+                    "WHERE sender_id = :them AND receiver_id = :me AND read = FALSE"
+                ),
+                {"them": friend_id, "me": me},
+            )
+            session.commit()
+            # rowcount may not be available with all drivers — use 0 as fallback
+            updated = getattr(result, "rowcount", 0) or 0
+
+    except Exception as exc:
+        logger.error("mark_messages_read error: %s", exc)
+        raise HTTPException(500, "Mark read failed")
+
+    return {"marked_read": True, "count": updated}
+
+
+# ── Stats update path (documentation) ─────────────────────────────────────────
+#
+# How wins / losses / xp are updated:
+#
+#   Path A — On-chain (Phase 6, primary):
+#     1. Match completes → EscrowClient.declare_winner(match_id, winner_id) is called
+#        (triggered from POST /match/result or the RageQuitDetector).
+#     2. The ArenaEscrow contract emits WinnerDeclared(matchId, winner).
+#     3. A future Oracle listener (Phase 6) subscribes to WinnerDeclared and calls:
+#          UPDATE user_stats SET wins = wins + 1 WHERE user_id = :winner_id
+#          UPDATE user_stats SET losses = losses + 1 WHERE user_id IN (loser_ids)
+#          UPDATE user_stats SET xp = xp + :xp_gain WHERE user_id IN (all_players)
+#        XP formula (Phase 6 TODO): win = +100 XP, loss = +25 XP (participation).
+#
+#   Path B — Direct API (current, for testing / custom matches):
+#     POST /match/result  with { winner_id }
+#       → currently only updates matches.status + matches.winner_id.
+#       → DB-ready: will also UPDATE user_stats when winner_id is confirmed.
+#
+#   GET /auth/me returns:
+#     xp, wins, losses  ← from user_stats (0 for new users)
+#     at_balance         ← from users.at_balance (200 for new users)
+#
+# DB-ready: all stat updates write to user_stats table (user_id FK → users.id).
+# CONTRACT-ready: WinnerDeclared event listener triggers stat writes.
