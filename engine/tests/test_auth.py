@@ -395,16 +395,16 @@ class TestMe:
         token = auth.issue_token(FAKE_UUID, "daniel@arena.gg")
         return {"Authorization": f"Bearer {token}"}
 
-    def _db_profile_row(self, at_balance: int = 200):
+    def _db_profile_row(self, at_balance: int = 200, role: str = "user"):
         # Columns: id, username, email, arena_id, rank, wallet_address,
         #          steam_id, riot_id,
         #          xp, wins, losses, avatar, avatar_bg, equipped_badge_icon,
-        #          forge_unlocked_item_ids, vip_expires_at, at_balance
+        #          forge_unlocked_item_ids, vip_expires_at, at_balance, role
         return (FAKE_UUID, "daniel", "daniel@arena.gg", FAKE_ARENA_ID,
                 "Gold", "0xABC", None, None,
                 1500, 42, 10,
                 "preset:warrior", "red", "badge:champion",
-                ["item-001", "item-002"], None, at_balance)
+                ["item-001", "item-002"], None, at_balance, role)
 
     def test_me_returns_profile(self):
         ctx, _ = _make_session_mock(fetchone_return=self._db_profile_row())
@@ -419,6 +419,14 @@ class TestMe:
         assert data["equipped_badge_icon"] == "badge:champion"
         assert data["forge_unlocked_item_ids"] == ["item-001", "item-002"]
         assert data["vip_expires_at"] is None
+        assert data.get("role") == "user"
+
+    def test_me_returns_admin_when_db_role_admin(self):
+        ctx, _ = _make_session_mock(fetchone_return=self._db_profile_row(role="admin"))
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/auth/me", headers=self._auth_header())
+        assert resp.status_code == 200
+        assert resp.json()["role"] == "admin"
 
     def test_me_no_token_returns_422(self):
         resp = client.get("/auth/me")
@@ -463,12 +471,12 @@ class TestPatchUserMe:
     def _db_profile_row(self):
         # id, username, email, arena_id, rank, wallet_address, steam_id, riot_id,
         # xp, wins, losses, avatar, avatar_bg, equipped_badge_icon,
-        # forge_unlocked_item_ids, vip_expires_at, at_balance
+        # forge_unlocked_item_ids, vip_expires_at, at_balance, role
         return (FAKE_UUID, "daniel", "daniel@arena.gg", FAKE_ARENA_ID,
                 "Gold", "0xABC", None, None,
                 10, 3, 1,
                 "preset:warrior", "blue", "badge:pro",
-                ["item-001"], None, 200)
+                ["item-001"], None, 200, "user")
 
     def test_patch_avatar_returns_200(self):
         ctx, session = _make_session_mock(fetchone_return=self._db_profile_row())

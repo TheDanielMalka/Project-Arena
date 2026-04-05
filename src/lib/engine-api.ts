@@ -368,6 +368,8 @@ export async function apiGetMe(token: string): Promise<{
   forge_unlocked_item_ids: string[];
   vip_expires_at: string | null;
   at_balance: number;
+  /** From user_roles via GET /auth/me (admin > moderator > user) */
+  role?: string;
 } | null> {
   try {
     const res = await fetch(`${ENGINE_BASE}/auth/me`, {
@@ -392,6 +394,7 @@ export async function apiGetMe(token: string): Promise<{
       forge_unlocked_item_ids: string[];
       vip_expires_at: string | null;
       at_balance: number;
+      role?: string;
     };
   } catch {
     return null;

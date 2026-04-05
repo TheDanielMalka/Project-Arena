@@ -220,6 +220,8 @@ class UserProfile(BaseModel):
     # Arena Tokens — platform currency for Forge store (NOT on-chain)
     # DB-ready: users.at_balance — awarded 200 on signup, spent in Forge
     at_balance: int = 0
+    # Effective privilege from user_roles: admin > moderator > user
+    role: str = "user"
     # Identity / Forge fields (from users table)
     avatar: str | None = None
     avatar_bg: str | None = None
@@ -965,7 +967,16 @@ async def me(payload: dict = Depends(verify_token)):
                     "       COALESCE(s.xp, 0), COALESCE(s.wins, 0), COALESCE(s.losses, 0), "
                     "       u.avatar, u.avatar_bg, u.equipped_badge_icon, "
                     "       u.forge_unlocked_item_ids, u.vip_expires_at, "
-                    "       COALESCE(u.at_balance, 0) "
+                    "       COALESCE(u.at_balance, 0), "
+                    "       CASE "
+                    "         WHEN EXISTS (SELECT 1 FROM user_roles ar "
+                    "                      WHERE ar.user_id = u.id AND ar.role = 'admin') "
+                    "           THEN 'admin' "
+                    "         WHEN EXISTS (SELECT 1 FROM user_roles mr "
+                    "                      WHERE mr.user_id = u.id AND mr.role = 'moderator') "
+                    "           THEN 'moderator' "
+                    "         ELSE 'user' "
+                    "       END "
                     "FROM users u "
                     "LEFT JOIN user_stats s ON s.user_id = u.id "
                     "WHERE u.id = :uid"
@@ -997,6 +1008,7 @@ async def me(payload: dict = Depends(verify_token)):
         forge_unlocked_item_ids=list(row[14]) if row[14] else [],
         vip_expires_at=row[15].isoformat() if row[15] else None,
         at_balance=int(row[16]),
+        role=str(row[17]) if row[17] is not None else "user",
     )
 
 

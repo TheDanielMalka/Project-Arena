@@ -1,5 +1,11 @@
 import { create } from "zustand";
-import type { UserProfile, UserProfilePatch, ForgeCategory, ShopEntitlement } from "@/types";
+import type {
+  UserProfile,
+  UserProfilePatch,
+  ForgeCategory,
+  ShopEntitlement,
+  UserRole,
+} from "@/types";
 import { setPendingClientSetupAfterSignup } from "@/lib/localArenaPrefs";
 import {
   apiGetMe,
@@ -98,6 +104,14 @@ const MOCK_USER: UserProfile = {
 
 const ADMIN_EMAILS = new Set(["admin@arena.gg"]);
 
+/** Prefer GET /auth/me `role` (from user_roles); fallback for legacy engine or dev allowlist. */
+function roleFromApi(apiRole: string | undefined, email: string): UserRole {
+  if (apiRole === "admin" || apiRole === "moderator" || apiRole === "user") {
+    return apiRole;
+  }
+  return ADMIN_EMAILS.has(email.trim().toLowerCase()) ? "admin" : "user";
+}
+
 function extendVipExpiresAt(currentIso: string | undefined, days: number): string {
   const now = Date.now();
   const base = currentIso ? Math.max(now, new Date(currentIso).getTime()) : now;
@@ -150,7 +164,7 @@ export const useUserStore = create<UserState>((set, get) => ({
 
     const user: UserProfile = {
       id: data.user_id,
-      role: ADMIN_EMAILS.has(normalizedEmail) ? "admin" : "user",
+      role: roleFromApi(profile.role, normalizedEmail),
       username: data.username,
       email: normalizedEmail,
       steamId: profile.steam_id?.trim() || null,
@@ -224,7 +238,7 @@ export const useUserStore = create<UserState>((set, get) => ({
 
     const user: UserProfile = {
       id: data.user_id,
-      role: "user",
+      role: roleFromApi(profile?.role, normalizedEmail),
       username: data.username,
       email: normalizedEmail,
       arenaId: data.arena_id ?? profile?.arena_id ?? "",
@@ -293,6 +307,7 @@ export const useUserStore = create<UserState>((set, get) => ({
     const w = profile.wallet_address ?? null;
     const next: UserProfile = {
       ...user,
+      role: roleFromApi(profile.role, user.email),
       username: profile.username,
       steamId: profile.steam_id?.trim() || null,
       riotId: profile.riot_id?.trim() || null,
