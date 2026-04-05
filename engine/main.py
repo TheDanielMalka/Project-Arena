@@ -1018,9 +1018,12 @@ async def get_active_match(payload: dict = Depends(verify_token)):
             row = session.execute(
                 text(
                     "SELECT m.id, m.game, m.status, m.bet_amount, m.stake_currency, "
-                    "       m.type, m.code, m.created_at "
+                    "       m.type, m.code, m.created_at, "
+                    "       m.mode, m.host_id, u.username AS host_username, "
+                    "       m.max_players, m.max_per_team "
                     "FROM matches m "
                     "JOIN match_players mp ON mp.match_id = m.id "
+                    "JOIN users u ON u.id = m.host_id "
                     "WHERE mp.user_id = :uid "
                     "  AND m.status IN ('waiting','in_progress') "
                     "ORDER BY m.created_at DESC LIMIT 1"
@@ -1051,6 +1054,11 @@ async def get_active_match(payload: dict = Depends(verify_token)):
                     "type":           row[5],
                     "code":           row[6],
                     "created_at":     row[7].isoformat() if row[7] else None,
+                    "mode":           row[8],
+                    "host_id":        str(row[9]) if row[9] else None,
+                    "host_username":  row[10],
+                    "max_players":    row[11],
+                    "max_per_team":   row[12],
                     "players": [
                         {"user_id": str(p[0]), "username": p[1], "avatar": p[2],
                          "arena_id": p[3], "team": p[4]}
@@ -2228,8 +2236,12 @@ async def invite_to_match(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("invite_to_match error: %s", exc)
-        raise HTTPException(500, "Invite failed")
+        logger.error("invite_to_match error: %s", exc, exc_info=True)
+        detail = str(exc)
+        # Surface enum-related errors explicitly so the client knows to run migration 010
+        if "notification_type" in detail or "invalid input value" in detail.lower():
+            raise HTTPException(500, "DB enum missing 'match_invite' — run migration 010")
+        raise HTTPException(500, f"Invite failed: {detail}")
 
     return {"invited": True, "match_id": match_id, "friend_id": req.friend_id}
 
