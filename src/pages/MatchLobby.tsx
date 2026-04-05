@@ -262,6 +262,8 @@ const MatchLobby = () => {
     deleteMatch,
     expireOldMatches,
     refreshMatchesFromServer,
+    activeRoomId:    myRoomMatchId,
+    setActiveRoomId: setMyRoomMatchId,
   } = useMatchStore();
   const { lockEscrow, cancelEscrow, connectedAddress, connectWallet: linkMetaMaskForMatch } = useWalletStore();
   const canPlay      = useClientStore((s) => s.canPlayForUser(websiteUserId));
@@ -343,7 +345,8 @@ const MatchLobby = () => {
     balance: boolean;
     balanceDetail: string;
   } | null>(null);
-  const [myRoomMatchId, setMyRoomMatchId] = useState<string | null>(null);
+  // myRoomMatchId / setMyRoomMatchId now come from Zustand (see useMatchStore destructure above).
+  // Using Zustand means the active-room ID survives React navigation (useState would reset on unmount).
   const [roomLocked, setRoomLocked]       = useState(false);
   const [countdown, setCountdown]         = useState<number | null>(null);
   const [leaveConfirmOpen,      setLeaveConfirmOpen]      = useState(false);
