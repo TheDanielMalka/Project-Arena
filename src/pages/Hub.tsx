@@ -17,7 +17,9 @@ import { useMessageStore } from "@/stores/messageStore";
 import { useInboxStore }   from "@/stores/inboxStore";
 import { useUserStore }    from "@/stores/userStore";
 import { useNotificationStore } from "@/stores/notificationStore";
-import type { Game, Friendship, InboxMessage } from "@/types";
+import type { DirectMessage, Game, Friendship, InboxMessage, PublicPlayerProfile } from "@/types";
+
+const EMPTY_CHAT_MESSAGES: DirectMessage[] = [];
 import { cn } from "@/lib/utils";
 import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
 
@@ -56,23 +58,28 @@ interface FriendChatPanelProps {
 }
 
 function FriendChatPanel({ friend, myId, myUsername, onClose, onIgnoreFromChat }: FriendChatPanelProps) {
-  const getConversation = useMessageStore((s) => s.getConversation);
+  const friendId = friend.friendId;
+  const messages = useMessageStore((s) => s.conversations[friendId] ?? EMPTY_CHAT_MESSAGES);
   const sendMessage     = useMessageStore((s) => s.sendMessage);
   const markRead        = useMessageStore((s) => s.markRead);
+  const loadConversationForFriend = useMessageStore((s) => s.loadConversationForFriend);
 
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
-  const messages  = getConversation(friend.friendId);
 
   useEffect(() => {
-    markRead(friend.friendId);
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [friend.friendId, markRead, messages.length]);
+    void loadConversationForFriend(friendId);
+  }, [friendId, loadConversationForFriend]);
 
-  const handleSend = () => {
+  useEffect(() => {
+    markRead(friendId);
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [friendId, markRead, messages.length]);
+
+  const handleSend = async () => {
     const content = input.trim();
     if (!content) return;
-    const sent = sendMessage({ myId, myUsername, friendId: friend.friendId, content });
+    const sent = await sendMessage({ myId, myUsername, friendId, content });
     if (sent) setInput("");
   };
 
@@ -192,21 +199,26 @@ function MsgChatPanel({ friend, myId, myUsername, onBack, onIgnoreFromChat }: {
   onBack: () => void;
   onIgnoreFromChat?: () => void;
 }) {
-  const getConv  = useMessageStore((s) => s.getConversation);
+  const friendId = friend.friendId;
+  const messages = useMessageStore((s) => s.conversations[friendId] ?? EMPTY_CHAT_MESSAGES);
   const sendMsg  = useMessageStore((s) => s.sendMessage);
   const markRead = useMessageStore((s) => s.markRead);
+  const loadConversationForFriend = useMessageStore((s) => s.loadConversationForFriend);
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
-  const messages  = getConv(friend.friendId);
 
-  useEffect(() => { markRead(friend.friendId); }, [friend.friendId, markRead]);
+  useEffect(() => {
+    void loadConversationForFriend(friendId);
+  }, [friendId, loadConversationForFriend]);
+
+  useEffect(() => { markRead(friendId); }, [friendId, markRead]);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages.length]);
 
   const tc = TIER_COLOR[friend.friendTier] ?? "#888";
 
-  const doSend = () => {
+  const doSend = async () => {
     if (!input.trim()) return;
-    const sent = sendMsg({ myId, myUsername, friendId: friend.friendId, content: input });
+    const sent = await sendMsg({ myId, myUsername, friendId, content: input });
     if (sent) setInput("");
   };
 
@@ -331,9 +343,9 @@ function ComposeDialog({ open, onClose, prefillArenaId }: ComposeProps) {
 
   const canSend = toArenaId.trim().length > 0 && subject.trim().length > 0 && content.trim().length > 0;
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!user || !canSend) return;
-    const result = sendInbox({
+    const result = await sendInbox({
       myId: user.id, myName: user.username, myArenaId: user.arenaId,
       targetArenaId: toArenaId.trim(), subject, content,
     });
@@ -425,7 +437,10 @@ interface FriendRequestModalProps {
 function FriendRequestModal({ open, targetUsername, targetArenaId, onClose, onConfirm }: FriendRequestModalProps) {
   const [message, setMessage] = useState("");
   const handleClose = () => { onClose(); setTimeout(() => setMessage(""), 300); };
-  const handleConfirm = () => { onConfirm(message.trim()); setMessage(""); };
+  const handleConfirm = () => {
+    void onConfirm(message.trim());
+    setMessage("");
+  };
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
@@ -478,6 +493,7 @@ export default function Hub() {
   const composeTo = searchParams.get("composeTo") || undefined;
 
   const user            = useUserStore((s) => s.user);
+  const token           = useUserStore((s) => s.token);
   const searchPlayers   = usePlayerStore((s) => s.searchPlayers);
   const addNotif        = useNotificationStore((s) => s.addNotification);
 
@@ -505,7 +521,8 @@ export default function Hub() {
   const markAllRead     = useInboxStore((s) => s.markAllRead);
   const markOneRead     = useInboxStore((s) => s.markRead);
   const deleteMessage   = useInboxStore((s) => s.deleteMessage);
-  const getInboxUnread  = useInboxStore((s) => s.getTotalUnread);
+  const inboxUnreadCount = useInboxStore((s) => s.unreadCount);
+  const refreshInbox    = useInboxStore((s) => s.refreshInbox);
   const composePrefillArenaId = useInboxStore((s) => s.composePrefillArenaId);
   const setComposePrefill     = useInboxStore((s) => s.setComposePrefill);
 
@@ -513,6 +530,7 @@ export default function Hub() {
   const [query,       setQuery]       = useState("");
   const [gameFilter,  setGameFilter]  = useState<Game | "">("");
   const [refreshSeed, setRefreshSeed] = useState(() => Date.now());
+  const [communityList, setCommunityList] = useState<PublicPlayerProfile[]>([]);
   const handleShuffle = useCallback(() => setRefreshSeed(Date.now()), []);
 
   // Friends tab state
@@ -560,13 +578,31 @@ export default function Hub() {
     setSearchParams(next, { replace: true });
   }, [tab, composeTo, composePrefillArenaId, searchParams, setSearchParams, setComposePrefill]);
 
+  useEffect(() => {
+    if (tab !== "community") return;
+    const handle = window.setTimeout(() => {
+      void searchPlayers(query, gameFilter || undefined, token ?? null).then(setCommunityList);
+    }, 220);
+    return () => clearTimeout(handle);
+  }, [tab, query, gameFilter, token, searchPlayers]);
+
+  useEffect(() => {
+    if (!user || !token || tab !== "messages") return;
+    void refreshInbox(token);
+  }, [user, token, tab, refreshInbox]);
+
+  useEffect(() => {
+    if (!user || !token) return;
+    void useInboxStore.getState().refreshUnreadBadge(token);
+  }, [user, token]);
+
   // Derived data
   const communityResults = useMemo(
     () =>
-      searchPlayers(query, gameFilter || undefined).filter(
+      communityList.filter(
         (p) => p.id !== user?.id && !ignoredUsers.some((u) => u.userId === p.id)
       ),
-    [query, gameFilter, searchPlayers, user?.id, ignoredUsers]
+    [communityList, user?.id, ignoredUsers]
   );
 
   // 9 random players for the no-search view
@@ -606,11 +642,11 @@ export default function Hub() {
   );
 
   const totalChatUnread  = getChatUnread();
-  const totalInboxUnread = getInboxUnread();
+  const totalInboxUnread = inboxUnreadCount;
   const totalMsgUnread   = totalChatUnread + totalInboxUnread;
 
   // Handlers
-  const handleAddFriend = (player: ReturnType<typeof searchPlayers>[0]) => {
+  const handleAddFriend = (player: PublicPlayerProfile) => {
     if (!user) return;
     setFrModalTarget({
       id: player.id, username: player.username, arenaId: player.arenaId,
@@ -619,9 +655,9 @@ export default function Hub() {
     });
   };
 
-  const handleFrConfirm = (message: string) => {
+  const handleFrConfirm = async (message: string) => {
     if (!user || !frModalTarget) return;
-    const created = sendFriendRequest({
+    const created = await sendFriendRequest({
       myId: user.id, myUsername: user.username,
       myArenaId: user.arenaId, myAvatarInitials: user.avatarInitials,
       myRank: user.rank, myTier: user.tier, myPreferredGame: user.preferredGame,
@@ -639,16 +675,18 @@ export default function Hub() {
     setFrModalTarget(null);
   };
 
-  const handleAccept = (f: Friendship) => {
-    acceptRequest(f.id);
-    addNotif({ type: "system", title: "Friend Added! 🎮", message: `You and ${f.friendUsername} are now friends.` });
+  const handleAccept = async (f: Friendship) => {
+    await acceptRequest(f.id);
   };
 
-  const handleDecline = (f: Friendship) => { declineRequest(f.id); };
+  const handleDecline = async (f: Friendship) => {
+    await declineRequest(f.id);
+  };
 
-  const handleIgnoreRequest = (f: Friendship) => {
+  const handleIgnoreRequest = async (f: Friendship) => {
     if (!user) return;
-    blockPlayer({ myId: user.id, targetUserId: f.initiatorId, targetUsername: f.friendUsername, quiet: true });
+    const ok = await blockPlayer({ myId: user.id, targetUserId: f.initiatorId, targetUsername: f.friendUsername, quiet: true });
+    if (!ok) return;
     addNotif({
       type: "system",
       title: "Request dismissed",
@@ -656,9 +694,10 @@ export default function Hub() {
     });
   };
 
-  const handleIgnoreFriend = (f: Friendship) => {
+  const handleIgnoreFriend = async (f: Friendship) => {
     if (!user) return;
-    blockPlayer({ myId: user.id, targetUserId: f.friendId, targetUsername: f.friendUsername, quiet: true });
+    const ok = await blockPlayer({ myId: user.id, targetUserId: f.friendId, targetUsername: f.friendUsername, quiet: true });
+    if (!ok) return;
     if (activeChatFriend?.friendId === f.friendId) setActiveChatFriend(null);
     if (activePanel?.type === "chat" && activePanel.friend.friendId === f.friendId) setActivePanel(null);
     addNotif({
@@ -668,9 +707,10 @@ export default function Hub() {
     });
   };
 
-  const handleIgnoreInboxSender = (msg: InboxMessage) => {
+  const handleIgnoreInboxSender = async (msg: InboxMessage) => {
     if (!user) return;
-    blockPlayer({ myId: user.id, targetUserId: msg.senderId, targetUsername: msg.senderName, quiet: true });
+    const ok = await blockPlayer({ myId: user.id, targetUserId: msg.senderId, targetUsername: msg.senderName, quiet: true });
+    if (!ok) return;
     addNotif({
       type: "system",
       title: "Sender ignored",
@@ -679,10 +719,10 @@ export default function Hub() {
     setActivePanel(null);
   };
 
-  const handleAddFriendFromInbox = (msg: InboxMessage) => {
+  const handleAddFriendFromInbox = async (msg: InboxMessage) => {
     if (!user) return;
     const p = usePlayerStore.getState().players.find((pl) => pl.id === msg.senderId);
-    const created = sendFriendRequest({
+    const created = await sendFriendRequest({
       myId: user.id, myUsername: user.username,
       myArenaId: user.arenaId, myAvatarInitials: user.avatarInitials,
       myRank: user.rank, myTier: user.tier, myPreferredGame: user.preferredGame,
@@ -699,15 +739,16 @@ export default function Hub() {
     });
   };
 
-  const handleRemoveFriend = (friendId: string, friendUsername: string) => {
-    removeFriend(friendId);
+  const handleRemoveFriend = async (friendId: string, friendUsername: string) => {
+    const ok = await removeFriend(friendId);
+    if (!ok) return;
     if (activeChatFriend?.friendId === friendId) setActiveChatFriend(null);
     addNotif({ type: "system", title: "Friend Removed", message: `${friendUsername} removed from friends.` });
   };
 
   const handleOpenInbox = (msg: InboxMessage) => {
     setActivePanel({ type: "inbox", msg });
-    if (!msg.read) markOneRead(msg.id);
+    if (!msg.read) void markOneRead(msg.id);
   };
 
   // ── Render ──────────────────────────────────────────────────
@@ -894,8 +935,10 @@ export default function Hub() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            const f = friendships.find((fr) => fr.friendId === player.id && fr.status === "pending");
-                            if (f) declineRequest(f.id);
+                            void (async () => {
+                              const f = friendships.find((fr) => fr.friendId === player.id && fr.status === "pending");
+                              if (f) await declineRequest(f.id);
+                            })();
                           }}
                           title="Cancel request"
                           className="text-muted-foreground hover:text-destructive transition-colors p-0.5"
@@ -916,12 +959,21 @@ export default function Hub() {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            blockPlayer({ myId: user.id, targetUserId: player.id, targetUsername: player.username, quiet: true });
-                            addNotif({
-                              type: "system",
-                              title: "Ignored",
-                              message: `${player.username} is blocked from contacting you.`,
-                            });
+                            void (async () => {
+                              if (!user) return;
+                              const ok = await blockPlayer({
+                                myId: user.id,
+                                targetUserId: player.id,
+                                targetUsername: player.username,
+                                quiet: true,
+                              });
+                              if (!ok) return;
+                              addNotif({
+                                type: "system",
+                                title: "Ignored",
+                                message: `${player.username} is blocked from contacting you.`,
+                              });
+                            })();
                           }}
                           title="Ignore player"
                           className="text-muted-foreground hover:text-destructive transition-colors p-0.5"
@@ -1015,7 +1067,7 @@ export default function Hub() {
                           <p className="text-xs font-medium truncate">{f.friendUsername}</p>
                           <p className="text-[9px] text-muted-foreground">Pending…</p>
                         </div>
-                        <button onClick={() => declineRequest(f.id)}
+                        <button onClick={() => void declineRequest(f.id)}
                           className="text-muted-foreground hover:text-destructive transition-colors" title="Cancel request">
                           <X className="h-3.5 w-3.5" />
                         </button>
@@ -1177,7 +1229,7 @@ export default function Hub() {
                   placeholder="Search…" className="pl-8 h-7 bg-secondary/50 border-border/50 text-xs" />
               </div>
               {msgTab === "inbox" && totalInboxUnread > 0 && (
-                <button onClick={() => markAllRead()} className="text-[10px] text-primary hover:underline self-start">
+                <button type="button" onClick={() => void markAllRead()} className="text-[10px] text-primary hover:underline self-start">
                   Mark all as read
                 </button>
               )}

@@ -21,8 +21,8 @@ const XP_ICON_MAP: Record<string, LucideIcon> = {
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const { user, showLoginGreeting, greetingType, clearLoginGreeting } = useUserStore();
-  const { matches } = useMatchStore();
+  const { user, token, showLoginGreeting, greetingType, clearLoginGreeting } = useUserStore();
+  const { matches, refreshMatchesFromServer } = useMatchStore();
 
   // ── Login greeting banner ─────────────────────────────────────────────────
   const [bannerVisible, setBannerVisible] = useState(false);
@@ -32,6 +32,11 @@ const Dashboard = () => {
   useEffect(() => {
     setShowClientSetupBanner(hasPendingClientSetup());
   }, []);
+
+  useEffect(() => {
+    if (!user || !token) return;
+    void refreshMatchesFromServer(token);
+  }, [user, token, refreshMatchesFromServer]);
 
   useEffect(() => {
     if (!showLoginGreeting) return;

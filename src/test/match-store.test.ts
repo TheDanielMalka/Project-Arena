@@ -1,7 +1,8 @@
 import { beforeEach, describe, it, expect } from "vitest";
 import { useMatchStore } from "@/stores/matchStore";
+import { MATCH_STORE_TEST_FIXTURE } from "@/test/matchStoreFixture";
 
-const SEED_MATCHES = useMatchStore.getState().matches;
+const SEED_MATCHES = MATCH_STORE_TEST_FIXTURE;
 
 describe("matchStore", () => {
   beforeEach(() => {

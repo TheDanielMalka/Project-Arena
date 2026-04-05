@@ -363,6 +363,25 @@ export interface SupportTicket {
   supportTopic?: SupportTopic;
 }
 
+// ─── Leaderboard (GET /leaderboard) ───────────────────────────
+// DB-ready: engine returns ranked rows; UI uses this shape across Leaderboard page.
+
+export interface LeaderboardPlayerRow {
+  id: string;
+  arenaId: string;
+  rank: number;
+  username: string;
+  wins: number;
+  losses: number;
+  winRate: number;
+  earnings: number;
+  streak: number;
+  change: "up" | "down" | "same";
+  game: string;
+  avatar?: string;
+  equippedBadgeIcon?: string;
+}
+
 // ─── Public Player Profile ────────────────────────────────────
 // Subset of UserProfile — excludes wallet, steamId, email, balance
 // DB: SELECT users.*, user_stats.* WHERE id = :id (public fields only)

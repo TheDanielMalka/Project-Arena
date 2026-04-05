@@ -27,6 +27,17 @@
  *   On match end:    UPDATE client_sessions SET status='ready', active_match_id=NULL
  */
 
+import type {
+  ArenaId,
+  Game,
+  InboxMessage,
+  LeaderboardPlayerRow,
+  Match,
+  MatchStatus,
+  PublicPlayerProfile,
+  UserStatus,
+} from "@/types";
+
 export interface EngineHealth {
   status:       "ok" | "offline" | "error";
   db?:          "connected" | "disconnected";   // sourced from GET /health
@@ -587,6 +598,809 @@ export async function apiUnlinkMeWalletAddress(token: string): Promise<boolean> 
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ wallet_address: "" }),
     });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// ── Auth: change password ────────────────────────────────────────────────────
+
+export type ApiChangePasswordResult =
+  | { ok: true }
+  | { ok: false; status: number; detail: string | null };
+
+export async function apiChangePassword(
+  token: string,
+  current_password: string,
+  new_password: string,
+): Promise<ApiChangePasswordResult> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/auth/change-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ current_password, new_password }),
+    });
+    const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
+    if (!res.ok) {
+      return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    }
+    return { ok: true as const };
+  } catch {
+    return { ok: false as const, status: 0, detail: "Network error" };
+  }
+}
+
+// ── Friends ─────────────────────────────────────────────────────────────────
+
+export type ApiFriendRow = {
+  user_id: string;
+  username: string;
+  arena_id: string | null;
+  avatar: string | null;
+  equipped_badge_icon: string | null;
+};
+
+export type ApiFriendRequestRow = {
+  request_id: string;
+  user_id: string;
+  username: string;
+  arena_id: string | null;
+  avatar: string | null;
+  message: string | null;
+  created_at: string | null;
+};
+
+export async function apiListFriends(token: string): Promise<ApiFriendRow[] | null> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/friends`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const raw = (await res.json()) as { friends?: ApiFriendRow[] };
+    return Array.isArray(raw.friends) ? raw.friends : [];
+  } catch {
+    return null;
+  }
+}
+
+export async function apiListFriendRequests(token: string): Promise<{
+  incoming: ApiFriendRequestRow[];
+  outgoing: ApiFriendRequestRow[];
+} | null> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/friends/requests`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const raw = (await res.json()) as {
+      incoming?: ApiFriendRequestRow[];
+      outgoing?: ApiFriendRequestRow[];
+    };
+    return {
+      incoming: Array.isArray(raw.incoming) ? raw.incoming : [],
+      outgoing: Array.isArray(raw.outgoing) ? raw.outgoing : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+export type ApiFriendMutationResult =
+  | { ok: true }
+  | { ok: false; status: number; detail: string | null };
+
+export async function apiSendFriendRequest(
+  token: string,
+  user_id: string,
+  message?: string | null,
+): Promise<ApiFriendMutationResult> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/friends/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ user_id, message: message ?? null }),
+    });
+    const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
+    if (!res.ok) {
+      return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    }
+    return { ok: true as const };
+  } catch {
+    return { ok: false as const, status: 0, detail: "Network error" };
+  }
+}
+
+export async function apiAcceptFriendRequest(token: string, from_user_id: string): Promise<ApiFriendMutationResult> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/friends/${encodeURIComponent(from_user_id)}/accept`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
+    if (!res.ok) {
+      return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    }
+    return { ok: true as const };
+  } catch {
+    return { ok: false as const, status: 0, detail: "Network error" };
+  }
+}
+
+export async function apiRejectFriendRequest(token: string, from_user_id: string): Promise<ApiFriendMutationResult> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/friends/${encodeURIComponent(from_user_id)}/reject`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
+    if (!res.ok) {
+      return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    }
+    return { ok: true as const };
+  } catch {
+    return { ok: false as const, status: 0, detail: "Network error" };
+  }
+}
+
+export async function apiRemoveFriend(token: string, user_id: string): Promise<ApiFriendMutationResult> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/friends/${encodeURIComponent(user_id)}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
+    if (!res.ok) {
+      return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    }
+    return { ok: true as const };
+  } catch {
+    return { ok: false as const, status: 0, detail: "Network error" };
+  }
+}
+
+export async function apiBlockUser(token: string, user_id: string): Promise<ApiFriendMutationResult> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/friends/${encodeURIComponent(user_id)}/block`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
+    if (!res.ok) {
+      return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    }
+    return { ok: true as const };
+  } catch {
+    return { ok: false as const, status: 0, detail: "Network error" };
+  }
+}
+
+// ── Direct messages ───────────────────────────────────────────────────────────
+
+export type ApiDmRow = {
+  id: string;
+  sender_id: string;
+  receiver_id: string;
+  content: string;
+  read: boolean;
+  created_at: string | null;
+};
+
+export async function apiGetMessages(
+  token: string,
+  friend_id: string,
+  limit = 50,
+): Promise<ApiDmRow[] | null> {
+  try {
+    const q = new URLSearchParams({ limit: String(Math.min(200, Math.max(1, limit))) });
+    const res = await fetch(`${ENGINE_BASE}/messages/${encodeURIComponent(friend_id)}?${q}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const raw = (await res.json()) as { messages?: ApiDmRow[] };
+    return Array.isArray(raw.messages) ? raw.messages : [];
+  } catch {
+    return null;
+  }
+}
+
+export type ApiSendMessageResult =
+  | { ok: true; id: string; created_at: string | null }
+  | { ok: false; status: number; detail: string | null };
+
+export async function apiSendMessage(
+  token: string,
+  receiver_id: string,
+  content: string,
+): Promise<ApiSendMessageResult> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ receiver_id, content }),
+    });
+    const raw = (await res.json().catch(() => ({}))) as {
+      detail?: unknown;
+      id?: string;
+      created_at?: string | null;
+    };
+    if (!res.ok) {
+      return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    }
+    return {
+      ok: true as const,
+      id: String(raw.id ?? ""),
+      created_at: raw.created_at ?? null,
+    };
+  } catch {
+    return { ok: false as const, status: 0, detail: "Network error" };
+  }
+}
+
+export async function apiMarkMessagesRead(token: string, friend_id: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/messages/${encodeURIComponent(friend_id)}/read`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// ── Matches list / history (GET /matches, GET /matches/history) ─────────────
+// DB-ready: open lobby + per-user history; shapes normalized from FastAPI JSON.
+
+function asStr(v: unknown): string | undefined {
+  if (v === null || v === undefined) return undefined;
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  return undefined;
+}
+
+function asNum(v: unknown): number | undefined {
+  if (typeof v === "number" && !Number.isNaN(v)) return v;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    if (!Number.isNaN(n)) return n;
+  }
+  return undefined;
+}
+
+const VALID_GAMES: ReadonlySet<string> = new Set([
+  "CS2",
+  "Valorant",
+  "Fortnite",
+  "Apex Legends",
+  "PUBG",
+  "COD",
+  "League of Legends",
+]);
+
+function normalizeClientGame(g: string | undefined): Game {
+  const s = (g ?? "CS2").trim();
+  return (VALID_GAMES.has(s) ? s : "CS2") as Game;
+}
+
+function normalizeMatchListStatus(s: string | undefined): MatchStatus {
+  const x = (s ?? "waiting").toLowerCase();
+  if (x === "pending") return "in_progress";
+  const allowed: MatchStatus[] = ["waiting", "in_progress", "completed", "cancelled", "disputed"];
+  return (allowed.includes(x as MatchStatus) ? x : "waiting") as MatchStatus;
+}
+
+function parseMatchPlayerRows(raw: unknown): { userId: string; username?: string; team?: string }[] {
+  if (!Array.isArray(raw)) return [];
+  const out: { userId: string; username?: string; team?: string }[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const o = row as Record<string, unknown>;
+    const userId = asStr(o.user_id ?? o.userId);
+    if (!userId) continue;
+    out.push({
+      userId,
+      username: asStr(o.username ?? o.display_name),
+      team: asStr(o.team)?.toUpperCase(),
+    });
+  }
+  return out;
+}
+
+/** Maps one engine match row → UI Match (snake_case or camelCase). */
+export function mapApiMatchRowToMatch(row: Record<string, unknown>): Match | null {
+  const id = asStr(row.id ?? row.match_id);
+  if (!id) return null;
+
+  const hostId = asStr(row.host_id) ?? "";
+  const host =
+    asStr(row.host_username ?? row.host_name ?? row.host_display_name) ??
+    asStr(row.host) ??
+    "Unknown";
+
+  const game = normalizeClientGame(asStr(row.game));
+  const mode = (asStr(row.mode) ?? "1v1") as Match["mode"];
+  const bet =
+    asNum(row.bet_amount) ??
+    asNum(row.stake_amount) ??
+    asNum(row.stake_per_player) ??
+    0;
+
+  const status = normalizeMatchListStatus(asStr(row.status));
+  const typeRaw = (asStr(row.type ?? row.match_type) ?? "public").toLowerCase();
+  const type = typeRaw === "custom" ? "custom" : "public";
+
+  const createdAt =
+    asStr(row.created_at ?? row.createdAt) ?? new Date().toISOString();
+  const startedAt = asStr(row.started_at ?? row.startedAt);
+  const endedAt = asStr(row.ended_at ?? row.endedAt);
+  const winnerId = asStr(row.winner_id ?? row.winnerId);
+  const code = asStr(row.code) ?? undefined;
+  const password = asStr(row.password) ?? undefined;
+  const maxPlayers = asNum(row.max_players ?? row.maxPlayers) ?? 2;
+  const maxPerTeam = asNum(row.max_per_team ?? row.maxPerTeam) ?? undefined;
+  const teamSize = maxPerTeam ?? (asNum(row.team_size ?? row.teamSize) ?? undefined);
+  const depositsReceived = asNum(row.deposits_received ?? row.depositsReceived) ?? undefined;
+  const timeLeft = asStr(row.time_left ?? row.timeLeft) ?? undefined;
+  const lockCountdownStart = asStr(row.lock_countdown_start ?? row.lockCountdownStart) ?? undefined;
+  const expiresAt = asStr(row.expires_at ?? row.expiresAt) ?? undefined;
+
+  const mPlayers = parseMatchPlayerRows(row.match_players ?? row.matchPlayers);
+  let teamA: string[] | undefined;
+  let teamB: string[] | undefined;
+  if (mPlayers.length > 0) {
+    teamA = mPlayers.filter((p) => p.team === "A").map((p) => p.userId);
+    teamB = mPlayers.filter((p) => p.team === "B").map((p) => p.userId);
+  }
+  const teamAraw = row.team_a ?? row.teamA;
+  const teamBraw = row.team_b ?? row.teamB;
+  if (Array.isArray(teamAraw)) teamA = teamAraw.map((x) => String(x));
+  if (Array.isArray(teamBraw)) teamB = teamBraw.map((x) => String(x));
+
+  let players: string[] = [];
+  if (Array.isArray(row.players)) {
+    players = (row.players as unknown[]).map((x) => {
+      if (x && typeof x === "object") {
+        const uid = asStr((x as Record<string, unknown>).user_id ?? (x as Record<string, unknown>).userId);
+        if (uid) return uid;
+      }
+      return String(x);
+    });
+  } else if (mPlayers.length > 0) {
+    players = mPlayers.map((p) => p.userId);
+  }
+
+  const base: Match = {
+    id,
+    type,
+    host,
+    hostId,
+    game,
+    mode,
+    betAmount: bet,
+    players,
+    maxPlayers,
+    status,
+    createdAt,
+    ...(startedAt ? { startedAt } : {}),
+    ...(endedAt ? { endedAt } : {}),
+    ...(winnerId ? { winnerId } : {}),
+    ...(code ? { code } : {}),
+    ...(password ? { password } : {}),
+    ...(teamA?.length ? { teamA } : {}),
+    ...(teamB?.length ? { teamB } : {}),
+    ...(teamSize !== undefined ? { teamSize, maxPerTeam: teamSize } : {}),
+    ...(depositsReceived !== undefined ? { depositsReceived } : {}),
+    ...(timeLeft ? { timeLeft } : {}),
+    ...(lockCountdownStart ? { lockCountdownStart } : {}),
+    ...(expiresAt ? { expiresAt } : {}),
+  };
+
+  return base;
+}
+
+async function fetchJsonMatches(path: string, token?: string | null): Promise<Match[] | null> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 12_000);
+    const res = await fetch(`${ENGINE_BASE}${path}`, {
+      signal: controller.signal,
+      headers: engineAuthHeaders(token ?? null),
+    });
+    clearTimeout(tid);
+    if (!res.ok) return null;
+    const raw = (await res.json()) as unknown;
+    let rows: unknown[] = [];
+    if (Array.isArray(raw)) rows = raw;
+    else if (raw && typeof raw === "object" && Array.isArray((raw as { matches?: unknown[] }).matches)) {
+      rows = (raw as { matches: unknown[] }).matches;
+    }
+    const matches: Match[] = [];
+    for (const r of rows) {
+      if (r && typeof r === "object") {
+        const m = mapApiMatchRowToMatch(r as Record<string, unknown>);
+        if (m) matches.push(m);
+      }
+    }
+    return matches;
+  } catch {
+    return null;
+  }
+}
+
+/** GET /matches — open / lobby matches (optional Bearer). */
+export async function apiListMatchesOpen(token?: string | null): Promise<Match[] | null> {
+  return fetchJsonMatches("/matches", token ?? null);
+}
+
+export type ApiMatchesHistoryOpts = {
+  limit?: number;
+  range?: "weekly" | "monthly" | "alltime";
+};
+
+/** GET /matches/history — authenticated user's history. */
+export async function apiListMatchesHistory(
+  token: string,
+  opts?: ApiMatchesHistoryOpts,
+): Promise<Match[] | null> {
+  const q = new URLSearchParams();
+  if (opts?.limit !== undefined) q.set("limit", String(opts.limit));
+  if (opts?.range) q.set("range", opts.range);
+  const suffix = q.toString() ? `?${q}` : "";
+  return fetchJsonMatches(`/matches/history${suffix}`, token);
+}
+
+function initialsFromUsername(name: string): string {
+  const t = name.trim();
+  if (t.length < 2) return (t || "??").toUpperCase();
+  return t.slice(0, 2).toUpperCase();
+}
+
+function tierHintFromRank(rank: string): string {
+  const first = rank.split(/\s+/)[0] ?? rank;
+  return ["Bronze", "Silver", "Gold", "Platinum", "Diamond", "Master", "Unranked"].includes(first)
+    ? first
+    : rank;
+}
+
+/** Maps GET /players row or GET /players/{id} → PublicPlayerProfile. */
+export function mapApiPlayerRowToPublic(row: Record<string, unknown>): PublicPlayerProfile | null {
+  const id = asStr(row.user_id ?? row.id);
+  if (!id) return null;
+  const username = asStr(row.username) ?? "Unknown";
+  const wins = asNum(row.wins) ?? 0;
+  const losses = asNum(row.losses) ?? 0;
+  const matchesPlayed = asNum(row.matches) ?? wins + losses;
+  const winRate =
+    asNum(row.win_rate) ??
+    (matchesPlayed > 0 ? Math.round((wins / matchesPlayed) * 1000) / 10 : 0);
+  const rankStr = asStr(row.rank) ?? "Unranked";
+  const pref = normalizeClientGame(asStr(row.preferred_game ?? row.preferredGame));
+  const statusRaw = (asStr(row.status) ?? "active").toLowerCase();
+  const status: UserStatus =
+    statusRaw === "banned" || statusRaw === "flagged" || statusRaw === "suspended" || statusRaw === "active"
+      ? (statusRaw as UserStatus)
+      : "active";
+  const arenaRaw = asStr(row.arena_id ?? row.arenaId);
+  const arenaId = (arenaRaw ?? `ARENA-${id.replace(/-/g, "").slice(0, 6).toUpperCase()}`) as ArenaId;
+  const created = asStr(row.created_at ?? row.member_since);
+  let memberSince = "—";
+  if (created) {
+    try {
+      memberSince = new Date(created).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+    } catch {
+      memberSince = created;
+    }
+  }
+
+  return {
+    id,
+    username,
+    avatarInitials: asStr(row.avatar_initials) ?? initialsFromUsername(username),
+    avatar: asStr(row.avatar) ?? undefined,
+    avatarBg: asStr(row.avatar_bg ?? row.avatarBg) ?? undefined,
+    equippedBadgeIcon: asStr(row.equipped_badge_icon ?? row.equippedBadgeIcon) ?? undefined,
+    rank: rankStr,
+    tier: asStr(row.tier) ?? tierHintFromRank(rankStr),
+    preferredGame: pref,
+    arenaId,
+    memberSince,
+    status,
+    leaderboardRank: asNum(row.leaderboard_rank ?? row.leaderboardRank),
+    stats: {
+      matches: matchesPlayed,
+      wins,
+      losses,
+      winRate,
+      totalEarnings: asNum(row.total_earnings ?? row.totalEarnings) ?? 0,
+    },
+  };
+}
+
+/** GET /players?q=&game= — directory search (Bearer recommended). */
+export async function apiSearchPlayers(
+  token: string | null,
+  q: string,
+  game?: string,
+): Promise<PublicPlayerProfile[]> {
+  try {
+    const params = new URLSearchParams();
+    params.set("q", q);
+    if (game) params.set("game", game);
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 12_000);
+    const res = await fetch(`${ENGINE_BASE}/players?${params}`, {
+      signal: controller.signal,
+      headers: engineAuthHeaders(token ?? null),
+    });
+    clearTimeout(tid);
+    if (!res.ok) return [];
+    const raw = (await res.json()) as { players?: unknown[] };
+    const rows = Array.isArray(raw.players) ? raw.players : [];
+    const out: PublicPlayerProfile[] = [];
+    for (const r of rows) {
+      if (r && typeof r === "object") {
+        const p = mapApiPlayerRowToPublic(r as Record<string, unknown>);
+        if (p) out.push(p);
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** GET /players/{user_id} — public profile card. */
+export async function apiGetPublicPlayer(
+  userId: string,
+  token?: string | null,
+): Promise<PublicPlayerProfile | null> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 12_000);
+    const res = await fetch(`${ENGINE_BASE}/players/${encodeURIComponent(userId)}`, {
+      signal: controller.signal,
+      headers: engineAuthHeaders(token ?? null),
+    });
+    clearTimeout(tid);
+    if (!res.ok) return null;
+    const raw = (await res.json()) as Record<string, unknown>;
+    return mapApiPlayerRowToPublic(raw);
+  } catch {
+    return null;
+  }
+}
+
+function mapLeaderboardApiRow(
+  row: Record<string, unknown>,
+  index: number,
+  gameFallback: string,
+): LeaderboardPlayerRow {
+  const wins = asNum(row.wins) ?? 0;
+  const losses = asNum(row.losses) ?? 0;
+  const played = wins + losses;
+  const winRate =
+    asNum(row.win_rate ?? row.winRate) ??
+    (played > 0 ? Math.round((wins / played) * 1000) / 10 : 0);
+  const ch = asStr(row.change)?.toLowerCase();
+  const change: LeaderboardPlayerRow["change"] =
+    ch === "up" || ch === "down" ? ch : "same";
+  return {
+    id: asStr(row.user_id ?? row.id) ?? `lb-${index}`,
+    arenaId: asStr(row.arena_id ?? row.arenaId) ?? "—",
+    rank: asNum(row.rank) ?? index + 1,
+    username: asStr(row.username) ?? "Unknown",
+    wins,
+    losses,
+    winRate,
+    earnings: asNum(row.total_earnings ?? row.earnings) ?? 0,
+    streak: asNum(row.streak) ?? 0,
+    change,
+    game: asStr(row.game) ?? gameFallback,
+    avatar: asStr(row.avatar) ?? undefined,
+    equippedBadgeIcon: asStr(row.equipped_badge_icon ?? row.equippedBadgeIcon) ?? undefined,
+  };
+}
+
+export type ApiLeaderboardOpts = {
+  game?: string;
+  limit?: number;
+  range?: "weekly" | "monthly" | "alltime";
+  token?: string | null;
+};
+
+/** GET /leaderboard?game=&limit=&range= */
+export async function apiGetLeaderboard(opts?: ApiLeaderboardOpts): Promise<LeaderboardPlayerRow[] | null> {
+  try {
+    const q = new URLSearchParams();
+    if (opts?.game) q.set("game", opts.game);
+    if (opts?.limit !== undefined) q.set("limit", String(opts.limit));
+    if (opts?.range) q.set("range", opts.range);
+    const suffix = q.toString() ? `?${q}` : "";
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 12_000);
+    const res = await fetch(`${ENGINE_BASE}/leaderboard${suffix}`, {
+      signal: controller.signal,
+      headers: engineAuthHeaders(opts?.token ?? null),
+    });
+    clearTimeout(tid);
+    if (!res.ok) return null;
+    const raw = (await res.json()) as { leaderboard?: unknown[] };
+    const rows = Array.isArray(raw.leaderboard) ? raw.leaderboard : [];
+    const gameFb = opts?.game ?? "CS2";
+    return rows.map((r, i) =>
+      r && typeof r === "object"
+        ? mapLeaderboardApiRow(r as Record<string, unknown>, i, gameFb)
+        : mapLeaderboardApiRow({}, i, gameFb),
+    );
+  } catch {
+    return null;
+  }
+}
+
+// ── Inbox (GET /inbox, POST /inbox, PATCH read, DELETE) ───────────────────────
+// DB-ready: inbox_messages; shapes match FastAPI in engine/main.py.
+
+function mapInboxApiRow(row: Record<string, unknown>, receiverId: string): InboxMessage {
+  const arena = asStr(row.sender_arena_id ?? row.senderArenaId) ?? "—";
+  return {
+    id: asStr(row.id) ?? "",
+    senderId: asStr(row.sender_id ?? row.senderId) ?? "",
+    senderName: asStr(row.sender_username ?? row.senderName) ?? "Unknown",
+    senderArenaId: arena as ArenaId,
+    receiverId,
+    subject: asStr(row.subject) ?? "",
+    content: asStr(row.content) ?? "",
+    read: Boolean(row.read),
+    deleted: false,
+    createdAt: asStr(row.created_at ?? row.createdAt) ?? new Date().toISOString(),
+  };
+}
+
+export type ApiListInboxOpts = {
+  unreadOnly?: boolean;
+  limit?: number;
+  /** Current user id (receiver); API omits it per row. */
+  receiverId: string;
+  token?: string | null;
+};
+
+/** GET /inbox?unread_only=&limit= */
+export async function apiListInbox(opts: ApiListInboxOpts): Promise<InboxMessage[] | null> {
+  const token = opts.token ?? null;
+  if (!token) return null;
+  try {
+    const q = new URLSearchParams();
+    q.set("unread_only", opts.unreadOnly ? "true" : "false");
+    if (opts.limit !== undefined) q.set("limit", String(opts.limit));
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 12_000);
+    const res = await fetch(`${ENGINE_BASE}/inbox?${q}`, {
+      signal: controller.signal,
+      headers: engineAuthHeaders(token),
+    });
+    clearTimeout(tid);
+    if (!res.ok) return null;
+    const raw = (await res.json()) as { messages?: unknown[] };
+    const rows = Array.isArray(raw.messages) ? raw.messages : [];
+    return rows.map((r) =>
+      r && typeof r === "object"
+        ? mapInboxApiRow(r as Record<string, unknown>, opts.receiverId)
+        : mapInboxApiRow({}, opts.receiverId),
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** GET /inbox/unread-count → sidebar / tab badge */
+export async function apiGetInboxUnreadCount(token: string | null | undefined): Promise<number | null> {
+  if (!token) return null;
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 12_000);
+    const res = await fetch(`${ENGINE_BASE}/inbox/unread-count`, {
+      signal: controller.signal,
+      headers: engineAuthHeaders(token),
+    });
+    clearTimeout(tid);
+    if (!res.ok) return null;
+    const raw = (await res.json()) as { unread_count?: unknown };
+    const n = asNum(raw.unread_count);
+    return n ?? 0;
+  } catch {
+    return null;
+  }
+}
+
+export type ApiPostInboxBody = { receiver_id: string; subject: string; content: string };
+
+/** POST /inbox — formal message to another user (receiver_id = UUID). */
+export async function apiPostInbox(
+  token: string,
+  body: ApiPostInboxBody,
+): Promise<
+  | { ok: true; id: string; sender_id: string; receiver_id: string; subject: string; created_at: string | null }
+  | { ok: false; error: string; status: number }
+> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 12_000);
+    const res = await fetch(`${ENGINE_BASE}/inbox`, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { ...engineAuthHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        receiver_id: body.receiver_id,
+        subject: body.subject,
+        content: body.content,
+      }),
+    });
+    clearTimeout(tid);
+    if (!res.ok) {
+      const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
+      const detail = parseFastApiDetail(raw.detail) ?? `Send failed (${res.status})`;
+      return { ok: false as const, error: detail, status: res.status };
+    }
+    const raw = (await res.json()) as Record<string, unknown>;
+    return {
+      ok: true as const,
+      id: asStr(raw.id) ?? "",
+      sender_id: asStr(raw.sender_id) ?? "",
+      receiver_id: asStr(raw.receiver_id) ?? "",
+      subject: asStr(raw.subject) ?? "",
+      created_at: asStr(raw.created_at) ?? null,
+    };
+  } catch {
+    return { ok: false as const, error: "Network error", status: 0 };
+  }
+}
+
+/** PATCH /inbox/:id/read */
+export async function apiPatchInboxRead(token: string, messageId: string): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 12_000);
+    const res = await fetch(`${ENGINE_BASE}/inbox/${encodeURIComponent(messageId)}/read`, {
+      method: "PATCH",
+      signal: controller.signal,
+      headers: engineAuthHeaders(token),
+    });
+    clearTimeout(tid);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** PATCH /inbox/read-all */
+export async function apiPatchInboxReadAll(token: string): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 12_000);
+    const res = await fetch(`${ENGINE_BASE}/inbox/read-all`, {
+      method: "PATCH",
+      signal: controller.signal,
+      headers: engineAuthHeaders(token),
+    });
+    clearTimeout(tid);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** DELETE /inbox/:id (soft delete) */
+export async function apiDeleteInbox(token: string, messageId: string): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 12_000);
+    const res = await fetch(`${ENGINE_BASE}/inbox/${encodeURIComponent(messageId)}`, {
+      method: "DELETE",
+      signal: controller.signal,
+      headers: engineAuthHeaders(token),
+    });
+    clearTimeout(tid);
     return res.ok;
   } catch {
     return false;

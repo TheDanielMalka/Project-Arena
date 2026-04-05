@@ -1,24 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import Leaderboard from "@/pages/Leaderboard";
 
 // PlayerActionPopover uses useNavigate → tests must wrap in MemoryRouter
 
 describe("Leaderboard page", () => {
-  it("updates top quick stats when a different podium player is clicked", () => {
+  it("updates top quick stats when a different podium player is clicked", async () => {
     render(<MemoryRouter><Leaderboard /></MemoryRouter>);
 
-    expect(screen.getByText("ShadowKing - Quick Stats (Top 3)")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/ShadowKing - Quick Stats \(Top 3\)/i)).toBeInTheDocument();
+    });
 
-    // Click the podium card itself (not the username button which stops propagation)
     fireEvent.click(screen.getByTestId("podium-card-PixelStorm"));
 
     expect(screen.getByText("PixelStorm - Quick Stats (Top 3)")).toBeInTheDocument();
   });
 
-  it("expands and collapses inline table details per player row", () => {
+  it("expands and collapses inline table details per player row", async () => {
     render(<MemoryRouter><Leaderboard /></MemoryRouter>);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("table-row-BlazeFury")).toBeInTheDocument();
+    });
 
     const avgLabelsBefore = screen.getAllByText("Avg $ / Match").length;
     expect(avgLabelsBefore).toBe(1);

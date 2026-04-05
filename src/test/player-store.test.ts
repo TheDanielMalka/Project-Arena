@@ -1,22 +1,18 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import { usePlayerStore } from "@/stores/playerStore";
 import { getPresetById } from "@/lib/avatarPresets";
 
-// ─── playerStore — data integrity & API-readiness ──────────────
-//
-// playerStore is the source-of-truth for all public player lookups.
-// It is used by:
-//   • Hub community tab   → searchPlayers(query, game)
-//   • Players page        → searchPlayers
-//   • PlayerProfile page  → getPlayerByUsername
-//   • inboxStore          → players.find(arenaId) for send-message validation
-//   • friendStore         → player metadata when sending requests
-//
-// DB-ready: all queries map to GET /api/players and GET /api/players/:username
+const TOK = "token-user";
 
-describe("playerStore — seed data integrity", () => {
-  it("contains exactly 20 seed players", () => {
-    // 9 leaderboard top-10 entries (lb-001..lb-010, minus BlazeFury which is shared) + 11 original = 20
+beforeEach(async () => {
+  usePlayerStore.setState({ players: [] });
+  await usePlayerStore.getState().searchPlayers("", undefined, TOK);
+});
+
+// ─── playerStore — data integrity (cache hydrated from mocked GET /players) ─
+
+describe("playerStore — cached player data integrity", () => {
+  it("contains exactly 20 players after directory search", () => {
     const { players } = usePlayerStore.getState();
     expect(players).toHaveLength(20);
   });
@@ -85,10 +81,9 @@ describe("playerStore — seed data integrity", () => {
     }
   });
 
-  it("seed includes players with all three status values", () => {
+  it("cache includes players with all three status values", () => {
     const { players } = usePlayerStore.getState();
     const statuses = new Set(players.map((p) => p.status));
-    // DB: users.status — CHECK constraint ('active','flagged','banned','suspended')
     expect(statuses.has("active")).toBe(true);
     expect(statuses.has("banned")).toBe(true);
     expect(statuses.has("flagged")).toBe(true);
@@ -103,7 +98,7 @@ describe("playerStore — seed data integrity", () => {
     expect(tiers.has("Silver")).toBe(true);
   });
 
-  it("seed preset avatars reference valid Identity Studio ids", () => {
+  it("preset avatars reference valid Identity Studio ids", () => {
     const { players } = usePlayerStore.getState();
     for (const p of players) {
       if (!p.avatar || p.avatar === "initials") continue;
@@ -113,12 +108,11 @@ describe("playerStore — seed data integrity", () => {
     }
   });
 
-  it("covers only active preferred games (CS2, Valorant — Coming Soon games not in seed)", () => {
+  it("covers only active preferred games (CS2, Valorant — Coming Soon games not in fixture)", () => {
     const { players } = usePlayerStore.getState();
     const games = new Set(players.map((p) => p.preferredGame));
     expect(games.has("CS2")).toBe(true);
     expect(games.has("Valorant")).toBe(true);
-    // Coming Soon games must NOT appear as preferredGame in seed players
     expect(games.has("Fortnite")).toBe(false);
     expect(games.has("PUBG")).toBe(false);
     expect(games.has("Apex Legends")).toBe(false);
@@ -128,35 +122,32 @@ describe("playerStore — seed data integrity", () => {
 // ─── playerStore — searchPlayers (used by Hub community + inboxStore) ─
 
 describe("playerStore — searchPlayers (arenaId path — used by inboxStore)", () => {
-  it("finds WingmanPro by exact arenaId (used by sendInboxMessage)", () => {
-    // This is the exact lookup inboxStore performs: targetArenaId.trim().toLowerCase()
-    const results = usePlayerStore.getState().searchPlayers("ARENA-WP0002");
+  it("finds WingmanPro by exact arenaId (used by sendInboxMessage)", async () => {
+    const results = await usePlayerStore.getState().searchPlayers("ARENA-WP0002", undefined, TOK);
     expect(results).toHaveLength(1);
     expect(results[0].username).toBe("WingmanPro");
   });
 
-  it("arenaId search is case-insensitive (matches inboxStore behavior)", () => {
-    const results = usePlayerStore.getState().searchPlayers("arena-wp0002");
+  it("arenaId search is case-insensitive (matches inboxStore behavior)", async () => {
+    const results = await usePlayerStore.getState().searchPlayers("arena-wp0002", undefined, TOK);
     expect(results).toHaveLength(1);
     expect(results[0].username).toBe("WingmanPro");
   });
 
-  it("partial arenaId prefix search works", () => {
-    const results = usePlayerStore.getState().searchPlayers("ARENA-SK");
+  it("partial arenaId prefix search works", async () => {
+    const results = await usePlayerStore.getState().searchPlayers("ARENA-SK", undefined, TOK);
     expect(results.some((p) => p.username === "ShadowKill3r")).toBe(true);
   });
 
-  it("returns empty when arenaId does not exist — inboxStore returns error", () => {
-    const results = usePlayerStore.getState().searchPlayers("ARENA-XXXXXX");
+  it("returns empty when arenaId does not exist — inboxStore returns error", async () => {
+    const results = await usePlayerStore.getState().searchPlayers("ARENA-XXXXXX", undefined, TOK);
     expect(results).toHaveLength(0);
   });
 
-  it("game filter combined with arenaId search narrows results", () => {
-    // ShadowKill3r plays CS2 — should match
-    const found = usePlayerStore.getState().searchPlayers("ARENA-SK0003", "CS2");
+  it("game filter combined with arenaId search narrows results", async () => {
+    const found = await usePlayerStore.getState().searchPlayers("ARENA-SK0003", "CS2", TOK);
     expect(found).toHaveLength(1);
-    // WingmanPro plays Valorant — should NOT appear with CS2 filter
-    const notFound = usePlayerStore.getState().searchPlayers("ARENA-WP0002", "CS2");
+    const notFound = await usePlayerStore.getState().searchPlayers("ARENA-WP0002", "CS2", TOK);
     expect(notFound).toHaveLength(0);
   });
 });
@@ -194,7 +185,6 @@ describe("playerStore — getPlayerByUsername", () => {
   });
 
   it("returns flagged player xDragon99 with suspiciously high winRate", () => {
-    // flagged: 92.6% win rate — anomaly detection target in DB
     const p = usePlayerStore.getState().getPlayerByUsername("xDragon99");
     expect(p?.status).toBe("flagged");
     expect(p?.stats.winRate).toBeGreaterThan(90);
@@ -207,9 +197,8 @@ describe("playerStore — getPlayerByUsername", () => {
     expect(p?.stats.winRate).toBeLessThan(50);
   });
 
-  it("xDragon99 arenaId is valid for sendInboxMessage flow", () => {
-    // inboxStore uses players.find(p => p.arenaId.toLowerCase() === target.toLowerCase())
-    const results = usePlayerStore.getState().searchPlayers("ARENA-XD0012");
+  it("xDragon99 arenaId is valid for sendInboxMessage flow", async () => {
+    const results = await usePlayerStore.getState().searchPlayers("ARENA-XD0012", undefined, TOK);
     expect(results).toHaveLength(1);
     expect(results[0].username).toBe("xDragon99");
   });
