@@ -3099,3 +3099,91 @@ async def delete_inbox_message(message_id: str, payload: dict = Depends(verify_t
         raise HTTPException(500, "Delete failed")
 
     return {"deleted": True, "id": message_id}
+
+
+# ── Admin — Oracle / EscrowClient ─────────────────────────────────────────────
+
+
+@app.get("/admin/oracle/status")
+async def admin_oracle_status(payload: dict = Depends(verify_token)):
+    """
+    Return the current state of the EscrowClient oracle listener.
+
+    Fields:
+      - listener_active: bool   — True when the background task is running
+      - last_block: int         — last processed block stored in oracle_sync_state
+      - last_sync_at: str|None  — ISO timestamp of last UPSERT
+      - escrow_enabled: bool    — True when EscrowClient was initialised
+
+    DB-ready: reads oracle_sync_state singleton row.
+    """
+    escrow_enabled = _escrow_client is not None
+    listener_active = (
+        _listener_task is not None
+        and not _listener_task.done()
+    )
+
+    last_block: int = 0
+    last_sync_at: str | None = None
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT last_block, last_sync_at "
+                    "FROM oracle_sync_state WHERE id = 'singleton'"
+                )
+            ).fetchone()
+            if row:
+                last_block = int(row[0])
+                last_sync_at = row[1].isoformat() if row[1] else None
+    except Exception as exc:
+        logger.warning("admin_oracle_status DB read failed: %s", exc)
+
+    return {
+        "escrow_enabled": escrow_enabled,
+        "listener_active": listener_active,
+        "last_block": last_block,
+        "last_sync_at": last_sync_at,
+    }
+
+
+@app.post("/admin/oracle/sync", status_code=200)
+async def admin_oracle_sync(payload: dict = Depends(verify_token)):
+    """
+    Manually trigger a one-off event scan from last_block to current chain head.
+
+    Useful after downtime or to force an immediate catch-up without waiting
+    for the next poll interval. Non-destructive — last_block is updated after.
+
+    DB-ready: reads oracle_sync_state, calls EscrowClient.process_events(),
+              then upserts updated last_block.
+    """
+    if not _escrow_client:
+        raise HTTPException(503, "EscrowClient not available — blockchain env vars not set")
+
+    try:
+        saved_block = _escrow_client._load_last_block()
+        current_block = _escrow_client._w3.eth.block_number
+        from_block = (saved_block + 1) if saved_block > 0 else max(0, current_block - 100)
+
+        if from_block > current_block:
+            return {"synced": True, "events_processed": 0, "from_block": from_block, "to_block": current_block}
+
+        n = _escrow_client.process_events(from_block, current_block)
+        _escrow_client._save_last_block(current_block)
+
+        logger.info(
+            "admin_oracle_sync: processed %d events | blocks %d→%d",
+            n, from_block, current_block,
+        )
+        return {
+            "synced": True,
+            "events_processed": n,
+            "from_block": from_block,
+            "to_block": current_block,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("admin_oracle_sync error: %s", exc)
+        raise HTTPException(500, "Oracle sync failed")
