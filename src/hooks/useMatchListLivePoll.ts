@@ -1,37 +1,51 @@
 import { useEffect } from "react";
 import { useMatchStore } from "@/stores/matchStore";
 
-/** Target ≤3–5s without WebSocket (lobby live sync). */
-const OPEN_MATCHES_POLL_MS = 4000;
+/** 3–5s target while tab is visible (doc 2.2); pauses when tab is in background. */
+export const OPEN_MATCHES_POLL_MS = 4000;
 
 /**
- * Refetch open (+ history when token present) on mount, on an interval, and when the tab regains focus.
+ * Open-match list sync until SSE/WebSocket exists (doc 2.2): refetch on mount, on an interval
+ * only while the document is visible, and on visibility restore / window focus (RQ refetchOnWindowFocus equivalent).
+ * When Claude adds SSE/WebSocket for lobby, prefer that channel and keep this hook only as fallback.
  * DB-ready: GET /matches + GET /matches/history
  */
 export function useMatchListLivePoll(token: string | null | undefined): void {
   const refreshMatchesFromServer = useMatchStore((s) => s.refreshMatchesFromServer);
 
   useEffect(() => {
-    void refreshMatchesFromServer(token ?? null);
-  }, [token, refreshMatchesFromServer]);
+    let intervalId = 0;
 
-  useEffect(() => {
-    const tick = () => void refreshMatchesFromServer(token ?? null);
-    const id = window.setInterval(tick, OPEN_MATCHES_POLL_MS);
-    return () => window.clearInterval(id);
-  }, [token, refreshMatchesFromServer]);
+    const refresh = () => void refreshMatchesFromServer(token ?? null);
 
-  useEffect(() => {
-    const bump = () => {
-      if (document.visibilityState === "visible") {
-        void refreshMatchesFromServer(token ?? null);
+    const clearPoll = () => {
+      if (intervalId) {
+        window.clearInterval(intervalId);
+        intervalId = 0;
       }
     };
-    window.addEventListener("focus", bump);
-    document.addEventListener("visibilitychange", bump);
+
+    const onVisibilityOrFocus = () => {
+      if (document.visibilityState !== "visible") {
+        clearPoll();
+        return;
+      }
+      refresh();
+      if (!intervalId) {
+        intervalId = window.setInterval(() => {
+          if (document.visibilityState === "visible") refresh();
+        }, OPEN_MATCHES_POLL_MS);
+      }
+    };
+
+    onVisibilityOrFocus();
+    document.addEventListener("visibilitychange", onVisibilityOrFocus);
+    window.addEventListener("focus", onVisibilityOrFocus);
+
     return () => {
-      window.removeEventListener("focus", bump);
-      document.removeEventListener("visibilitychange", bump);
+      clearPoll();
+      document.removeEventListener("visibilitychange", onVisibilityOrFocus);
+      window.removeEventListener("focus", onVisibilityOrFocus);
     };
   }, [token, refreshMatchesFromServer]);
 }
