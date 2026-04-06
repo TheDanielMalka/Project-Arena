@@ -1,12 +1,13 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-
-const WINS = 94;
-const LOSSES = 53;
-const TOTAL = WINS + LOSSES;
-const WIN_PCT = Math.round((WINS / TOTAL) * 100);
-const LOSS_PCT = 100 - WIN_PCT;
+import { useUserStore } from "@/stores/userStore";
 
 export function WinLossChart() {
+  const user = useUserStore((s) => s.user);
+  const wins = user?.stats.wins ?? 0;
+  const losses = user?.stats.losses ?? 0;
+  const total = wins + losses;
+  const winPct = total > 0 ? Math.round((wins / total) * 100) : 0;
+  const lossPct = total > 0 ? 100 - winPct : 0;
   return (
     <Card className="bg-card border-border">
       <CardHeader className="pb-1 pt-3 px-3">
@@ -23,10 +24,10 @@ export function WinLossChart() {
             </span>
             <div className="flex items-baseline gap-1.5">
               <span className="font-display text-xl font-bold text-foreground leading-none">
-                {WINS}
+                {wins}
               </span>
               <span className="font-display text-xs text-muted-foreground">
-                {WIN_PCT}%
+                {winPct}%
               </span>
             </div>
           </div>
@@ -34,6 +35,7 @@ export function WinLossChart() {
             <div
               className="h-full rounded-full animate-fill-wins"
               style={{
+                width: `${winPct}%`,
                 background: "linear-gradient(90deg, hsl(355 78% 38%) 0%, hsl(355 78% 58%) 100%)",
                 boxShadow: "0 0 8px hsl(355 78% 52% / 0.45)",
               }}
@@ -44,7 +46,7 @@ export function WinLossChart() {
         <div className="flex items-center gap-2">
           <div className="flex-1 h-px bg-border" />
           <span className="font-display text-[9px] tracking-[0.2em] text-muted-foreground/50 uppercase">
-            {TOTAL} matches
+            {total} matches
           </span>
           <div className="flex-1 h-px bg-border" />
         </div>
@@ -56,10 +58,10 @@ export function WinLossChart() {
             </span>
             <div className="flex items-baseline gap-1.5">
               <span className="font-display text-xl font-bold text-foreground leading-none">
-                {LOSSES}
+                {losses}
               </span>
               <span className="font-display text-xs text-muted-foreground">
-                {LOSS_PCT}%
+                {lossPct}%
               </span>
             </div>
           </div>
@@ -67,6 +69,7 @@ export function WinLossChart() {
             <div
               className="h-full rounded-full animate-fill-losses"
               style={{
+                width: `${lossPct}%`,
                 background: "linear-gradient(90deg, hsl(0 0% 22%) 0%, hsl(0 0% 38%) 100%)",
               }}
             />
@@ -82,7 +85,7 @@ export function WinLossChart() {
               color: "hsl(355 78% 65%)",
             }}
           >
-            {WIN_PCT}% Win Rate
+            {winPct}% Win Rate
           </div>
         </div>
 
