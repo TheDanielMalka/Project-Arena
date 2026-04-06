@@ -33,7 +33,15 @@ EVIDENCE_DIR = os.getenv("EVIDENCE_DIR", "/app/evidence")
 
 logger = logging.getLogger("arena.engine")
 
-db_engine = create_engine(DB_URL, pool_pre_ping=True)
+db_engine = create_engine(
+    DB_URL,
+    pool_pre_ping=True,   # drop stale connections before use
+    pool_size=10,         # base connections kept alive (~1 per 3 concurrent users for alpha)
+    max_overflow=20,      # burst headroom: up to 30 total for spike traffic
+    pool_timeout=30,      # raise after 30s if no connection available (avoid silent hang)
+    pool_recycle=1800,    # recycle connections every 30 min (avoids server-side timeout)
+    # TODO §7: raise pool_size to 20+ before public beta with 100+ concurrent users
+)
 SessionLocal = sessionmaker(bind=db_engine)
 
 # ── Escrow client (Phase 6) ───────────────────────────────────────────────────
