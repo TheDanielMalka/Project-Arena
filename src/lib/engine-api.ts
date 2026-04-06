@@ -592,21 +592,40 @@ export async function apiForgePurchase(
 }
 
 export type ApiCreateMatchSuccess = {
-  match_id: string;
-  game: string;
-  status: string;
+  match_id:     string;
+  game:         string;
+  status:       string;
   stake_amount: number;
   stake_currency: "CRYPTO" | "AT";
+  // Fields added in create_match v2 — critical for lobby display after navigation
+  code:         string | null;   // server-generated room code (e.g. "ARENA-HT59")
+  mode:         string | null;   // "1v1" | "2v2" | "4v4" | "5v5"
+  max_players:  number | null;
+  max_per_team: number | null;
+  match_type:   string | null;
 };
 
 export type ApiMatchMutationResult =
   | { ok: true; data: ApiCreateMatchSuccess }
   | { ok: false; status: number; detail: string | null };
 
-/** POST /matches — Bearer auth; CS2 needs steam_id on user, Valorant needs riot_id */
+/**
+ * POST /matches — create a new match lobby.
+ * Bearer auth; CS2 needs steam_id on user, Valorant needs riot_id.
+ *
+ * IMPORTANT: mode and match_type MUST be sent to the server or the backend
+ * defaults to "1v1" and "custom" respectively, causing the room to show the
+ * wrong mode after navigation when the server response replaces the local state.
+ */
 export async function apiCreateMatch(
   token: string,
-  body: { game: string; stake_amount: number; stake_currency?: "CRYPTO" | "AT" },
+  body: {
+    game:            string;
+    stake_amount:    number;
+    stake_currency?: "CRYPTO" | "AT";
+    mode?:           string;        // "1v1" | "2v2" | "4v4" | "5v5" — MUST be sent
+    match_type?:     string;        // "public" | "custom" — MUST be sent
+  },
 ): Promise<ApiMatchMutationResult> {
   try {
     const res = await fetch(`${ENGINE_BASE}/matches`, {
@@ -618,12 +637,17 @@ export async function apiCreateMatch(
       body: JSON.stringify(body),
     });
     const raw = (await res.json().catch(() => ({}))) as {
-      detail?: unknown;
-      match_id?: string;
-      game?: string;
-      status?: string;
-      stake_amount?: number;
+      detail?:        unknown;
+      match_id?:      string;
+      game?:          string;
+      status?:        string;
+      stake_amount?:  number;
       stake_currency?: unknown;
+      code?:          string;       // server-generated room code
+      mode?:          string;       // echoed back so client can trust server value
+      max_players?:   number;
+      max_per_team?:  number;
+      match_type?:    string;
     };
     if (!res.ok) {
       return {
@@ -637,11 +661,16 @@ export async function apiCreateMatch(
     return {
       ok: true as const,
       data: {
-        match_id: String(raw.match_id ?? ""),
-        game: String(raw.game ?? body.game),
-        status: String(raw.status ?? "waiting"),
+        match_id:     String(raw.match_id ?? ""),
+        game:         String(raw.game ?? body.game),
+        status:       String(raw.status ?? "waiting"),
         stake_amount: typeof raw.stake_amount === "number" ? raw.stake_amount : body.stake_amount,
         stake_currency,
+        code:         raw.code         ?? null,
+        mode:         raw.mode         ?? body.mode         ?? null,
+        max_players:  raw.max_players  ?? null,
+        max_per_team: raw.max_per_team ?? null,
+        match_type:   raw.match_type   ?? body.match_type   ?? null,
       },
     };
   } catch {
@@ -1150,10 +1179,18 @@ function parseMatchPlayerRows(raw: unknown): { userId: string; username?: string
     const o = row as Record<string, unknown>;
     const userId = asStr(o.user_id ?? o.userId);
     if (!userId) continue;
+    // Backend stores team as integer (0=TeamA, 1=TeamB) — normalize to "A"/"B"
+    const rawTeam = asStr(o.team)?.toUpperCase();
+    const team =
+      rawTeam === "A" ? "A" :
+      rawTeam === "B" ? "B" :
+      rawTeam === "0" ? "A" :
+      rawTeam === "1" ? "B" :
+      undefined;
     out.push({
       userId,
       username: asStr(o.username ?? o.display_name),
-      team: asStr(o.team)?.toUpperCase(),
+      team,
     });
   }
   return out;
@@ -1205,8 +1242,10 @@ export function mapApiMatchRowToMatch(row: Record<string, unknown>): Match | nul
   let teamA: string[] | undefined;
   let teamB: string[] | undefined;
   if (mPlayers.length > 0) {
-    teamA = mPlayers.filter((p) => p.team === "A").map((p) => p.userId);
-    teamB = mPlayers.filter((p) => p.team === "B").map((p) => p.userId);
+    // Use username for display (room slot renders these values directly).
+    // Fall back to userId only when username is unavailable.
+    teamA = mPlayers.filter((p) => p.team === "A").map((p) => p.username ?? p.userId);
+    teamB = mPlayers.filter((p) => p.team === "B").map((p) => p.username ?? p.userId);
   }
   const teamAraw = row.team_a ?? row.teamA;
   const teamBraw = row.team_b ?? row.teamB;

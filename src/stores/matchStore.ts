@@ -242,17 +242,26 @@ export const useMatchStore = create<MatchState>((set, get) => ({
       const serverIds = new Set(serverList.map((m) => m.id));
       // Keep local-only matches (created but not yet on server, or filtered out)
       const locals = s.matches.filter((m) => !serverIds.has(m.id));
-      // Merge: list_matches returns player_count only — no individual player UUIDs.
-      // If the existing store entry has richer player data (from get_active_match),
-      // preserve it so the room panel doesn't lose its roster after a refresh poll.
+      // Merge: list_matches returns player_count only — not individual player data.
+      // Strategy: start with existing (preserves expiresAt, lockCountdownStart, password,
+      // depositsReceived, teamA/teamB display names, etc.) then overlay server fields
+      // (status, mode, code, maxPlayers — fields that ARE returned by list_matches).
+      // Explicit overrides for arrays that need length-based fallback logic.
       const merged = serverList.map((srv) => {
         const existing = s.matches.find((m) => m.id === srv.id);
         if (!existing) return srv;
         return {
-          ...srv,
-          players:  srv.players.length  > 0 ? srv.players  : existing.players,
-          teamA:   (srv.teamA?.length   ?? 0) > 0 ? srv.teamA  : existing.teamA,
-          teamB:   (srv.teamB?.length   ?? 0) > 0 ? srv.teamB  : existing.teamB,
+          ...existing,  // all local-rich fields preserved (expiresAt, lockCountdownStart, password, etc.)
+          ...srv,       // server fields override (status, mode, code, bet, maxPlayers, host, etc.)
+          // list_matches has no individual player data — fall back to existing roster
+          players: (srv.players.length  > 0) ? srv.players  : existing.players,
+          teamA:  ((srv.teamA?.length  ?? 0) > 0) ? srv.teamA  : existing.teamA,
+          teamB:  ((srv.teamB?.length  ?? 0) > 0) ? srv.teamB  : existing.teamB,
+          // Re-pin fields that srv may carry as undefined (overwriting existing via ...srv spread)
+          expiresAt:          existing.expiresAt,
+          lockCountdownStart: existing.lockCountdownStart,
+          password:           existing.password ?? (srv as Match).password,
+          depositsReceived:   existing.depositsReceived,
         };
       });
       return { matches: [...merged, ...locals] };
