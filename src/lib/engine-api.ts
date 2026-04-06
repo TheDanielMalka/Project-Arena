@@ -1179,10 +1179,18 @@ function parseMatchPlayerRows(raw: unknown): { userId: string; username?: string
     const o = row as Record<string, unknown>;
     const userId = asStr(o.user_id ?? o.userId);
     if (!userId) continue;
+    // Backend stores team as integer (0=TeamA, 1=TeamB) — normalize to "A"/"B"
+    const rawTeam = asStr(o.team)?.toUpperCase();
+    const team =
+      rawTeam === "A" ? "A" :
+      rawTeam === "B" ? "B" :
+      rawTeam === "0" ? "A" :
+      rawTeam === "1" ? "B" :
+      undefined;
     out.push({
       userId,
       username: asStr(o.username ?? o.display_name),
-      team: asStr(o.team)?.toUpperCase(),
+      team,
     });
   }
   return out;
@@ -1234,8 +1242,10 @@ export function mapApiMatchRowToMatch(row: Record<string, unknown>): Match | nul
   let teamA: string[] | undefined;
   let teamB: string[] | undefined;
   if (mPlayers.length > 0) {
-    teamA = mPlayers.filter((p) => p.team === "A").map((p) => p.userId);
-    teamB = mPlayers.filter((p) => p.team === "B").map((p) => p.userId);
+    // Use username for display (room slot renders these values directly).
+    // Fall back to userId only when username is unavailable.
+    teamA = mPlayers.filter((p) => p.team === "A").map((p) => p.username ?? p.userId);
+    teamB = mPlayers.filter((p) => p.team === "B").map((p) => p.username ?? p.userId);
   }
   const teamAraw = row.team_a ?? row.teamA;
   const teamBraw = row.team_b ?? row.teamB;

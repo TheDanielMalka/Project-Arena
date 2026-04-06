@@ -659,9 +659,10 @@ const MatchLobby = () => {
     if (!myActiveRoom || !user) return;
     const matchId    = myActiveRoom.id;
     const stakeLabel = formatMatchStakeShort(myActiveRoom);
-    // Optimistic: clear local state immediately
-    // Must pass user.id (UUID) — teamA/players arrays contain IDs, not usernames
-    leaveMatch(matchId, user.id);
+    // Optimistic: clear local state immediately.
+    // Must pass user.username — joinMatch (lines ~509/537) adds username to players,
+    // so leaveMatch must use the same key to find and remove the player.
+    leaveMatch(matchId, user.username);
     cancelEscrow(matchId);
     setMyRoomMatchId(null);
     setCountdown(null);
@@ -1649,6 +1650,14 @@ const MatchLobby = () => {
                         const teamSize = getTeamSize(newMatchMode);
                         let serverMatchId: string | undefined;
                         let stakeCurrencyResolved: StakeCurrency = createStakeCurrency;
+                        // serverData is extracted inside the if block (where apiRes is in scope)
+                        // and stored here so it's accessible outside — avoids block-scope bug.
+                        let serverData: {
+                          code: string | null; mode: string | null;
+                          max_players: number | null; max_per_team: number | null;
+                          game: string | null;
+                        } | null = null;
+
                         const useServerApi =
                           !!token &&
                           (newMatchGame === "CS2" || newMatchGame === "Valorant");
@@ -1671,14 +1680,34 @@ const MatchLobby = () => {
                             game:           newMatchGame,
                             stake_amount:   newMatchBet,
                             stake_currency: createStakeCurrency,
-                            mode:           newMatchMode ?? "1v1",   // MUST send — backend defaults to "1v1"
-                            match_type:     "custom",                // MUST send — ensures custom room type
+                            mode:           newMatchMode ?? "1v1",
+                            match_type:     "custom",
                           });
                           if (apiRes.ok === false) {
                             if (apiRes.status === 409) {
-                              // 409 = user already has an active room — restore it
+                              // 409 = already in a room — restore it from server
                               const active = await apiGetActiveMatch(token!);
-                              if (active?.match?.match_id) setMyRoomMatchId(active.match.match_id);
+                              if (active?.match?.match_id) {
+                                const restored = mapApiMatchRowToMatch({
+                                  id:             active.match.match_id,
+                                  match_id:       active.match.match_id,
+                                  game:           active.match.game,
+                                  status:         active.match.status,
+                                  bet_amount:     active.match.bet_amount,
+                                  stake_currency: active.match.stake_currency,
+                                  type:           active.match.type,
+                                  code:           active.match.code,
+                                  created_at:     active.match.created_at,
+                                  mode:           active.match.mode,
+                                  host_id:        active.match.host_id,
+                                  host_username:  active.match.host_username,
+                                  max_players:    active.match.max_players,
+                                  max_per_team:   active.match.max_per_team,
+                                  match_players:  active.match.players,
+                                });
+                                if (restored) useMatchStore.getState().addMatch(restored);
+                                setMyRoomMatchId(active.match.match_id);
+                              }
                               useNotificationStore.getState().addNotification({
                                 type: "system",
                                 title: "Room restored",
@@ -1695,15 +1724,17 @@ const MatchLobby = () => {
                             }
                             return;
                           }
+                          // Extract server data while apiRes is still in scope
                           serverMatchId = apiRes.data.match_id;
                           stakeCurrencyResolved = apiRes.data.stake_currency ?? createStakeCurrency;
+                          serverData = {
+                            code:         apiRes.data.code,
+                            mode:         apiRes.data.mode,
+                            max_players:  apiRes.data.max_players,
+                            max_per_team: apiRes.data.max_per_team,
+                            game:         apiRes.data.game,
+                          };
                         }
-
-                        // Use server-authoritative values when available.
-                        // code, mode, max_players, max_per_team come from the API response —
-                        // using locally-generated values caused the room to appear changed
-                        // after navigation when refreshMatchesFromServer replaced them.
-                        const serverData = serverMatchId && apiRes.ok ? apiRes.data : null;
                         const created = addMatch({
                           ...(serverMatchId ? { id: serverMatchId } : {}),
                           type:          "custom",
