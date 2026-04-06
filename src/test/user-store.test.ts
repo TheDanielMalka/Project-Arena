@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as engineApi from "@/lib/engine-api";
+import { ARENA_ACCESS_TOKEN_KEY } from "@/lib/authStorage";
 import { useUserStore } from "@/stores/userStore";
 
 const SIGNUP_GAME = { steamId: "76561198000000001" } as const;
 
 describe("userStore", () => {
   beforeEach(() => {
+    localStorage.clear();
     useUserStore.getState().logout();
   });
 
@@ -13,6 +15,26 @@ describe("userStore", () => {
   it("login sets isAuthenticated to true", async () => {
     await useUserStore.getState().login("player@arena.gg", "pass");
     expect(useUserStore.getState().isAuthenticated).toBe(true);
+  });
+
+  it("login persists access token to localStorage", async () => {
+    await useUserStore.getState().login("player@arena.gg", "pass");
+    expect(localStorage.getItem(ARENA_ACCESS_TOKEN_KEY)).toBe("token-user");
+  });
+
+  it("logout clears persisted access token", async () => {
+    await useUserStore.getState().login("player@arena.gg", "pass");
+    useUserStore.getState().logout();
+    expect(localStorage.getItem(ARENA_ACCESS_TOKEN_KEY)).toBeNull();
+  });
+
+  it("restoreSession hydrates user from stored token", async () => {
+    localStorage.setItem(ARENA_ACCESS_TOKEN_KEY, "token-user");
+    useUserStore.setState({ authHydrated: false });
+    await useUserStore.getState().restoreSession();
+    expect(useUserStore.getState().authHydrated).toBe(true);
+    expect(useUserStore.getState().isAuthenticated).toBe(true);
+    expect(useUserStore.getState().user?.username).toBe("ArenaPlayer_01");
   });
 
   it("login sets user role to admin for admin email", async () => {

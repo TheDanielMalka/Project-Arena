@@ -270,7 +270,7 @@ export function ArenaSidebar() {
               {/* Logout */}
               <div className="border-t border-border/30 p-1.5">
                 <button
-                  onClick={() => { logout(); navigate("/"); setOpen(false); }}
+                  onClick={() => { logout(); navigate("/auth", { replace: true }); setOpen(false); }}
                   className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-left hover:bg-destructive/10 transition-colors group"
                 >
                   <LogOut className="h-3.5 w-3.5 text-muted-foreground/60 group-hover:text-destructive transition-colors shrink-0" />

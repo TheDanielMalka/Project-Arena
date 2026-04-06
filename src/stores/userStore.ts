@@ -18,6 +18,11 @@ import {
   hydrateWalletForgeAfterAuth,
   resetWalletForgeForLogout,
 } from "@/lib/sessionAtSync";
+import {
+  clearStoredAccessToken,
+  readStoredAccessToken,
+  writeStoredAccessToken,
+} from "@/lib/authStorage";
 
 export type SignupResult =
   | { ok: true }
@@ -27,6 +32,8 @@ interface UserState {
   user: UserProfile | null;
   token: string | null;
   isAuthenticated: boolean;
+  /** True after first `restoreSession` completes, or after login/signup/logout (avoids auth flash before hydration). */
+  authHydrated: boolean;
   walletConnected: boolean;
   showLoginGreeting: boolean;
   greetingType: "login" | "signup" | "google" | null;
@@ -148,10 +155,54 @@ function scheduleSocialSyncAfterAuth() {
   void import("@/stores/friendStore").then((m) => m.syncFriendsFromServer());
 }
 
+type MeProfile = NonNullable<Awaited<ReturnType<typeof apiGetMe>>>;
+
+function userProfileFromMe(profile: MeProfile): UserProfile {
+  const normalizedEmail = profile.email.trim().toLowerCase();
+  const wallet = profile.wallet_address ?? null;
+  const wins = profile.wins ?? 0;
+  const losses = profile.losses ?? 0;
+  return {
+    id: profile.user_id,
+    role: roleFromApi(profile.role, normalizedEmail),
+    username: profile.username,
+    email: normalizedEmail,
+    steamId: profile.steam_id?.trim() || null,
+    riotId: profile.riot_id?.trim() || null,
+    walletAddress: wallet,
+    walletShort: wallet ? `${wallet.slice(0, 6)}...${wallet.slice(-4)}` : "",
+    rank: profile.rank?.trim() || "—",
+    tier: "",
+    verified: true,
+    avatarInitials: profile.username.slice(0, 2).toUpperCase(),
+    preferredGame: "CS2",
+    arenaId: profile.arena_id ?? "",
+    memberSince: "—",
+    status: "active",
+    avatar: profile.avatar ?? "initials",
+    avatarBg: profile.avatar_bg ?? "default",
+    equippedBadgeIcon: profile.equipped_badge_icon ?? undefined,
+    unlockedForgeItemIds: profile.forge_unlocked_item_ids ?? [],
+    vipExpiresAt: profile.vip_expires_at ?? undefined,
+    stats: {
+      matches: wins + losses,
+      wins,
+      losses,
+      winRate: wins + losses > 0 ? Math.round((wins / (wins + losses)) * 1000) / 10 : 0,
+      totalEarnings: 0,
+      inEscrow: 0,
+      xp: profile.xp ?? 0,
+    },
+    balance: { total: 0, available: 0, inEscrow: 0 },
+    atBalance: profile.at_balance,
+  };
+}
+
 export const useUserStore = create<UserState>((set, get) => ({
   user: null,
   token: null,
   isAuthenticated: false,
+  authHydrated: false,
   walletConnected: false,
   showLoginGreeting: false,
   greetingType: null,
@@ -162,51 +213,15 @@ export const useUserStore = create<UserState>((set, get) => ({
     const profile = await apiGetMe(data.access_token);
     if (!profile) return false;
 
-    const normalizedEmail = data.email.trim().toLowerCase();
-    const wallet = data.wallet_address ?? profile.wallet_address ?? null;
-    const wins = profile.wins ?? 0;
-    const losses = profile.losses ?? 0;
+    const user = userProfileFromMe(profile);
 
-    const user: UserProfile = {
-      id: data.user_id,
-      role: roleFromApi(profile.role, normalizedEmail),
-      username: data.username,
-      email: normalizedEmail,
-      steamId: profile.steam_id?.trim() || null,
-      riotId: profile.riot_id?.trim() || null,
-      walletAddress: wallet,
-      walletShort: wallet ? `${wallet.slice(0, 6)}...${wallet.slice(-4)}` : "",
-      rank: profile.rank?.trim() || "—",
-      tier: "",
-      verified: true,
-      avatarInitials: data.username.slice(0, 2).toUpperCase(),
-      preferredGame: "CS2",
-      arenaId: data.arena_id ?? profile.arena_id ?? "",
-      memberSince: "—",
-      status: "active",
-      avatar: profile.avatar ?? "initials",
-      avatarBg: profile.avatar_bg ?? "default",
-      equippedBadgeIcon: profile.equipped_badge_icon ?? undefined,
-      unlockedForgeItemIds: profile.forge_unlocked_item_ids ?? [],
-      vipExpiresAt: profile.vip_expires_at ?? undefined,
-      stats: {
-        matches: wins + losses,
-        wins,
-        losses,
-        winRate: wins + losses > 0 ? Math.round((wins / (wins + losses)) * 1000) / 10 : 0,
-        totalEarnings: 0,
-        inEscrow: 0,
-        xp: profile.xp ?? 0,
-      },
-      balance: { total: 0, available: 0, inEscrow: 0 },
-      atBalance: profile.at_balance,
-    };
-
+    writeStoredAccessToken(data.access_token);
     set({
       user,
       token: data.access_token,
       isAuthenticated: true,
-      walletConnected: !!wallet,
+      authHydrated: true,
+      walletConnected: !!user.walletAddress,
       showLoginGreeting: true,
       greetingType: "login",
     });
@@ -236,56 +251,32 @@ export const useUserStore = create<UserState>((set, get) => ({
     const data = reg.data;
     const profile = await apiGetMe(data.access_token);
 
-    const initials = data.username.slice(0, 2).toUpperCase();
-    const normalizedEmail = data.email.trim().toLowerCase();
-    const wallet = profile?.wallet_address ?? data.wallet_address ?? null;
-    const wins = profile?.wins ?? 0;
-    const losses = profile?.losses ?? 0;
+    if (!profile) {
+      return { ok: false as const, detail: "Could not load profile after signup.", field: null };
+    }
 
-    const user: UserProfile = {
-      id: data.user_id,
-      role: roleFromApi(profile?.role, normalizedEmail),
+    const user = userProfileFromMe(profile);
+    const merged: UserProfile = {
+      ...user,
       username: data.username,
-      email: normalizedEmail,
-      arenaId: data.arena_id ?? profile?.arena_id ?? "",
-      walletAddress: wallet,
-      walletShort: wallet ? `${wallet.slice(0, 6)}...${wallet.slice(-4)}` : "",
-      steamId: gameAccounts?.steamId?.trim() || profile?.steam_id?.trim() || null,
-      riotId: gameAccounts?.riotId?.trim() || profile?.riot_id?.trim() || null,
-      avatarInitials: initials,
-      rank: profile?.rank?.trim() || "—",
-      tier: "",
-      verified: true,
-      preferredGame: "CS2",
-      memberSince: "—",
-      status: "active",
-      avatar: profile?.avatar ?? "initials",
-      avatarBg: profile?.avatar_bg ?? "default",
-      equippedBadgeIcon: profile?.equipped_badge_icon ?? undefined,
-      unlockedForgeItemIds: profile?.forge_unlocked_item_ids ?? [],
-      vipExpiresAt: profile?.vip_expires_at ?? undefined,
-      stats: {
-        matches: wins + losses,
-        wins,
-        losses,
-        winRate: wins + losses > 0 ? Math.round((wins / (wins + losses)) * 1000) / 10 : 0,
-        totalEarnings: 0,
-        inEscrow: 0,
-        xp: profile?.xp ?? 0,
-      },
-      balance: { total: 0, available: 0, inEscrow: 0 },
-      atBalance: profile?.at_balance ?? 0,
+      email: data.email.trim().toLowerCase(),
+      steamId: gameAccounts?.steamId?.trim() || profile.steam_id?.trim() || null,
+      riotId: gameAccounts?.riotId?.trim() || profile.riot_id?.trim() || null,
+      avatarInitials: data.username.slice(0, 2).toUpperCase(),
+      arenaId: data.arena_id ?? profile.arena_id ?? user.arenaId,
     };
 
+    writeStoredAccessToken(data.access_token);
     set({
-      user,
+      user: merged,
       token: data.access_token,
       isAuthenticated: true,
-      walletConnected: !!wallet,
+      authHydrated: true,
+      walletConnected: !!merged.walletAddress,
       showLoginGreeting: true,
       greetingType: "signup",
     });
-    hydrateWalletForgeAfterAuth(user);
+    hydrateWalletForgeAfterAuth(merged);
     setPendingClientSetupAfterSignup();
     scheduleSyncForgePurchasesToProfile();
     scheduleSocialSyncAfterAuth();
@@ -293,18 +284,36 @@ export const useUserStore = create<UserState>((set, get) => ({
   },
 
   loginWithGoogle: () => {
+    clearStoredAccessToken();
     const u: UserProfile = { ...MOCK_USER, role: "user" };
-    set({ user: u, isAuthenticated: true, walletConnected: true, showLoginGreeting: true, greetingType: "google" });
+    set({
+      user: u,
+      token: null,
+      isAuthenticated: true,
+      authHydrated: true,
+      walletConnected: true,
+      showLoginGreeting: true,
+      greetingType: "google",
+    });
     hydrateWalletForgeAfterAuth(u);
     scheduleSyncForgePurchasesToProfile();
   },
 
   logout: () => {
+    clearStoredAccessToken();
     resetWalletForgeForLogout();
     void import("@/stores/friendStore").then((m) => m.useFriendStore.getState().resetSocialLocal());
     void import("@/stores/messageStore").then((m) => m.useMessageStore.getState().resetConversationsLocal());
     void import("@/stores/inboxStore").then((m) => m.useInboxStore.getState().resetInboxLocal());
-    set({ user: null, token: null, isAuthenticated: false, walletConnected: false, showLoginGreeting: false, greetingType: null });
+    set({
+      user: null,
+      token: null,
+      isAuthenticated: false,
+      authHydrated: true,
+      walletConnected: false,
+      showLoginGreeting: false,
+      greetingType: null,
+    });
   },
 
   refreshProfileFromServer: async () => {
@@ -344,9 +353,39 @@ export const useUserStore = create<UserState>((set, get) => ({
   },
 
   restoreSession: async (): Promise<void> => {
-    // Temporarily disabled: do not persist login between refreshes.
-    // Kept for backward-compat callers/tests.
-    return;
+    const raw = readStoredAccessToken();
+    const trimmed = raw?.trim() ?? "";
+    if (!trimmed) {
+      set({ authHydrated: true });
+      return;
+    }
+    const profile = await apiGetMe(trimmed);
+    if (!profile) {
+      clearStoredAccessToken();
+      set({
+        user: null,
+        token: null,
+        isAuthenticated: false,
+        walletConnected: false,
+        authHydrated: true,
+        showLoginGreeting: false,
+        greetingType: null,
+      });
+      return;
+    }
+    const user = userProfileFromMe(profile);
+    set({
+      user,
+      token: trimmed,
+      isAuthenticated: true,
+      authHydrated: true,
+      walletConnected: !!user.walletAddress,
+      showLoginGreeting: false,
+      greetingType: null,
+    });
+    hydrateWalletForgeAfterAuth(user);
+    scheduleSyncForgePurchasesToProfile();
+    scheduleSocialSyncAfterAuth();
   },
 
   clearLoginGreeting: () => set({ showLoginGreeting: false, greetingType: null }),
