@@ -1278,6 +1278,16 @@ export function mapApiMatchRowToMatch(row: Record<string, unknown>): Match | nul
     // Fall back to userId only when username is unavailable.
     teamA = mPlayers.filter((p) => p.team === "A").map((p) => p.username ?? p.userId);
     teamB = mPlayers.filter((p) => p.team === "B").map((p) => p.username ?? p.userId);
+
+    // Some engine responses may not include team assignments yet (team is NULL in DB).
+    // In that case, still prefer stable display names over raw UUIDs by splitting the
+    // joined_at order into Team A then Team B.
+    if (teamA.length === 0 && teamB.length === 0) {
+      const maxPerSide = maxPerTeam ?? teamSize ?? Math.max(1, Math.ceil(maxPlayers / 2));
+      const names = mPlayers.map((p) => p.username ?? p.userId);
+      teamA = names.slice(0, maxPerSide);
+      teamB = names.slice(maxPerSide, maxPerSide * 2);
+    }
   }
   const teamAraw = row.team_a ?? row.teamA;
   const teamBraw = row.team_b ?? row.teamB;
