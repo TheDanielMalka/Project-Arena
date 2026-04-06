@@ -243,7 +243,7 @@ export const useMatchStore = create<MatchState>((set, get) => ({
       // Keep local-only matches (created but not yet on server, or filtered out)
       const locals = s.matches.filter((m) => !serverIds.has(m.id));
       // Merge: list_matches returns player_count only — not individual player data.
-      // Strategy: start with existing (preserves expiresAt, lockCountdownStart, password,
+      // Strategy: start with existing (preserves expiresAt, lockCountdownStart,
       // depositsReceived, teamA/teamB display names, etc.) then overlay server fields
       // (status, mode, code, maxPlayers — fields that ARE returned by list_matches).
       // Explicit overrides for arrays that need length-based fallback logic.
@@ -260,7 +260,10 @@ export const useMatchStore = create<MatchState>((set, get) => ({
           // Re-pin fields that srv may carry as undefined (overwriting existing via ...srv spread)
           expiresAt:          existing.expiresAt,
           lockCountdownStart: existing.lockCountdownStart,
-          password:           existing.password ?? (srv as Match).password,
+          // Never take room password from server rows (lists must not leak secrets).
+          password:           existing.password,
+          hasPassword:
+            srv.hasPassword !== undefined ? srv.hasPassword : existing.hasPassword,
           depositsReceived:   existing.depositsReceived,
         };
       });

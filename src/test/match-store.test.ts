@@ -16,7 +16,7 @@ describe("matchStore", () => {
       type: "custom", host: "TestUser", hostId: "u-test",
       game: "CS2", mode: "2v2", betAmount: 30,
       players: [], maxPlayers: 4, status: "waiting",
-      password: "test", teamA: ["TestUser"], teamB: [],
+      hasPassword: true, teamA: ["TestUser"], teamB: [],
       maxPerTeam: 2, teamSize: 2, depositsReceived: 1,
     });
     expect(created.id).toBeDefined();
@@ -41,7 +41,7 @@ describe("matchStore", () => {
       type: "custom", host: "Y", hostId: "y1",
       game: "CS2", mode: "5v5", betAmount: 50,
       players: [], maxPlayers: 10, status: "waiting",
-      password: "pw", teamA: ["Y"], teamB: [],
+      hasPassword: true, teamA: ["Y"], teamB: [],
       maxPerTeam: 5, teamSize: 5, depositsReceived: 1,
     });
     expect(m.code).toMatch(/^ARENA-/);
