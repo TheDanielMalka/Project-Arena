@@ -1,30 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-
-const data = [
-  { month: "JAN", earnings: 320 },
-  { month: "FEB", earnings: 480 },
-  { month: "MAR", earnings: 290 },
-  { month: "APR", earnings: 610 },
-  { month: "MAY", earnings: 520 },
-  { month: "JUN", earnings: 627 },
-];
+import { useMatchStore } from "@/stores/matchStore";
+import { useUserStore } from "@/stores/userStore";
+import type { Match } from "@/types";
 
 const W = 560;
 const H = 96;
 const PAD = { top: 10, right: 12, bottom: 18, left: 34 };
 const INNER_W = W - PAD.left - PAD.right;
 const INNER_H = H - PAD.top - PAD.bottom;
-
-const MIN = 0;
-const MAX = 800;
-
-function toX(i: number) {
-  return PAD.left + (i / (data.length - 1)) * INNER_W;
-}
-function toY(v: number) {
-  return PAD.top + INNER_H - ((v - MIN) / (MAX - MIN)) * INNER_H;
-}
 
 // Smooth curve via cubic bezier
 function smoothPath(pts: { x: number; y: number }[]) {
@@ -40,16 +24,52 @@ function smoothPath(pts: { x: number; y: number }[]) {
   return d;
 }
 
-const points = data.map((d, i) => ({ x: toX(i), y: toY(d.earnings) }));
-const linePath = smoothPath(points);
-const areaPath =
-  linePath +
-  ` L ${points[points.length - 1].x} ${PAD.top + INNER_H}` +
-  ` L ${points[0].x} ${PAD.top + INNER_H} Z`;
-
-const GRID_LINES = [0, 200, 400, 600, 800];
-
 export function EarningsChart() {
+  const user = useUserStore((s) => s.user);
+  const matches = useMatchStore((s) => s.matches);
+  const myId = user?.id ?? "";
+
+  const data = useMemo(() => {
+    const now = new Date();
+    const months: { key: string; label: string; earnings: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const label = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
+      months.push({ key, label, earnings: 0 });
+    }
+    const idx = new Map(months.map((m, i) => [m.key, i] as const));
+
+    const completed = matches.filter((m: Match) => m.status === "completed" && !!m.winnerId);
+    for (const m of completed) {
+      if (!myId) continue;
+      if (m.winnerId !== myId) continue;
+      const iso = m.endedAt ?? m.createdAt;
+      const d = new Date(iso);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const i = idx.get(key);
+      if (i === undefined) continue;
+      months[i]!.earnings += m.betAmount ?? 0;
+    }
+    return months.map((m) => ({ month: m.label, earnings: Math.round(m.earnings) }));
+  }, [matches, myId]);
+
+  const min = 0;
+  const peak = Math.max(0, ...data.map((d) => d.earnings));
+  const max = Math.max(100, Math.ceil(peak / 100) * 100);
+  const gridLines = max <= 200 ? [0, max / 2, max] : [0, max * 0.25, max * 0.5, max * 0.75, max];
+
+  const toX = (i: number) => PAD.left + (i / Math.max(1, data.length - 1)) * INNER_W;
+  const toY = (v: number) =>
+    PAD.top + INNER_H - ((v - min) / Math.max(1, max - min)) * INNER_H;
+
+  const points = data.map((d, i) => ({ x: toX(i), y: toY(d.earnings) }));
+  const linePath = smoothPath(points);
+  const areaPath =
+    linePath +
+    ` L ${points[points.length - 1]!.x} ${PAD.top + INNER_H}` +
+    ` L ${points[0]!.x} ${PAD.top + INNER_H} Z`;
+
   const lineRef = useRef<SVGPathElement>(null);
   const [length, setLength] = useState(0);
   const [drawn, setDrawn] = useState(false);
@@ -59,16 +79,13 @@ export function EarningsChart() {
     if (lineRef.current && typeof lineRef.current.getTotalLength === "function") {
       const l = lineRef.current.getTotalLength();
       setLength(l);
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => setDrawn(true));
-      });
+      setDrawn(true);
     } else {
       setDrawn(true);
     }
-  }, []);
+  }, [linePath]);
 
   const total = data.reduce((s, d) => s + d.earnings, 0);
-  const peak = Math.max(...data.map((d) => d.earnings));
 
   return (
     <Card className="bg-card border-border">
@@ -117,7 +134,7 @@ export function EarningsChart() {
           </defs>
 
           {/* Grid lines */}
-          {GRID_LINES.map((v) => {
+          {gridLines.map((v) => {
             const y = toY(v);
             return (
               <g key={v}>
@@ -138,7 +155,7 @@ export function EarningsChart() {
                   fontFamily="Rajdhani, sans-serif"
                   letterSpacing="0.05em"
                 >
-                  {v === 0 ? "" : v}
+                  {v === 0 ? "" : Math.round(v)}
                 </text>
               </g>
             );
