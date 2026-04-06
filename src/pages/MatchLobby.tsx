@@ -333,7 +333,7 @@ const MatchLobby = () => {
   const [showPassword, setShowPassword]       = useState(false);
   const [filterGame, setFilterGame]           = useState<string>("");
   const [filterMode, setFilterMode]           = useState<MatchMode | null>(null);
-  const [depositConfirm, setDepositConfirm]   = useState<{ match: Match; team?: "A" | "B" } | null>(null);
+  const [depositConfirm, setDepositConfirm]   = useState<{ match: Match; team?: "A" | "B"; password?: string } | null>(null);
   const [depositStep, setDepositStep]         = useState<"idle" | "verifying" | "confirmed" | "failed">("idle");
   const [checkResults, setCheckResults]       = useState<{
     client: boolean;
@@ -417,14 +417,14 @@ const MatchLobby = () => {
   const handlePasswordSubmit = () => {
     if (!passwordPrompt) return;
     const match = customMatches.find(m => m.id === passwordPrompt.matchId);
-    if (match && passwordInput === match.password) {
-      if (matchStakeCurrency(match) !== "AT" && !guardWalletConnected()) return;
-      if (!guardCanPlay()) return;
-      setPasswordPrompt(null); setPasswordInput("");
-      setDepositConfirm({ match, team: passwordPrompt.team });
-      setDepositStep("idle");
-      setCheckResults(null);
-    } else { setPasswordError(true); }
+    if (!match) return;
+    if (matchStakeCurrency(match) !== "AT" && !guardWalletConnected()) return;
+    if (!guardCanPlay()) return;
+    if (!passwordInput.trim()) { setPasswordError(true); return; }
+    setPasswordPrompt(null);
+    setDepositConfirm({ match, team: passwordPrompt.team, password: passwordInput });
+    setDepositStep("idle");
+    setCheckResults(null);
   };
   const handleDepositConfirm = async () => {
     if (!depositConfirm || !user) return;
@@ -480,13 +480,20 @@ const MatchLobby = () => {
   };
   const handleDepositFinal = async () => {
     if (!depositConfirm || !user) return;
-    const { match, team } = depositConfirm;
+    const { match, team, password } = depositConfirm;
     if (matchStakeCurrency(match) !== "AT" && !guardWalletConnected()) return;
     if (!guardCanPlay()) return;
     const bumpList = () => void useMatchStore.getState().refreshMatchesFromServer(token ?? null);
     if (token && looksLikeServerMatchId(match.id)) {
-      const jr = await apiJoinMatch(token, match.id);
+      const jr = await apiJoinMatch(token, match.id, { password });
       if (jr.ok === false) {
+        if (jr.status === 403) {
+          // Password-protected room — server rejected password; re-prompt.
+          setPasswordPrompt({ matchId: match.id, bet: match.betAmount, team });
+          setPasswordError(true);
+          setPasswordInput(password ?? "");
+          setShowPassword(false);
+        }
         // 409 = already in another room → restore it
         if (jr.status === 409 && token) {
           const active = await apiGetActiveMatch(token);
@@ -1692,6 +1699,7 @@ const MatchLobby = () => {
                             stake_currency: createStakeCurrency,
                             mode:           newMatchMode ?? "1v1",
                             match_type:     "custom",
+                            password:       newMatchPassword,
                           });
                           if (apiRes.ok === false) {
                             if (apiRes.status === 409) {

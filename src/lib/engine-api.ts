@@ -639,6 +639,8 @@ export async function apiCreateMatch(
     stake_currency?: "CRYPTO" | "AT";
     mode?:           string;        // "1v1" | "2v2" | "4v4" | "5v5" — MUST be sent
     match_type?:     string;        // "public" | "custom" — MUST be sent
+    // TODO: Claude to add `password` support to POST /matches (store + hash) and never return the password in list responses.
+    password?:       string;        // optional join password (server is source of truth)
   },
 ): Promise<ApiMatchMutationResult> {
   try {
@@ -799,12 +801,19 @@ export type ApiJoinMatchSuccess = { joined: boolean; match_id: string; game: str
 export async function apiJoinMatch(
   token: string,
   matchId: string,
+  opts?: { password?: string },
 ): Promise<{ ok: true; data: ApiJoinMatchSuccess } | { ok: false; status: number; detail: string | null }> {
   try {
+    const password = opts?.password?.trim();
     const res = await arenaUserFetch(
       `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/join`,
       token,
-      { method: "POST" },
+      {
+        method: "POST",
+        // TODO: Claude to add password verification in POST /matches/{match_id}/join (403 on mismatch).
+        headers: password ? { "Content-Type": "application/json" } : undefined,
+        body: password ? JSON.stringify({ password }) : undefined,
+      },
     );
     const raw = (await res.json().catch(() => ({}))) as {
       detail?: unknown;
