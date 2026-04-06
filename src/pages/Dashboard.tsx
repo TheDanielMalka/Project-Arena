@@ -8,6 +8,7 @@ import { DailyChallenges } from "@/components/dashboard/DailyChallenges";
 import LiveMatchTracker from "@/components/match/LiveMatchTracker";
 import { useUserStore } from "@/stores/userStore";
 import { useMatchStore } from "@/stores/matchStore";
+import { useMatchListLivePoll } from "@/hooks/useMatchListLivePoll";
 import { Swords, Wallet, History, TrendingUp, Radio, Gift, Medal, Shield, Trophy, Gem, Sparkles, Crown, X, Download, type LucideIcon } from "lucide-react";
 import { getXpInfo } from "@/lib/xp";
 import { getAvatarSidebarStyle } from "@/lib/avatarBgs";
@@ -22,7 +23,8 @@ const XP_ICON_MAP: Record<string, LucideIcon> = {
 const Dashboard = () => {
   const navigate = useNavigate();
   const { user, token, showLoginGreeting, greetingType, clearLoginGreeting } = useUserStore();
-  const { matches, refreshMatchesFromServer } = useMatchStore();
+  const { matches } = useMatchStore();
+  useMatchListLivePoll(user && token ? token : null);
 
   // ── Login greeting banner ─────────────────────────────────────────────────
   const [bannerVisible, setBannerVisible] = useState(false);
@@ -32,11 +34,6 @@ const Dashboard = () => {
   useEffect(() => {
     setShowClientSetupBanner(hasPendingClientSetup());
   }, []);
-
-  useEffect(() => {
-    if (!user || !token) return;
-    void refreshMatchesFromServer(token);
-  }, [user, token, refreshMatchesFromServer]);
 
   useEffect(() => {
     if (!showLoginGreeting) return;
