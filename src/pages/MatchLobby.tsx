@@ -34,6 +34,7 @@ import {
   mapApiMatchRowToMatch,
   type ApiFriendRow,
 } from "@/lib/engine-api";
+import { useMatchListLivePoll } from "@/hooks/useMatchListLivePoll";
 import { looksLikeServerMatchId } from "@/lib/gameAccounts";
 import { friendlyChainErrorMessage } from "@/lib/friendlyChainError";
 import { createMatchOnChain, getBnbBalance } from "@/lib/metamaskBsc";
@@ -261,7 +262,6 @@ const MatchLobby = () => {
     getMatchByCode,
     deleteMatch,
     expireOldMatches,
-    refreshMatchesFromServer,
     activeRoomId:    myRoomMatchId,
     setActiveRoomId: setMyRoomMatchId,
   } = useMatchStore();
@@ -278,10 +278,7 @@ const MatchLobby = () => {
   const markInMatch  = useClientStore((s) => s.markInMatch);
   const markIdle     = useClientStore((s) => s.markIdle);
   useMatchPolling({ interval: 5000 });
-
-  useEffect(() => {
-    void refreshMatchesFromServer(token ?? null);
-  }, [token, refreshMatchesFromServer]);
+  useMatchListLivePoll(user && token ? token : null);
 
   // ── Lobby persistence: restore active room on mount / login ────────────────
   useEffect(() => {
@@ -486,6 +483,7 @@ const MatchLobby = () => {
     const { match, team } = depositConfirm;
     if (matchStakeCurrency(match) !== "AT" && !guardWalletConnected()) return;
     if (!guardCanPlay()) return;
+    const bumpList = () => void useMatchStore.getState().refreshMatchesFromServer(token ?? null);
     if (token && looksLikeServerMatchId(match.id)) {
       const jr = await apiJoinMatch(token, match.id);
       if (jr.ok === false) {
@@ -502,6 +500,7 @@ const MatchLobby = () => {
         setDepositConfirm(null);
         setDepositStep("idle");
         setCheckResults(null);
+        bumpList();
         return;
       }
     }
@@ -517,6 +516,7 @@ const MatchLobby = () => {
       setDepositConfirm(null);
       setDepositStep("idle");
       setCheckResults(null);
+      bumpList();
       return;
     }
     const escrowTx = await lockEscrow(match.betAmount, match.id);
@@ -532,6 +532,7 @@ const MatchLobby = () => {
       setDepositConfirm(null);
       setDepositStep("idle");
       setCheckResults(null);
+      bumpList();
       return;
     }
     joinMatch(match.id, user.username, team);
@@ -545,6 +546,7 @@ const MatchLobby = () => {
     setDepositConfirm(null);
     setDepositStep("idle");
     setCheckResults(null);
+    bumpList();
   };
   const handleCopyCode = (code: string) => {
     navigator.clipboard.writeText(code); setCopiedCode(code);
@@ -671,9 +673,12 @@ const MatchLobby = () => {
       title: "↩️ Left Room",
       message: `You left the match room. Your ${stakeLabel} stake has been refunded.`,
     });
-    // Sync with server so the room doesn't come back on next page load
     if (token && looksLikeServerMatchId(matchId)) {
-      void apiLeaveMatch(token, matchId);
+      void apiLeaveMatch(token, matchId).finally(() => {
+        void useMatchStore.getState().refreshMatchesFromServer(token);
+      });
+    } else {
+      void useMatchStore.getState().refreshMatchesFromServer(token ?? null);
     }
   }, [myActiveRoom, user, token, leaveMatch, cancelEscrow]);
 
@@ -692,9 +697,12 @@ const MatchLobby = () => {
       title: "🗑️ Room Deleted",
       message: `Match room closed. Your ${stakeLabel} deposit has been refunded.`,
     });
-    // Sync with server — marks match cancelled in DB so it never restores on refresh
     if (token && looksLikeServerMatchId(matchId)) {
-      void apiCancelMatch(token, matchId);
+      void apiCancelMatch(token, matchId).finally(() => {
+        void useMatchStore.getState().refreshMatchesFromServer(token);
+      });
+    } else {
+      void useMatchStore.getState().refreshMatchesFromServer(token ?? null);
     }
   }, [myActiveRoom, user, token, cancelEscrow, deleteMatch]);
 
@@ -715,6 +723,7 @@ const MatchLobby = () => {
     setInvitingFriendId(null);
     if (result.ok) {
       setInvitedFriendIds((prev) => new Set(prev).add(friendId));
+      void useMatchStore.getState().refreshMatchesFromServer(token);
       useNotificationStore.getState().addNotification({
         type: "system",
         title: "Invite Sent",
@@ -1645,6 +1654,7 @@ const MatchLobby = () => {
                     }
                     onClick={() => {
                       void (async () => {
+                        try {
                         if (!newMatchGame || !newMatchBet || !newMatchMode || !user) return;
                         if (createStakeCurrency === "CRYPTO" && !connectedAddress) return;
                         const teamSize = getTeamSize(newMatchMode);
@@ -1802,6 +1812,9 @@ const MatchLobby = () => {
                         setNewMatchBet(null);
                         setNewMatchMode(null);
                         setCreateStakeCurrency("CRYPTO");
+                        } finally {
+                          void useMatchStore.getState().refreshMatchesFromServer(token ?? null);
+                        }
                       })();
                     }}
                     className="glow-green font-display">
