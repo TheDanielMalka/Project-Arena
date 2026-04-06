@@ -1703,3 +1703,317 @@ export async function apiDeleteInbox(token: string, messageId: string): Promise<
   }
 }
 
+// ── Notifications ─────────────────────────────────────────────────────────────
+// DB-ready: notifications table; shapes match GET /notifications response.
+
+export type ApiNotificationRow = {
+  id:         string;
+  type:       string;
+  title:      string;
+  message:    string;
+  read:       boolean;
+  metadata:   Record<string, unknown> | null;
+  created_at: string | null;
+};
+
+/**
+ * GET /notifications — authenticated user's notifications, newest first.
+ * ?unread_only=true&limit=N
+ * DB-ready: SELECT from notifications WHERE user_id = :me ORDER BY created_at DESC.
+ */
+export async function apiGetNotifications(
+  token: string,
+  opts?: { unreadOnly?: boolean; limit?: number },
+): Promise<ApiNotificationRow[] | null> {
+  try {
+    const q = new URLSearchParams();
+    if (opts?.unreadOnly) q.set("unread_only", "true");
+    if (opts?.limit !== undefined) q.set("limit", String(opts.limit));
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8_000);
+    const res = await fetch(`${ENGINE_BASE}/notifications?${q}`, {
+      signal:  controller.signal,
+      headers: engineAuthHeaders(token),
+    });
+    clearTimeout(tid);
+    if (!res.ok) return null;
+    const raw = (await res.json()) as { notifications?: ApiNotificationRow[] };
+    return Array.isArray(raw.notifications) ? raw.notifications : [];
+  } catch {
+    return null;
+  }
+}
+
+/** PATCH /notifications/:id/read — mark single notification as read. */
+export async function apiMarkNotificationRead(token: string, notificationId: string): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8_000);
+    const res = await fetch(
+      `${ENGINE_BASE}/notifications/${encodeURIComponent(notificationId)}/read`,
+      { method: "PATCH", signal: controller.signal, headers: engineAuthHeaders(token) },
+    );
+    clearTimeout(tid);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** PATCH /notifications/read-all — mark all as read for the authenticated user. */
+export async function apiMarkAllNotificationsRead(token: string): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8_000);
+    const res = await fetch(`${ENGINE_BASE}/notifications/read-all`, {
+      method:  "PATCH",
+      signal:  controller.signal,
+      headers: engineAuthHeaders(token),
+    });
+    clearTimeout(tid);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** DELETE /notifications/:id — remove a single notification for the authenticated user. */
+export async function apiDeleteNotification(token: string, notificationId: string): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8_000);
+    const res = await fetch(
+      `${ENGINE_BASE}/notifications/${encodeURIComponent(notificationId)}`,
+      { method: "DELETE", signal: controller.signal, headers: engineAuthHeaders(token) },
+    );
+    clearTimeout(tid);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// ── Disputes ──────────────────────────────────────────────────────────────────
+// DB-ready: disputes table; shapes match GET /disputes and POST /disputes.
+
+export type ApiDisputeRow = {
+  id:                string;
+  match_id:          string;
+  player_a:          string;
+  player_b:          string;
+  player_a_username: string;
+  player_b_username: string;
+  reason:            string;
+  status:            string;
+  resolution:        string;
+  evidence:          string | null;
+  admin_notes:       string | null;
+  resolved_by:       string | null;
+  created_at:        string | null;
+  resolved_at:       string | null;
+  game:              string;
+  stake:             number;
+};
+
+/**
+ * POST /disputes — open a dispute on a completed or disputed match.
+ * Marks match status → 'disputed'.
+ * DB-ready: INSERT into disputes; UPDATE matches SET status='disputed'.
+ */
+export async function apiCreateDispute(
+  token: string,
+  body: { match_id: string; reason: string; evidence?: string | null },
+): Promise<{ ok: true; id: string } | { ok: false; status: number; detail: string | null }> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8_000);
+    const res = await fetch(`${ENGINE_BASE}/disputes`, {
+      method:  "POST",
+      signal:  controller.signal,
+      headers: { ...engineAuthHeaders(token), "Content-Type": "application/json" },
+      body:    JSON.stringify(body),
+    });
+    clearTimeout(tid);
+    const raw = (await res.json().catch(() => ({}))) as { detail?: unknown; id?: string };
+    if (!res.ok) {
+      return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    }
+    return { ok: true as const, id: String(raw.id ?? "") };
+  } catch {
+    return { ok: false as const, status: 0, detail: "Network error" };
+  }
+}
+
+/**
+ * GET /disputes — list disputes where caller is player_a or player_b.
+ * DB-ready: disputes JOIN matches JOIN users.
+ */
+export async function apiGetDisputes(token: string): Promise<ApiDisputeRow[] | null> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8_000);
+    const res = await fetch(`${ENGINE_BASE}/disputes`, {
+      signal:  controller.signal,
+      headers: engineAuthHeaders(token),
+    });
+    clearTimeout(tid);
+    if (!res.ok) return null;
+    const raw = (await res.json()) as { disputes?: ApiDisputeRow[] };
+    return Array.isArray(raw.disputes) ? raw.disputes : [];
+  } catch {
+    return null;
+  }
+}
+
+// ── Support Tickets ───────────────────────────────────────────────────────────
+// DB-ready: support_tickets table; shapes match GET/POST /support/tickets.
+
+export type ApiSupportTicketRow = {
+  id:                string;
+  reason:            string;
+  description:       string;
+  status:            string;
+  category:          string;
+  match_id:          string | null;
+  topic:             string | null;
+  admin_note:        string | null;
+  created_at:        string | null;
+  updated_at:        string | null;
+  reported_id:       string | null;
+  reported_username: string | null;
+};
+
+/**
+ * POST /support/tickets — file a support ticket.
+ * DB-ready: INSERT into support_tickets.
+ */
+export async function apiCreateSupportTicket(
+  token: string,
+  body: {
+    reason:          string;
+    description:     string;
+    reported_id?:    string | null;
+    category?:       string;
+    match_id?:       string | null;
+    topic?:          string | null;
+    attachment_url?: string | null;
+  },
+): Promise<{ ok: true; id: string } | { ok: false; status: number; detail: string | null }> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8_000);
+    const res = await fetch(`${ENGINE_BASE}/support/tickets`, {
+      method:  "POST",
+      signal:  controller.signal,
+      headers: { ...engineAuthHeaders(token), "Content-Type": "application/json" },
+      body:    JSON.stringify(body),
+    });
+    clearTimeout(tid);
+    const raw = (await res.json().catch(() => ({}))) as { detail?: unknown; id?: string };
+    if (!res.ok) {
+      return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    }
+    return { ok: true as const, id: String(raw.id ?? "") };
+  } catch {
+    return { ok: false as const, status: 0, detail: "Network error" };
+  }
+}
+
+/**
+ * GET /support/tickets — list caller's own tickets (optional ?status= filter).
+ * DB-ready: support_tickets WHERE reporter_id = me.
+ */
+export async function apiGetSupportTickets(
+  token: string,
+  opts?: { status?: string },
+): Promise<ApiSupportTicketRow[] | null> {
+  try {
+    const q = new URLSearchParams();
+    if (opts?.status) q.set("status", opts.status);
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8_000);
+    const res = await fetch(`${ENGINE_BASE}/support/tickets?${q}`, {
+      signal:  controller.signal,
+      headers: engineAuthHeaders(token),
+    });
+    clearTimeout(tid);
+    if (!res.ok) return null;
+    const raw = (await res.json()) as { tickets?: ApiSupportTicketRow[] };
+    return Array.isArray(raw.tickets) ? raw.tickets : [];
+  } catch {
+    return null;
+  }
+}
+
+// ── Forge Challenges ──────────────────────────────────────────────────────────
+// DB-ready: forge_challenges + forge_challenge_progress; shapes match GET /forge/challenges.
+
+export type ApiForgeChallengeRow = {
+  id:          string;
+  title:       string;
+  description: string;
+  icon:        string;
+  type:        "daily" | "weekly";
+  rewardAT:    number;
+  rewardXP:    number;
+  target:      number;
+  progress:    number;
+  status:      "active" | "claimable" | "claimed";
+  expiresAt:   string;
+};
+
+/**
+ * GET /forge/challenges — active challenges with the user's cycle progress.
+ * DB-ready: forge_challenges LEFT JOIN forge_challenge_progress for current cycle.
+ */
+export async function apiGetForgeChallenges(token: string): Promise<ApiForgeChallengeRow[] | null> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8_000);
+    const res = await fetch(`${ENGINE_BASE}/forge/challenges`, {
+      signal:  controller.signal,
+      headers: engineAuthHeaders(token),
+    });
+    clearTimeout(tid);
+    if (!res.ok) return null;
+    const raw = (await res.json()) as { challenges?: ApiForgeChallengeRow[] };
+    return Array.isArray(raw.challenges) ? raw.challenges : [];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * POST /forge/challenges/:id/claim — claim AT + XP reward for a completed challenge.
+ * DB-ready: UPDATE forge_challenge_progress status='claimed'; credit AT + XP.
+ */
+export async function apiClaimForgeChallenge(
+  token: string,
+  challengeId: string,
+): Promise<
+  | { ok: true; reward_at: number; reward_xp: number; at_balance: number }
+  | { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8_000);
+    const res = await fetch(
+      `${ENGINE_BASE}/forge/challenges/${encodeURIComponent(challengeId)}/claim`,
+      { method: "POST", signal: controller.signal, headers: engineAuthHeaders(token) },
+    );
+    clearTimeout(tid);
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    }
+    return {
+      ok:         true as const,
+      reward_at:  asNum(raw.reward_at)  ?? 0,
+      reward_xp:  asNum(raw.reward_xp)  ?? 0,
+      at_balance: asNum(raw.at_balance) ?? 0,
+    };
+  } catch {
+    return { ok: false as const, status: 0, detail: "Network error" };
+  }
+}
+
