@@ -44,6 +44,7 @@ import {
   lobbyTeamViewFromMatch,
   type LobbySlot,
 } from "@/lib/lobbyRosterDisplay";
+import { createFailureMessage, inviteFailureMessage, joinFailureMessage } from "@/lib/stakeErrors";
 import { createMatchOnChain, getBnbBalance } from "@/lib/metamaskBsc";
 
 // ─── Game configs ─────────────────────────────────────────────────────────────
@@ -526,7 +527,7 @@ const MatchLobby = () => {
           useNotificationStore.getState().addNotification({
             type: "system",
             title: "Could not join match",
-            message: jr.detail ?? "The server rejected your join request.",
+            message: joinFailureMessage(matchStakeCurrency(match), jr),
           });
         }
         setDepositConfirm(null);
@@ -762,14 +763,17 @@ const MatchLobby = () => {
         message: "Your friend will see the invite in their notifications.",
       });
     } else {
-      const failResult = result as { ok: false; detail: string | null };
+      const failResult = result as { ok: false; status?: number; detail: string | null };
+      const fail = { status: typeof failResult.status === "number" ? failResult.status : 0, detail: failResult.detail };
+      const match = matches.find((m) => m.id === myRoomMatchId) ?? null;
+      const sc = match ? matchStakeCurrency(match) : "CRYPTO";
       useNotificationStore.getState().addNotification({
         type: "system",
         title: "Invite Failed",
-        message: failResult.detail ?? "Could not send invite. Try again.",
+        message: inviteFailureMessage(sc, fail),
       });
     }
-  }, [token, myRoomMatchId]);
+  }, [token, myRoomMatchId, matches]);
 
   return (
     <div className="space-y-5">
@@ -1780,9 +1784,7 @@ const MatchLobby = () => {
                               useNotificationStore.getState().addNotification({
                                 type: "system",
                                 title: "Could not create match",
-                                message:
-                                  apiRes.detail ??
-                                  "Check your Steam / Riot ID on your account and try again.",
+                                message: createFailureMessage(createStakeCurrency, apiRes),
                               });
                             }
                             return;
