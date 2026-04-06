@@ -242,25 +242,35 @@ export const useMatchStore = create<MatchState>((set, get) => ({
       const serverIds = new Set(serverList.map((m) => m.id));
       // Keep local-only matches (created but not yet on server, or filtered out)
       const locals = s.matches.filter((m) => !serverIds.has(m.id));
-      // Merge: list_matches returns player_count only — not individual player data.
-      // Strategy: start with existing (preserves expiresAt, lockCountdownStart,
-      // depositsReceived, teamA/teamB display names, etc.) then overlay server fields
-      // (status, mode, code, maxPlayers — fields that ARE returned by list_matches).
-      // Explicit overrides for arrays that need length-based fallback logic.
+      // Merge: list payload may include player_count without roster arrays — then drop stale local roster.
       const merged = serverList.map((srv) => {
         const existing = s.matches.find((m) => m.id === srv.id);
         if (!existing) return srv;
+
+        const srvRosterEmpty =
+          srv.players.length === 0 &&
+          (srv.teamA?.length ?? 0) === 0 &&
+          (srv.teamB?.length ?? 0) === 0;
+        const serverGaveCount = typeof srv.filledPlayerCount === "number";
+
+        const rosterFromServer = srvRosterEmpty && serverGaveCount
+          ? { players: [] as string[], teamA: [] as string[], teamB: [] as string[] }
+          : {
+              players: (srv.players.length > 0) ? srv.players : existing.players,
+              teamA:
+                ((srv.teamA?.length ?? 0) > 0) ? srv.teamA! : existing.teamA ?? [],
+              teamB:
+                ((srv.teamB?.length ?? 0) > 0) ? srv.teamB! : existing.teamB ?? [],
+            };
+
         return {
-          ...existing,  // all local-rich fields preserved (expiresAt, lockCountdownStart, password, etc.)
-          ...srv,       // server fields override (status, mode, code, bet, maxPlayers, host, etc.)
-          // list_matches has no individual player data — fall back to existing roster
-          players: (srv.players.length  > 0) ? srv.players  : existing.players,
-          teamA:  ((srv.teamA?.length  ?? 0) > 0) ? srv.teamA  : existing.teamA,
-          teamB:  ((srv.teamB?.length  ?? 0) > 0) ? srv.teamB  : existing.teamB,
-          // Re-pin fields that srv may carry as undefined (overwriting existing via ...srv spread)
+          ...existing,
+          ...srv,
+          ...rosterFromServer,
+          filledPlayerCount:
+            srv.filledPlayerCount ?? existing.filledPlayerCount,
           expiresAt:          existing.expiresAt,
           lockCountdownStart: existing.lockCountdownStart,
-          // Never take room password from server rows (lists must not leak secrets).
           password:           existing.password,
           hasPassword:
             srv.hasPassword !== undefined ? srv.hasPassword : existing.hasPassword,

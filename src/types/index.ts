@@ -109,6 +109,8 @@ export interface Match {
   stakeCurrency?: StakeCurrency;
   betAmount: number;         // stake per player — DB: matches.bet_amount
   players: string[];
+  /** From GET /matches `player_count` when full roster is not in the payload. */
+  filledPlayerCount?: number;
   maxPlayers: number;        // teamSize * 2 — DB: matches.max_players
   status: MatchStatus;
   createdAt: string;

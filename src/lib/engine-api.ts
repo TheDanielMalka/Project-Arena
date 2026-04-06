@@ -1261,6 +1261,7 @@ export function mapApiMatchRowToMatch(row: Record<string, unknown>): Match | nul
   const winnerId = asStr(row.winner_id ?? row.winnerId);
   const code = asStr(row.code) ?? undefined;
   const hasPassword = parseOptionalBool(row.has_password ?? row.hasPassword);
+  const filledPlayerCount = asNum(row.player_count ?? row.playerCount);
   const maxPlayers = asNum(row.max_players ?? row.maxPlayers) ?? 2;
   const maxPerTeam = asNum(row.max_per_team ?? row.maxPerTeam) ?? undefined;
   const teamSize = maxPerTeam ?? (asNum(row.team_size ?? row.teamSize) ?? undefined);
@@ -1305,6 +1306,9 @@ export function mapApiMatchRowToMatch(row: Record<string, unknown>): Match | nul
     mode,
     betAmount: bet,
     players,
+    ...(filledPlayerCount !== undefined && filledPlayerCount !== null
+      ? { filledPlayerCount }
+      : {}),
     maxPlayers,
     status,
     createdAt,
