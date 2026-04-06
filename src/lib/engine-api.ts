@@ -351,7 +351,7 @@ export async function apiInviteToMatch(
   token: string,
   matchId: string,
   friendId: string,
-): Promise<{ ok: true } | { ok: false; detail: string | null }> {
+): Promise<{ ok: true } | { ok: false; status: number; detail: string | null }> {
   try {
     const res = await arenaUserFetch(
       `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/invite`,
@@ -364,11 +364,11 @@ export async function apiInviteToMatch(
     );
     if (!res.ok) {
       const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
-      return { ok: false, detail: parseFastApiDetail(raw.detail) };
+      return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
     }
     return { ok: true };
   } catch {
-    return { ok: false, detail: null };
+    return { ok: false, status: 0, detail: null };
   }
 }
 
