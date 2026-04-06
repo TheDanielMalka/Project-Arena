@@ -37,6 +37,7 @@ import type {
   PublicPlayerProfile,
   UserStatus,
 } from "@/types";
+import { notifyAuth401 } from "@/lib/authSession";
 
 export interface EngineHealth {
   status:       "ok" | "offline" | "error";
@@ -169,14 +170,13 @@ export async function getClientStatus(
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 5000);
 
-    const headers: HeadersInit = {};
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-
     const url = walletAddress
       ? `${ENGINE_BASE}/client/status?wallet_address=${encodeURIComponent(walletAddress)}`
       : `${ENGINE_BASE}/client/status`;
 
-    const res = await fetch(url, { signal: controller.signal, headers });
+    const res = token
+      ? await arenaUserFetch(url, token, { signal: controller.signal })
+      : await fetch(url, { signal: controller.signal, headers: engineAuthHeaders(null) });
     clearTimeout(tid);
     if (!res.ok) return null;
     return (await res.json()) as ClientStatusResponse;
@@ -192,6 +192,32 @@ function engineAuthHeaders(userToken?: string | null): HeadersInit {
   return headers;
 }
 
+/** Website user JWT — on 401 clears persisted session via registerAuth401Handler. */
+async function arenaUserFetch(input: string, token: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers as HeadersInit);
+  headers.set("Authorization", `Bearer ${token}`);
+  const res = await fetch(input, { ...init, headers });
+  if (res.status === 401) notifyAuth401();
+  return res;
+}
+
+/** If userToken set — arenaUserFetch; else static ENGINE_TOKEN only (401 does not clear user session). */
+async function fetchWithOptionalUserAuth(
+  input: string,
+  userToken: string | null | undefined,
+  init: RequestInit = {},
+): Promise<Response> {
+  if (userToken) {
+    return arenaUserFetch(input, userToken, init);
+  }
+  const headers = new Headers(init.headers as HeadersInit);
+  const extra = engineAuthHeaders(null);
+  if (extra && typeof extra === "object" && "Authorization" in extra) {
+    headers.set("Authorization", (extra as { Authorization: string }).Authorization);
+  }
+  return fetch(input, { ...init, headers });
+}
+
 /**
  * GET /match/:id/status — full JSON (optional Bearer for `your_team`).
  * DB-ready: matches + match_players; CONTRACT-ready: on_chain_match_id → deposit().
@@ -203,10 +229,10 @@ export async function apiGetMatchStatus(
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 5000);
-    const res = await fetch(
-      `${ENGINE_BASE}/match/${encodeURIComponent(matchId)}/status`,
-      { signal: controller.signal, headers: engineAuthHeaders(token) },
-    );
+    const url = `${ENGINE_BASE}/match/${encodeURIComponent(matchId)}/status`;
+    const res = token
+      ? await arenaUserFetch(url, token, { signal: controller.signal })
+      : await fetch(url, { signal: controller.signal, headers: engineAuthHeaders(null) });
     clearTimeout(tid);
     if (!res.ok) return null;
     return (await res.json()) as MatchStatusApiResponse;
@@ -252,9 +278,7 @@ export async function apiGetActiveMatch(
   token: string,
 ): Promise<ActiveMatchResponse | null> {
   try {
-    const res = await fetch(`${ENGINE_BASE}/match/active`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await arenaUserFetch(`${ENGINE_BASE}/match/active`, token, {});
     if (!res.ok) return null;
     return (await res.json()) as ActiveMatchResponse;
   } catch {
@@ -274,11 +298,11 @@ export async function apiCancelMatch(
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 8_000);
-    const res = await fetch(`${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}`, {
-      method: "DELETE",
-      signal: controller.signal,
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}`,
+      token,
+      { method: "DELETE", signal: controller.signal },
+    );
     clearTimeout(tid);
     if (!res.ok) {
       const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
@@ -302,13 +326,10 @@ export async function apiLeaveMatch(
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 8_000);
-    const res = await fetch(
+    const res = await arenaUserFetch(
       `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/leave`,
-      {
-        method: "POST",
-        signal: controller.signal,
-        headers: { Authorization: `Bearer ${token}` },
-      },
+      token,
+      { method: "POST", signal: controller.signal },
     );
     clearTimeout(tid);
     if (!res.ok) {
@@ -331,14 +352,12 @@ export async function apiInviteToMatch(
   friendId: string,
 ): Promise<{ ok: true } | { ok: false; detail: string | null }> {
   try {
-    const res = await fetch(
+    const res = await arenaUserFetch(
       `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/invite`,
+      token,
       {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ friend_id: friendId }),
       },
     );
@@ -520,9 +539,7 @@ export async function apiGetMe(token: string): Promise<{
   role?: string;
 } | null> {
   try {
-    const res = await fetch(`${ENGINE_BASE}/auth/me`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await arenaUserFetch(`${ENGINE_BASE}/auth/me`, token, {});
     if (!res.ok) return null;
     return (await res.json()) as {
       user_id: string;
@@ -559,12 +576,9 @@ export async function apiForgePurchase(
   item_slug: string,
 ): Promise<ApiForgePurchaseResult> {
   try {
-    const res = await fetch(`${ENGINE_BASE}/forge/purchase`, {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/forge/purchase`, token, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ item_slug }),
     });
     const raw = (await res.json().catch(() => ({}))) as {
@@ -628,12 +642,9 @@ export async function apiCreateMatch(
   },
 ): Promise<ApiMatchMutationResult> {
   try {
-    const res = await fetch(`${ENGINE_BASE}/matches`, {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/matches`, token, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
     const raw = (await res.json().catch(() => ({}))) as {
@@ -716,12 +727,9 @@ export async function apiBuyAtPackage(
   | { ok: false; status: number; detail: string | null }
 > {
   try {
-    const res = await fetch(`${ENGINE_BASE}/wallet/buy-at-package`, {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/wallet/buy-at-package`, token, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -762,12 +770,9 @@ export async function apiWithdrawAT(
   | { ok: false; status: number; detail: string | null }
 > {
   try {
-    const res = await fetch(`${ENGINE_BASE}/wallet/withdraw-at`, {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/wallet/withdraw-at`, token, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -796,10 +801,11 @@ export async function apiJoinMatch(
   matchId: string,
 ): Promise<{ ok: true; data: ApiJoinMatchSuccess } | { ok: false; status: number; detail: string | null }> {
   try {
-    const res = await fetch(`${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/join`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/join`,
+      token,
+      { method: "POST" },
+    );
     const raw = (await res.json().catch(() => ({}))) as {
       detail?: unknown;
       joined?: boolean;
@@ -840,9 +846,9 @@ export async function apiPatchMe(
   },
 ): Promise<boolean> {
   try {
-    const res = await fetch(`${ENGINE_BASE}/users/me`, {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/users/me`, token, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     });
     return res.ok;
@@ -857,9 +863,9 @@ export async function apiPatchMe(
  */
 export async function apiPatchMeWalletAddress(token: string, wallet_address: string): Promise<boolean> {
   try {
-    const res = await fetch(`${ENGINE_BASE}/users/me`, {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/users/me`, token, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ wallet_address }),
     });
     return res.ok;
@@ -874,9 +880,9 @@ export async function apiPatchMeWalletAddress(token: string, wallet_address: str
  */
 export async function apiUnlinkMeWalletAddress(token: string): Promise<boolean> {
   try {
-    const res = await fetch(`${ENGINE_BASE}/users/me`, {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/users/me`, token, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ wallet_address: "" }),
     });
     return res.ok;
@@ -897,9 +903,9 @@ export async function apiChangePassword(
   new_password: string,
 ): Promise<ApiChangePasswordResult> {
   try {
-    const res = await fetch(`${ENGINE_BASE}/auth/change-password`, {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/auth/change-password`, token, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ current_password, new_password }),
     });
     const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
@@ -934,9 +940,7 @@ export type ApiFriendRequestRow = {
 
 export async function apiListFriends(token: string): Promise<ApiFriendRow[] | null> {
   try {
-    const res = await fetch(`${ENGINE_BASE}/friends`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await arenaUserFetch(`${ENGINE_BASE}/friends`, token, {});
     if (!res.ok) return null;
     const raw = (await res.json()) as { friends?: ApiFriendRow[] };
     return Array.isArray(raw.friends) ? raw.friends : [];
@@ -950,9 +954,7 @@ export async function apiListFriendRequests(token: string): Promise<{
   outgoing: ApiFriendRequestRow[];
 } | null> {
   try {
-    const res = await fetch(`${ENGINE_BASE}/friends/requests`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await arenaUserFetch(`${ENGINE_BASE}/friends/requests`, token, {});
     if (!res.ok) return null;
     const raw = (await res.json()) as {
       incoming?: ApiFriendRequestRow[];
@@ -977,9 +979,9 @@ export async function apiSendFriendRequest(
   message?: string | null,
 ): Promise<ApiFriendMutationResult> {
   try {
-    const res = await fetch(`${ENGINE_BASE}/friends/request`, {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/friends/request`, token, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id, message: message ?? null }),
     });
     const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
@@ -994,10 +996,11 @@ export async function apiSendFriendRequest(
 
 export async function apiAcceptFriendRequest(token: string, from_user_id: string): Promise<ApiFriendMutationResult> {
   try {
-    const res = await fetch(`${ENGINE_BASE}/friends/${encodeURIComponent(from_user_id)}/accept`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/friends/${encodeURIComponent(from_user_id)}/accept`,
+      token,
+      { method: "POST" },
+    );
     const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
     if (!res.ok) {
       return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
@@ -1010,10 +1013,11 @@ export async function apiAcceptFriendRequest(token: string, from_user_id: string
 
 export async function apiRejectFriendRequest(token: string, from_user_id: string): Promise<ApiFriendMutationResult> {
   try {
-    const res = await fetch(`${ENGINE_BASE}/friends/${encodeURIComponent(from_user_id)}/reject`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/friends/${encodeURIComponent(from_user_id)}/reject`,
+      token,
+      { method: "POST" },
+    );
     const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
     if (!res.ok) {
       return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
@@ -1026,10 +1030,11 @@ export async function apiRejectFriendRequest(token: string, from_user_id: string
 
 export async function apiRemoveFriend(token: string, user_id: string): Promise<ApiFriendMutationResult> {
   try {
-    const res = await fetch(`${ENGINE_BASE}/friends/${encodeURIComponent(user_id)}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/friends/${encodeURIComponent(user_id)}`,
+      token,
+      { method: "DELETE" },
+    );
     const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
     if (!res.ok) {
       return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
@@ -1042,10 +1047,11 @@ export async function apiRemoveFriend(token: string, user_id: string): Promise<A
 
 export async function apiBlockUser(token: string, user_id: string): Promise<ApiFriendMutationResult> {
   try {
-    const res = await fetch(`${ENGINE_BASE}/friends/${encodeURIComponent(user_id)}/block`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/friends/${encodeURIComponent(user_id)}/block`,
+      token,
+      { method: "POST" },
+    );
     const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
     if (!res.ok) {
       return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
@@ -1074,9 +1080,11 @@ export async function apiGetMessages(
 ): Promise<ApiDmRow[] | null> {
   try {
     const q = new URLSearchParams({ limit: String(Math.min(200, Math.max(1, limit))) });
-    const res = await fetch(`${ENGINE_BASE}/messages/${encodeURIComponent(friend_id)}?${q}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/messages/${encodeURIComponent(friend_id)}?${q}`,
+      token,
+      {},
+    );
     if (!res.ok) return null;
     const raw = (await res.json()) as { messages?: ApiDmRow[] };
     return Array.isArray(raw.messages) ? raw.messages : [];
@@ -1095,9 +1103,9 @@ export async function apiSendMessage(
   content: string,
 ): Promise<ApiSendMessageResult> {
   try {
-    const res = await fetch(`${ENGINE_BASE}/messages`, {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/messages`, token, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ receiver_id, content }),
     });
     const raw = (await res.json().catch(() => ({}))) as {
@@ -1120,10 +1128,11 @@ export async function apiSendMessage(
 
 export async function apiMarkMessagesRead(token: string, friend_id: string): Promise<boolean> {
   try {
-    const res = await fetch(`${ENGINE_BASE}/messages/${encodeURIComponent(friend_id)}/read`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/messages/${encodeURIComponent(friend_id)}/read`,
+      token,
+      { method: "POST" },
+    );
     return res.ok;
   } catch {
     return false;
@@ -1299,9 +1308,8 @@ async function fetchJsonMatches(path: string, token?: string | null): Promise<Ma
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 12_000);
-    const res = await fetch(`${ENGINE_BASE}${path}`, {
+    const res = await fetchWithOptionalUserAuth(`${ENGINE_BASE}${path}`, token ?? null, {
       signal: controller.signal,
-      headers: engineAuthHeaders(token ?? null),
     });
     clearTimeout(tid);
     if (!res.ok) return null;
@@ -1425,9 +1433,8 @@ export async function apiSearchPlayers(
     if (game) params.set("game", game);
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 12_000);
-    const res = await fetch(`${ENGINE_BASE}/players?${params}`, {
+    const res = await fetchWithOptionalUserAuth(`${ENGINE_BASE}/players?${params}`, token, {
       signal: controller.signal,
-      headers: engineAuthHeaders(token ?? null),
     });
     clearTimeout(tid);
     if (!res.ok) return [];
@@ -1454,10 +1461,11 @@ export async function apiGetPublicPlayer(
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 12_000);
-    const res = await fetch(`${ENGINE_BASE}/players/${encodeURIComponent(userId)}`, {
-      signal: controller.signal,
-      headers: engineAuthHeaders(token ?? null),
-    });
+    const res = await fetchWithOptionalUserAuth(
+      `${ENGINE_BASE}/players/${encodeURIComponent(userId)}`,
+      token,
+      { signal: controller.signal },
+    );
     clearTimeout(tid);
     if (!res.ok) return null;
     const raw = (await res.json()) as Record<string, unknown>;
@@ -1515,9 +1523,8 @@ export async function apiGetLeaderboard(opts?: ApiLeaderboardOpts): Promise<Lead
     const suffix = q.toString() ? `?${q}` : "";
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 12_000);
-    const res = await fetch(`${ENGINE_BASE}/leaderboard${suffix}`, {
+    const res = await fetchWithOptionalUserAuth(`${ENGINE_BASE}/leaderboard${suffix}`, opts?.token ?? null, {
       signal: controller.signal,
-      headers: engineAuthHeaders(opts?.token ?? null),
     });
     clearTimeout(tid);
     if (!res.ok) return null;
@@ -1571,9 +1578,8 @@ export async function apiListInbox(opts: ApiListInboxOpts): Promise<InboxMessage
     if (opts.limit !== undefined) q.set("limit", String(opts.limit));
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 12_000);
-    const res = await fetch(`${ENGINE_BASE}/inbox?${q}`, {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/inbox?${q}`, token, {
       signal: controller.signal,
-      headers: engineAuthHeaders(token),
     });
     clearTimeout(tid);
     if (!res.ok) return null;
@@ -1595,9 +1601,8 @@ export async function apiGetInboxUnreadCount(token: string | null | undefined): 
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 12_000);
-    const res = await fetch(`${ENGINE_BASE}/inbox/unread-count`, {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/inbox/unread-count`, token, {
       signal: controller.signal,
-      headers: engineAuthHeaders(token),
     });
     clearTimeout(tid);
     if (!res.ok) return null;
@@ -1622,10 +1627,10 @@ export async function apiPostInbox(
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 12_000);
-    const res = await fetch(`${ENGINE_BASE}/inbox`, {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/inbox`, token, {
       method: "POST",
       signal: controller.signal,
-      headers: { ...engineAuthHeaders(token), "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         receiver_id: body.receiver_id,
         subject: body.subject,
@@ -1657,11 +1662,11 @@ export async function apiPatchInboxRead(token: string, messageId: string): Promi
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 12_000);
-    const res = await fetch(`${ENGINE_BASE}/inbox/${encodeURIComponent(messageId)}/read`, {
-      method: "PATCH",
-      signal: controller.signal,
-      headers: engineAuthHeaders(token),
-    });
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/inbox/${encodeURIComponent(messageId)}/read`,
+      token,
+      { method: "PATCH", signal: controller.signal },
+    );
     clearTimeout(tid);
     return res.ok;
   } catch {
@@ -1674,10 +1679,9 @@ export async function apiPatchInboxReadAll(token: string): Promise<boolean> {
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 12_000);
-    const res = await fetch(`${ENGINE_BASE}/inbox/read-all`, {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/inbox/read-all`, token, {
       method: "PATCH",
       signal: controller.signal,
-      headers: engineAuthHeaders(token),
     });
     clearTimeout(tid);
     return res.ok;
@@ -1691,11 +1695,11 @@ export async function apiDeleteInbox(token: string, messageId: string): Promise<
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 12_000);
-    const res = await fetch(`${ENGINE_BASE}/inbox/${encodeURIComponent(messageId)}`, {
-      method: "DELETE",
-      signal: controller.signal,
-      headers: engineAuthHeaders(token),
-    });
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/inbox/${encodeURIComponent(messageId)}`,
+      token,
+      { method: "DELETE", signal: controller.signal },
+    );
     clearTimeout(tid);
     return res.ok;
   } catch {
@@ -1731,9 +1735,8 @@ export async function apiGetNotifications(
     if (opts?.limit !== undefined) q.set("limit", String(opts.limit));
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 8_000);
-    const res = await fetch(`${ENGINE_BASE}/notifications?${q}`, {
-      signal:  controller.signal,
-      headers: engineAuthHeaders(token),
+    const res = await arenaUserFetch(`${ENGINE_BASE}/notifications?${q}`, token, {
+      signal: controller.signal,
     });
     clearTimeout(tid);
     if (!res.ok) return null;
@@ -1749,9 +1752,10 @@ export async function apiMarkNotificationRead(token: string, notificationId: str
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 8_000);
-    const res = await fetch(
+    const res = await arenaUserFetch(
       `${ENGINE_BASE}/notifications/${encodeURIComponent(notificationId)}/read`,
-      { method: "PATCH", signal: controller.signal, headers: engineAuthHeaders(token) },
+      token,
+      { method: "PATCH", signal: controller.signal },
     );
     clearTimeout(tid);
     return res.ok;
@@ -1765,10 +1769,9 @@ export async function apiMarkAllNotificationsRead(token: string): Promise<boolea
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 8_000);
-    const res = await fetch(`${ENGINE_BASE}/notifications/read-all`, {
-      method:  "PATCH",
-      signal:  controller.signal,
-      headers: engineAuthHeaders(token),
+    const res = await arenaUserFetch(`${ENGINE_BASE}/notifications/read-all`, token, {
+      method: "PATCH",
+      signal: controller.signal,
     });
     clearTimeout(tid);
     return res.ok;
@@ -1782,9 +1785,10 @@ export async function apiDeleteNotification(token: string, notificationId: strin
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 8_000);
-    const res = await fetch(
+    const res = await arenaUserFetch(
       `${ENGINE_BASE}/notifications/${encodeURIComponent(notificationId)}`,
-      { method: "DELETE", signal: controller.signal, headers: engineAuthHeaders(token) },
+      token,
+      { method: "DELETE", signal: controller.signal },
     );
     clearTimeout(tid);
     return res.ok;
@@ -1827,11 +1831,11 @@ export async function apiCreateDispute(
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 8_000);
-    const res = await fetch(`${ENGINE_BASE}/disputes`, {
-      method:  "POST",
-      signal:  controller.signal,
-      headers: { ...engineAuthHeaders(token), "Content-Type": "application/json" },
-      body:    JSON.stringify(body),
+    const res = await arenaUserFetch(`${ENGINE_BASE}/disputes`, token, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     });
     clearTimeout(tid);
     const raw = (await res.json().catch(() => ({}))) as { detail?: unknown; id?: string };
@@ -1852,9 +1856,8 @@ export async function apiGetDisputes(token: string): Promise<ApiDisputeRow[] | n
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 8_000);
-    const res = await fetch(`${ENGINE_BASE}/disputes`, {
-      signal:  controller.signal,
-      headers: engineAuthHeaders(token),
+    const res = await arenaUserFetch(`${ENGINE_BASE}/disputes`, token, {
+      signal: controller.signal,
     });
     clearTimeout(tid);
     if (!res.ok) return null;
@@ -1902,11 +1905,11 @@ export async function apiCreateSupportTicket(
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 8_000);
-    const res = await fetch(`${ENGINE_BASE}/support/tickets`, {
-      method:  "POST",
-      signal:  controller.signal,
-      headers: { ...engineAuthHeaders(token), "Content-Type": "application/json" },
-      body:    JSON.stringify(body),
+    const res = await arenaUserFetch(`${ENGINE_BASE}/support/tickets`, token, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     });
     clearTimeout(tid);
     const raw = (await res.json().catch(() => ({}))) as { detail?: unknown; id?: string };
@@ -1932,9 +1935,8 @@ export async function apiGetSupportTickets(
     if (opts?.status) q.set("status", opts.status);
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 8_000);
-    const res = await fetch(`${ENGINE_BASE}/support/tickets?${q}`, {
-      signal:  controller.signal,
-      headers: engineAuthHeaders(token),
+    const res = await arenaUserFetch(`${ENGINE_BASE}/support/tickets?${q}`, token, {
+      signal: controller.signal,
     });
     clearTimeout(tid);
     if (!res.ok) return null;
@@ -1970,9 +1972,8 @@ export async function apiGetForgeChallenges(token: string): Promise<ApiForgeChal
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 8_000);
-    const res = await fetch(`${ENGINE_BASE}/forge/challenges`, {
-      signal:  controller.signal,
-      headers: engineAuthHeaders(token),
+    const res = await arenaUserFetch(`${ENGINE_BASE}/forge/challenges`, token, {
+      signal: controller.signal,
     });
     clearTimeout(tid);
     if (!res.ok) return null;
@@ -1997,9 +1998,10 @@ export async function apiClaimForgeChallenge(
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 8_000);
-    const res = await fetch(
+    const res = await arenaUserFetch(
       `${ENGINE_BASE}/forge/challenges/${encodeURIComponent(challengeId)}/claim`,
-      { method: "POST", signal: controller.signal, headers: engineAuthHeaders(token) },
+      token,
+      { method: "POST", signal: controller.signal },
     );
     clearTimeout(tid);
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;

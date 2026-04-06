@@ -47,7 +47,10 @@ export function ArenaHeader() {
   // Keep the poller alive — syncs into clientStore automatically
   useEngineStatus();
 
-  const handleSignOut = () => { logout(); navigate("/"); };
+  const handleSignOut = () => {
+    logout();
+    navigate("/auth", { replace: true });
+  };
 
   // "Client Ready" only when the client is logged in as the same user as the website.
   // If client is running but bound to a different (or no) user → show "connected" state.

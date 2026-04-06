@@ -1,8 +1,10 @@
+import { useEffect, type ReactNode } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { NotificationToastListener } from "@/components/notifications/NotificationToast";
 import { useUserStore } from "@/stores/userStore";
+import { registerAuth401Handler, clearAuth401Handler } from "@/lib/authSession";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Routes, Route } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -39,6 +41,28 @@ const AdminRoute = () => {
   return user?.role === "admin" ? <AppLayout><Admin /></AppLayout> : <Navigate to="/dashboard" replace />;
 };
 
+function SessionGate({ children }: { children: ReactNode }) {
+  const authHydrated = useUserStore((s) => s.authHydrated);
+  const restoreSession = useUserStore((s) => s.restoreSession);
+
+  useEffect(() => {
+    registerAuth401Handler(() => {
+      useUserStore.getState().logout();
+    });
+    void restoreSession();
+    return () => clearAuth401Handler();
+  }, [restoreSession]);
+
+  if (!authHydrated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background text-muted-foreground text-sm">
+        Loading…
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
 const App = () => {
   return (
     <QueryClientProvider client={queryClient}>
@@ -47,6 +71,7 @@ const App = () => {
         <Sonner />
         <NotificationToastListener />
         <BrowserRouter>
+          <SessionGate>
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/auth" element={<Auth />} />
@@ -72,6 +97,7 @@ const App = () => {
             <Route path="/admin" element={<AdminRoute />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </SessionGate>
         </BrowserRouter>
       </TooltipProvider>
     </QueryClientProvider>
