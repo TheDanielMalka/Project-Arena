@@ -35,6 +35,7 @@ import {
   type ApiFriendRow,
 } from "@/lib/engine-api";
 import { useMatchListLivePoll } from "@/hooks/useMatchListLivePoll";
+import { useActiveRoomServerSync } from "@/hooks/useActiveRoomServerSync";
 import { looksLikeServerMatchId } from "@/lib/gameAccounts";
 import { friendlyChainErrorMessage } from "@/lib/friendlyChainError";
 import { joinPasswordFailureMessage } from "@/lib/matchRoomPassword";
@@ -296,6 +297,7 @@ const MatchLobby = () => {
   const markIdle     = useClientStore((s) => s.markIdle);
   useMatchPolling({ interval: 5000 });
   useMatchListLivePoll(user && token ? token : null);
+  useActiveRoomServerSync(user && token ? token : null, myRoomMatchId);
 
   // ── Lobby persistence: restore active room on mount / login ────────────────
   useEffect(() => {
