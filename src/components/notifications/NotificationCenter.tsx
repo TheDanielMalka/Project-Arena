@@ -155,7 +155,7 @@ export function NotificationCenter() {
                 variant="ghost"
                 size="sm"
                 className="h-7 text-xs text-muted-foreground hover:text-primary"
-                onClick={markAllAsRead}
+                onClick={() => markAllAsRead()}
               >
                 <CheckCheck className="h-3 w-3 mr-1" />
                 Read all
