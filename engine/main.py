@@ -4061,6 +4061,700 @@ async def delete_inbox_message(message_id: str, payload: dict = Depends(verify_t
     return {"deleted": True, "id": message_id}
 
 
+# ── Notifications ──────────────────────────────────────────────────────────────
+
+@app.get("/notifications")
+async def get_notifications(
+    unread_only: bool = Query(default=False),
+    limit: int = Query(default=50, ge=1, le=200),
+    payload: dict = Depends(verify_token),
+):
+    """
+    GET /notifications — paginated list of notifications for the authenticated user.
+    Optional ?unread_only=true&limit=N.
+    DB-ready: SELECT from notifications WHERE user_id = :me ORDER BY created_at DESC.
+    """
+    me: str = payload["sub"]
+    extra = "AND read = FALSE" if unread_only else ""
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(
+                text(f"""
+                    SELECT id, type, title, message, read, metadata, created_at
+                    FROM notifications
+                    WHERE user_id = :me {extra}
+                    ORDER BY created_at DESC
+                    LIMIT :lim
+                """),
+                {"me": me, "lim": limit},
+            ).fetchall()
+    except Exception as exc:
+        logger.error("get_notifications error: %s", exc)
+        raise HTTPException(500, "Failed to load notifications")
+
+    return {
+        "notifications": [
+            {
+                "id":         str(r[0]),
+                "type":       r[1],
+                "title":      r[2],
+                "message":    r[3],
+                "read":       r[4],
+                "metadata":   r[5] if r[5] else None,
+                "created_at": r[6].isoformat() if r[6] else None,
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.patch("/notifications/{notification_id}/read", status_code=200)
+async def mark_notification_read(notification_id: str, payload: dict = Depends(verify_token)):
+    """
+    PATCH /notifications/:id/read — mark a single notification as read.
+    Only the owner can mark their own notifications.
+    DB-ready: UPDATE notifications SET read = TRUE WHERE id = :id AND user_id = :me.
+    """
+    me: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("SELECT id FROM notifications WHERE id = :nid AND user_id = :me"),
+                {"nid": notification_id, "me": me},
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "Notification not found")
+            session.execute(
+                text("UPDATE notifications SET read = TRUE WHERE id = :nid"),
+                {"nid": notification_id},
+            )
+            session.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("mark_notification_read error: %s", exc)
+        raise HTTPException(500, "Update failed")
+
+    return {"read": True, "id": notification_id}
+
+
+@app.patch("/notifications/read-all", status_code=200)
+async def mark_all_notifications_read(payload: dict = Depends(verify_token)):
+    """
+    PATCH /notifications/read-all — mark all of the authenticated user's notifications as read.
+    DB-ready: UPDATE notifications SET read = TRUE WHERE user_id = :me AND read = FALSE.
+    """
+    me: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            result = session.execute(
+                text(
+                    "UPDATE notifications SET read = TRUE "
+                    "WHERE user_id = :me AND read = FALSE"
+                ),
+                {"me": me},
+            )
+            session.commit()
+            updated = getattr(result, "rowcount", 0) or 0
+    except Exception as exc:
+        logger.error("mark_all_notifications_read error: %s", exc)
+        raise HTTPException(500, "Update failed")
+
+    return {"marked_read": updated}
+
+
+@app.delete("/notifications/{notification_id}", status_code=200)
+async def delete_notification(notification_id: str, payload: dict = Depends(verify_token)):
+    """
+    DELETE /notifications/:id — permanently remove a notification for the authenticated user.
+    DB-ready: DELETE FROM notifications WHERE id = :id AND user_id = :me.
+    """
+    me: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("SELECT id FROM notifications WHERE id = :nid AND user_id = :me"),
+                {"nid": notification_id, "me": me},
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "Notification not found")
+            session.execute(
+                text("DELETE FROM notifications WHERE id = :nid"),
+                {"nid": notification_id},
+            )
+            session.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("delete_notification error: %s", exc)
+        raise HTTPException(500, "Delete failed")
+
+    return {"deleted": True, "id": notification_id}
+
+
+# ── Disputes ───────────────────────────────────────────────────────────────────
+
+class CreateDisputeRequest(BaseModel):
+    """POST /disputes — open a dispute on a completed match."""
+    match_id: str
+    reason: str
+    evidence: str | None = None
+
+
+@app.post("/disputes", status_code=201)
+async def create_dispute(req: CreateDisputeRequest, payload: dict = Depends(verify_token)):
+    """
+    POST /disputes — player opens a dispute on a completed or already-disputed match.
+
+    Rules:
+      - match must exist and be 'completed' or 'disputed'
+      - caller must be a player in the match
+      - player_a = caller, player_b = first other player in match_players
+      - sets status = 'open', resolution = 'pending'
+      - marks match status → 'disputed'
+
+    DB-ready: INSERT into disputes; UPDATE matches SET status = 'disputed'.
+    """
+    me: str = payload["sub"]
+
+    reason = req.reason.strip()
+    if not reason:
+        raise HTTPException(400, "Reason cannot be empty")
+
+    try:
+        with SessionLocal() as session:
+            match_row = session.execute(
+                text("SELECT id, status FROM matches WHERE id = :mid"),
+                {"mid": req.match_id},
+            ).fetchone()
+            if not match_row:
+                raise HTTPException(404, "Match not found")
+            if match_row[1] not in ("completed", "disputed"):
+                raise HTTPException(409, f"Cannot dispute a match with status '{match_row[1]}'")
+
+            player_rows = session.execute(
+                text("SELECT user_id FROM match_players WHERE match_id = :mid ORDER BY joined_at"),
+                {"mid": req.match_id},
+            ).fetchall()
+            player_ids = [str(r[0]) for r in player_rows]
+
+            if me not in player_ids:
+                raise HTTPException(403, "You are not a player in this match")
+
+            others = [pid for pid in player_ids if pid != me]
+            player_a = me
+            player_b = others[0] if others else me
+
+            row = session.execute(
+                text(
+                    "INSERT INTO disputes (match_id, player_a, player_b, reason, evidence) "
+                    "VALUES (:mid, :pa, :pb, :reason, :evidence) "
+                    "RETURNING id, created_at"
+                ),
+                {
+                    "mid":      req.match_id,
+                    "pa":       player_a,
+                    "pb":       player_b,
+                    "reason":   reason,
+                    "evidence": req.evidence,
+                },
+            ).fetchone()
+            session.execute(
+                text("UPDATE matches SET status = 'disputed' WHERE id = :mid"),
+                {"mid": req.match_id},
+            )
+            session.commit()
+            dispute_id = str(row[0])
+            created_at = row[1].isoformat() if row[1] else None
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("create_dispute error: %s", exc)
+        raise HTTPException(500, f"Dispute creation failed: {exc}")
+
+    return {
+        "id":         dispute_id,
+        "match_id":   req.match_id,
+        "player_a":   player_a,
+        "player_b":   player_b,
+        "reason":     reason,
+        "status":     "open",
+        "resolution": "pending",
+        "created_at": created_at,
+    }
+
+
+@app.get("/disputes")
+async def get_disputes(payload: dict = Depends(verify_token)):
+    """
+    GET /disputes — list all disputes where the caller is player_a or player_b.
+    Includes match game, stake, and both players' usernames via JOIN.
+    DB-ready: SELECT from disputes JOIN matches JOIN users.
+    """
+    me: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(
+                text("""
+                    SELECT
+                        d.id, d.match_id, d.player_a, d.player_b,
+                        d.reason, d.status, d.resolution,
+                        d.evidence, d.admin_notes, d.resolved_by,
+                        d.created_at, d.resolved_at,
+                        m.game, m.bet_amount,
+                        ua.username AS pa_username,
+                        ub.username AS pb_username
+                    FROM disputes d
+                    JOIN matches m  ON m.id  = d.match_id
+                    JOIN users   ua ON ua.id = d.player_a
+                    JOIN users   ub ON ub.id = d.player_b
+                    WHERE d.player_a = :me OR d.player_b = :me
+                    ORDER BY d.created_at DESC
+                """),
+                {"me": me},
+            ).fetchall()
+    except Exception as exc:
+        logger.error("get_disputes error: %s", exc)
+        raise HTTPException(500, "Failed to load disputes")
+
+    return {
+        "disputes": [
+            {
+                "id":                  str(r[0]),
+                "match_id":            str(r[1]),
+                "player_a":            str(r[2]),
+                "player_b":            str(r[3]),
+                "reason":              r[4],
+                "status":              r[5],
+                "resolution":          r[6],
+                "evidence":            r[7],
+                "admin_notes":         r[8],
+                "resolved_by":         str(r[9]) if r[9] else None,
+                "created_at":          r[10].isoformat() if r[10] else None,
+                "resolved_at":         r[11].isoformat() if r[11] else None,
+                "game":                r[12],
+                "stake":               float(r[13]) if r[13] else 0.0,
+                "player_a_username":   r[14],
+                "player_b_username":   r[15],
+            }
+            for r in rows
+        ]
+    }
+
+
+class UpdateDisputeRequest(BaseModel):
+    """PATCH /disputes/:id — admin updates status / resolution / notes."""
+    status: str | None = None
+    resolution: str | None = None
+    admin_notes: str | None = None
+
+
+@app.patch("/disputes/{dispute_id}", status_code=200)
+async def update_dispute(
+    dispute_id: str,
+    req: UpdateDisputeRequest,
+    payload: dict = Depends(require_admin),
+):
+    """
+    PATCH /disputes/:id — admin-only: update dispute status, resolution, admin_notes.
+    Sets resolved_by = caller and resolved_at = NOW() when status → 'resolved'.
+    DB-ready: UPDATE disputes SET ... WHERE id = :did.
+    """
+    me: str = payload["sub"]
+
+    _valid_statuses    = {"open", "reviewing", "resolved", "escalated"}
+    _valid_resolutions = {"pending", "approved", "rejected", "player_a_wins", "player_b_wins", "refund", "void"}
+
+    if req.status and req.status not in _valid_statuses:
+        raise HTTPException(400, f"Invalid status '{req.status}'")
+    if req.resolution and req.resolution not in _valid_resolutions:
+        raise HTTPException(400, f"Invalid resolution '{req.resolution}'")
+
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("SELECT id FROM disputes WHERE id = :did"),
+                {"did": dispute_id},
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "Dispute not found")
+
+            set_parts: list[str] = []
+            params: dict = {"did": dispute_id}
+            if req.status:
+                set_parts.append("status = :status")
+                params["status"] = req.status
+                if req.status == "resolved":
+                    set_parts.append("resolved_by = :resolver")
+                    set_parts.append("resolved_at = NOW()")
+                    params["resolver"] = me
+            if req.resolution:
+                set_parts.append("resolution = :resolution")
+                params["resolution"] = req.resolution
+            if req.admin_notes is not None:
+                set_parts.append("admin_notes = :admin_notes")
+                params["admin_notes"] = req.admin_notes
+
+            if not set_parts:
+                raise HTTPException(400, "No fields to update")
+
+            session.execute(
+                text(f"UPDATE disputes SET {', '.join(set_parts)} WHERE id = :did"),
+                params,
+            )
+            session.commit()
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("update_dispute error: %s", exc)
+        raise HTTPException(500, "Update failed")
+
+    return {"updated": True, "id": dispute_id}
+
+
+# ── Support Tickets ────────────────────────────────────────────────────────────
+
+class CreateSupportTicketRequest(BaseModel):
+    """POST /support/tickets — file a support ticket."""
+    reason: str
+    description: str
+    reported_id: str | None = None
+    category: str = "player_report"
+    match_id: str | None = None
+    topic: str | None = None
+    attachment_url: str | None = None
+
+
+@app.post("/support/tickets", status_code=201)
+async def create_support_ticket(
+    req: CreateSupportTicketRequest,
+    payload: dict = Depends(verify_token),
+):
+    """
+    POST /support/tickets — player files a support ticket.
+
+    Categories align with SupportTicketCategory in src/types/index.ts:
+      player_report    — reported_id should be provided
+      match_dispute    — match_id should be provided
+      general_support  — topic should be provided
+
+    DB-ready: INSERT into support_tickets (all DB enum values validated here).
+    """
+    me: str = payload["sub"]
+
+    _valid_reasons    = {"cheating", "harassment", "fake_screenshot", "disconnect_abuse", "other"}
+    _valid_categories = {"player_report", "match_dispute", "general_support"}
+    _valid_topics     = {"account_access", "payments_escrow", "bug_technical", "match_outcome", "feedback", "other"}
+
+    if req.reason not in _valid_reasons:
+        raise HTTPException(400, f"Invalid reason '{req.reason}'")
+    if req.category not in _valid_categories:
+        raise HTTPException(400, f"Invalid category '{req.category}'")
+    if req.topic and req.topic not in _valid_topics:
+        raise HTTPException(400, f"Invalid topic '{req.topic}'")
+
+    description = req.description.strip()
+    if not description:
+        raise HTTPException(400, "Description cannot be empty")
+
+    if req.reported_id and req.reported_id == me:
+        raise HTTPException(400, "Cannot file a ticket against yourself")
+
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "INSERT INTO support_tickets "
+                    "(reporter_id, reported_id, reason, description, category, match_id, topic, attachment_url) "
+                    "VALUES (:rid, :reported, :reason, :desc, :cat, :mid, :topic, :att) "
+                    "RETURNING id, created_at"
+                ),
+                {
+                    "rid":      me,
+                    "reported": req.reported_id,
+                    "reason":   req.reason,
+                    "desc":     description,
+                    "cat":      req.category,
+                    "mid":      req.match_id,
+                    "topic":    req.topic,
+                    "att":      req.attachment_url,
+                },
+            ).fetchone()
+            session.commit()
+            ticket_id  = str(row[0])
+            created_at = row[1].isoformat() if row[1] else None
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("create_support_ticket error: %s", exc)
+        raise HTTPException(500, f"Ticket creation failed: {exc}")
+
+    return {
+        "id":          ticket_id,
+        "reporter_id": me,
+        "reason":      req.reason,
+        "status":      "open",
+        "category":    req.category,
+        "created_at":  created_at,
+    }
+
+
+@app.get("/support/tickets")
+async def get_support_tickets(
+    status: str | None = Query(default=None),
+    payload: dict = Depends(verify_token),
+):
+    """
+    GET /support/tickets — list tickets filed by the authenticated user.
+    Optional ?status=open|investigating|dismissed|resolved
+    DB-ready: SELECT from support_tickets WHERE reporter_id = :me.
+    """
+    me: str = payload["sub"]
+    extra = ""
+    params: dict = {"me": me}
+    if status:
+        extra = "AND st.status = :status"
+        params["status"] = status
+
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(
+                text(f"""
+                    SELECT
+                        st.id, st.reason, st.description, st.status,
+                        st.category, st.match_id, st.topic,
+                        st.admin_note, st.created_at, st.updated_at,
+                        st.reported_id,
+                        u.username AS reported_username
+                    FROM support_tickets st
+                    LEFT JOIN users u ON u.id = st.reported_id
+                    WHERE st.reporter_id = :me {extra}
+                    ORDER BY st.created_at DESC
+                """),
+                params,
+            ).fetchall()
+    except Exception as exc:
+        logger.error("get_support_tickets error: %s", exc)
+        raise HTTPException(500, "Failed to load tickets")
+
+    return {
+        "tickets": [
+            {
+                "id":                str(r[0]),
+                "reason":            r[1],
+                "description":       r[2],
+                "status":            r[3],
+                "category":          r[4],
+                "match_id":          str(r[5]) if r[5] else None,
+                "topic":             r[6],
+                "admin_note":        r[7],
+                "created_at":        r[8].isoformat() if r[8] else None,
+                "updated_at":        r[9].isoformat() if r[9] else None,
+                "reported_id":       str(r[10]) if r[10] else None,
+                "reported_username": r[11],
+            }
+            for r in rows
+        ]
+    }
+
+
+# ── Forge Challenges ───────────────────────────────────────────────────────────
+
+@app.get("/forge/challenges")
+async def get_forge_challenges(payload: dict = Depends(verify_token)):
+    """
+    GET /forge/challenges — list active daily + weekly challenges with the user's progress.
+
+    Progress is per-cycle:
+      daily   → cycle_start = today (UTC date)
+      weekly  → cycle_start = most recent Monday (UTC)
+
+    Returns status: 'active' | 'claimable' | 'claimed' and expiry timestamps.
+    DB-ready: forge_challenges LEFT JOIN forge_challenge_progress for current cycle.
+    """
+    me: str = payload["sub"]
+    try:
+        import datetime as _dt
+        today      = _dt.date.today()
+        week_start = today - _dt.timedelta(days=today.weekday())
+
+        with SessionLocal() as session:
+            rows = session.execute(
+                text("""
+                    SELECT
+                        fc.id, fc.title, fc.description, fc.icon,
+                        fc.type, fc.reward_at, fc.reward_xp, fc.target,
+                        COALESCE(fcp.progress, 0)       AS progress,
+                        COALESCE(fcp.status,  'active') AS ch_status
+                    FROM forge_challenges fc
+                    LEFT JOIN forge_challenge_progress fcp
+                      ON fcp.challenge_id = fc.id
+                     AND fcp.user_id      = :me
+                     AND fcp.cycle_start  = CASE
+                           WHEN fc.type = 'daily'  THEN :today
+                           WHEN fc.type = 'weekly' THEN :week_start
+                           ELSE :today
+                         END
+                    WHERE fc.active = TRUE
+                    ORDER BY fc.type, fc.created_at
+                """),
+                {"me": me, "today": today, "week_start": week_start},
+            ).fetchall()
+    except Exception as exc:
+        logger.error("get_forge_challenges error: %s", exc)
+        raise HTTPException(500, "Failed to load challenges")
+
+    import datetime as _dt2
+
+    def _expires_at(ch_type: str) -> str:
+        t = _dt2.date.today()
+        if ch_type == "daily":
+            nxt = t + _dt2.timedelta(days=1)
+        else:
+            # next Monday
+            nxt = t + _dt2.timedelta(days=7 - t.weekday())
+        return _dt2.datetime.combine(nxt, _dt2.time.min, tzinfo=_dt2.timezone.utc).isoformat()
+
+    def _status(progress: int, target: int, db_status: str) -> str:
+        if db_status == "claimed":
+            return "claimed"
+        if progress >= target:
+            return "claimable"
+        return "active"
+
+    return {
+        "challenges": [
+            {
+                "id":          str(r[0]),
+                "title":       r[1],
+                "description": r[2],
+                "icon":        r[3],
+                "type":        r[4],
+                "rewardAT":    r[5],
+                "rewardXP":    r[6],
+                "target":      r[7],
+                "progress":    r[8],
+                "status":      _status(r[8], r[7], r[9]),
+                "expiresAt":   _expires_at(r[4]),
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.post("/forge/challenges/{challenge_id}/claim", status_code=200)
+async def claim_forge_challenge(challenge_id: str, payload: dict = Depends(verify_token)):
+    """
+    POST /forge/challenges/:id/claim — claim AT + XP reward for a completed challenge.
+
+    Rules:
+      - challenge must exist and be active
+      - user must have progress >= target for the current cycle
+      - status must not already be 'claimed'
+      - credits reward_at AT and reward_xp XP
+      - sets forge_challenge_progress.status = 'claimed', claimed_at = NOW()
+
+    DB-ready:
+      UPDATE forge_challenge_progress SET status = 'claimed', claimed_at = NOW();
+      UPDATE users SET at_balance = at_balance + :reward_at;
+      UPDATE user_stats SET xp = xp + :reward_xp;
+      INSERT INTO transactions (at_purchase for the AT credit).
+    """
+    me: str = payload["sub"]
+
+    try:
+        import datetime as _dt
+        today      = _dt.date.today()
+        week_start = today - _dt.timedelta(days=today.weekday())
+
+        with SessionLocal() as session:
+            ch_row = session.execute(
+                text(
+                    "SELECT id, type, reward_at, reward_xp, target "
+                    "FROM forge_challenges WHERE id = :cid AND active = TRUE"
+                ),
+                {"cid": challenge_id},
+            ).fetchone()
+            if not ch_row:
+                raise HTTPException(404, "Challenge not found")
+
+            _, ch_type, reward_at, reward_xp, target = ch_row
+            cycle_start = today if ch_type == "daily" else week_start
+
+            prog_row = session.execute(
+                text(
+                    "SELECT progress, status FROM forge_challenge_progress "
+                    "WHERE user_id = :me AND challenge_id = :cid AND cycle_start = :cs"
+                ),
+                {"me": me, "cid": challenge_id, "cs": cycle_start},
+            ).fetchone()
+
+            if not prog_row:
+                raise HTTPException(400, "No progress found for this challenge in the current cycle")
+
+            progress, db_status = prog_row
+            if db_status == "claimed":
+                raise HTTPException(409, "Reward already claimed for this cycle")
+            if progress < target:
+                raise HTTPException(400, f"Challenge not yet complete ({progress}/{target})")
+
+            # Mark claimed
+            session.execute(
+                text(
+                    "UPDATE forge_challenge_progress "
+                    "SET status = 'claimed', claimed_at = NOW() "
+                    "WHERE user_id = :me AND challenge_id = :cid AND cycle_start = :cs"
+                ),
+                {"me": me, "cid": challenge_id, "cs": cycle_start},
+            )
+            # Credit AT balance
+            session.execute(
+                text("UPDATE users SET at_balance = at_balance + :amt WHERE id = :uid"),
+                {"amt": reward_at, "uid": me},
+            )
+            # Credit XP
+            session.execute(
+                text("UPDATE user_stats SET xp = xp + :xp WHERE user_id = :uid"),
+                {"xp": reward_xp, "uid": me},
+            )
+            # Record AT credit transaction
+            session.execute(
+                text(
+                    "INSERT INTO transactions (user_id, type, amount, token, status, note) "
+                    "VALUES (:uid, 'at_purchase', :amt, 'AT', 'completed', :note)"
+                ),
+                {"uid": me, "amt": reward_at, "note": f"challenge_reward:{challenge_id}"},
+            )
+            session.commit()
+
+            bal_row = session.execute(
+                text("SELECT at_balance FROM users WHERE id = :uid"),
+                {"uid": me},
+            ).fetchone()
+            new_balance = int(bal_row[0]) if bal_row else 0
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("claim_forge_challenge error: %s", exc)
+        raise HTTPException(500, f"Claim failed: {exc}")
+
+    logger.info(
+        "forge_challenge_claim: user=%s challenge=%s +%d AT +%d XP",
+        me, challenge_id, reward_at, reward_xp,
+    )
+    return {
+        "claimed":      True,
+        "challenge_id": challenge_id,
+        "reward_at":    reward_at,
+        "reward_xp":    reward_xp,
+        "at_balance":   new_balance,
+    }
+
+
 # ── Admin — Oracle / EscrowClient ─────────────────────────────────────────────
 
 

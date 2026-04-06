@@ -1,87 +1,78 @@
 import { create } from "zustand";
 import type { NotificationType, Notification } from "@/types";
+import {
+  apiGetNotifications,
+  apiMarkNotificationRead,
+  apiMarkAllNotificationsRead,
+  apiDeleteNotification,
+  type ApiNotificationRow,
+} from "@/lib/engine-api";
 
 // Re-export so consumers can import from either path
 export type { NotificationType, Notification };
 
+function mapApiRowToNotification(row: ApiNotificationRow): Notification {
+  return {
+    id:        row.id,
+    type:      row.type as NotificationType,
+    title:     row.title,
+    message:   row.message,
+    timestamp: row.created_at ? new Date(row.created_at) : new Date(),
+    read:      row.read,
+    metadata:  row.metadata ?? undefined,
+  };
+}
+
 interface NotificationState {
   notifications: Notification[];
   unreadCount: number;
-  // DB-ready: replace with POST /api/notifications
+  /**
+   * Fetch notifications from GET /notifications and replace local state.
+   * Call once after login to hydrate the store from the real DB.
+   * DB-ready: SELECT from notifications WHERE user_id = me ORDER BY created_at DESC.
+   */
+  fetchNotifications: (token: string) => Promise<void>;
   addNotification: (notification: Omit<Notification, "id" | "timestamp" | "read">) => void;
-  // DB-ready: replace with PATCH /api/notifications/:id/read
-  markAsRead: (id: string) => void;
-  // DB-ready: replace with PATCH /api/notifications/read-all
-  markAllAsRead: () => void;
-  // DB-ready: replace with DELETE /api/notifications/:id
-  removeNotification: (id: string) => void;
-  // DB-ready: replace with DELETE /api/notifications
+  /** Optimistic mark-as-read — fires PATCH /notifications/:id/read in background. */
+  markAsRead: (id: string, token?: string | null) => void;
+  /** Optimistic mark-all-read — fires PATCH /notifications/read-all in background. */
+  markAllAsRead: (token?: string | null) => void;
+  /** Optimistic remove — fires DELETE /notifications/:id in background. */
+  removeNotification: (id: string, token?: string | null) => void;
   clearAll: () => void;
 }
 
 let idCounter = 0;
 
-const DEMO_NOTIFICATIONS: Notification[] = [
-  {
-    id: "demo-1",
-    type: "payout",
-    title: "💰 Payout Received",
-    message: "You received 0.45 ETH from Match #1042. Funds deposited to your wallet.",
-    timestamp: new Date(Date.now() - 1000 * 60 * 3),
-    read: false,
-  },
-  {
-    id: "demo-2",
-    type: "match_result",
-    title: "🏆 Victory!",
-    message: "You won the CS2 match against Team Phantom. Rating +25.",
-    timestamp: new Date(Date.now() - 1000 * 60 * 18),
-    read: false,
-  },
-  {
-    id: "demo-3",
-    type: "match_invite",
-    title: "⚔️ Match Invite",
-    message: "xDragon99 challenged you to a 1v1 Valorant duel. $50 stake.",
-    timestamp: new Date(Date.now() - 1000 * 60 * 45),
-    read: false,
-  },
-  {
-    id: "demo-4",
-    type: "dispute",
-    title: "🚩 Dispute Opened",
-    message: "Match #1038 is under review. An admin will resolve within 24h.",
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2),
-    read: true,
-  },
-  {
-    id: "demo-5",
-    type: "system",
-    title: "🔧 Maintenance",
-    message: "Scheduled maintenance tonight 02:00-04:00 UTC. Matchmaking paused.",
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 5),
-    read: true,
-  },
-];
-
 export const useNotificationStore = create<NotificationState>((set) => ({
-  notifications: DEMO_NOTIFICATIONS,
-  unreadCount: DEMO_NOTIFICATIONS.filter((n) => !n.read).length,
+  // Start empty — fetchNotifications() populates from the real DB after login.
+  notifications: [],
+  unreadCount: 0,
+
+  fetchNotifications: async (token) => {
+    const rows = await apiGetNotifications(token, { limit: 50 });
+    if (!rows) return;  // network error — keep existing state
+    const notifications = rows.map(mapApiRowToNotification);
+    const unreadCount   = notifications.filter((n) => !n.read).length;
+    set({ notifications, unreadCount });
+  },
 
   addNotification: (notification) => {
     const newNotif: Notification = {
       ...notification,
-      id: `notif-${++idCounter}`,
+      id:        `notif-${++idCounter}`,
       timestamp: new Date(),
-      read: false,
+      read:      false,
     };
     set((state) => ({
       notifications: [newNotif, ...state.notifications],
-      unreadCount: state.unreadCount + 1,
+      unreadCount:   state.unreadCount + 1,
     }));
   },
 
-  markAsRead: (id) =>
+  markAsRead: (id, token) => {
+    // Optimistic update — fire & forget API call in background
+    if (token) void apiMarkNotificationRead(token, id);
     set((state) => {
       const wasUnread = state.notifications.find((n) => n.id === id && !n.read);
       return {
@@ -90,22 +81,27 @@ export const useNotificationStore = create<NotificationState>((set) => ({
         ),
         unreadCount: wasUnread ? state.unreadCount - 1 : state.unreadCount,
       };
-    }),
+    });
+  },
 
-  markAllAsRead: () =>
+  markAllAsRead: (token) => {
+    if (token) void apiMarkAllNotificationsRead(token);
     set((state) => ({
       notifications: state.notifications.map((n) => ({ ...n, read: true })),
-      unreadCount: 0,
-    })),
+      unreadCount:   0,
+    }));
+  },
 
-  removeNotification: (id) =>
+  removeNotification: (id, token) => {
+    if (token) void apiDeleteNotification(token, id);
     set((state) => {
       const removed = state.notifications.find((n) => n.id === id);
       return {
         notifications: state.notifications.filter((n) => n.id !== id),
-        unreadCount: removed && !removed.read ? state.unreadCount - 1 : state.unreadCount,
+        unreadCount:   removed && !removed.read ? state.unreadCount - 1 : state.unreadCount,
       };
-    }),
+    });
+  },
 
   clearAll: () => set({ notifications: [], unreadCount: 0 }),
 }));
