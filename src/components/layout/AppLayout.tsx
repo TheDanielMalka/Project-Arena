@@ -12,23 +12,26 @@ interface AppLayoutProps {
 }
 
 export function AppLayout({ children }: AppLayoutProps) {
+  const authHydrated = useUserStore((s) => s.authHydrated);
   const isAuthenticated = useUserStore((s) => s.isAuthenticated);
   const pruneExpiredShopEntitlements = useUserStore((s) => s.pruneExpiredShopEntitlements);
   const navigate = useNavigate();
 
   useEffect(() => {
+    if (!authHydrated) return;
     if (!isAuthenticated) {
       navigate("/auth", { replace: true });
     }
-  }, [isAuthenticated, navigate]);
+  }, [authHydrated, isAuthenticated, navigate]);
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!authHydrated || !isAuthenticated) return;
     pruneExpiredShopEntitlements();
     const id = window.setInterval(pruneExpiredShopEntitlements, 60_000);
     return () => window.clearInterval(id);
-  }, [isAuthenticated, pruneExpiredShopEntitlements]);
+  }, [authHydrated, isAuthenticated, pruneExpiredShopEntitlements]);
 
+  if (!authHydrated) return null;
   if (!isAuthenticated) return null;
 
   return (
