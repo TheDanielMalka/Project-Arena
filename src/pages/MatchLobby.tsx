@@ -1668,9 +1668,11 @@ const MatchLobby = () => {
                           }
 
                           const apiRes = await apiCreateMatch(token, {
-                            game: newMatchGame,
-                            stake_amount: newMatchBet,
+                            game:           newMatchGame,
+                            stake_amount:   newMatchBet,
                             stake_currency: createStakeCurrency,
+                            mode:           newMatchMode ?? "1v1",   // MUST send — backend defaults to "1v1"
+                            match_type:     "custom",                // MUST send — ensures custom room type
                           });
                           if (apiRes.ok === false) {
                             if (apiRes.status === 409) {
@@ -1697,23 +1699,31 @@ const MatchLobby = () => {
                           stakeCurrencyResolved = apiRes.data.stake_currency ?? createStakeCurrency;
                         }
 
+                        // Use server-authoritative values when available.
+                        // code, mode, max_players, max_per_team come from the API response —
+                        // using locally-generated values caused the room to appear changed
+                        // after navigation when refreshMatchesFromServer replaced them.
+                        const serverData = serverMatchId && apiRes.ok ? apiRes.data : null;
                         const created = addMatch({
                           ...(serverMatchId ? { id: serverMatchId } : {}),
-                          type: "custom",
-                          host: user.username,
-                          hostId: user.id,
-                          game: newMatchGame as Game,
-                          mode: newMatchMode,
-                          betAmount: newMatchBet,
+                          type:          "custom",
+                          host:          user.username,
+                          hostId:        user.id,
+                          game:          (serverData?.game ?? newMatchGame) as Game,
+                          mode:          (serverData?.mode ?? newMatchMode) as import("@/types").MatchMode,
+                          betAmount:     newMatchBet,
                           stakeCurrency: stakeCurrencyResolved,
-                          players: [],
-                          maxPlayers: getTotalPlayers(newMatchMode),
-                          status: "waiting",
-                          password: newMatchPassword,
-                          teamA: [user.username],
-                          teamB: [],
-                          maxPerTeam: teamSize,
-                          teamSize,
+                          // players tracks UUIDs for leave/join logic; teamA tracks usernames for display
+                          players:       [user.id],
+                          maxPlayers:    serverData?.max_players ?? getTotalPlayers(newMatchMode),
+                          status:        "waiting",
+                          password:      newMatchPassword,
+                          // code comes from server — prevents local random code overwriting server code after nav
+                          code:          serverData?.code ?? undefined,
+                          teamA:         [user.username],
+                          teamB:         [],
+                          maxPerTeam:    serverData?.max_per_team ?? teamSize,
+                          teamSize:      serverData?.max_per_team ?? teamSize,
                           depositsReceived: 1,
                         });
 
