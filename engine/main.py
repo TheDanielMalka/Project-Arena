@@ -33,7 +33,15 @@ EVIDENCE_DIR = os.getenv("EVIDENCE_DIR", "/app/evidence")
 
 logger = logging.getLogger("arena.engine")
 
-db_engine = create_engine(DB_URL, pool_pre_ping=True)
+db_engine = create_engine(
+    DB_URL,
+    pool_pre_ping=True,   # drop stale connections before use
+    pool_size=10,         # base connections kept alive (~1 per 3 concurrent users for alpha)
+    max_overflow=20,      # burst headroom: up to 30 total for spike traffic
+    pool_timeout=30,      # raise after 30s if no connection available (avoid silent hang)
+    pool_recycle=1800,    # recycle connections every 30 min (avoids server-side timeout)
+    # TODO §7: raise pool_size to 20+ before public beta with 100+ concurrent users
+)
 SessionLocal = sessionmaker(bind=db_engine)
 
 # ── Escrow client (Phase 6) ───────────────────────────────────────────────────
@@ -1578,7 +1586,7 @@ def _assert_usdt_balance(wallet_address: str, required_usdt: float) -> None:
     """
     from src.config import BLOCKCHAIN_RPC_URL, USDT_CONTRACT_ADDRESS
     if not BLOCKCHAIN_RPC_URL or not USDT_CONTRACT_ADDRESS:
-        log.debug("_assert_usdt_balance: RPC/USDT contract not configured, skipping")
+        logger.debug("_assert_usdt_balance: RPC/USDT contract not configured, skipping")
         return
     try:
         from web3 import Web3
@@ -1606,7 +1614,7 @@ def _assert_usdt_balance(wallet_address: str, required_usdt: float) -> None:
     except HTTPException:
         raise
     except Exception as exc:
-        log.warning("_assert_usdt_balance: on-chain check failed, skipping: %s", exc)
+        logger.warning("_assert_usdt_balance: on-chain check failed, skipping: %s", exc)
 
 
 _VALID_MODES = {"1v1", "2v2", "4v4", "5v5"}
@@ -1621,6 +1629,8 @@ class CreateMatchRequest(BaseModel):
       stake_amount → matches.bet_amount  (NUMERIC, must be > 0; CHECK enforced by DB)
       mode         → matches.mode  (match_mode enum: '1v1' | '2v2' | '4v4' | '5v5')
       match_type   → matches.type  (match_type enum: 'public' | 'custom')
+      password     → matches.password  (optional; plain text for MVP —
+                                        TODO: bcrypt hash before public beta)
 
     DB-ready: writes to matches + match_players tables.
     CONTRACT-ready: stake_amount → ArenaEscrow.lockStake() once wallet is linked.
@@ -1630,6 +1640,15 @@ class CreateMatchRequest(BaseModel):
     mode: str = "1v1"                # "1v1" | "2v2" | "4v4" | "5v5"
     match_type: str = "custom"       # "public" | "custom"
     stake_currency: str = "CRYPTO"   # "CRYPTO" (ETH/BNB via escrow) | "AT" (Arena Tokens)
+    password: str | None = None      # optional room password (stored in matches.password)
+
+
+class JoinMatchRequest(BaseModel):
+    """
+    POST /matches/{match_id}/join — optional room password.
+    Sent in request body; matched against matches.password server-side.
+    """
+    password: str | None = None
 
 
 _VALID_CURRENCIES = {"CRYPTO", "AT"}
@@ -1856,10 +1875,13 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
             room_code = "ARENA-" + "".join(_secrets.choice(_chars) for _ in range(5))
 
             # ── Create match ──────────────────────────────────────────────────
+            # password stored as plain text for MVP.
+            # TODO: replace with bcrypt hash before public beta.
             match_row = session.execute(
                 text(
-                    "INSERT INTO matches (type, game, host_id, mode, bet_amount, stake_currency, code, max_players, max_per_team) "
-                    "VALUES (:mtype, :g, :host, :mode, :bet, :sc, :code, :maxp, :mpt) "
+                    "INSERT INTO matches "
+                    "  (type, game, host_id, mode, bet_amount, stake_currency, code, password, max_players, max_per_team) "
+                    "VALUES (:mtype, :g, :host, :mode, :bet, :sc, :code, :pw, :maxp, :mpt) "
                     "RETURNING id"
                 ),
                 {
@@ -1870,6 +1892,7 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
                     "bet":   bet_amount,
                     "sc":    stake_currency,
                     "code":  room_code,
+                    "pw":    req.password or None,
                     "maxp":  max_players,
                     "mpt":   team_size,
                 },
@@ -1912,13 +1935,16 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
 
 
 @app.post("/matches/{match_id}/join", status_code=200)
-async def join_match(match_id: str, payload: dict = Depends(verify_token)):
+async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depends(verify_token)):
     """
     Join an existing match lobby.
 
     Game-account gate (same as create_match):
       CS2      → joiner must have steam_id
       Valorant → joiner must have riot_id
+
+    Password check: if matches.password IS NOT NULL, req.password must match.
+    Auto-start: when player_count reaches max_players, status → in_progress.
 
     DB-ready: validates match exists + is 'waiting', checks duplicate join,
               inserts into match_players.
@@ -1931,7 +1957,7 @@ async def join_match(match_id: str, payload: dict = Depends(verify_token)):
             # ── Verify match exists and is open ───────────────────────────────
             match_row = session.execute(
                 text(
-                    "SELECT game, status, bet_amount, stake_currency "
+                    "SELECT game, status, bet_amount, stake_currency, password, max_players "
                     "FROM matches WHERE id = :mid"
                 ),
                 {"mid": match_id},
@@ -1940,12 +1966,16 @@ async def join_match(match_id: str, payload: dict = Depends(verify_token)):
             if not match_row:
                 raise HTTPException(404, "Match not found")
 
-            game, status, stake_amount, stake_currency = match_row
+            game, status, stake_amount, stake_currency, match_password, max_players = match_row
             game = _normalize_game(game or "CS2")
             stake_currency = (stake_currency or "CRYPTO").upper()
 
             if status != "waiting":
                 raise HTTPException(409, f"Match is not open for joining (status: {status})")
+
+            # ── Password check ────────────────────────────────────────────────
+            if match_password and (req.password or "") != match_password:
+                raise HTTPException(403, "Incorrect room password")
 
             # ── Check joiner's game account ───────────────────────────────────
             user_row = session.execute(
@@ -2019,6 +2049,23 @@ async def join_match(match_id: str, payload: dict = Depends(verify_token)):
             if stake_currency == "AT":
                 _deduct_at(session, user_id, int(stake_amount or 0), match_id, "escrow_lock")
 
+            # ── Auto-start: transition waiting → in_progress when room fills ──
+            # Count includes the newly inserted row (same session, uncommitted).
+            count_row = session.execute(
+                text("SELECT COUNT(*) FROM match_players WHERE match_id = :mid"),
+                {"mid": match_id},
+            ).fetchone()
+            match_started = False
+            if count_row and int(count_row[0]) >= (max_players or 2):
+                session.execute(
+                    text(
+                        "UPDATE matches SET status = 'in_progress', started_at = NOW() "
+                        "WHERE id = :mid AND status = 'waiting'"
+                    ),
+                    {"mid": match_id},
+                )
+                match_started = True
+
             session.commit()
 
     except HTTPException:
@@ -2027,7 +2074,13 @@ async def join_match(match_id: str, payload: dict = Depends(verify_token)):
         logger.error("join_match error: %s", exc)
         raise HTTPException(500, "Join failed")
 
-    return {"joined": True, "match_id": match_id, "game": game, "stake_currency": stake_currency}
+    return {
+        "joined":         True,
+        "match_id":       match_id,
+        "game":           game,
+        "stake_currency": stake_currency,
+        "started":        match_started,  # True when room just filled and transitioned to in_progress
+    }
 
 
 @app.delete("/matches/{match_id}", status_code=200)
@@ -2169,6 +2222,10 @@ async def invite_to_match(
       - match must exist and be 'waiting'
       - inviter must be a player in the match
       - friend_id must be an accepted friend of the inviter
+      - AT match:     friend must have enough AT (402 if not)
+      - CRYPTO match: friend must have a linked wallet (400 if not)
+                      and sufficient USDT balance (400 if check passes but fails)
+
     DB-ready: notifications table, type='match_invite'
     """
     user_id: str = payload["sub"]
@@ -2204,6 +2261,35 @@ async def invite_to_match(
             ).fetchone()
             if not friendship:
                 raise HTTPException(403, "Not friends with this user")
+
+            # ── Pre-validate: friend must be able to afford this room ─────────
+            # Blocked invite is better than a notification that can never be acted on.
+            invite_currency = (match_row[3] or "CRYPTO").upper()
+            invite_stake    = match_row[2]   # bet_amount (Decimal | float | None)
+
+            friend_row = session.execute(
+                text("SELECT wallet_address FROM users WHERE id = :fid"),
+                {"fid": req.friend_id},
+            ).fetchone()
+            if not friend_row:
+                raise HTTPException(404, "Friend not found")
+
+            if invite_currency == "AT":
+                at_stake = int(float(invite_stake or 0))
+                # _assert_at_balance raises 402 if friend is short — propagated to caller.
+                _assert_at_balance(session, req.friend_id, at_stake)
+            else:
+                # CRYPTO: wallet must be linked (hard requirement, no on-chain fallback).
+                friend_wallet = friend_row[0]
+                if not friend_wallet:
+                    raise HTTPException(
+                        400,
+                        "Your friend does not have a wallet linked and cannot join a staked match. "
+                        "Ask them to connect their MetaMask in Profile → Wallet first."
+                    )
+                # on-chain balance check — non-fatal if RPC unavailable (skipped gracefully).
+                if invite_stake:
+                    _assert_usdt_balance(friend_wallet, float(invite_stake))
 
             inviter = session.execute(
                 text("SELECT username FROM users WHERE id = :uid"),
@@ -3469,12 +3555,13 @@ async def list_matches(
                         m.code,
                         m.created_at,
                         m.max_players,
-                        u.username   AS host_username,
-                        u.id         AS host_id,
-                        u.avatar     AS host_avatar,
-                        COUNT(mp.user_id) AS player_count,
+                        u.username              AS host_username,
+                        u.id                    AS host_id,
+                        u.avatar                AS host_avatar,
+                        COUNT(mp.user_id)       AS player_count,
                         m.max_per_team,
-                        m.stake_currency
+                        m.stake_currency,
+                        (m.password IS NOT NULL) AS has_password
                     FROM matches m
                     JOIN users u ON u.id = m.host_id
                     LEFT JOIN match_players mp ON mp.match_id = m.id
@@ -3485,32 +3572,69 @@ async def list_matches(
                 """),
                 params,
             ).fetchall()
+
+            # ── Secondary query: ordered roster for all returned matches ──────
+            # One JOIN query for all match_ids avoids N+1.
+            # Ordered by joined_at so client sees stable slot order.
+            roster_by_match: dict[str, list[dict]] = {}
+            if rows:
+                match_ids = [str(r[0]) for r in rows]
+                # Build named placeholders (:mid0, :mid1, …) — safe, no injection risk.
+                placeholders = ", ".join(f":mid{i}" for i in range(len(match_ids)))
+                roster_params = {f"mid{i}": mid for i, mid in enumerate(match_ids)}
+                roster_rows = session.execute(
+                    text(
+                        f"SELECT mp.match_id, u.id, u.username, mp.team "
+                        f"FROM match_players mp "
+                        f"JOIN users u ON u.id = mp.user_id "
+                        f"WHERE mp.match_id IN ({placeholders}) "
+                        f"ORDER BY mp.match_id, mp.joined_at"
+                    ),
+                    roster_params,
+                ).fetchall()
+                for rr in roster_rows:
+                    mid = str(rr[0])
+                    roster_by_match.setdefault(mid, []).append({
+                        "user_id":  str(rr[1]),
+                        "username": rr[2],
+                        "team":     rr[3],
+                    })
+
     except Exception as exc:
         logger.error("list_matches error: %s", exc)
         raise HTTPException(500, "Failed to load matches")
 
-    return {
-        "matches": [
-            {
-                "id":             str(r[0]),
-                "game":           r[1],
-                "mode":           r[2],
-                "type":           r[3],
-                "bet_amount":     float(r[4]) if r[4] is not None else 0.0,
-                "status":         r[5],
-                "code":           r[6],
-                "created_at":     r[7].isoformat() if r[7] else None,
-                "max_players":    r[8],
-                "host_username":  r[9],
-                "host_id":        str(r[10]) if r[10] else None,
-                "host_avatar":    r[11],
-                "player_count":   int(r[12]),
-                "max_per_team":   r[13],
-                "stake_currency": r[14],
-            }
-            for r in rows
-        ]
-    }
+    result_matches = []
+    for r in rows:
+        mid = str(r[0])
+        players_list = roster_by_match.get(mid, [])
+        team_a = [p for p in players_list if p["team"] == "A"]
+        team_b = [p for p in players_list if p["team"] == "B"]
+        result_matches.append({
+            "id":             mid,
+            "game":           r[1],
+            "mode":           r[2],
+            "type":           r[3],
+            "bet_amount":     float(r[4]) if r[4] is not None else 0.0,
+            "status":         r[5],
+            "code":           r[6],
+            "created_at":     r[7].isoformat() if r[7] else None,
+            "max_players":    r[8],
+            "host_username":  r[9],
+            "host_id":        str(r[10]) if r[10] else None,
+            "host_avatar":    r[11],
+            "player_count":   int(r[12]),
+            "max_per_team":   r[13],
+            "stake_currency": r[14],
+            "has_password":   bool(r[15]),
+            # Ordered roster — client uses this for slot display and team counts.
+            # team may be None until team-assignment logic is added (Doc B §4).
+            "players":        players_list,
+            "team_a_count":   len(team_a),
+            "team_b_count":   len(team_b),
+        })
+
+    return {"matches": result_matches}
 
 
 # ── Leaderboard ────────────────────────────────────────────────────────────────

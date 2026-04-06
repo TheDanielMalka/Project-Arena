@@ -669,14 +669,16 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "waiting", None, "CRYPTO"),  # match lookup
-            self._user_steam(),      # user lookup
-            None,                    # active-room guard → no active room
-            None,                    # already-joined check → not joined yet
+            ("CS2", "waiting", None, "CRYPTO", None, 2),  # match lookup (6 values: +password, +max_players)
+            self._user_steam(),  # user lookup
+            None,                # active-room guard → no active room
+            None,                # already-joined check → not joined yet
+            (1,),                # COUNT(*) = 1 player (below max 2 → no auto-start)
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 f"/matches/{match_id}/join",
+                json={},                         # body required since JoinMatchRequest added
                 headers=self._auth_header(),
             )
         assert resp.status_code == 200
@@ -687,13 +689,14 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "waiting", None, "CRYPTO"),  # match lookup
-            self._user_steam(),                  # user lookup
+            ("CS2", "waiting", None, "CRYPTO", None, 2),  # match lookup
+            self._user_steam(),
             (str(uuid.uuid4()),),                # active-room guard → already in a room
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 f"/matches/{match_id}/join",
+                json={},
                 headers=self._auth_header(),
             )
         assert resp.status_code == 409
@@ -703,12 +706,13 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "waiting", None, "CRYPTO"),  # match lookup
-            self._user_none(),   # user lookup → no steam_id → 403
+            ("CS2", "waiting", None, "CRYPTO", None, 2),  # match lookup
+            self._user_none(),                             # no steam_id → 403
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 f"/matches/{match_id}/join",
+                json={},
                 headers=self._auth_header(),
             )
         assert resp.status_code == 403
@@ -718,12 +722,13 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("Valorant", "waiting", None, "CRYPTO"),  # match lookup
-            self._user_none(),         # user lookup → no riot_id → 403
+            ("Valorant", "waiting", None, "CRYPTO", None, 2),  # match lookup
+            self._user_none(),                                   # no riot_id → 403
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 f"/matches/{match_id}/join",
+                json={},
                 headers=self._auth_header(),
             )
         assert resp.status_code == 403
@@ -735,6 +740,7 @@ class TestMatchGating:
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 f"/matches/{match_id}/join",
+                json={},
                 headers=self._auth_header(),
             )
         assert resp.status_code == 404
@@ -743,11 +749,12 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "in_progress", None, "CRYPTO"),  # match is already started → 409
+            ("CS2", "in_progress", None, "CRYPTO", None, 2),  # match already started → 409
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 f"/matches/{match_id}/join",
+                json={},
                 headers=self._auth_header(),
             )
         assert resp.status_code == 409
@@ -756,20 +763,21 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "waiting", None, "CRYPTO"),   # match lookup
-            self._user_steam(),   # user lookup
-            None,                 # active-room guard → no other active room
-            (1,),                 # already-joined check → duplicate in same match
+            ("CS2", "waiting", None, "CRYPTO", None, 2),  # match lookup
+            self._user_steam(),  # user lookup
+            None,                # active-room guard → no other active room
+            (1,),                # already-joined check → duplicate in same match
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 f"/matches/{match_id}/join",
+                json={},
                 headers=self._auth_header(),
             )
         assert resp.status_code == 409
 
     def test_join_match_no_token_returns_422(self):
-        resp = client.post(f"/matches/{uuid.uuid4()}/join")
+        resp = client.post(f"/matches/{uuid.uuid4()}/join", json={})
         assert resp.status_code == 422
 
     def test_join_without_wallet_returns_400(self):
@@ -777,12 +785,13 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "waiting", None, "CRYPTO"),   # match lookup
-            self._user_steam_no_wallet(),          # user has steam but no wallet
+            ("CS2", "waiting", None, "CRYPTO", None, 2),  # match lookup
+            self._user_steam_no_wallet(),                   # steam but no wallet → 400
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 f"/matches/{match_id}/join",
+                json={},
                 headers=self._auth_header(),
             )
         assert resp.status_code == 400
@@ -1780,17 +1789,24 @@ class TestListMatches:
             1,                    # player_count
             1,                    # max_per_team
             "CRYPTO",             # stake_currency
+            False,                # has_password — added in Doc B §2
         )
 
     def test_list_matches_returns_open_lobbies(self):
         ctx, session = _make_session_mock()
-        session.execute.return_value.fetchall.return_value = [self._match_row()]
+        # Two fetchall calls: first = match list, second = roster query (empty → no players)
+        session.execute.return_value.fetchall.side_effect = [
+            [self._match_row()],  # main matches query
+            [],                   # roster query (no players in mock)
+        ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.get("/matches")
         assert resp.status_code == 200
         matches = resp.json()["matches"]
         assert isinstance(matches, list)
         assert matches[0]["status"] == "waiting"
+        assert "has_password" in matches[0]
+        assert "players" in matches[0]
 
     def test_list_matches_empty_lobby(self):
         ctx, session = _make_session_mock()
