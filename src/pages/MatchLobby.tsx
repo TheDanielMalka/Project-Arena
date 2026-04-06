@@ -37,6 +37,7 @@ import {
 import { useMatchListLivePoll } from "@/hooks/useMatchListLivePoll";
 import { looksLikeServerMatchId } from "@/lib/gameAccounts";
 import { friendlyChainErrorMessage } from "@/lib/friendlyChainError";
+import { joinPasswordFailureMessage } from "@/lib/matchRoomPassword";
 import { createMatchOnChain, getBnbBalance } from "@/lib/metamaskBsc";
 
 // ─── Game configs ─────────────────────────────────────────────────────────────
@@ -329,7 +330,7 @@ const MatchLobby = () => {
   const [selectedPublicLobbyId, setSelectedPublicLobbyId] = useState<string | null>(null);
   const [passwordPrompt, setPasswordPrompt] = useState<{ matchId: string; bet: number; team?: "A" | "B" } | null>(null);
   const [passwordInput, setPasswordInput] = useState("");
-  const [passwordError, setPasswordError] = useState(false);
+  const [passwordGateError, setPasswordGateError] = useState<string | null>(null);
   const [showPassword, setShowPassword]       = useState(false);
   const [filterGame, setFilterGame]           = useState<string>("");
   const [filterMode, setFilterMode]           = useState<MatchMode | null>(null);
@@ -410,9 +411,19 @@ const MatchLobby = () => {
   const handleJoinCustom = (matchId: string, bet: number, team?: "A" | "B") => {
     if (!guardNotInRoom()) return;
     const m = customMatches.find((x) => x.id === matchId);
-    if (m && matchStakeCurrency(m) !== "AT" && !guardWalletConnected()) return;
+    if (!m) return;
+    if (matchStakeCurrency(m) !== "AT" && !guardWalletConnected()) return;
     if (!guardCanPlay()) return;
-    setPasswordPrompt({ matchId, bet, team }); setPasswordInput(""); setPasswordError(false); setShowPassword(false);
+    if (m.hasPassword === false) {
+      setDepositConfirm({ match: m, team });
+      setDepositStep("idle");
+      setCheckResults(null);
+      return;
+    }
+    setPasswordPrompt({ matchId, bet, team });
+    setPasswordInput("");
+    setPasswordGateError(null);
+    setShowPassword(false);
   };
   const handlePasswordSubmit = () => {
     if (!passwordPrompt) return;
@@ -420,7 +431,10 @@ const MatchLobby = () => {
     if (!match) return;
     if (matchStakeCurrency(match) !== "AT" && !guardWalletConnected()) return;
     if (!guardCanPlay()) return;
-    if (!passwordInput.trim()) { setPasswordError(true); return; }
+    if (!passwordInput.trim()) {
+      setPasswordGateError("Please enter a room password.");
+      return;
+    }
     setPasswordPrompt(null);
     setDepositConfirm({ match, team: passwordPrompt.team, password: passwordInput });
     setDepositStep("idle");
@@ -488,9 +502,8 @@ const MatchLobby = () => {
       const jr = await apiJoinMatch(token, match.id, { password });
       if (jr.ok === false) {
         if (jr.status === 403) {
-          // Password-protected room — server rejected password; re-prompt.
           setPasswordPrompt({ matchId: match.id, bet: match.betAmount, team });
-          setPasswordError(true);
+          setPasswordGateError(joinPasswordFailureMessage(jr.detail));
           setPasswordInput(password ?? "");
           setShowPassword(false);
         }
@@ -499,11 +512,13 @@ const MatchLobby = () => {
           const active = await apiGetActiveMatch(token);
           if (active?.match?.match_id) setMyRoomMatchId(active.match.match_id);
         }
-        useNotificationStore.getState().addNotification({
-          type: "system",
-          title: "Could not join match",
-          message: jr.detail ?? "The server rejected your join request.",
-        });
+        if (jr.status !== 403) {
+          useNotificationStore.getState().addNotification({
+            type: "system",
+            title: "Could not join match",
+            message: jr.detail ?? "The server rejected your join request.",
+          });
+        }
         setDepositConfirm(null);
         setDepositStep("idle");
         setCheckResults(null);
@@ -794,10 +809,10 @@ const MatchLobby = () => {
               <div className="relative flex-1">
                 <Input type={showPassword ? "text" : "password"} placeholder="Enter password..."
                   value={passwordInput}
-                  onChange={(e) => { setPasswordInput(e.target.value); setPasswordError(false); }}
+                  onChange={(e) => { setPasswordInput(e.target.value); setPasswordGateError(null); }}
                   onKeyDown={(e) => e.key === "Enter" && handlePasswordSubmit()}
                   autoFocus
-                  className={`font-mono bg-secondary border-border pr-10 ${passwordError ? "border-destructive" : ""}`} />
+                  className={`font-mono bg-secondary border-border pr-10 ${passwordGateError ? "border-destructive" : ""}`} />
                 <button type="button" onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -807,12 +822,12 @@ const MatchLobby = () => {
                 <Lock className="mr-2 h-4 w-4" /> Verify
               </Button>
             </div>
-            {passwordError && (
+            {passwordGateError && (
               <p className="text-destructive text-sm flex items-center gap-1 mb-3">
-                <AlertCircle className="h-3 w-3" /> Wrong password. Try again.
+                <AlertCircle className="h-3 w-3" /> {passwordGateError}
               </p>
             )}
-            <button onClick={() => setPasswordPrompt(null)} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Cancel</button>
+            <button type="button" onClick={() => { setPasswordPrompt(null); setPasswordGateError(null); }} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Cancel</button>
           </div>
         </div>
       )}
@@ -1766,7 +1781,7 @@ const MatchLobby = () => {
                           players:       [user.id],
                           maxPlayers:    serverData?.max_players ?? getTotalPlayers(newMatchMode),
                           status:        "waiting",
-                          password:      newMatchPassword,
+                          hasPassword:   newMatchPassword.trim().length > 0,
                           // code comes from server — prevents local random code overwriting server code after nav
                           code:          serverData?.code ?? undefined,
                           teamA:         [user.username],
@@ -1880,8 +1895,15 @@ const MatchLobby = () => {
                             {match.host}'s {match.mode}
                           </p>
                           <p className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
-                            <span>{match.game}</span><span>·</span>
-                            <KeyRound className="h-3 w-3" /> Protected
+                            <span>{match.game}</span>
+                            {match.hasPassword === true && (
+                              <>
+                                <span>·</span>
+                                <span className="inline-flex items-center gap-1">
+                                  <KeyRound className="h-3 w-3 shrink-0" /> Password protected
+                                </span>
+                              </>
+                            )}
                           </p>
                         </div>
                       </div>

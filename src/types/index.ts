@@ -123,7 +123,10 @@ export interface Match {
                                  // DB: matches.lock_countdown_start (TIMESTAMPTZ)
   expiresAt?: string;            // ISO timestamp (createdAt + 30min) — DB: matches.expires_at (TIMESTAMPTZ GENERATED)
   code?: string;
+  /** Local-only legacy; never set from public list API — use hasPassword + server join instead. */
   password?: string;
+  /** From GET /matches when engine sends has_password — show lock in lobby, never the secret. */
+  hasPassword?: boolean;
   teamA?: string[];
   teamB?: string[];
   maxPerTeam?: number;       // alias for teamSize (kept for UI compat)

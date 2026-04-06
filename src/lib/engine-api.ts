@@ -38,6 +38,7 @@ import type {
   UserStatus,
 } from "@/types";
 import { notifyAuth401 } from "@/lib/authSession";
+import { MATCH_JOIN_PASSWORD_FIELD } from "@/lib/matchRoomPassword";
 
 export interface EngineHealth {
   status:       "ok" | "offline" | "error";
@@ -639,8 +640,8 @@ export async function apiCreateMatch(
     stake_currency?: "CRYPTO" | "AT";
     mode?:           string;        // "1v1" | "2v2" | "4v4" | "5v5" — MUST be sent
     match_type?:     string;        // "public" | "custom" — MUST be sent
-    // TODO: Claude to add `password` support to POST /matches (store + hash) and never return the password in list responses.
-    password?:       string;        // optional join password (server is source of truth)
+    /** Optional room password; engine stores and verifies — never echo in GET /matches. */
+    password?:       string;
   },
 ): Promise<ApiMatchMutationResult> {
   try {
@@ -810,9 +811,10 @@ export async function apiJoinMatch(
       token,
       {
         method: "POST",
-        // TODO: Claude to add password verification in POST /matches/{match_id}/join (403 on mismatch).
         headers: password ? { "Content-Type": "application/json" } : undefined,
-        body: password ? JSON.stringify({ password }) : undefined,
+        body: password
+          ? JSON.stringify({ [MATCH_JOIN_PASSWORD_FIELD]: password })
+          : undefined,
       },
     );
     const raw = (await res.json().catch(() => ({}))) as {
@@ -1214,6 +1216,17 @@ function parseMatchPlayerRows(raw: unknown): { userId: string; username?: string
   return out;
 }
 
+function parseOptionalBool(v: unknown): boolean | undefined {
+  if (v === true) return true;
+  if (v === false) return false;
+  if (v === 1 || v === "1") return true;
+  if (v === 0 || v === "0") return false;
+  const s = typeof v === "string" ? v.trim().toLowerCase() : "";
+  if (s === "true") return true;
+  if (s === "false") return false;
+  return undefined;
+}
+
 /** Maps one engine match row → UI Match (snake_case or camelCase). */
 export function mapApiMatchRowToMatch(row: Record<string, unknown>): Match | null {
   const id = asStr(row.id ?? row.match_id);
@@ -1247,7 +1260,7 @@ export function mapApiMatchRowToMatch(row: Record<string, unknown>): Match | nul
   const endedAt = asStr(row.ended_at ?? row.endedAt);
   const winnerId = asStr(row.winner_id ?? row.winnerId);
   const code = asStr(row.code) ?? undefined;
-  const password = asStr(row.password) ?? undefined;
+  const hasPassword = parseOptionalBool(row.has_password ?? row.hasPassword);
   const maxPlayers = asNum(row.max_players ?? row.maxPlayers) ?? 2;
   const maxPerTeam = asNum(row.max_per_team ?? row.maxPerTeam) ?? undefined;
   const teamSize = maxPerTeam ?? (asNum(row.team_size ?? row.teamSize) ?? undefined);
@@ -1299,7 +1312,7 @@ export function mapApiMatchRowToMatch(row: Record<string, unknown>): Match | nul
     ...(endedAt ? { endedAt } : {}),
     ...(winnerId ? { winnerId } : {}),
     ...(code ? { code } : {}),
-    ...(password ? { password } : {}),
+    ...(hasPassword !== undefined ? { hasPassword } : {}),
     ...(teamA?.length ? { teamA } : {}),
     ...(teamB?.length ? { teamB } : {}),
     ...(teamSize !== undefined ? { teamSize, maxPerTeam: teamSize } : {}),
