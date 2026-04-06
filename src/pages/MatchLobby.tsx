@@ -38,6 +38,12 @@ import { useMatchListLivePoll } from "@/hooks/useMatchListLivePoll";
 import { looksLikeServerMatchId } from "@/lib/gameAccounts";
 import { friendlyChainErrorMessage } from "@/lib/friendlyChainError";
 import { joinPasswordFailureMessage } from "@/lib/matchRoomPassword";
+import {
+  lobbyFilledTotal,
+  lobbySlotsForSide,
+  lobbyTeamViewFromMatch,
+  type LobbySlot,
+} from "@/lib/lobbyRosterDisplay";
 import { createMatchOnChain, getBnbBalance } from "@/lib/metamaskBsc";
 
 // ─── Game configs ─────────────────────────────────────────────────────────────
@@ -94,9 +100,18 @@ const statusConfig: Record<MatchStatus, { label: string; color: string; icon: Re
 };
 
 // ─── AvatarStack — player pile shown inline on match rows ─────────────────────
-const AvatarStack = ({ players, max = 5 }: { players: string[]; max?: number }) => {
+const AvatarStack = ({
+  players,
+  max = 5,
+  extraHidden = 0,
+}: {
+  players: string[];
+  max?: number;
+  /** Players known to be in the room but without display names (server count-only). */
+  extraHidden?: number;
+}) => {
   const shown = players.slice(0, max);
-  const extra = players.length - shown.length;
+  const extra = Math.max(0, players.length - shown.length) + extraHidden;
   return (
     <div className="flex items-center">
       {shown.map((p, i) => (
@@ -362,11 +377,6 @@ const MatchLobby = () => {
   const selectedPublicLobby = selectedPublicLobbyId
     ? publicMatches.find(m => m.id === selectedPublicLobbyId) ?? null : null;
 
-  const getPublicLobbyTeams = (match: Match) => {
-    const maxPerTeam = Math.max(1, Math.ceil(match.maxPlayers / 2));
-    return { maxPerTeam, teamA: match.players.slice(0, maxPerTeam), teamB: match.players.slice(maxPerTeam, maxPerTeam * 2) };
-  };
-
   /** MetaMask on BSC Testnet — required for create/join (Issue #23). */
   const guardWalletConnected = useCallback((): boolean => {
     if (useWalletStore.getState().connectedAddress) return true;
@@ -593,7 +603,7 @@ const MatchLobby = () => {
   // Stats for header strip — DB-ready: computed from real matches when connected
   const liveCount   = publicMatches.filter(m => m.status === "in_progress").length;
   const openCount   = publicMatches.filter(m => m.status === "waiting").length;
-  const totalPool   = publicMatches.reduce((s, m) => s + m.betAmount * m.players.length, 0);
+  const totalPool   = publicMatches.reduce((s, m) => s + m.betAmount * lobbyFilledTotal(m), 0);
 
   const myActiveRoom = myRoomMatchId
     ? matches.find((m) => m.id === myRoomMatchId) ?? null
@@ -1002,9 +1012,12 @@ const MatchLobby = () => {
 
       {/* ── Public Lobby Details Overlay ── */}
       {selectedPublicLobby && (() => {
-        const { teamA, teamB, maxPerTeam } = getPublicLobbyTeams(selectedPublicLobby);
+        const roster = lobbyTeamViewFromMatch(selectedPublicLobby);
+        const slotsA = lobbySlotsForSide(roster.namesA, roster.filledA, roster.maxPerTeam);
+        const slotsB = lobbySlotsForSide(roster.namesB, roster.filledB, roster.maxPerTeam);
         const cfg = ALL_GAME_CONFIG[selectedPublicLobby.game];
         const isLive = selectedPublicLobby.status === "in_progress";
+        const totalInLobby = lobbyFilledTotal(selectedPublicLobby);
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
             <div className="w-full max-w-5xl rounded-2xl border border-border bg-card shadow-2xl overflow-hidden">
@@ -1031,27 +1044,46 @@ const MatchLobby = () => {
                   </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                  {[
-                    { label: "Team A", players: teamA, accent: "primary", border: "border-primary/20", bg: "bg-primary/5", text: "text-primary" },
-                    { label: "Team B", players: teamB, accent: "arena-orange", border: "border-arena-orange/20", bg: "bg-arena-orange/5", text: "text-arena-orange" },
-                  ].map(({ label, players, border, bg, text }) => (
+                  {([
+                    { label: "Team A" as const, slots: slotsA, border: "border-primary/20", bg: "bg-primary/5", text: "text-primary" },
+                    { label: "Team B" as const, slots: slotsB, border: "border-arena-orange/20", bg: "bg-arena-orange/5", text: "text-arena-orange" },
+                  ]).map(({ label, slots, border, bg, text }) => (
                     <div key={label} className={`rounded-xl border ${border} ${bg} p-2.5`}>
                       <p className={`text-xs ${text} font-display uppercase tracking-wider mb-1.5 flex items-center gap-1`}>
-                        <Shield className="h-3 w-3" /> {label} ({players.length}/{maxPerTeam})
+                        <Shield className="h-3 w-3" /> {label} ({label === "Team A" ? roster.filledA : roster.filledB}/{roster.maxPerTeam})
                       </p>
                       <div className="space-y-0.5">
-                        {players.map((p, i) => <PlayerRow key={`${p}-${i}`} name={p} isHost={label === "Team A"} index={i} onPlayerClick={(name, rect) => setPlayerPopover({ slotValue: name, rect })} />)}
-                        {Array.from({ length: maxPerTeam - players.length }).map((_, i) => (
-                          <p key={i} className="text-xs text-muted-foreground/30 italic pl-5">Empty slot</p>
-                        ))}
+                        {slots.map((slot, i) => {
+                          if (slot.kind === "player") {
+                            return (
+                              <PlayerRow
+                                key={`${label}-p-${i}`}
+                                name={slot.name}
+                                isHost={label === "Team A"}
+                                index={i}
+                                onPlayerClick={(name, rect) => setPlayerPopover({ slotValue: name, rect })}
+                              />
+                            );
+                          }
+                          if (slot.kind === "filled") {
+                            return (
+                              <p key={`${label}-f-${i}`} className="text-xs text-muted-foreground/70 italic pl-5 py-0.5">
+                                In lobby
+                              </p>
+                            );
+                          }
+                          return (
+                            <p key={`${label}-e-${i}`} className="text-xs text-muted-foreground/30 italic pl-5">Empty slot</p>
+                          );
+                        })}
                       </div>
                     </div>
                   ))}
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-border">
-                  <p className="text-xs text-muted-foreground">{selectedPublicLobby.players.length}/{selectedPublicLobby.maxPlayers} players in lobby</p>
+                  <p className="text-xs text-muted-foreground">{totalInLobby}/{selectedPublicLobby.maxPlayers} players in lobby</p>
                   <Button
-                    disabled={isInActiveRoom || selectedPublicLobby.status !== "waiting" || selectedPublicLobby.players.length >= selectedPublicLobby.maxPlayers || !(matchStakeCurrency(selectedPublicLobby) === "AT" ? canJoinAtStake : canPlayStaked)}
+                    disabled={isInActiveRoom || selectedPublicLobby.status !== "waiting" || totalInLobby >= selectedPublicLobby.maxPlayers || !(matchStakeCurrency(selectedPublicLobby) === "AT" ? canJoinAtStake : canPlayStaked)}
                     onClick={() => { setSelectedPublicLobbyId(null); handleJoinPublic(selectedPublicLobby.id, selectedPublicLobby.betAmount); }}
                     className="font-display"
                     title={matchStakeCurrency(selectedPublicLobby) === "AT" ? (!canPlay ? "Arena Client not connected" : undefined) : stakedActionTitle}
@@ -1123,91 +1155,84 @@ const MatchLobby = () => {
           {/* Player slots progress */}
           <div className="mb-3">
             {myActiveRoom.type === "custom" ? (
-              <div className="grid grid-cols-2 gap-2">
-                {/* Team A */}
-                <div>
-                  <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">Team A</p>
-                  <div className="space-y-1">
-                    {Array.from({ length: myActiveRoom.maxPerTeam ?? myActiveRoom.teamSize ?? 5 }).map((_, i) => {
-                      const player = (myActiveRoom.teamA ?? [])[i];
-                      return (
-                        <div key={i} className={cn(
-                          "h-6 rounded flex items-center px-2 text-[10px]",
-                          player ? "bg-primary/15 border border-primary/30 text-foreground" : "bg-secondary/30 border border-border/30 text-muted-foreground/40"
-                        )}>
-                          {player ? (
-                            <button
-                              className="truncate text-left hover:text-primary transition-colors w-full"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setPlayerPopover({ slotValue: player, rect: e.currentTarget.getBoundingClientRect() });
-                              }}
-                            >
-                              {player}
-                            </button>
-                          ) : (
-                            <button
-                              className="flex items-center gap-1 text-muted-foreground/40 hover:text-primary transition-colors w-full"
-                              onClick={(e) => { e.stopPropagation(); void handleOpenInviteModal(); }}
-                              title="Invite a friend"
-                            >
-                              <UserPlus className="h-3 w-3 shrink-0" />
-                              <span>{`Slot ${i + 1}`}</span>
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
+              (() => {
+                const rv = lobbyTeamViewFromMatch(myActiveRoom);
+                const sideA = lobbySlotsForSide(rv.namesA, rv.filledA, rv.maxPerTeam);
+                const sideB = lobbySlotsForSide(rv.namesB, rv.filledB, rv.maxPerTeam);
+                const renderSlot = (slot: LobbySlot, i: number, team: "A" | "B") => {
+                  const filledCls =
+                    team === "A"
+                      ? "bg-primary/15 border border-primary/30 text-foreground"
+                      : "bg-arena-purple/15 border border-arena-purple/30 text-foreground";
+                  const openCls = "bg-secondary/30 border border-border/30 text-muted-foreground/40";
+                  if (slot.kind === "player") {
+                    return (
+                      <div key={i} className={cn("h-6 rounded flex items-center px-2 text-[10px]", filledCls)}>
+                        <button
+                          className="truncate text-left hover:text-primary transition-colors w-full"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPlayerPopover({ slotValue: slot.name, rect: e.currentTarget.getBoundingClientRect() });
+                          }}
+                        >
+                          {slot.name}
+                        </button>
+                      </div>
+                    );
+                  }
+                  if (slot.kind === "filled") {
+                    return (
+                      <div key={i} className={cn("h-6 rounded flex items-center px-2 text-[10px] italic", filledCls)}>
+                        <span className="truncate w-full">In lobby</span>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={i} className={cn("h-6 rounded flex items-center px-2 text-[10px]", openCls)}>
+                      <button
+                        className="flex items-center gap-1 hover:text-primary transition-colors w-full"
+                        onClick={(e) => { e.stopPropagation(); void handleOpenInviteModal(); }}
+                        title="Invite a friend"
+                        type="button"
+                      >
+                        <UserPlus className="h-3 w-3 shrink-0" />
+                        <span>{`Slot ${i + 1}`}</span>
+                      </button>
+                    </div>
+                  );
+                };
+                return (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">
+                        Team A ({rv.filledA}/{rv.maxPerTeam})
+                      </p>
+                      <div className="space-y-1">{sideA.map((s, i) => renderSlot(s, i, "A"))}</div>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">
+                        Team B ({rv.filledB}/{rv.maxPerTeam})
+                      </p>
+                      <div className="space-y-1">{sideB.map((s, i) => renderSlot(s, i, "B"))}</div>
+                    </div>
                   </div>
-                </div>
-                {/* Team B */}
-                <div>
-                  <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">Team B</p>
-                  <div className="space-y-1">
-                    {Array.from({ length: myActiveRoom.maxPerTeam ?? myActiveRoom.teamSize ?? 5 }).map((_, i) => {
-                      const player = (myActiveRoom.teamB ?? [])[i];
-                      return (
-                        <div key={i} className={cn(
-                          "h-6 rounded flex items-center px-2 text-[10px]",
-                          player ? "bg-arena-purple/15 border border-arena-purple/30 text-foreground" : "bg-secondary/30 border border-border/30 text-muted-foreground/40"
-                        )}>
-                          {player ? (
-                            <button
-                              className="truncate text-left hover:text-primary transition-colors w-full"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setPlayerPopover({ slotValue: player, rect: e.currentTarget.getBoundingClientRect() });
-                              }}
-                            >
-                              {player}
-                            </button>
-                          ) : (
-                            <button
-                              className="flex items-center gap-1 text-muted-foreground/40 hover:text-primary transition-colors w-full"
-                              onClick={(e) => { e.stopPropagation(); void handleOpenInviteModal(); }}
-                              title="Invite a friend"
-                            >
-                              <UserPlus className="h-3 w-3 shrink-0" />
-                              <span>{`Slot ${i + 1}`}</span>
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
+                );
+              })()
             ) : (
               /* Public match — simple progress bar */
               <div>
                 <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
                   <span>Players</span>
-                  <span className="font-mono">{myActiveRoom.players.length} / {myActiveRoom.maxPlayers}</span>
+                  <span className="font-mono">
+                    {lobbyFilledTotal(myActiveRoom)} / {myActiveRoom.maxPlayers}
+                  </span>
                 </div>
                 <div className="h-1.5 rounded-full bg-secondary/50 overflow-hidden">
                   <div
                     className="h-full bg-primary rounded-full transition-all"
-                    style={{ width: `${(myActiveRoom.players.length / myActiveRoom.maxPlayers) * 100}%` }}
+                    style={{
+                      width: `${(lobbyFilledTotal(myActiveRoom) / Math.max(1, myActiveRoom.maxPlayers)) * 100}%`,
+                    }}
                   />
                 </div>
               </div>
@@ -1398,6 +1423,9 @@ const MatchLobby = () => {
             </div>
             <div className="divide-y divide-border/40">
               {filteredPublicMatches.map((match) => {
+                const roster = lobbyTeamViewFromMatch(match);
+                const knownStack = [...roster.namesA, ...roster.namesB];
+                const hiddenCount = Math.max(0, roster.filledA + roster.filledB - knownStack.length);
                 const status = statusConfig[match.status] ?? {
                   label: "Unknown",
                   color: "bg-muted text-muted-foreground border-border",
@@ -1405,7 +1433,8 @@ const MatchLobby = () => {
                 };
                 const StatusIcon = status.icon;
                 const isLive = match.status === "in_progress";
-                const canJoin = match.status === "waiting" && match.players.length < match.maxPlayers;
+                const filled = lobbyFilledTotal(match);
+                const canJoin = match.status === "waiting" && filled < match.maxPlayers;
                 const cfg = ALL_GAME_CONFIG[match.game];
                 // Smart dimming: when a bet is selected, grey out non-matching matches
                 const dimmed = selectedBet !== null && match.betAmount !== selectedBet;
@@ -1431,10 +1460,11 @@ const MatchLobby = () => {
                       <GameLogo game={match.game} size={26} />
                       <div className="min-w-0">
                         <p className="font-medium text-xs truncate">{match.host}'s Match</p>
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                          {/* Mini avatar stack */}
-                          <AvatarStack players={match.players} max={5} />
-                          <span className="text-xs text-muted-foreground">{match.players.length}/{match.maxPlayers}</span>
+                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                          <AvatarStack players={knownStack} max={5} extraHidden={hiddenCount} />
+                          <span className="text-xs text-muted-foreground font-mono" title={`${filled} / ${match.maxPlayers} players`}>
+                            {roster.filledA}/{roster.maxPerTeam} · {roster.filledB}/{roster.maxPerTeam}
+                          </span>
                           {match.timeLeft && (
                             <span className="text-xs text-arena-cyan flex items-center gap-0.5">
                               <Clock className="h-3 w-3" />{match.timeLeft}
@@ -1873,11 +1903,11 @@ const MatchLobby = () => {
               };
               const StatusIcon = status.icon;
               const isLive = match.status === "in_progress";
-              const maxPerTeam = match.maxPerTeam ?? match.teamSize ?? getTeamSize(match.mode);
-              const teamA = match.teamA ?? [];
-              const teamB = match.teamB ?? [];
-              const teamAFull = teamA.length >= maxPerTeam;
-              const teamBFull = teamB.length >= maxPerTeam;
+              const roster = lobbyTeamViewFromMatch(match);
+              const slotsA = lobbySlotsForSide(roster.namesA, roster.filledA, roster.maxPerTeam);
+              const slotsB = lobbySlotsForSide(roster.namesB, roster.filledB, roster.maxPerTeam);
+              const teamAFull = roster.filledA >= roster.maxPerTeam;
+              const teamBFull = roster.filledB >= roster.maxPerTeam;
               const canJoin = match.status === "waiting" && (!teamAFull || !teamBFull);
               const cfg = ALL_GAME_CONFIG[match.game];
 
@@ -1920,19 +1950,36 @@ const MatchLobby = () => {
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2.5">
-                      {[
-                        { label: "Team A", players: teamA, full: teamAFull, border: "border-primary/20", bg: "bg-primary/5", text: "text-primary", joinBorder: "border-primary/30", joinText: "text-primary", joinHover: "hover:bg-primary/10", isA: true },
-                        { label: "Team B", players: teamB, full: teamBFull, border: "border-arena-orange/20", bg: "bg-arena-orange/5", text: "text-arena-orange", joinBorder: "border-arena-orange/30", joinText: "text-arena-orange", joinHover: "hover:bg-arena-orange/10", isA: false },
-                      ].map(({ label, players, full, border, bg, text, joinBorder, joinText, joinHover, isA }) => (
+                      {([
+                        { label: "Team A" as const, slots: slotsA, full: teamAFull, border: "border-primary/20", bg: "bg-primary/5", text: "text-primary", joinBorder: "border-primary/30", joinText: "text-primary", joinHover: "hover:bg-primary/10", isA: true },
+                        { label: "Team B" as const, slots: slotsB, full: teamBFull, border: "border-arena-orange/20", bg: "bg-arena-orange/5", text: "text-arena-orange", joinBorder: "border-arena-orange/30", joinText: "text-arena-orange", joinHover: "hover:bg-arena-orange/10", isA: false },
+                      ]).map(({ label, slots, full, border, bg, text, joinBorder, joinText, joinHover, isA }) => (
                         <div key={label} className={`rounded-xl border ${border} ${bg} p-2.5`}>
                           <p className={`text-xs ${text} font-display uppercase tracking-wider mb-1.5 flex items-center gap-1`}>
-                            <Shield className="h-3 w-3" /> {label} ({players.length}/{maxPerTeam})
+                            <Shield className="h-3 w-3" /> {label} ({label === "Team A" ? roster.filledA : roster.filledB}/{roster.maxPerTeam})
                           </p>
                           <div className="space-y-0.5">
-                            {players.map((p, i) => <PlayerRow key={i} name={p} isHost={isA} index={i} onPlayerClick={(name, rect) => setPlayerPopover({ slotValue: name, rect })} />)}
-                            {Array.from({ length: maxPerTeam - players.length }).map((_, i) => (
-                              <p key={i} className="text-xs text-muted-foreground/30 italic pl-5">Empty slot</p>
-                            ))}
+                            {slots.map((slot, i) => {
+                              if (slot.kind === "player") {
+                                return (
+                                  <PlayerRow
+                                    key={`${label}-${i}`}
+                                    name={slot.name}
+                                    isHost={isA}
+                                    index={i}
+                                    onPlayerClick={(name, rect) => setPlayerPopover({ slotValue: name, rect })}
+                                  />
+                                );
+                              }
+                              if (slot.kind === "filled") {
+                                return (
+                                  <p key={`${label}-f-${i}`} className="text-xs text-muted-foreground/70 italic pl-5 py-0.5">In lobby</p>
+                                );
+                              }
+                              return (
+                                <p key={`${label}-e-${i}`} className="text-xs text-muted-foreground/30 italic pl-5">Empty slot</p>
+                              );
+                            })}
                           </div>
                           {canJoin && !full && !isInActiveRoom && (matchStakeCurrency(match) === "AT" ? canJoinAtStake : canPlayStaked) && (
                             <button onClick={() => handleJoinCustom(match.id, match.betAmount, isA ? "A" : "B")}
