@@ -253,15 +253,31 @@ export const useMatchStore = create<MatchState>((set, get) => ({
           (srv.teamB?.length ?? 0) === 0;
         const serverGaveCount = typeof srv.filledPlayerCount === "number";
 
-        const rosterFromServer = srvRosterEmpty && serverGaveCount
-          ? { players: [] as string[], teamA: [] as string[], teamB: [] as string[] }
-          : {
-              players: (srv.players.length > 0) ? srv.players : existing.players,
-              teamA:
-                ((srv.teamA?.length ?? 0) > 0) ? srv.teamA! : existing.teamA ?? [],
-              teamB:
-                ((srv.teamB?.length ?? 0) > 0) ? srv.teamB! : existing.teamB ?? [],
+        const existingNames = [...(existing.teamA ?? []), ...(existing.teamB ?? []), ...existing.players]
+          .filter((x, i, arr) => !!x && arr.indexOf(x) === i);
+
+        const rosterFromServer = (() => {
+          // Server list row has count-only. Keep existing known names stable and trim by the new count,
+          // so the UI doesn't flicker between username and "In lobby". When count decreases, this also
+          // removes stale names beyond the new count.
+          if (srvRosterEmpty && serverGaveCount) {
+            const maxPerSide = srv.maxPerTeam ?? srv.teamSize ?? existing.maxPerTeam ?? existing.teamSize ?? 5;
+            const total = Math.max(0, Math.min(srv.filledPlayerCount ?? 0, maxPerSide * 2));
+            const kept = existingNames.slice(0, total);
+            return {
+              players: [] as string[],
+              teamA: kept.slice(0, maxPerSide),
+              teamB: kept.slice(maxPerSide, maxPerSide * 2),
             };
+          }
+          return {
+            players: (srv.players.length > 0) ? srv.players : existing.players,
+            teamA:
+              ((srv.teamA?.length ?? 0) > 0) ? srv.teamA! : existing.teamA ?? [],
+            teamB:
+              ((srv.teamB?.length ?? 0) > 0) ? srv.teamB! : existing.teamB ?? [],
+          };
+        })();
 
         return {
           ...existing,
