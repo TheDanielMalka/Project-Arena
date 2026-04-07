@@ -52,6 +52,60 @@ _escrow_client = None
 _listener_task = None  # background thread task — EscrowClient.listen()
 
 
+async def _stale_player_cleanup_loop(interval: int = 15) -> None:
+    """
+    Background task: every `interval` seconds (default 15s), remove non-host
+    players in 'waiting' matches who stopped sending /heartbeat pings.
+
+    A player is stale when last_seen < NOW() - 45s — they closed the browser
+    without calling POST /matches/{id}/leave.
+
+    AT matches: refunds the stake.  CRYPTO: no on-chain action (not deposited yet).
+    The host is never removed passively — they must DELETE the room explicitly.
+
+    Phase 7 (WebSocket) will supersede this polling bridge.
+    """
+    import asyncio as _asyncio
+    while True:
+        try:
+            await _asyncio.sleep(interval)
+            with SessionLocal() as session:
+                # Fetch stale non-host players in waiting rooms
+                stale = session.execute(
+                    text(
+                        "SELECT mp.match_id, mp.user_id, m.stake_currency, m.bet_amount "
+                        "FROM match_players mp "
+                        "JOIN matches m ON m.id = mp.match_id "
+                        "WHERE m.status = 'waiting' "
+                        "  AND mp.user_id != m.host_id "
+                        "  AND mp.last_seen < NOW() - INTERVAL '45 seconds'"
+                    )
+                ).fetchall()
+
+                if stale:
+                    for row in stale:
+                        mid, uid, currency, bet = row
+                        session.execute(
+                            text(
+                                "DELETE FROM match_players "
+                                "WHERE match_id = :mid AND user_id = :uid"
+                            ),
+                            {"mid": str(mid), "uid": str(uid)},
+                        )
+                        if currency == "AT":
+                            at_amt = int(float(bet or 0))
+                            if at_amt > 0:
+                                try:
+                                    _credit_at(session, str(uid), at_amt, str(mid),
+                                               "escrow_refund_disconnect")
+                                except Exception as _e:
+                                    logger.error("stale_cleanup: AT refund failed uid=%s: %s", uid, _e)
+                    session.commit()
+                    logger.info("Stale player cleanup: removed %d disconnected players", len(stale))
+        except Exception as exc:
+            logger.error("_stale_player_cleanup_loop error: %s", exc)
+
+
 async def _expired_match_cleanup_loop(interval: int = 300) -> None:
     """
     Background task: every `interval` seconds (default 5 min), cancel
@@ -122,6 +176,16 @@ async def lifespan(app: FastAPI):
             conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS idx_cs_user ON client_sessions(user_id)"
             ))
+            # Migration 014: last_seen for heartbeat / stale-player cleanup.
+            # Safe no-op when column already exists.
+            conn.execute(text(
+                "ALTER TABLE match_players "
+                "ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ DEFAULT NOW()"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_match_players_last_seen "
+                "ON match_players(last_seen)"
+            ))
             conn.commit()
         logger.info("✅ Arena Engine connected to DB")
     except Exception as exc:
@@ -157,11 +221,18 @@ async def lifespan(app: FastAPI):
     _cleanup_task = asyncio.create_task(_expired_match_cleanup_loop())
     logger.info("✅ Expired match cleanup task started")
 
+    # Stale player cleanup — runs every 15 seconds.
+    # Removes non-host players who closed the browser without calling leave_match.
+    # Bridges the gap until Phase 7 WebSocket replaces polling.
+    _stale_task = asyncio.create_task(_stale_player_cleanup_loop())
+    logger.info("✅ Stale player cleanup task started")
+
     yield
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
     _rq_task.cancel()
     _cleanup_task.cancel()
+    _stale_task.cancel()
     if _listener_task:
         _listener_task.cancel()
         try:
@@ -2557,6 +2628,129 @@ async def leave_match(match_id: str, payload: dict = Depends(verify_token)):
     return {"left": True, "match_id": match_id}
 
 
+@app.post("/matches/{match_id}/heartbeat", status_code=200)
+async def match_heartbeat(match_id: str, payload: dict = Depends(verify_token)):
+    """
+    POST /matches/{match_id}/heartbeat — lobby keep-alive ping.
+
+    Call every 3-5 seconds while in MatchLobby (both host and guests).
+    Each call:
+      1. Refreshes last_seen for this player (proves browser is still open)
+      2. Removes stale players whose last_seen expired (closed browser without leave)
+         — only in 'waiting' matches; refunds AT stake for removed players
+      3. Returns the current fresh roster + match status
+
+    Response:
+      in_match    — False if caller is not (or no longer) in this match
+      players     — full current roster with team assignments
+      your_team   — 'A' | 'B' for the calling user
+      status      — current match status
+      stale_removed — count of players cleaned up this tick (debug info)
+
+    This bridges the gap until Phase 7 (WebSocket) provides true real-time.
+
+    DB-ready: match_players.last_seen + matches table.
+    """
+    user_id: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            # ── Refresh last_seen for this player ─────────────────────────────
+            updated = session.execute(
+                text(
+                    "UPDATE match_players SET last_seen = NOW() "
+                    "WHERE match_id = :mid AND user_id = :uid "
+                    "RETURNING user_id"
+                ),
+                {"mid": match_id, "uid": user_id},
+            ).fetchone()
+
+            if not updated:
+                # Caller is not in this match (already removed or never joined)
+                session.rollback()
+                return {"in_match": False, "match_id": match_id, "players": []}
+
+            # ── Remove stale non-host players (waiting match only) ────────────
+            stale = session.execute(
+                text(
+                    "SELECT mp.user_id, m.stake_currency, m.bet_amount "
+                    "FROM match_players mp "
+                    "JOIN matches m ON m.id = mp.match_id "
+                    "WHERE mp.match_id = :mid "
+                    "  AND m.status = 'waiting' "
+                    "  AND mp.user_id != m.host_id "
+                    "  AND mp.last_seen < NOW() - INTERVAL '30 seconds'"
+                ),
+                {"mid": match_id},
+            ).fetchall()
+
+            for (stale_uid, currency, bet) in stale:
+                session.execute(
+                    text(
+                        "DELETE FROM match_players "
+                        "WHERE match_id = :mid AND user_id = :uid"
+                    ),
+                    {"mid": match_id, "uid": str(stale_uid)},
+                )
+                if currency == "AT":
+                    at_amt = int(float(bet or 0))
+                    if at_amt > 0:
+                        try:
+                            _credit_at(session, str(stale_uid), at_amt, match_id,
+                                       "escrow_refund_disconnect")
+                        except Exception as _e:
+                            logger.error("heartbeat: AT refund failed uid=%s: %s", stale_uid, _e)
+
+            # ── Fresh roster (after stale cleanup, in same transaction) ────────
+            players = session.execute(
+                text(
+                    "SELECT u.id, u.username, u.avatar, u.arena_id, "
+                    "       COALESCE(mp.team, 'A') AS team "
+                    "FROM match_players mp "
+                    "JOIN users u ON u.id = mp.user_id "
+                    "WHERE mp.match_id = :mid "
+                    "ORDER BY COALESCE(mp.team, 'A'), mp.joined_at"
+                ),
+                {"mid": match_id},
+            ).fetchall()
+
+            match_info = session.execute(
+                text(
+                    "SELECT status, game, mode, code, max_players, max_per_team "
+                    "FROM matches WHERE id = :mid"
+                ),
+                {"mid": match_id},
+            ).fetchone()
+
+            session.commit()
+
+        your_team = next((p[4] for p in players if str(p[0]) == user_id), None)
+
+        return {
+            "in_match":      True,
+            "match_id":      match_id,
+            "status":        match_info[0] if match_info else None,
+            "game":          match_info[1] if match_info else None,
+            "mode":          match_info[2] if match_info else None,
+            "code":          match_info[3] if match_info else None,
+            "max_players":   match_info[4] if match_info else None,
+            "max_per_team":  match_info[5] if match_info else None,
+            "your_user_id":  user_id,
+            "your_team":     your_team,
+            "stale_removed": len(stale),
+            "players": [
+                {"user_id": str(p[0]), "username": p[1], "avatar": p[2],
+                 "arena_id": p[3], "team": p[4]}
+                for p in players
+            ],
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("match_heartbeat error: %s", exc)
+        raise HTTPException(500, "Heartbeat failed")
+
+
 class MatchInviteRequest(BaseModel):
     """POST /matches/{match_id}/invite body."""
     friend_id: str
@@ -2602,6 +2796,14 @@ async def invite_to_match(
             ).fetchone()
             if not in_match:
                 raise HTTPException(403, "You are not in this match")
+
+            # ── Friend already in room? ───────────────────────────────────────
+            friend_in_match = session.execute(
+                text("SELECT 1 FROM match_players WHERE match_id = :mid AND user_id = :fid"),
+                {"mid": match_id, "fid": req.friend_id},
+            ).fetchone()
+            if friend_in_match:
+                raise HTTPException(409, "This player is already in your room")
 
             friendship = session.execute(
                 text(
