@@ -124,7 +124,10 @@ async def _expired_match_cleanup_loop(interval: int = 300) -> None:
                 expired = session.execute(
                     text(
                         "UPDATE matches SET status = 'cancelled', ended_at = NOW() "
-                        "WHERE status = 'waiting' AND expires_at < NOW() "
+                        "WHERE status = 'waiting' AND ("
+                        "    expires_at < NOW() "
+                        "    OR (expires_at IS NULL AND created_at < NOW() - INTERVAL '1 hour')"
+                        ") "
                         "RETURNING id, stake_currency"
                     )
                 ).fetchall()
