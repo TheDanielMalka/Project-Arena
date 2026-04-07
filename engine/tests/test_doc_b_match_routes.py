@@ -638,3 +638,96 @@ class TestMatchHeartbeat:
             )
         assert resp.status_code == 200
         assert resp.json()["status"] == "in_progress"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# _expired_match_cleanup_loop — SQL covers both expires_at < NOW() and NULL
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestExpiredMatchCleanupSQL:
+    """
+    Verify that _expired_match_cleanup_loop executes a query that handles:
+      1. Rooms with expires_at < NOW()   — normal case, trigger was applied
+      2. Rooms with expires_at IS NULL   — legacy rooms created before migration 009
+
+    Both must be cancelled; a room with expires_at IS NULL that was created
+    less than 1 hour ago must NOT be cancelled.
+
+    We test by running one iteration of the loop and inspecting the SQL string
+    that was passed to session.execute().
+    """
+
+    def test_cleanup_sql_covers_null_expires_at(self):
+        """The UPDATE query must include the IS NULL fallback."""
+        import asyncio
+        from main import _expired_match_cleanup_loop
+
+        ctx, session = _make_session()
+        session.execute.return_value.fetchall.return_value = []  # no expired matches
+        ctx.__enter__.return_value = session
+
+        call_count = 0
+
+        async def _run_once():
+            nonlocal call_count
+
+            async def _fast_sleep(n):
+                nonlocal call_count
+                call_count += 1
+                if call_count >= 2:
+                    raise asyncio.CancelledError()
+
+            with patch("main.SessionLocal", return_value=ctx):
+                with patch("asyncio.sleep", side_effect=_fast_sleep):
+                    try:
+                        await _expired_match_cleanup_loop(interval=0)
+                    except asyncio.CancelledError:
+                        pass
+
+        asyncio.run(_run_once())
+
+        # Grab the SQL string from the first execute call
+        assert session.execute.called, "session.execute was never called"
+        sql_arg = session.execute.call_args_list[0][0][0]
+        sql_text = str(sql_arg).lower()
+
+        assert "expires_at is null" in sql_text, (
+            "Cleanup query must handle legacy rooms where expires_at IS NULL. "
+            f"Got: {sql_text}"
+        )
+        assert "created_at" in sql_text, (
+            "Cleanup query must fall back to created_at for NULL expires_at rooms. "
+            f"Got: {sql_text}"
+        )
+
+    def test_cleanup_cancels_at_match_and_refunds(self):
+        """When an expired AT match is found, _refund_at_match must be called."""
+        import asyncio
+        from main import _expired_match_cleanup_loop
+
+        expired_match_id = str(uuid.uuid4())
+        ctx, session = _make_session()
+        session.execute.return_value.fetchall.return_value = [(expired_match_id, "AT")]
+        ctx.__enter__.return_value = session
+
+        call_count = 0
+
+        async def _run_once():
+            nonlocal call_count
+
+            async def _fast_sleep(n):
+                nonlocal call_count
+                call_count += 1
+                if call_count >= 2:
+                    raise asyncio.CancelledError()
+
+            with patch("main.SessionLocal", return_value=ctx):
+                with patch("main._refund_at_match") as mock_refund:
+                    with patch("asyncio.sleep", side_effect=_fast_sleep):
+                        try:
+                            await _expired_match_cleanup_loop(interval=0)
+                        except asyncio.CancelledError:
+                            pass
+                    mock_refund.assert_called_once_with(expired_match_id)
+
+        asyncio.run(_run_once())
