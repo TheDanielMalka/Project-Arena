@@ -1209,13 +1209,20 @@ async def get_active_match(payload: dict = Depends(verify_token)):
             match_id = str(row[0])
             players = session.execute(
                 text(
-                    "SELECT u.id, u.username, u.avatar, u.arena_id, mp.team "
+                    "SELECT u.id, u.username, u.avatar, u.arena_id, "
+                    "       COALESCE(mp.team, 'A') AS team "
                     "FROM match_players mp "
                     "JOIN users u ON u.id = mp.user_id "
-                    "WHERE mp.match_id = :mid ORDER BY mp.team, mp.joined_at"
+                    "WHERE mp.match_id = :mid "
+                    "ORDER BY COALESCE(mp.team, 'A'), mp.joined_at"
                 ),
                 {"mid": match_id},
             ).fetchall()
+
+            # Identify the caller's own slot (avoids client-side duplication)
+            your_team = next(
+                (p[4] for p in players if str(p[0]) == user_id), None
+            )
 
             return {
                 "match": {
@@ -1232,6 +1239,10 @@ async def get_active_match(payload: dict = Depends(verify_token)):
                     "host_username":  row[10],
                     "max_players":    row[11],
                     "max_per_team":   row[12],
+                    # your_user_id + your_team let the UI mark "me" without
+                    # duplicating from local state
+                    "your_user_id":   user_id,
+                    "your_team":      your_team,
                     "players": [
                         {"user_id": str(p[0]), "username": p[1], "avatar": p[2],
                          "arena_id": p[3], "team": p[4]}
@@ -1265,7 +1276,7 @@ async def match_status(
     DB-ready: matches + match_players
     CONTRACT-ready: on_chain_match_id → ArenaEscrow.deposit() / declareWinner()
     """
-    user_id: str | None = token.get("user_id") if token else None
+    user_id: str | None = token.get("sub") if token else None  # JWT uses "sub", not "user_id"
     try:
         with SessionLocal() as session:
             row = session.execute(
@@ -1946,10 +1957,15 @@ class CreateMatchRequest(BaseModel):
 
 class JoinMatchRequest(BaseModel):
     """
-    POST /matches/{match_id}/join — optional room password.
-    Sent in request body; matched against matches.password server-side.
+    POST /matches/{match_id}/join — optional room password + optional team preference.
+
+    team: "A" | "B" | None
+      When provided, the server honors the preference if that team still has a free
+      slot (returns 409 if full so the client can show "Team X is full").
+      When omitted, the server auto-assigns (fills A first, then B).
     """
     password: str | None = None
+    team: str | None = None  # "A" | "B" — optional; honored if slot available
 
 
 _VALID_CURRENCIES = {"CRYPTO", "AT"}
@@ -2339,17 +2355,38 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
                 raise HTTPException(409, "Already joined this match")
 
             # ── Determine team assignment ─────────────────────────────────────
-            # Fill Team A up to max_per_team slots first, then Team B.
-            # This ensures 5v5 with friends works correctly:
-            #   players 1-5 → Team A, players 6-10 → Team B.
-            team_a_count = session.execute(
+            # Count both teams in one query.
+            # NULL team is treated as 'A' (legacy hosts created before team column
+            # was made explicit — they are always the Team A slot owner).
+            counts_row = session.execute(
                 text(
-                    "SELECT COUNT(*) FROM match_players "
-                    "WHERE match_id = :mid AND team = 'A'"
+                    "SELECT "
+                    "  COUNT(*) FILTER (WHERE team = 'A' OR team IS NULL) AS a_count, "
+                    "  COUNT(*) FILTER (WHERE team = 'B')                 AS b_count "
+                    "FROM match_players WHERE match_id = :mid"
                 ),
                 {"mid": match_id},
-            ).fetchone()[0]
-            assigned_team = "A" if int(team_a_count) < int(max_per_team or 1) else "B"
+            ).fetchone()
+            team_a_count = int(counts_row[0])
+            team_b_count = int(counts_row[1])
+            mpt           = int(max_per_team or 1)
+
+            if req.team is not None:
+                # Honor explicit team preference when the slot is available.
+                req_team = req.team.upper()
+                if req_team not in ("A", "B"):
+                    raise HTTPException(400, "team must be 'A' or 'B'")
+                requested_count = team_a_count if req_team == "A" else team_b_count
+                if requested_count >= mpt:
+                    other = "B" if req_team == "A" else "A"
+                    raise HTTPException(
+                        409,
+                        f"Team {req_team} is full — join Team {other} instead.",
+                    )
+                assigned_team = req_team
+            else:
+                # Auto-assign: fill Team A first, then Team B.
+                assigned_team = "A" if team_a_count < mpt else "B"
 
             # ── Join ──────────────────────────────────────────────────────────
             session.execute(
@@ -3910,7 +3947,8 @@ async def list_matches(
                 roster_params = {f"mid{i}": mid for i, mid in enumerate(match_ids)}
                 roster_rows = session.execute(
                     text(
-                        f"SELECT mp.match_id, u.id, u.username, mp.team "
+                        f"SELECT mp.match_id, u.id, u.username, "
+                        f"       COALESCE(mp.team, 'A') AS team "
                         f"FROM match_players mp "
                         f"JOIN users u ON u.id = mp.user_id "
                         f"WHERE mp.match_id IN ({placeholders}) "
