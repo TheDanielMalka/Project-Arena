@@ -183,16 +183,29 @@ class TestValidateScreenshotConsensus:
         )
 
     def _post_screenshot(self, session_mock_ctx):
+        """
+        POST /validate/screenshot with all filesystem I/O mocked out.
+
+        Patches applied every time:
+          - builtins.open      → mock_open() — no real file created (CI-safe)
+          - shutil.copyfileobj → no-op
+          - main.VisionEngine  → returns self._mock_output()
+          - save_evidence      → None
+          - main.SessionLocal  → session_mock_ctx
+        """
+        from unittest.mock import mock_open as _mock_open
         png = _tiny_png()
-        with patch("main.SessionLocal", return_value=session_mock_ctx):
-            with patch("main.VisionEngine") as MockEngine:
-                MockEngine.return_value.process_frame.return_value = self._mock_output()
-                with patch("src.vision.matcher.save_evidence", return_value=None):
-                    return client.post(
-                        f"/validate/screenshot?match_id={_MATCH_ID}&game=CS2",
-                        files={"file": ("ss.png", io.BytesIO(png), "image/png")},
-                        headers=_AUTH_HDRS,
-                    )
+        with patch("builtins.open", _mock_open()), \
+             patch("shutil.copyfileobj"), \
+             patch("main.SessionLocal", return_value=session_mock_ctx), \
+             patch("main.VisionEngine") as MockEngine, \
+             patch("src.vision.matcher.save_evidence", return_value=None):
+            MockEngine.return_value.process_frame.return_value = self._mock_output()
+            return client.post(
+                f"/validate/screenshot?match_id={_MATCH_ID}&game=CS2",
+                files={"file": ("ss.png", io.BytesIO(png), "image/png")},
+                headers=_AUTH_HDRS,
+            )
 
     def test_response_contains_consensus_fields(self):
         """Response always contains consensus_status and consensus_result keys."""
@@ -221,20 +234,22 @@ class TestValidateScreenshotConsensus:
         session.execute.return_value.fetchall.return_value = []
 
         # max_players = 2, no prior votes → after 1 vote: PENDING
-        with patch("main.SessionLocal", return_value=ctx):
-            with patch("main.VisionEngine") as MockEngine:
-                MockEngine.return_value.process_frame.return_value = self._mock_output()
-                with patch("src.vision.matcher.save_evidence", return_value=None):
-                    # Also patch consensus internals to keep mock chain simple
-                    from src.vision.consensus import ConsensusStatus
-                    with patch("src.vision.consensus.MatchConsensus.submit",
-                               return_value=ConsensusStatus.PENDING):
-                        with patch("src.vision.consensus.MatchConsensus._restore_from_db"):
-                            resp = client.post(
-                                f"/validate/screenshot?match_id={_MATCH_ID}&game=CS2",
-                                files={"file": ("ss.png", io.BytesIO(_tiny_png()), "image/png")},
-                                headers=_AUTH_HDRS,
-                            )
+        from src.vision.consensus import ConsensusStatus
+        from unittest.mock import mock_open as _mock_open
+        with patch("builtins.open", _mock_open()), \
+             patch("shutil.copyfileobj"), \
+             patch("main.SessionLocal", return_value=ctx), \
+             patch("main.VisionEngine") as MockEngine, \
+             patch("src.vision.matcher.save_evidence", return_value=None), \
+             patch("src.vision.consensus.MatchConsensus.submit",
+                   return_value=ConsensusStatus.PENDING), \
+             patch("src.vision.consensus.MatchConsensus._restore_from_db"):
+            MockEngine.return_value.process_frame.return_value = self._mock_output()
+            resp = client.post(
+                f"/validate/screenshot?match_id={_MATCH_ID}&game=CS2",
+                files={"file": ("ss.png", io.BytesIO(_tiny_png()), "image/png")},
+                headers=_AUTH_HDRS,
+            )
 
         assert resp.status_code == 200
         assert resp.json()["consensus_status"] == "pending"
@@ -260,20 +275,23 @@ class TestValidateScreenshotConsensus:
             submissions=[],
         )
 
-        with patch("main.SessionLocal", return_value=ctx):
-            with patch("main.VisionEngine") as MockEngine:
-                MockEngine.return_value.process_frame.return_value = self._mock_output()
-                with patch("src.vision.matcher.save_evidence", return_value=None):
-                    with patch("src.vision.consensus.MatchConsensus.submit",
-                               return_value=ConsensusStatus.REACHED):
-                        with patch("src.vision.consensus.MatchConsensus.evaluate",
-                                   return_value=mock_verdict):
-                            with patch("src.vision.consensus.MatchConsensus._restore_from_db"):
-                                resp = client.post(
-                                    f"/validate/screenshot?match_id={_MATCH_ID}&game=CS2",
-                                    files={"file": ("ss.png", io.BytesIO(_tiny_png()), "image/png")},
-                                    headers=_AUTH_HDRS,
-                                )
+        from unittest.mock import mock_open as _mock_open
+        with patch("builtins.open", _mock_open()), \
+             patch("shutil.copyfileobj"), \
+             patch("main.SessionLocal", return_value=ctx), \
+             patch("main.VisionEngine") as MockEngine, \
+             patch("src.vision.matcher.save_evidence", return_value=None), \
+             patch("src.vision.consensus.MatchConsensus.submit",
+                   return_value=ConsensusStatus.REACHED), \
+             patch("src.vision.consensus.MatchConsensus.evaluate",
+                   return_value=mock_verdict), \
+             patch("src.vision.consensus.MatchConsensus._restore_from_db"):
+            MockEngine.return_value.process_frame.return_value = self._mock_output()
+            resp = client.post(
+                f"/validate/screenshot?match_id={_MATCH_ID}&game=CS2",
+                files={"file": ("ss.png", io.BytesIO(_tiny_png()), "image/png")},
+                headers=_AUTH_HDRS,
+            )
 
         assert resp.status_code == 200
         assert resp.json()["consensus_status"] == "reached"
@@ -292,14 +310,17 @@ class TestValidateScreenshotConsensus:
             result=None, confidence=0.0, players=[], accepted=False
         )
 
-        with patch("main.SessionLocal", return_value=ctx):
-            with patch("main.VisionEngine") as MockEngine:
-                MockEngine.return_value.process_frame.return_value = no_result_output
-                resp = client.post(
-                    f"/validate/screenshot?match_id={_MATCH_ID}&game=CS2",
-                    files={"file": ("ss.png", io.BytesIO(_tiny_png()), "image/png")},
-                    headers=_AUTH_HDRS,
-                )
+        from unittest.mock import mock_open as _mock_open
+        with patch("builtins.open", _mock_open()), \
+             patch("shutil.copyfileobj"), \
+             patch("main.SessionLocal", return_value=ctx), \
+             patch("main.VisionEngine") as MockEngine:
+            MockEngine.return_value.process_frame.return_value = no_result_output
+            resp = client.post(
+                f"/validate/screenshot?match_id={_MATCH_ID}&game=CS2",
+                files={"file": ("ss.png", io.BytesIO(_tiny_png()), "image/png")},
+                headers=_AUTH_HDRS,
+            )
 
         assert resp.status_code == 200
         assert resp.json()["consensus_status"] is None
