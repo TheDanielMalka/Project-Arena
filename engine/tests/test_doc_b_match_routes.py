@@ -74,7 +74,7 @@ class TestJoinMatchPassword:
             _steam_user(),                                        # user row (has wallet)
             None,                                                 # active-room guard
             None,                                                 # duplicate-join check
-            (1,),                                                 # team_a_count = 1 ≥ max_per_team 1 → Team B
+            (1, 0),                                               # (a_count=1, b_count=0) → Team B
             (1,),                                                 # COUNT(*) = 1 < max 2
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -94,10 +94,10 @@ class TestJoinMatchPassword:
         session.execute.return_value.fetchone.side_effect = [
             _mock_match_row(password="secret", currency="CRYPTO"),
             _steam_user(),
-            None,   # active-room guard
-            None,   # duplicate-join check
-            (1,),   # team_a_count = 1 ≥ max_per_team 1 → Team B
-            (1,),   # COUNT(*) — below max, no auto-start
+            None,     # active-room guard
+            None,     # duplicate-join check
+            (1, 0),   # (a_count=1, b_count=0) → Team B
+            (1,),     # COUNT(*) — below max, no auto-start
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
@@ -156,7 +156,7 @@ class TestJoinMatchAutoStart:
             (500,),          # _assert_at_balance → at_balance = 500 ≥ 10 AT ✅
             None,            # active-room guard
             None,            # duplicate-join check
-            (1,),            # team_a_count = 1 ≥ max_per_team 1 → Team B
+            (1, 0),          # (a_count=1, b_count=0) → Team B
             (2,),            # COUNT(*) = 2 == max_players → auto-start!
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -176,11 +176,11 @@ class TestJoinMatchAutoStart:
         session.execute.return_value.fetchone.side_effect = [
             _mock_match_row(currency="AT", max_players=4, max_per_team=2),  # 2v2
             _steam_user(),
-            (500,),  # at_balance
-            None,    # active-room guard
-            None,    # duplicate-join check
-            (0,),    # team_a_count = 0 < max_per_team 2 → Team A
-            (1,),    # COUNT(*) = 1 < 4 → no auto-start
+            (500,),   # at_balance
+            None,     # active-room guard
+            None,     # duplicate-join check
+            (0, 0),   # (a_count=0, b_count=0) → Team A
+            (1,),     # COUNT(*) = 1 < 4 → no auto-start
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
@@ -197,9 +197,12 @@ class TestJoinMatchAutoStart:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestTeamAssignment:
-    """join_match fills Team A first (up to max_per_team), then Team B."""
+    """join_match fills Team A first (up to max_per_team), then Team B.
+    Also honors explicit team preference when the slot is free."""
 
-    def _join(self, team_a_count: int, max_per_team: int = 1, currency: str = "CRYPTO"):
+    def _join(self, team_a_count: int, team_b_count: int = 0,
+              max_per_team: int = 1, currency: str = "CRYPTO",
+              req_team: str | None = None):
         ctx, session = _make_session()
         side: list = [
             _mock_match_row(currency=currency, max_players=max_per_team * 2,
@@ -209,21 +212,24 @@ class TestTeamAssignment:
         if currency == "AT":
             side.append((500,))   # at_balance
         side += [
-            None,               # active-room guard
-            None,               # duplicate-join check
-            (team_a_count,),    # team_a_count SELECT
-            (team_a_count + 1,),# COUNT(*) — total after join (below max → no auto-start)
+            None,                           # active-room guard
+            None,                           # duplicate-join check
+            (team_a_count, team_b_count),   # (a_count, b_count) combined query
+            (team_a_count + team_b_count + 1,),  # COUNT(*) total after join
         ]
         session.execute.return_value.fetchone.side_effect = side
+        body = {} if req_team is None else {"team": req_team}
         with patch("main.SessionLocal", return_value=ctx):
             return client.post(
                 f"/matches/{_MATCH_ID}/join",
-                json={},
+                json=body,
                 headers=_AUTH_HEADERS,
             )
 
+    # ── Auto-assign tests ─────────────────────────────────────────────────────
+
     def test_second_player_in_1v1_gets_team_b(self):
-        """1v1: host is Team A (1 slot), second player → Team B."""
+        """1v1: host is Team A (1 slot, incl. NULL legacy hosts), second player → Team B."""
         resp = self._join(team_a_count=1, max_per_team=1)
         assert resp.status_code == 200
         assert resp.json()["team"] == "B"
@@ -236,13 +242,13 @@ class TestTeamAssignment:
 
     def test_5v5_fills_team_a_first(self):
         """5v5: Team A has 4 players → 5th joiner still gets Team A."""
-        resp = self._join(team_a_count=4, max_per_team=5)
+        resp = self._join(team_a_count=4, team_b_count=3, max_per_team=5)
         assert resp.status_code == 200
         assert resp.json()["team"] == "A"
 
     def test_5v5_switches_to_team_b_when_a_full(self):
         """5v5: Team A is full (5) → next joiner gets Team B."""
-        resp = self._join(team_a_count=5, max_per_team=5)
+        resp = self._join(team_a_count=5, team_b_count=4, max_per_team=5)
         assert resp.status_code == 200
         assert resp.json()["team"] == "B"
 
@@ -251,6 +257,43 @@ class TestTeamAssignment:
         resp = self._join(team_a_count=0, max_per_team=1, currency="AT")
         assert resp.status_code == 200
         assert "team" in resp.json()
+
+    # ── Explicit team preference tests ────────────────────────────────────────
+
+    def test_explicit_team_b_preference_respected(self):
+        """req.team='B' with space in B → assigned Team B even though A has room."""
+        resp = self._join(team_a_count=0, team_b_count=0, max_per_team=1,
+                         req_team="B")
+        assert resp.status_code == 200
+        assert resp.json()["team"] == "B"
+
+    def test_explicit_team_a_preference_respected(self):
+        """req.team='A' with space in A → assigned Team A."""
+        resp = self._join(team_a_count=0, team_b_count=1, max_per_team=1,
+                         req_team="A")
+        assert resp.status_code == 200
+        assert resp.json()["team"] == "A"
+
+    def test_explicit_team_b_full_returns_409(self):
+        """req.team='B' but Team B is full → 409 with helpful message."""
+        resp = self._join(team_a_count=1, team_b_count=1, max_per_team=1,
+                         req_team="B")
+        assert resp.status_code == 409
+        assert "full" in resp.json()["detail"].lower()
+        assert "A" in resp.json()["detail"]  # suggests the other team
+
+    def test_explicit_team_a_full_returns_409(self):
+        """req.team='A' but Team A is full → 409."""
+        resp = self._join(team_a_count=1, team_b_count=0, max_per_team=1,
+                         req_team="A")
+        assert resp.status_code == 409
+        assert "full" in resp.json()["detail"].lower()
+
+    def test_invalid_team_value_returns_400(self):
+        """req.team='C' → 400."""
+        resp = self._join(team_a_count=0, team_b_count=0, max_per_team=1,
+                         req_team="C")
+        assert resp.status_code == 400
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

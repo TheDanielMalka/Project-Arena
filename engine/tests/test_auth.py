@@ -685,7 +685,7 @@ class TestMatchGating:
             self._user_steam(),  # user lookup
             None,                # active-room guard → no active room
             None,                # already-joined check → not joined yet
-            (1,),                # team_a_count = 1 ≥ max_per_team 1 → Team B
+            (1, 0),              # (a_count=1, b_count=0) → Team B
             (1,),                # COUNT(*) = 1 player (below max 2 → no auto-start)
         ]
         with patch("main.SessionLocal", return_value=ctx):
