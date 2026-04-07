@@ -325,3 +325,148 @@ class TestValidateScreenshotConsensus:
         assert resp.status_code == 200
         assert resp.json()["consensus_status"] is None
         assert resp.json()["consensus_result"] is None
+
+    def test_evidence_saved_even_when_result_is_none(self):
+        """match_evidence INSERT is executed even when vision returns result=None."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchone.side_effect = [
+            ("in_progress",),
+            (_WALLET, None),
+        ]
+
+        from src.vision.engine import VisionEngineOutput
+        no_result_output = VisionEngineOutput(
+            result=None, confidence=0.0, players=[], accepted=False
+        )
+
+        from unittest.mock import mock_open as _mock_open
+        with patch("builtins.open", _mock_open()), \
+             patch("shutil.copyfileobj"), \
+             patch("main.SessionLocal", return_value=ctx), \
+             patch("main.VisionEngine") as MockEngine:
+            MockEngine.return_value.process_frame.return_value = no_result_output
+            resp = client.post(
+                f"/validate/screenshot?match_id={_MATCH_ID}&game=CS2",
+                files={"file": ("ss.png", io.BytesIO(_tiny_png()), "image/png")},
+                headers=_AUTH_HDRS,
+            )
+
+        assert resp.status_code == 200
+        # session.execute must have been called for the INSERT (even with no result)
+        assert session.execute.called
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# _auto_payout_on_consensus — unit tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestAutoPayout:
+    """Direct unit tests for _auto_payout_on_consensus()."""
+
+    def _make_session(self, winner_row=None):
+        session = MagicMock()
+        session.execute.return_value.fetchone.return_value = winner_row
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=session)
+        ctx.__exit__  = MagicMock(return_value=False)
+        return MagicMock(return_value=ctx), session
+
+    def test_at_match_calls_settle(self):
+        """AT match: _settle_at_match called with correct args."""
+        import uuid as _uuid2
+        winner_uid = str(_uuid2.uuid4())
+        sf, session = self._make_session(winner_row=(winner_uid, "AT"))
+
+        with patch("main.SessionLocal", sf), \
+             patch("main._settle_at_match") as mock_settle:
+            from main import _auto_payout_on_consensus
+            _auto_payout_on_consensus("match-1", "victory")
+
+        mock_settle.assert_called_once_with("match-1", winner_uid)
+
+    def test_crypto_match_calls_declare_winner(self):
+        """CRYPTO match: EscrowClient.declare_winner called."""
+        import uuid as _uuid2
+        winner_uid = str(_uuid2.uuid4())
+        sf, session = self._make_session(winner_row=(winner_uid, "CRYPTO"))
+        mock_escrow = MagicMock()
+        mock_escrow.declare_winner.return_value = "0xTX"
+
+        with patch("main.SessionLocal", sf), \
+             patch("main._escrow_client", mock_escrow):
+            from main import _auto_payout_on_consensus
+            _auto_payout_on_consensus("match-1", "CT_WIN")
+
+        mock_escrow.declare_winner.assert_called_once_with("match-1", winner_uid)
+
+    def test_no_winner_found_is_nonfatal(self):
+        """If no matching wallet in match_consensus, function returns without error."""
+        sf, _ = self._make_session(winner_row=None)
+
+        with patch("main.SessionLocal", sf):
+            from main import _auto_payout_on_consensus
+            _auto_payout_on_consensus("match-1", "victory")   # should not raise
+
+    def test_db_error_is_nonfatal(self):
+        """Any DB exception is caught and logged — never propagates."""
+        sf = MagicMock(side_effect=Exception("DB down"))
+
+        with patch("main.SessionLocal", sf):
+            from main import _auto_payout_on_consensus
+            _auto_payout_on_consensus("match-1", "victory")   # should not raise
+
+    def test_on_chain_failure_is_nonfatal(self):
+        """on-chain declare_winner failure does not crash the function."""
+        import uuid as _uuid2
+        winner_uid = str(_uuid2.uuid4())
+        sf, _ = self._make_session(winner_row=(winner_uid, "CRYPTO"))
+        mock_escrow = MagicMock()
+        mock_escrow.declare_winner.side_effect = Exception("RPC timeout")
+
+        with patch("main.SessionLocal", sf), \
+             patch("main._escrow_client", mock_escrow):
+            from main import _auto_payout_on_consensus
+            _auto_payout_on_consensus("match-1", "victory")   # should not raise
+
+    def test_auto_payout_triggered_when_consensus_reached(self):
+        """POST /validate/screenshot triggers _auto_payout when consensus REACHED."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchone.side_effect = [
+            ("in_progress",),
+            (_WALLET, None),
+        ]
+        session.execute.return_value.fetchall.return_value = []
+
+        from src.vision.consensus import ConsensusStatus, ConsensusResult
+
+        mock_verdict = ConsensusResult(
+            status=ConsensusStatus.REACHED,
+            agreed_result="victory",
+            total_players=2, agreeing_players=2,
+            flagged_wallets=[], submissions=[],
+        )
+
+        from unittest.mock import mock_open as _mock_open
+        with patch("builtins.open", _mock_open()), \
+             patch("shutil.copyfileobj"), \
+             patch("main.SessionLocal", return_value=ctx), \
+             patch("main.VisionEngine") as MockEngine, \
+             patch("src.vision.matcher.save_evidence", return_value=None), \
+             patch("src.vision.consensus.MatchConsensus.submit",
+                   return_value=ConsensusStatus.REACHED), \
+             patch("src.vision.consensus.MatchConsensus.evaluate",
+                   return_value=mock_verdict), \
+             patch("src.vision.consensus.MatchConsensus._restore_from_db"), \
+             patch("main._auto_payout_on_consensus") as mock_payout:
+            MockEngine.return_value.process_frame.return_value = \
+                __import__("src.vision.engine", fromlist=["VisionEngineOutput"]).VisionEngineOutput(
+                    result="victory", confidence=0.95, players=[], accepted=True
+                )
+            resp = client.post(
+                f"/validate/screenshot?match_id={_MATCH_ID}&game=CS2",
+                files={"file": ("ss.png", io.BytesIO(_tiny_png()), "image/png")},
+                headers=_AUTH_HDRS,
+            )
+
+        assert resp.status_code == 200
+        mock_payout.assert_called_once_with(_MATCH_ID, "victory")

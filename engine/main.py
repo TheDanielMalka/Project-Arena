@@ -437,6 +437,110 @@ async def crop_capture(
     return {"filepath": filepath, "message": "ROI cropped"}
 
 
+def _auto_payout_on_consensus(match_id: str, agreed_result: str) -> None:
+    """
+    Triggered automatically when MatchConsensus reaches REACHED status.
+
+    Finds the winning player (the one who submitted agreed_result), updates
+    the match to 'completed', and releases payout.
+
+    Winner determination:
+      - Query match_consensus for wallets that submitted agreed_result.
+      - Join with users to resolve wallet_address → user_id.
+      - For 1v1: one winner wallet; for team match: first agreeing player is
+        the representative winner_id (team payout is handled by the contract).
+
+    Idempotent guard: UPDATE … WHERE status='in_progress' ensures a match
+    that was already completed (e.g. by admin or submit_result) is skipped.
+
+    Non-fatal: any error is logged and swallowed; admin can use
+    POST /admin/match/{id}/declare-winner as fallback.
+
+    DB-ready: match_consensus, users, matches
+    CONTRACT-ready: EscrowClient.declare_winner() for CRYPTO matches
+    """
+    try:
+        # ── Find winner_id from consensus votes ───────────────────────────────
+        winner_id: str | None = None
+        stake_currency: str = "CRYPTO"
+        try:
+            with SessionLocal() as session:
+                row = session.execute(
+                    text("""
+                        SELECT u.id, m.stake_currency
+                        FROM   match_consensus mc
+                        JOIN   users u ON u.wallet_address = mc.wallet_address
+                        JOIN   matches m ON m.id = mc.match_id
+                        WHERE  mc.match_id = :mid
+                          AND  mc.result   = :result
+                        LIMIT  1
+                    """),
+                    {"mid": match_id, "result": agreed_result},
+                ).fetchone()
+            if row:
+                winner_id      = str(row[0])
+                stake_currency = (row[1] or "CRYPTO")
+        except Exception as exc:
+            logger.warning(
+                "_auto_payout: winner lookup failed (non-fatal): match=%s error=%s",
+                match_id, exc,
+            )
+
+        if not winner_id:
+            logger.warning(
+                "_auto_payout: no winner found for match=%s result=%s — "
+                "use POST /admin/match/{id}/declare-winner as fallback",
+                match_id, agreed_result,
+            )
+            return
+
+        # ── Mark match completed (idempotent guard on status) ─────────────────
+        try:
+            with SessionLocal() as session:
+                session.execute(
+                    text(
+                        "UPDATE matches "
+                        "SET status = 'completed', winner_id = :winner, ended_at = NOW() "
+                        "WHERE id = :mid AND status = 'in_progress'"
+                    ),
+                    {"winner": winner_id, "mid": match_id},
+                )
+                session.commit()
+        except Exception as exc:
+            logger.error(
+                "_auto_payout: match UPDATE failed (non-fatal): match=%s error=%s",
+                match_id, exc,
+            )
+            return
+
+        # ── Release payout ────────────────────────────────────────────────────
+        if stake_currency == "AT":
+            _settle_at_match(match_id, winner_id)
+        elif _escrow_client:
+            try:
+                tx_hash = _escrow_client.declare_winner(match_id, winner_id)
+                logger.info(
+                    "_auto_payout on-chain: match=%s winner=%s tx=%s",
+                    match_id, winner_id, tx_hash,
+                )
+            except Exception as exc:
+                logger.error(
+                    "_auto_payout on-chain failed (non-fatal): match=%s error=%s",
+                    match_id, exc,
+                )
+
+        logger.info(
+            "_auto_payout complete: match=%s winner=%s currency=%s",
+            match_id, winner_id, stake_currency,
+        )
+
+    except Exception as exc:
+        logger.error(
+            "_auto_payout_on_consensus unexpected error (non-fatal): match=%s error=%s",
+            match_id, exc,
+        )
+
+
 @app.post("/validate/screenshot", response_model=ValidationResponse)
 async def validate_screenshot(
     match_id: str,
@@ -532,38 +636,41 @@ async def validate_screenshot(
         evidence_path = save_evidence(save_path, output.result, output.confidence)
 
     # ── 5. Persist to match_evidence ─────────────────────────────────────────
-    # DB-ready: match_evidence stores the full vision output for consensus.
-    if output.result:
-        try:
-            with SessionLocal() as session:
-                session.execute(
-                    text("""
-                        INSERT INTO match_evidence
-                            (id, match_id, wallet_address, game, result, confidence,
-                             accepted, players, agents, score, screenshot_path, evidence_path)
-                        VALUES
-                            (:id, :mid, :wallet, :game, :result, :confidence,
-                             :accepted, :players, :agents, :score, :sspath, :evpath)
-                        ON CONFLICT DO NOTHING
-                    """),
-                    {
-                        "id":         str(_uuid.uuid4()),
-                        "mid":        match_id,
-                        "wallet":     wallet_address,
-                        "game":       game,
-                        "result":     output.result,
-                        "confidence": float(output.confidence),
-                        "accepted":   bool(output.accepted),
-                        "players":    output.players,
-                        "agents":     output.agents,
-                        "score":      output.score,
-                        "sspath":     save_path,
-                        "evpath":     evidence_path,
-                    },
-                )
-                session.commit()
-        except Exception as exc:
-            logger.error("validate_screenshot evidence insert error (non-fatal): %s", exc)
+    # Always insert — even when result is None — so every submitted screenshot
+    # is auditable (e.g. low-confidence frames, connection drops, disputes).
+    # ON CONFLICT DO NOTHING is safe: the submission-limit check above already
+    # blocks a second row for the same (match_id, wallet_address).
+    # DB-ready: match_evidence table (infra/sql/init.sql)
+    try:
+        with SessionLocal() as session:
+            session.execute(
+                text("""
+                    INSERT INTO match_evidence
+                        (id, match_id, wallet_address, game, result, confidence,
+                         accepted, players, agents, score, screenshot_path, evidence_path)
+                    VALUES
+                        (:id, :mid, :wallet, :game, :result, :confidence,
+                         :accepted, :players, :agents, :score, :sspath, :evpath)
+                    ON CONFLICT DO NOTHING
+                """),
+                {
+                    "id":         str(_uuid.uuid4()),
+                    "mid":        match_id,
+                    "wallet":     wallet_address,
+                    "game":       game,
+                    "result":     output.result,
+                    "confidence": float(output.confidence),
+                    "accepted":   bool(output.accepted),
+                    "players":    output.players,
+                    "agents":     output.agents,
+                    "score":      output.score,
+                    "sspath":     save_path,
+                    "evpath":     evidence_path,
+                },
+            )
+            session.commit()
+    except Exception as exc:
+        logger.error("validate_screenshot evidence insert error (non-fatal): %s", exc)
 
     # ── 6. Submit to MatchConsensus (DB-backed, non-fatal) ───────────────────
     # Instantiate a DB-backed MatchConsensus for this match.  Because the
@@ -612,6 +719,10 @@ async def validate_screenshot(
                     _verdict.agreeing_players, _verdict.total_players,
                     _verdict.flagged_wallets,
                 )
+                # Auto-payout: find winner from votes and release funds.
+                # Non-fatal — admin can use declare-winner as fallback.
+                if _verdict.agreed_result:
+                    _auto_payout_on_consensus(match_id, _verdict.agreed_result)
         except Exception as exc:
             logger.error("validate_screenshot consensus step error (non-fatal): %s", exc)
 
