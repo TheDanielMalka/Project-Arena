@@ -958,7 +958,8 @@ class TestBuyArenaTokens:
     def test_buy_at_credits_correct_amount(self):
         """10 USDT → 100 AT (default AT_PER_USDT=10)."""
         ctx, session = _make_session_mock()
-        session.execute.return_value.fetchone.return_value = (300,)  # new at_balance
+        # fetchone chain: 1=dedup check (None=no dup), 2=UPDATE RETURNING new balance
+        session.execute.return_value.fetchone.side_effect = [None, (300,)]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 "/wallet/buy-at",
@@ -974,7 +975,7 @@ class TestBuyArenaTokens:
 
     def test_buy_at_returns_new_balance(self):
         ctx, session = _make_session_mock()
-        session.execute.return_value.fetchone.return_value = (450,)
+        session.execute.return_value.fetchone.side_effect = [None, (450,)]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 "/wallet/buy-at",
@@ -982,6 +983,20 @@ class TestBuyArenaTokens:
                 headers=self._auth_header(),
             )
         assert resp.json()["at_balance"] == 450
+
+    def test_buy_at_duplicate_tx_hash_returns_409(self):
+        """Same tx_hash sent twice → 409 on the second call."""
+        ctx, session = _make_session_mock()
+        # fetchone returns a row → duplicate found
+        session.execute.return_value.fetchone.return_value = (1,)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/wallet/buy-at",
+                json={"tx_hash": "0xDEADBEEF", "usdt_amount": 10.0},
+                headers=self._auth_header(),
+            )
+        assert resp.status_code == 409
+        assert "already been processed" in resp.json()["detail"]
 
     def test_buy_at_zero_amount_returns_400(self):
         resp = client.post(
@@ -2201,3 +2216,45 @@ class TestInbox:
     def test_delete_inbox_no_token_returns_422(self):
         resp = client.delete(f"/inbox/{uuid.uuid4()}")
         assert resp.status_code == 422
+
+
+# ─── Rate limiter unit tests ──────────────────────────────────────────────────
+
+class TestRateLimiter:
+    """Unit tests for _check_rate_limit helper (no DB needed)."""
+
+    def setup_method(self):
+        import main
+        main._rate_buckets.clear()
+
+    def test_allows_calls_within_limit(self):
+        from main import _check_rate_limit
+        for _ in range(4):
+            _check_rate_limit("rl_key", max_calls=5, window_secs=60)
+
+    def test_blocks_when_limit_exceeded(self):
+        from main import _check_rate_limit
+        from fastapi import HTTPException as _HTTPException
+        for _ in range(5):
+            _check_rate_limit("rl_key2", max_calls=5, window_secs=60)
+        with pytest.raises(_HTTPException) as exc_info:
+            _check_rate_limit("rl_key2", max_calls=5, window_secs=60)
+        assert exc_info.value.status_code == 429
+
+    def test_different_keys_are_independent(self):
+        from main import _check_rate_limit
+        for _ in range(5):
+            _check_rate_limit("key_a", max_calls=5, window_secs=60)
+        # key_b has its own bucket — should not be limited
+        _check_rate_limit("key_b", max_calls=5, window_secs=60)
+
+    def test_register_rate_limited_after_5_per_minute(self):
+        """POST /auth/register → 429 after 5 attempts from same IP."""
+        import main
+        # Exhaust the bucket for testclient's IP
+        for _ in range(5):
+            main._check_rate_limit("register:testclient", max_calls=5)
+        from fastapi import HTTPException as _HTTPException
+        with pytest.raises(_HTTPException) as exc_info:
+            main._check_rate_limit("register:testclient", max_calls=5)
+        assert exc_info.value.status_code == 429
