@@ -423,28 +423,27 @@ class TestInvitePreValidation:
         """
         Builds a mock session with the correct fetchone side_effect chain for
         invite_to_match.  Chain:
-          1. match_row  (game, status, bet_amount, stake_currency, code)
-          2. in_match   (caller is in the match)
-          3. friendship (accepted)
-          4. friend_row (wallet_address)
-          5. at_balance row (only relevant for AT currency)
+          1. match_row       (game, status, bet_amount, stake_currency, code)
+          2. in_match        (caller is in the match)
+          3. friend_in_match (friend NOT already in match → None)
+          4. friendship      (accepted)
+          5. friend_row      (wallet_address)
+          6. at_balance row  (only relevant for AT currency)
+          7. inviter username
         """
         ctx, session = _make_session()
         match_row = ("CS2", "waiting", 10, currency, "ARENA-XXXXX")
         side: list = [
             match_row,           # match lookup
             (1,),                # in_match — caller is a player
+            None,                # friend_in_match — not already in room
             (1,),                # friendship — accepted friend
             (friend_wallet,),    # friend wallet_address row
         ]
         if currency == "AT":
             side.append((friend_at,))  # at_balance for the friend
+        side.append((_USER_ID,))       # inviter username
         session.execute.return_value.fetchone.side_effect = side
-
-        # Inviter username lookup (separate call inside the route)
-        # The mock returns the last remaining value or the default; since
-        # fetchone side_effect is consumed in order, add the inviter name:
-        side.append((_USER_ID,))  # not used in validation, just inviter name
         return ctx
 
     def test_at_match_friend_with_enough_at_sends_invite(self):
@@ -454,6 +453,7 @@ class TestInvitePreValidation:
         ctx.__enter__.return_value.execute.return_value.fetchone.side_effect = [
             ("CS2", "waiting", 10, "AT", "ARENA-XXXXX"),
             (1,),          # in_match
+            None,          # friend_in_match — not in room
             (1,),          # friendship
             (None,),       # friend wallet (AT doesn't need it)
             (500,),        # friend at_balance ≥ 10 → OK
@@ -473,6 +473,7 @@ class TestInvitePreValidation:
         session.execute.return_value.fetchone.side_effect = [
             ("CS2", "waiting", 10, "AT", "ARENA-XXXXX"),  # match row
             (1,),          # in_match
+            None,          # friend_in_match — not in room
             (1,),          # friendship
             (None,),       # friend wallet (irrelevant for AT)
             (0,),          # friend at_balance = 0 < 10 → 402
@@ -491,6 +492,7 @@ class TestInvitePreValidation:
         session.execute.return_value.fetchone.side_effect = [
             ("CS2", "waiting", 10, "CRYPTO", "ARENA-XXXXX"),  # match row
             (1,),    # in_match
+            None,    # friend_in_match — not in room
             (1,),    # friendship
             (None,), # friend wallet = None → 400
         ]
@@ -518,3 +520,121 @@ class TestInvitePreValidation:
             json={"friend_id": _FRIEND_ID},
         )
         assert resp.status_code == 422  # missing Authorization header → 422
+
+    def test_friend_already_in_match_returns_409(self):
+        """Friend joined the room themselves → 409 before friendship/balance checks."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchone.side_effect = [
+            ("CS2", "waiting", 10, "AT", "ARENA-XXXXX"),  # match row
+            (1,),   # in_match — inviter is in the room
+            (1,),   # friend_in_match — friend is ALREADY in the room → 409
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{_MATCH_ID}/invite",
+                json={"friend_id": _FRIEND_ID},
+                headers=_AUTH_HEADERS,
+            )
+        assert resp.status_code == 409
+        assert "already" in resp.json()["detail"].lower()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# POST /matches/{id}/heartbeat — lobby keep-alive + stale player cleanup
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestMatchHeartbeat:
+    """POST /matches/{id}/heartbeat — keep-alive, roster refresh, stale cleanup."""
+
+    def _session_heartbeat(
+        self,
+        in_match: bool = True,
+        stale_rows: list | None = None,
+        players: list | None = None,
+        match_status: str = "waiting",
+    ):
+        """Build a mock session for the heartbeat route.
+
+        Fetchone chain:
+          1. UPDATE match_players RETURNING → player row (or None if not in match)
+        Fetchall chain:
+          1. stale SELECT → stale rows
+          2. players SELECT → roster
+        Fetchone chain (continued):
+          3. match_info SELECT → (status, game, mode, code, max_players, max_per_team)
+        """
+        ctx, session = _make_session()
+
+        if not in_match:
+            session.execute.return_value.fetchone.return_value = None
+            return ctx
+
+        stale = stale_rows or []
+        roster = players or [
+            (str(uuid.uuid4()), "HostPlayer", None, "ARENA-HH", "A"),
+            (str(uuid.uuid4()), "Player2",    None, "ARENA-P2", "B"),
+        ]
+
+        session.execute.return_value.fetchone.side_effect = [
+            (_USER_ID,),  # UPDATE RETURNING — in match
+        ]
+
+        session.execute.return_value.fetchall.side_effect = [
+            stale,   # stale player SELECT
+            roster,  # fresh roster SELECT
+        ]
+
+        # match_info fetchone — append after fetchall calls are consumed
+        match_info = (match_status, "CS2", "1v1", "ARENA-ABCDE", 2, 1)
+        # Re-configure: fetchone needs second call for match_info
+        session.execute.return_value.fetchone.side_effect = [
+            (_USER_ID,),   # UPDATE RETURNING
+            match_info,    # match SELECT
+        ]
+        session.execute.return_value.fetchall.side_effect = [
+            stale,   # stale players
+            roster,  # fresh roster
+        ]
+
+        return ctx
+
+    def test_heartbeat_returns_players(self):
+        """Happy path: in match → returns roster."""
+        ctx = self._session_heartbeat()
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{_MATCH_ID}/heartbeat",
+                headers=_AUTH_HEADERS,
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["in_match"] is True
+        assert isinstance(data["players"], list)
+        assert "your_team" in data
+        assert "your_user_id" in data
+
+    def test_heartbeat_not_in_match_returns_in_match_false(self):
+        """Player not in this match → in_match=False, no error."""
+        ctx = self._session_heartbeat(in_match=False)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{_MATCH_ID}/heartbeat",
+                headers=_AUTH_HEADERS,
+            )
+        assert resp.status_code == 200
+        assert resp.json()["in_match"] is False
+
+    def test_heartbeat_requires_auth(self):
+        resp = client.post(f"/matches/{_MATCH_ID}/heartbeat")
+        assert resp.status_code == 422
+
+    def test_heartbeat_returns_match_status(self):
+        """Response includes current match status."""
+        ctx = self._session_heartbeat(match_status="in_progress")
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{_MATCH_ID}/heartbeat",
+                headers=_AUTH_HEADERS,
+            )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "in_progress"
