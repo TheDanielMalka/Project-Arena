@@ -358,9 +358,9 @@ class ValidationResponse(BaseModel):
     Fields match CLAUDE.md naming contract exactly:
       result, confidence, accepted, game, players, agents, score
 
-    TODO:
-    - persist this as a match_evidence row in DB once schema is ready
-    - add match_id foreign key once matches table exists
+    Step-3 additions (consensus state, both optional so old callers still work):
+      consensus_status : "pending" | "reached" | "failed" | None
+      consensus_result : agreed result string when reached, else None
     """
     match_id: str
     game: str                            # "CS2" | "Valorant"
@@ -371,6 +371,8 @@ class ValidationResponse(BaseModel):
     agents: list[str] = []              # Valorant agent names; [] for CS2
     score: str | None
     evidence_path: str | None
+    consensus_status: str | None = None  # "pending" | "reached" | "failed"
+    consensus_result: str | None = None  # agreed outcome when consensus reached
 
 
 class CaptureResponse(BaseModel):
@@ -563,7 +565,57 @@ async def validate_screenshot(
         except Exception as exc:
             logger.error("validate_screenshot evidence insert error (non-fatal): %s", exc)
 
-    # ── 6. Return response ────────────────────────────────────────────────────
+    # ── 6. Submit to MatchConsensus (DB-backed, non-fatal) ───────────────────
+    # Instantiate a DB-backed MatchConsensus for this match.  Because the
+    # constructor calls _restore_from_db(), any votes persisted before an
+    # engine restart are re-loaded automatically — no lost votes on crash.
+    #
+    # If consensus is REACHED on this submission we log it; the actual payout
+    # trigger is owned by POST /match/result once the winner_id is confirmed
+    # by the client.  This step is purely vote-tracking.
+    #
+    # DB-ready: match_consensus table (013-match-consensus.sql)
+    consensus_status_str: str | None = None
+    consensus_result_str: str | None = None
+
+    if output.result and wallet_address:
+        try:
+            from src.vision.consensus import MatchConsensus, ConsensusStatus
+
+            # Fetch max_players from DB to know when consensus is complete
+            _expected = 2   # safe default
+            try:
+                with SessionLocal() as _s:
+                    _mp_row = _s.execute(
+                        text("SELECT max_players FROM matches WHERE id = :mid"),
+                        {"mid": match_id},
+                    ).fetchone()
+                    if _mp_row and _mp_row[0]:
+                        _expected = int(_mp_row[0])
+            except Exception as _exc:
+                logger.debug("consensus: max_players lookup failed (using 2): %s", _exc)
+
+            _consensus = MatchConsensus(
+                match_id=match_id,
+                expected_players=_expected,
+                session_factory=SessionLocal,
+            )
+            _status = _consensus.submit(wallet_address, output)
+            consensus_status_str = _status.value
+
+            if _status == ConsensusStatus.REACHED:
+                _verdict = _consensus.evaluate()
+                consensus_result_str = _verdict.agreed_result
+                logger.info(
+                    "consensus REACHED: match=%s result=%s agreeing=%d/%d flagged=%s",
+                    match_id, _verdict.agreed_result,
+                    _verdict.agreeing_players, _verdict.total_players,
+                    _verdict.flagged_wallets,
+                )
+        except Exception as exc:
+            logger.error("validate_screenshot consensus step error (non-fatal): %s", exc)
+
+    # ── 7. Return response ────────────────────────────────────────────────────
     return ValidationResponse(
         match_id=match_id,
         game=game,
@@ -574,6 +626,8 @@ async def validate_screenshot(
         agents=output.agents,
         score=output.score,
         evidence_path=evidence_path,
+        consensus_status=consensus_status_str,
+        consensus_result=consensus_result_str,
     )
 
 
@@ -1142,6 +1196,142 @@ async def match_status(
         "stake_per_player":  None,
         "your_team":         None,
     }
+
+
+
+@app.get("/match/{match_id}/consensus")
+async def match_consensus_state(
+    match_id: str,
+    token: dict | None = Depends(optional_token),
+):
+    """
+    Return the current consensus state for a match.
+
+    Reads directly from the match_consensus table (persistent storage) so
+    this always reflects the true state, even after an engine restart.
+
+    Response shape:
+      {
+        "match_id":          "<uuid>",
+        "status":            "pending" | "reached" | "failed",
+        "agreed_result":     "<result>" | null,
+        "total_votes":       <int>,
+        "agreeing_votes":    <int>,
+        "expected_players":  <int>,
+        "flagged_wallets":   ["0x..."],
+        "submissions": [
+          {
+            "wallet_address": "0x...",
+            "result":         "<result>" | null,
+            "confidence":     0.95,
+            "submitted_at":   "2026-01-01T00:00:00Z"
+          }
+        ]
+      }
+
+    Returns {"status": "no_data"} when no votes have been recorded yet.
+    Requires no authentication (match info is already public via GET /matches).
+
+    DB-ready: match_consensus table (013-match-consensus.sql)
+    """
+    try:
+        with SessionLocal() as session:
+            # Fetch all votes for this match
+            vote_rows = session.execute(
+                text("""
+                    SELECT wallet_address, result, confidence, submitted_at
+                    FROM   match_consensus
+                    WHERE  match_id = :mid
+                    ORDER  BY submitted_at
+                """),
+                {"mid": match_id},
+            ).fetchall()
+
+            # Also look up expected_players from matches table
+            match_row = session.execute(
+                text("SELECT max_players FROM matches WHERE id = :mid"),
+                {"mid": match_id},
+            ).fetchone()
+
+        expected = int(match_row[0]) if match_row and match_row[0] else 2
+
+        if not vote_rows:
+            return {
+                "match_id":         match_id,
+                "status":           "no_data",
+                "agreed_result":    None,
+                "total_votes":      0,
+                "agreeing_votes":   0,
+                "expected_players": expected,
+                "flagged_wallets":  [],
+                "submissions":      [],
+            }
+
+        # Reconstruct consensus in memory from DB rows (cheap, no vision work)
+        from src.vision.consensus import MatchConsensus, ConsensusStatus
+
+        _c = MatchConsensus(match_id=match_id, expected_players=expected)
+        for row in vote_rows:
+            wallet, result, confidence, _ = row
+            # Inject directly into _submissions dict (bypass persist — already in DB)
+            from src.vision.consensus import PlayerSubmission
+            from datetime import datetime as _dt, timezone as _tz
+            submitted_at = row[3] or _dt.now(_tz.utc)
+            _c._submissions[wallet] = PlayerSubmission(
+                wallet_address=wallet,
+                result=result,
+                confidence=float(confidence),
+                players=[],   # not stored in summary query for brevity
+                submitted_at=submitted_at,
+            )
+
+        # Use _current_status() so PENDING is returned when fewer than
+        # expected_players have submitted, even if the fraction already meets
+        # the threshold among those who have.  Only call evaluate() when all
+        # players have submitted (is_complete() == True).
+        current_status = _c._current_status()
+
+        if current_status == ConsensusStatus.PENDING:
+            verdict_result    = None
+            agreeing_players  = 0
+            flagged: list[str] = []
+        else:
+            verdict           = _c.evaluate()
+            verdict_result    = verdict.agreed_result
+            agreeing_players  = verdict.agreeing_players
+            flagged           = verdict.flagged_wallets
+
+        return {
+            "match_id":         match_id,
+            "status":           current_status.value,
+            "agreed_result":    verdict_result,
+            "total_votes":      len(vote_rows),
+            "agreeing_votes":   agreeing_players,
+            "expected_players": expected,
+            "flagged_wallets":  flagged,
+            "submissions": [
+                {
+                    "wallet_address": row[0],
+                    "result":         row[1],
+                    "confidence":     float(row[2]),
+                    "submitted_at":   row[3].isoformat() if row[3] else None,
+                }
+                for row in vote_rows
+            ],
+        }
+
+    except Exception as exc:
+        logger.error("match_consensus_state error: match=%s error=%s", match_id, exc)
+        return {
+            "match_id":         match_id,
+            "status":           "error",
+            "agreed_result":    None,
+            "total_votes":      0,
+            "agreeing_votes":   0,
+            "expected_players": 2,
+            "flagged_wallets":  [],
+            "submissions":      [],
+        }
 
 
 # ── Auth routes ───────────────────────────────────────────────────────────────
