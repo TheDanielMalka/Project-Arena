@@ -4,7 +4,10 @@ import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException, Depends, Header, Query, UploadFile, File
+import time as _time
+from collections import defaultdict as _defaultdict
+
+from fastapi import FastAPI, HTTPException, Depends, Header, Query, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, model_validator
 from sqlalchemy import create_engine, text
@@ -50,6 +53,23 @@ SessionLocal = sessionmaker(bind=db_engine)
 # CONTRACT-ready: EscrowClient.declare_winner() releases payout on-chain.
 _escrow_client = None
 _listener_task = None  # background thread task — EscrowClient.listen()
+
+# ── In-memory rate limiter ────────────────────────────────────────────────────
+# Sliding-window counter; safe under asyncio's single event loop per worker.
+# Replace with Redis-backed limits before multi-process / multi-server deploy.
+_rate_buckets: dict[str, list[float]] = _defaultdict(list)
+
+
+def _check_rate_limit(key: str, max_calls: int, window_secs: int = 60) -> None:
+    """Raise HTTP 429 when *key* exceeds *max_calls* within the last *window_secs*."""
+    now = _time.monotonic()
+    _rate_buckets[key] = [t for t in _rate_buckets[key] if now - t < window_secs]
+    if len(_rate_buckets[key]) >= max_calls:
+        raise HTTPException(
+            429,
+            "Too many requests — please wait a moment and try again",
+        )
+    _rate_buckets[key].append(now)
 
 
 async def _stale_player_cleanup_loop(interval: int = 15) -> None:
@@ -188,6 +208,12 @@ async def lifespan(app: FastAPI):
             conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS idx_match_players_last_seen "
                 "ON match_players(last_seen)"
+            ))
+            # Migration 015: partial UNIQUE index on transactions.tx_hash
+            # Prevents the same on-chain tx from being credited twice.
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_tx_hash_unique "
+                "ON transactions(tx_hash) WHERE tx_hash IS NOT NULL"
             ))
             conn.commit()
         logger.info("✅ Arena Engine connected to DB")
@@ -1546,13 +1572,15 @@ async def match_consensus_state(
 # ── Auth routes ───────────────────────────────────────────────────────────────
 
 @app.post("/auth/register", response_model=AuthResponse, status_code=201)
-async def register(req: RegisterRequest):
+async def register(req: RegisterRequest, request: Request):
     """
     Register a new Arena user.
 
     Creates rows in: users, user_stats, user_balances, user_roles.
     DB-ready: all inserts use the users table from infra/sql/init.sql.
     """
+    _check_rate_limit(f"register:{request.client.host}", max_calls=5, window_secs=60)
+
     # ── Normalize inputs ──────────────────────────────────────────────────────
     email    = req.email.strip().lower()
     username = req.username.strip()
@@ -1625,12 +1653,13 @@ async def register(req: RegisterRequest):
 
 
 @app.post("/auth/login", response_model=AuthResponse)
-async def login(req: LoginRequest):
+async def login(req: LoginRequest, request: Request):
     """
     Login with email OR username + password.
 
     DB-ready: SELECT from users table; verifies bcrypt hash.
     """
+    _check_rate_limit(f"login:{request.client.host}", max_calls=10, window_secs=60)
     try:
         with SessionLocal() as session:
             row = session.execute(
@@ -2211,6 +2240,7 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
               and match_players (match_id, user_id, wallet_address).
     """
     user_id: str = payload["sub"]
+    _check_rate_limit(f"matches:{user_id}", max_calls=5, window_secs=60)
     game = _normalize_game(req.game)
 
     if game not in _VALID_GAMES:
@@ -2792,6 +2822,7 @@ async def invite_to_match(
     DB-ready: notifications table, type='match_invite'
     """
     user_id: str = payload["sub"]
+    _check_rate_limit(f"invite:{user_id}", max_calls=10, window_secs=60)
     if user_id == req.friend_id:
         raise HTTPException(400, "Cannot invite yourself")
 
@@ -2942,6 +2973,7 @@ async def buy_arena_tokens(req: BuyAtRequest, payload: dict = Depends(verify_tok
     from src.config import AT_PER_USDT
 
     user_id: str = payload["sub"]
+    _check_rate_limit(f"buy_at:{user_id}", max_calls=3, window_secs=60)
 
     if req.usdt_amount <= 0:
         raise HTTPException(400, "usdt_amount must be greater than 0")
@@ -2952,6 +2984,15 @@ async def buy_arena_tokens(req: BuyAtRequest, payload: dict = Depends(verify_tok
 
     try:
         with SessionLocal() as session:
+            # ── Dedup: reject replayed on-chain transactions ──────────────────
+            if req.tx_hash:
+                duplicate = session.execute(
+                    text("SELECT 1 FROM transactions WHERE tx_hash = :h"),
+                    {"h": req.tx_hash},
+                ).fetchone()
+                if duplicate:
+                    raise HTTPException(409, "This transaction has already been processed")
+
             result = session.execute(
                 text("""
                     UPDATE users
@@ -2965,6 +3006,15 @@ async def buy_arena_tokens(req: BuyAtRequest, payload: dict = Depends(verify_tok
             if not result:
                 raise HTTPException(404, "User not found")
 
+            # Record with tx_hash so the UNIQUE index blocks any future replay.
+            session.execute(
+                text(
+                    "INSERT INTO transactions "
+                    "(user_id, type, amount, token, status, tx_hash) "
+                    "VALUES (:uid, 'at_purchase', :amt, 'AT', 'completed', :txh)"
+                ),
+                {"uid": user_id, "amt": at_to_credit, "txh": req.tx_hash or None},
+            )
             session.commit()
             new_balance = int(result[0])
 
@@ -3228,9 +3278,19 @@ async def buy_at_package(req: BuyAtPackageRequest, payload: dict = Depends(verif
     DB-ready: UPDATE users SET at_balance + :at; INSERT transactions.
     """
     user_id: str = payload["sub"]
+    _check_rate_limit(f"buy_at_pkg:{user_id}", max_calls=3, window_secs=60)
 
     try:
         with SessionLocal() as session:
+            # ── Dedup: reject replayed on-chain transactions ──────────────────
+            if req.tx_hash:
+                duplicate = session.execute(
+                    text("SELECT 1 FROM transactions WHERE tx_hash = :h"),
+                    {"h": req.tx_hash},
+                ).fetchone()
+                if duplicate:
+                    raise HTTPException(409, "This transaction has already been processed")
+
             pkg = session.execute(
                 text(
                     "SELECT at_amount, usdt_price, discount_pct "
@@ -3257,12 +3317,14 @@ async def buy_at_package(req: BuyAtPackageRequest, payload: dict = Depends(verif
             if not result:
                 raise HTTPException(404, "User not found")
 
+            # Include tx_hash so the UNIQUE index blocks any future replay.
             session.execute(
                 text(
-                    "INSERT INTO transactions (user_id, type, amount, token, status) "
-                    "VALUES (:uid, 'at_purchase', :amt, 'AT', 'completed')"
+                    "INSERT INTO transactions "
+                    "(user_id, type, amount, token, status, tx_hash) "
+                    "VALUES (:uid, 'at_purchase', :amt, 'AT', 'completed', :txh)"
                 ),
-                {"uid": user_id, "amt": int(at_amount)},
+                {"uid": user_id, "amt": int(at_amount), "txh": req.tx_hash or None},
             )
             session.commit()
             new_balance = int(result[0])
