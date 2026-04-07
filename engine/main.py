@@ -1281,6 +1281,19 @@ async def get_active_match(payload: dict = Depends(verify_token)):
                 return {"match": None}
 
             match_id = str(row[0])
+
+            # Touch last_seen so the existing 3-second frontend poll doubles as
+            # a keep-alive.  Without this, _stale_player_cleanup_loop would remove
+            # active lobby users after 45 s just because they never called /heartbeat.
+            session.execute(
+                text(
+                    "UPDATE match_players SET last_seen = NOW() "
+                    "WHERE match_id = :mid AND user_id = :uid"
+                ),
+                {"mid": match_id, "uid": user_id},
+            )
+            session.commit()
+
             players = session.execute(
                 text(
                     "SELECT u.id, u.username, u.avatar, u.arena_id, "
