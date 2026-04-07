@@ -5116,38 +5116,62 @@ async def admin_oracle_status(payload: dict = Depends(require_admin)):
 
 
 @app.post("/admin/oracle/sync", status_code=200)
-async def admin_oracle_sync(payload: dict = Depends(require_admin)):
+async def admin_oracle_sync(
+    from_block: int | None = Query(default=None),
+    payload: dict = Depends(require_admin),
+):
     """
-    Manually trigger a one-off event scan from last_block to current chain head.
+    Manually trigger a one-off event scan from a given block to the current
+    chain head.
 
-    Useful after downtime or to force an immediate catch-up without waiting
-    for the next poll interval. Non-destructive — last_block is updated after.
+    Query param:
+      ?from_block=<N>   Start scanning from block N (recovery after outage).
+                        If omitted, resumes from last_block+1 stored in DB
+                        (same as automatic listener behaviour).
+
+    Use cases:
+      - Engine was down and events were missed: pass from_block=<last_known_good>
+      - Force an immediate full catch-up: omit from_block
+
+    Non-destructive: last_block in oracle_sync_state is updated after.
 
     DB-ready: reads oracle_sync_state, calls EscrowClient.process_events(),
               then upserts updated last_block.
+    CONTRACT-ready: EscrowClient.process_events() handles all ArenaEscrow events.
     """
     if not _escrow_client:
         raise HTTPException(503, "EscrowClient not available — blockchain env vars not set")
 
     try:
-        saved_block = _escrow_client._load_last_block()
         current_block = _escrow_client._w3.eth.block_number
-        from_block = (saved_block + 1) if saved_block > 0 else max(0, current_block - 100)
 
-        if from_block > current_block:
-            return {"synced": True, "events_processed": 0, "from_block": from_block, "to_block": current_block}
+        if from_block is not None:
+            # Caller explicitly specified a start block — use it directly
+            scan_from = max(0, from_block)
+        else:
+            # Resume from where the listener last left off
+            saved_block = _escrow_client._load_last_block()
+            scan_from = (saved_block + 1) if saved_block > 0 else max(0, current_block - 100)
 
-        n = _escrow_client.process_events(from_block, current_block)
+        if scan_from > current_block:
+            return {
+                "synced": True,
+                "events_processed": 0,
+                "from_block": scan_from,
+                "to_block": current_block,
+            }
+
+        n = _escrow_client.process_events(scan_from, current_block)
         _escrow_client._save_last_block(current_block)
 
         logger.info(
             "admin_oracle_sync: processed %d events | blocks %d→%d",
-            n, from_block, current_block,
+            n, scan_from, current_block,
         )
         return {
             "synced": True,
             "events_processed": n,
-            "from_block": from_block,
+            "from_block": scan_from,
             "to_block": current_block,
         }
     except HTTPException:
@@ -5155,3 +5179,117 @@ async def admin_oracle_sync(payload: dict = Depends(require_admin)):
     except Exception as exc:
         logger.error("admin_oracle_sync error: %s", exc)
         raise HTTPException(500, "Oracle sync failed")
+
+
+class DeclareWinnerRequest(BaseModel):
+    """Body for POST /admin/match/{id}/declare-winner."""
+    winner_id: str
+    reason: str = ""   # admin note — logged and sent to winner's inbox
+
+
+@app.post("/admin/match/{match_id}/declare-winner", status_code=200)
+async def admin_declare_winner(
+    match_id: str,
+    req: DeclareWinnerRequest,
+    payload: dict = Depends(require_admin),
+):
+    """
+    Admin manual winner declaration — bypasses consensus flow.
+
+    Use for:
+      - Dispute resolution (admin reviewed evidence and picks winner)
+      - Stuck matches (all players disconnected; consensus never reached)
+      - Timeout / AFK forfeit scenarios
+
+    Flow:
+      1. Verify match exists and is not already completed/cancelled
+      2. UPDATE matches → status=completed, winner_id, ended_at=NOW()
+      3. Trigger payout (AT: _settle_at_match; CRYPTO: EscrowClient.declare_winner)
+      4. Send inbox notification to winner
+      5. Return {"declared": True, match_id, winner_id, stake_currency}
+
+    DB-ready: matches, match_players, inbox_messages
+    CONTRACT-ready: EscrowClient.declare_winner() for CRYPTO matches
+    """
+    try:
+        with SessionLocal() as session:
+            match_row = session.execute(
+                text("SELECT status, stake_currency FROM matches WHERE id = :mid"),
+                {"mid": match_id},
+            ).fetchone()
+
+        if not match_row:
+            raise HTTPException(404, f"Match {match_id} not found")
+
+        match_status, stake_currency = match_row[0], match_row[1]
+        if match_status in ("completed", "cancelled"):
+            raise HTTPException(
+                409,
+                f"Match is already {match_status} — cannot override winner",
+            )
+
+        # ── 1. Write winner to DB ─────────────────────────────────────────────
+        with SessionLocal() as session:
+            session.execute(
+                text(
+                    "UPDATE matches "
+                    "SET status = 'completed', winner_id = :winner, ended_at = NOW() "
+                    "WHERE id = :mid"
+                ),
+                {"winner": req.winner_id, "mid": match_id},
+            )
+            session.commit()
+
+        # ── 2. Payout ─────────────────────────────────────────────────────────
+        if stake_currency == "AT":
+            _settle_at_match(match_id, req.winner_id)
+        elif _escrow_client:
+            try:
+                tx_hash = _escrow_client.declare_winner(match_id, req.winner_id)
+                logger.info(
+                    "admin_declare_winner on-chain: match=%s tx=%s",
+                    match_id, tx_hash,
+                )
+            except Exception as exc:
+                logger.error(
+                    "admin_declare_winner on-chain failed (non-fatal): match=%s error=%s",
+                    match_id, exc,
+                )
+
+        # ── 3. Inbox notification to winner ───────────────────────────────────
+        try:
+            with SessionLocal() as session:
+                reason_note = f" Reason: {req.reason}" if req.reason else ""
+                _send_system_inbox(
+                    session,
+                    req.winner_id,
+                    subject="🏆 Victory — Admin Declaration",
+                    content=(
+                        f"An admin has declared you the winner of match {match_id}."
+                        f"{reason_note} Winnings will be released shortly."
+                    ),
+                )
+                session.commit()
+        except Exception as exc:
+            logger.warning(
+                "admin_declare_winner: inbox notification failed (non-fatal): %s", exc
+            )
+
+        logger.info(
+            "admin_declare_winner: match=%s winner=%s admin=%s reason=%r",
+            match_id, req.winner_id, payload.get("sub"), req.reason,
+        )
+        return {
+            "declared":       True,
+            "match_id":       match_id,
+            "winner_id":      req.winner_id,
+            "stake_currency": stake_currency,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            "admin_declare_winner error: match=%s error=%s", match_id, exc
+        )
+        raise HTTPException(500, "Winner declaration failed")

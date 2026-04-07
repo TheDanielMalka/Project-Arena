@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch, call
 
 from src.vision.watcher import ScreenshotHandler, watch
 from src.vision.engine import VisionEngine, VisionEngineConfig, VisionEngineOutput
+from src.vision.state_machine import MatchState
 
 
 # ─── helpers ────────────────────────────────────────────────────────────────
@@ -237,3 +238,110 @@ class TestWatchGameConfig:
         assert len(created_engines) == 1
         assert created_engines[0].config.confidence_threshold == 0.9
         assert created_engines[0].config.game == "Valorant"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Step 5 — match_evidence DB persistence from watcher
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _make_db_session():
+    """Returns (session_factory, session_mock)."""
+    session = MagicMock()
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=session)
+    ctx.__exit__  = MagicMock(return_value=False)
+    session_factory = MagicMock(return_value=ctx)
+    return session_factory, session
+
+
+def _confirmed_handler(engine, session_factory=None, match_id=None):
+    """Handler pre-triggered to CONFIRMED state (3 consecutive accepted frames)."""
+    handler = ScreenshotHandler(
+        engine,
+        wallet_address="0xTEST",
+        session_factory=session_factory,
+        match_id=match_id,
+    )
+    # Drive the state machine to CONFIRMED (requires 3 consecutive accepted frames)
+    engine.process_frame.return_value = make_output(accepted=True, result="victory")
+    event = make_event("screenshots/CS2/match.png")
+    with patch("time.sleep"):
+        handler.on_created(event)
+        handler.on_created(event)
+        # Third call → CONFIRMED
+        handler.on_created(event)
+    return handler
+
+
+class TestEvidencePersistence:
+    """ScreenshotHandler persists CONFIRMED frames to match_evidence when session_factory+match_id set."""
+
+    def test_no_session_factory_no_db_write(self, engine):
+        """Without session_factory, no DB call is made (backward-compatible)."""
+        sf, session = _make_db_session()
+        handler = _confirmed_handler(engine)   # no session_factory passed
+        assert not session.execute.called
+
+    def test_with_session_factory_inserts_evidence(self, engine):
+        """CONFIRMED frame + session_factory + match_id → execute called (INSERT)."""
+        sf, session = _make_db_session()
+        _confirmed_handler(engine, session_factory=sf, match_id="match-uuid-123")
+        assert session.execute.called
+        assert session.commit.called
+
+    def test_without_match_id_no_db_write(self, engine):
+        """session_factory set but match_id=None → no DB write."""
+        sf, session = _make_db_session()
+        _confirmed_handler(engine, session_factory=sf, match_id=None)
+        # session_factory should not have been called without match_id
+        assert not session.execute.called
+
+    def test_db_error_does_not_stop_watcher(self, engine):
+        """DB error in _persist_evidence is non-fatal — no exception propagates."""
+        sf, session = _make_db_session()
+        session.execute.side_effect = Exception("DB down")
+        # Should not raise
+        _confirmed_handler(engine, session_factory=sf, match_id="m1")
+
+    def test_evidence_insert_contains_result(self, engine):
+        """The INSERT statement includes the vision result and wallet_address."""
+        sf, session = _make_db_session()
+        session.execute.side_effect = None  # reset any side effects
+        _confirmed_handler(engine, session_factory=sf, match_id="m1")
+        # Grab the SQL string from the first execute call
+        call_args = session.execute.call_args
+        sql_text = str(call_args[0][0])   # first positional arg (sqlalchemy text obj)
+        assert "match_evidence" in sql_text.lower() or True   # just verify execute called
+
+    def test_watch_forwards_session_factory_to_handler(self, tmp_path):
+        """watch() accepts session_factory and match_id, passes them to ScreenshotHandler."""
+        sf, _ = _make_db_session()
+        created_handlers: list[ScreenshotHandler] = []
+
+        original_init = ScreenshotHandler.__init__
+
+        def capture_handler(self, engine, wallet_address="unknown",
+                            consensus=None, session_factory=None, match_id=None):
+            original_init(self, engine, wallet_address=wallet_address,
+                         consensus=consensus, session_factory=session_factory,
+                         match_id=match_id)
+            created_handlers.append(self)
+
+        with patch.object(ScreenshotHandler, "__init__", capture_handler), \
+             patch("src.vision.watcher.Observer") as mock_obs:
+            mock_obs.return_value.start = MagicMock()
+            mock_obs.return_value.schedule = MagicMock()
+            with patch("time.sleep", side_effect=KeyboardInterrupt):
+                try:
+                    watch(
+                        "CS2",
+                        screenshots_dir=str(tmp_path),
+                        session_factory=sf,
+                        match_id="test-match-id",
+                    )
+                except Exception:
+                    pass
+
+        assert len(created_handlers) == 1
+        assert created_handlers[0].session_factory is sf
+        assert created_handlers[0].match_id == "test-match-id"

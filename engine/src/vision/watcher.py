@@ -2,23 +2,50 @@ import time
 import os
 import logging
 import threading
+import uuid as _uuid
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from src.vision.engine import VisionEngine, VisionEngineConfig
 from src.vision.state_machine import StateMachine, MatchState
 from src.vision.consensus import MatchConsensus, ConsensusStatus
-from typing import Optional
+from typing import Optional, Callable, Any
 
 log = logging.getLogger("vision.watcher")
 
 
 class ScreenshotHandler(FileSystemEventHandler):
+    """
+    Watches a screenshot directory and runs the vision pipeline on each new PNG.
 
-    def __init__(self, engine: VisionEngine, wallet_address: str,
-                 consensus: Optional[MatchConsensus] = None):
+    Parameters
+    ----------
+    engine         : VisionEngine instance to call process_frame() on.
+    wallet_address : Player's wallet address — used for consensus submissions
+                     and match_evidence DB rows.
+    consensus      : Optional MatchConsensus; when provided the confirmed result
+                     is submitted for multi-player consensus evaluation.
+    session_factory: Optional SQLAlchemy session factory (e.g. SessionLocal).
+                     When provided alongside match_id, each CONFIRMED frame is
+                     persisted to match_evidence table in DB.
+    match_id       : UUID of the active match; required for DB persistence.
+                     Ignored when session_factory is None.
+
+    DB-ready: match_evidence table (infra/sql/init.sql)
+    """
+
+    def __init__(
+        self,
+        engine: VisionEngine,
+        wallet_address: str,
+        consensus: Optional[MatchConsensus] = None,
+        session_factory: Optional[Callable[[], Any]] = None,
+        match_id: Optional[str] = None,
+    ):
         self.engine = engine
         self.wallet_address = wallet_address
         self.consensus = consensus
+        self.session_factory = session_factory
+        self.match_id = match_id
         self.last_processed_time: float = 0
         self.state_machine = StateMachine(confirmations_required=3)
 
@@ -61,6 +88,14 @@ class ScreenshotHandler(FileSystemEventHandler):
                 print(f"agents:  {confirmed.agents}")
             self.state_machine.mark_reported()
 
+            # ── Persist to match_evidence (Step 5) ───────────────────────────
+            # When session_factory + match_id are provided (desktop client
+            # launched via the arena engine CLI), save the confirmed frame to
+            # the DB so admins can audit every submission.
+            # DB-ready: match_evidence table from infra/sql/init.sql
+            if self.session_factory is not None and self.match_id is not None:
+                self._persist_evidence(confirmed, image_path)
+
             # Submit to consensus if a match session is active
             if self.consensus is not None:
                 consensus_status = self.consensus.submit(self.wallet_address, confirmed)
@@ -82,12 +117,65 @@ class ScreenshotHandler(FileSystemEventHandler):
         else:
             print(f"no confidence: {result.confidence:.0%}")
 
+    # ── DB helpers ──────────────────────────────────────────────────────────── #
+
+    def _persist_evidence(self, output, image_path: str) -> None:
+        """
+        INSERT confirmed vision output to match_evidence table.
+
+        Called only when session_factory and match_id are both set.
+        Non-fatal: any DB error is logged and swallowed so the watcher
+        continues processing frames even if DB is temporarily unavailable.
+
+        DB-ready: match_evidence table (infra/sql/init.sql)
+        """
+        try:
+            from sqlalchemy import text as _text
+            evidence_id = str(_uuid.uuid4())
+            with self.session_factory() as session:
+                session.execute(
+                    _text("""
+                        INSERT INTO match_evidence
+                            (id, match_id, wallet_address, game, result, confidence,
+                             accepted, players, agents, score, screenshot_path)
+                        VALUES
+                            (:id, :mid, :wallet, :game, :result, :confidence,
+                             :accepted, :players, :agents, :score, :sspath)
+                        ON CONFLICT DO NOTHING
+                    """),
+                    {
+                        "id":         evidence_id,
+                        "mid":        self.match_id,
+                        "wallet":     self.wallet_address,
+                        "game":       getattr(output, "game", "CS2"),
+                        "result":     output.result,
+                        "confidence": float(output.confidence),
+                        "accepted":   bool(output.accepted),
+                        "players":    output.players,
+                        "agents":     getattr(output, "agents", []),
+                        "score":      getattr(output, "score", None),
+                        "sspath":     image_path,
+                    },
+                )
+                session.commit()
+                log.info(
+                    "watcher | evidence persisted: match=%s wallet=%s result=%s",
+                    self.match_id, self.wallet_address, output.result,
+                )
+        except Exception as exc:
+            log.error(
+                "watcher | evidence persist failed (non-fatal): match=%s error=%s",
+                self.match_id, exc,
+            )
+
 
 def watch(game: str, screenshots_dir: str = "screenshots",
           config: Optional[VisionEngineConfig] = None,
           wallet_address: str = "unknown",
           consensus: Optional[MatchConsensus] = None,
-          stop_event: Optional[threading.Event] = None):
+          stop_event: Optional[threading.Event] = None,
+          session_factory: Optional[Callable[[], Any]] = None,
+          match_id: Optional[str] = None):
     """
     Watch a directory for new PNG screenshots and run the vision pipeline
     on each one.
@@ -104,7 +192,8 @@ def watch(game: str, screenshots_dir: str = "screenshots",
                             directory being watched.
                           - If provided → used as-is.  A warning is logged
                             if config.game differs from the `game` argument.
-        wallet_address  : player's wallet address for consensus submissions.
+        wallet_address  : player's wallet address for consensus submissions
+                          and match_evidence DB rows.
         consensus       : optional MatchConsensus instance; when provided
                           the confirmed result is submitted for multi-player
                           consensus evaluation.
@@ -112,11 +201,18 @@ def watch(game: str, screenshots_dir: str = "screenshots",
                           loop exits cleanly.  If None, the loop runs until
                           KeyboardInterrupt (original behaviour — fully
                           backward-compatible).
+        session_factory : optional SQLAlchemy session factory.  When provided
+                          alongside match_id, each CONFIRMED frame is written
+                          to match_evidence table in DB (Step 5).
+        match_id        : UUID of the active match for DB persistence.
+                          Required when session_factory is set; ignored otherwise.
 
     Critical note: when config=None the engine is seeded with game=<game>.
     Callers that pass a custom config are responsible for setting config.game
     correctly. This prevents Valorant screenshots from being processed by
     the CS2 colour detector (and vice-versa).
+
+    DB-ready: match_evidence table (013-match-consensus.sql pattern)
     """
     watch_path = os.path.join(screenshots_dir, game.replace(" ", "_"))
     os.makedirs(watch_path, exist_ok=True)
@@ -136,8 +232,13 @@ def watch(game: str, screenshots_dir: str = "screenshots",
         )
 
     engine = VisionEngine(config=config)
-    handler = ScreenshotHandler(engine, wallet_address=wallet_address,
-                                consensus=consensus)
+    handler = ScreenshotHandler(
+        engine,
+        wallet_address=wallet_address,
+        consensus=consensus,
+        session_factory=session_factory,
+        match_id=match_id,
+    )
 
     observer = Observer()
     observer.schedule(handler, path=watch_path, recursive=False)
