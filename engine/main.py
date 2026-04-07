@@ -2200,11 +2200,11 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
             ).fetchone()
             match_id = str(match_row[0])
 
-            # ── Add creator as first player ───────────────────────────────────
+            # ── Add creator as first player (always Team A) ───────────────────
             session.execute(
                 text(
-                    "INSERT INTO match_players (match_id, user_id, wallet_address) "
-                    "VALUES (:mid, :uid, :w)"
+                    "INSERT INTO match_players (match_id, user_id, wallet_address, team) "
+                    "VALUES (:mid, :uid, :w, 'A')"
                 ),
                 {"mid": match_id, "uid": user_id, "w": wallet_address},
             )
@@ -2258,7 +2258,8 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
             # ── Verify match exists and is open ───────────────────────────────
             match_row = session.execute(
                 text(
-                    "SELECT game, status, bet_amount, stake_currency, password, max_players "
+                    "SELECT game, status, bet_amount, stake_currency, password, "
+                    "       max_players, max_per_team "
                     "FROM matches WHERE id = :mid"
                 ),
                 {"mid": match_id},
@@ -2267,7 +2268,7 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
             if not match_row:
                 raise HTTPException(404, "Match not found")
 
-            game, status, stake_amount, stake_currency, match_password, max_players = match_row
+            game, status, stake_amount, stake_currency, match_password, max_players, max_per_team = match_row
             game = _normalize_game(game or "CS2")
             stake_currency = (stake_currency or "CRYPTO").upper()
 
@@ -2337,13 +2338,26 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
             if already:
                 raise HTTPException(409, "Already joined this match")
 
+            # ── Determine team assignment ─────────────────────────────────────
+            # Fill Team A up to max_per_team slots first, then Team B.
+            # This ensures 5v5 with friends works correctly:
+            #   players 1-5 → Team A, players 6-10 → Team B.
+            team_a_count = session.execute(
+                text(
+                    "SELECT COUNT(*) FROM match_players "
+                    "WHERE match_id = :mid AND team = 'A'"
+                ),
+                {"mid": match_id},
+            ).fetchone()[0]
+            assigned_team = "A" if int(team_a_count) < int(max_per_team or 1) else "B"
+
             # ── Join ──────────────────────────────────────────────────────────
             session.execute(
                 text(
-                    "INSERT INTO match_players (match_id, user_id, wallet_address) "
-                    "VALUES (:mid, :uid, :w)"
+                    "INSERT INTO match_players (match_id, user_id, wallet_address, team) "
+                    "VALUES (:mid, :uid, :w, :team)"
                 ),
-                {"mid": match_id, "uid": user_id, "w": wallet_address},
+                {"mid": match_id, "uid": user_id, "w": wallet_address, "team": assigned_team},
             )
 
             # ── Lock joiner's AT stake ────────────────────────────────────────
@@ -2380,6 +2394,7 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
         "match_id":       match_id,
         "game":           game,
         "stake_currency": stake_currency,
+        "team":           assigned_team,  # "A" or "B" — assigned based on current roster
         "started":        match_started,  # True when room just filled and transitioned to in_progress
     }
 

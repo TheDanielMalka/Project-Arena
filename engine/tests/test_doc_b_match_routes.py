@@ -46,10 +46,10 @@ def _make_session(fetchone=None, fetchall=None):
 
 def _mock_match_row(
     game="CS2", status="waiting", bet=10, currency="AT",
-    password=None, max_players=2,
+    password=None, max_players=2, max_per_team=1,
 ):
-    """6-element tuple matching the new SELECT in join_match."""
-    return (game, status, bet, currency, password, max_players)
+    """7-element tuple matching the SELECT in join_match (+max_per_team)."""
+    return (game, status, bet, currency, password, max_players, max_per_team)
 
 
 def _steam_user(wallet="0xABC"):
@@ -74,6 +74,7 @@ class TestJoinMatchPassword:
             _steam_user(),                                        # user row (has wallet)
             None,                                                 # active-room guard
             None,                                                 # duplicate-join check
+            (1,),                                                 # team_a_count = 1 ≥ max_per_team 1 → Team B
             (1,),                                                 # COUNT(*) = 1 < max 2
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -95,6 +96,7 @@ class TestJoinMatchPassword:
             _steam_user(),
             None,   # active-room guard
             None,   # duplicate-join check
+            (1,),   # team_a_count = 1 ≥ max_per_team 1 → Team B
             (1,),   # COUNT(*) — below max, no auto-start
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -149,11 +151,12 @@ class TestJoinMatchAutoStart:
         """
         ctx, session = _make_session()
         session.execute.return_value.fetchone.side_effect = [
-            _mock_match_row(currency="AT", max_players=2),  # match row
+            _mock_match_row(currency="AT", max_players=2, max_per_team=1),  # match row
             _steam_user(),   # user row
             (500,),          # _assert_at_balance → at_balance = 500 ≥ 10 AT ✅
             None,            # active-room guard
             None,            # duplicate-join check
+            (1,),            # team_a_count = 1 ≥ max_per_team 1 → Team B
             (2,),            # COUNT(*) = 2 == max_players → auto-start!
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -171,11 +174,12 @@ class TestJoinMatchAutoStart:
         """
         ctx, session = _make_session()
         session.execute.return_value.fetchone.side_effect = [
-            _mock_match_row(currency="AT", max_players=4),
+            _mock_match_row(currency="AT", max_players=4, max_per_team=2),  # 2v2
             _steam_user(),
             (500,),  # at_balance
             None,    # active-room guard
             None,    # duplicate-join check
+            (0,),    # team_a_count = 0 < max_per_team 2 → Team A
             (1,),    # COUNT(*) = 1 < 4 → no auto-start
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -186,6 +190,67 @@ class TestJoinMatchAutoStart:
             )
         assert resp.status_code == 200
         assert resp.json()["started"] is False
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Team assignment — join_match assigns players to teams in order
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestTeamAssignment:
+    """join_match fills Team A first (up to max_per_team), then Team B."""
+
+    def _join(self, team_a_count: int, max_per_team: int = 1, currency: str = "CRYPTO"):
+        ctx, session = _make_session()
+        side: list = [
+            _mock_match_row(currency=currency, max_players=max_per_team * 2,
+                            max_per_team=max_per_team),
+            _steam_user(),
+        ]
+        if currency == "AT":
+            side.append((500,))   # at_balance
+        side += [
+            None,               # active-room guard
+            None,               # duplicate-join check
+            (team_a_count,),    # team_a_count SELECT
+            (team_a_count + 1,),# COUNT(*) — total after join (below max → no auto-start)
+        ]
+        session.execute.return_value.fetchone.side_effect = side
+        with patch("main.SessionLocal", return_value=ctx):
+            return client.post(
+                f"/matches/{_MATCH_ID}/join",
+                json={},
+                headers=_AUTH_HEADERS,
+            )
+
+    def test_second_player_in_1v1_gets_team_b(self):
+        """1v1: host is Team A (1 slot), second player → Team B."""
+        resp = self._join(team_a_count=1, max_per_team=1)
+        assert resp.status_code == 200
+        assert resp.json()["team"] == "B"
+
+    def test_first_joiner_in_empty_room_gets_team_a(self):
+        """No one in Team A yet → joiner gets Team A."""
+        resp = self._join(team_a_count=0, max_per_team=1)
+        assert resp.status_code == 200
+        assert resp.json()["team"] == "A"
+
+    def test_5v5_fills_team_a_first(self):
+        """5v5: Team A has 4 players → 5th joiner still gets Team A."""
+        resp = self._join(team_a_count=4, max_per_team=5)
+        assert resp.status_code == 200
+        assert resp.json()["team"] == "A"
+
+    def test_5v5_switches_to_team_b_when_a_full(self):
+        """5v5: Team A is full (5) → next joiner gets Team B."""
+        resp = self._join(team_a_count=5, max_per_team=5)
+        assert resp.status_code == 200
+        assert resp.json()["team"] == "B"
+
+    def test_team_returned_in_response(self):
+        """Response always includes 'team' field."""
+        resp = self._join(team_a_count=0, max_per_team=1, currency="AT")
+        assert resp.status_code == 200
+        assert "team" in resp.json()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
