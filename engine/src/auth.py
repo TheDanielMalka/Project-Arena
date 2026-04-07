@@ -39,22 +39,26 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 # ── JWT helpers ───────────────────────────────────────────────────────────────
 
-def issue_token(user_id: str, email: str) -> str:
+def issue_token(user_id: str, email: str, username: str = "") -> str:
     """
     Issue a signed JWT for the given user.
 
     Payload:
-      sub   — user UUID (PK in users table)
-      email — for display / quick lookup
-      iat   — issued-at timestamp
-      exp   — expiry (7 days from now)
+      sub      — user UUID (PK in users table)
+      email    — for display / quick lookup
+      username — display name; included so the UI can show it immediately
+                 on refresh before /auth/me finishes loading, preventing
+                 the UUID flash where username briefly shows as the raw sub.
+      iat      — issued-at timestamp
+      exp      — expiry (7 days from now)
     """
     now = datetime.now(timezone.utc)
     payload = {
-        "sub": user_id,
-        "email": email,
-        "iat": now,
-        "exp": now + timedelta(hours=_JWT_EXPIRY_HOURS),
+        "sub":      user_id,
+        "email":    email,
+        "username": username,
+        "iat":      now,
+        "exp":      now + timedelta(hours=_JWT_EXPIRY_HOURS),
     }
     return jwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM)
 

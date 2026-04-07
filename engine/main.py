@@ -1516,7 +1516,7 @@ async def register(req: RegisterRequest):
         logger.error("register error: %s", exc)
         raise HTTPException(500, "Registration failed")
 
-    token = auth.issue_token(user_id, email)
+    token = auth.issue_token(user_id, email, username)
     return AuthResponse(
         access_token=token,
         user_id=user_id,
@@ -1551,7 +1551,7 @@ async def login(req: LoginRequest):
         raise HTTPException(401, "Invalid credentials")
 
     user_id = str(row[0])
-    token = auth.issue_token(user_id, row[2])
+    token = auth.issue_token(user_id, row[2], row[1])  # email=row[2], username=row[1]
     return AuthResponse(
         access_token=token,
         user_id=user_id,
@@ -2592,8 +2592,18 @@ async def invite_to_match(
 
             if invite_currency == "AT":
                 at_stake = int(float(invite_stake or 0))
-                # _assert_at_balance raises 402 if friend is short — propagated to caller.
-                _assert_at_balance(session, req.friend_id, at_stake)
+                # Wrap to give the inviter a meaningful message (not "you need X AT").
+                try:
+                    _assert_at_balance(session, req.friend_id, at_stake)
+                except HTTPException as _e:
+                    if _e.status_code == 402:
+                        raise HTTPException(
+                            402,
+                            f"Your friend doesn't have enough Arena Tokens to join. "
+                            f"This room costs {at_stake} AT. "
+                            "Ask them to top up their AT balance first.",
+                        )
+                    raise
             else:
                 # CRYPTO: wallet must be linked (hard requirement, no on-chain fallback).
                 friend_wallet = friend_row[0]
@@ -2640,10 +2650,10 @@ async def invite_to_match(
     except Exception as exc:
         logger.error("invite_to_match error: %s", exc, exc_info=True)
         detail = str(exc)
-        # Surface enum-related errors explicitly so the client knows to run migration 010
+        # Surface enum-related errors as a migration hint in logs only — never expose raw DB errors.
         if "notification_type" in detail or "invalid input value" in detail.lower():
-            raise HTTPException(500, "DB enum missing 'match_invite' — run migration 010")
-        raise HTTPException(500, f"Invite failed: {detail}")
+            logger.error("invite_to_match: DB enum missing 'match_invite' — run migration 011")
+        raise HTTPException(500, "Invite could not be sent. Please try again.")
 
     return {"invited": True, "match_id": match_id, "friend_id": req.friend_id}
 
@@ -4630,6 +4640,125 @@ async def delete_notification(notification_id: str, payload: dict = Depends(veri
         raise HTTPException(500, "Delete failed")
 
     return {"deleted": True, "id": notification_id}
+
+
+# ── Notification respond (accept / decline) ───────────────────────────────────
+
+class NotificationRespondRequest(BaseModel):
+    """POST /notifications/:id/respond body."""
+    action: str  # "accept" | "decline"
+
+
+@app.post("/notifications/{notification_id}/respond", status_code=200)
+async def respond_to_notification(
+    notification_id: str,
+    req: NotificationRespondRequest,
+    payload: dict = Depends(verify_token),
+):
+    """
+    Accept or decline an actionable notification (e.g. match_invite).
+
+    POST /notifications/:id/respond
+    Body: {"action": "accept" | "decline"}
+
+    On accept (match_invite):
+      - Validates the match is still 'waiting' (409 if not)
+      - Marks the notification as read
+      - Returns match details so the client can navigate directly to MatchLobby
+        and pre-fill the join flow without a second search
+
+    On decline:
+      - Marks the notification as read
+      - Returns {"action": "decline"}
+
+    DB-ready: notifications + matches tables.
+    """
+    me: str = payload["sub"]
+
+    if req.action not in ("accept", "decline"):
+        raise HTTPException(400, "action must be 'accept' or 'decline'")
+
+    try:
+        with SessionLocal() as session:
+            notif_row = session.execute(
+                text(
+                    "SELECT id, type, metadata FROM notifications "
+                    "WHERE id = :nid AND user_id = :me"
+                ),
+                {"nid": notification_id, "me": me},
+            ).fetchone()
+
+            if not notif_row:
+                raise HTTPException(404, "Notification not found")
+
+            notif_type = notif_row[1]
+            metadata   = notif_row[2] or {}  # JSONB — SQLAlchemy returns dict
+
+            # ── Mark as read regardless of action ─────────────────────────────
+            session.execute(
+                text("UPDATE notifications SET read = TRUE WHERE id = :nid"),
+                {"nid": notification_id},
+            )
+
+            if req.action == "decline":
+                session.commit()
+                return {"action": "decline"}
+
+            # ── Accept ─────────────────────────────────────────────────────────
+            if notif_type != "match_invite":
+                # Generic accept for non-invite types (future-proof)
+                session.commit()
+                return {"action": "accept"}
+
+            match_id = metadata.get("match_id") if isinstance(metadata, dict) else None
+            if not match_id:
+                raise HTTPException(410, "This invite is no longer valid")
+
+            # Validate match still joinable
+            match_row = session.execute(
+                text(
+                    "SELECT status, game, bet_amount, stake_currency, code, "
+                    "       mode, max_players, max_per_team "
+                    "FROM matches WHERE id = :mid"
+                ),
+                {"mid": match_id},
+            ).fetchone()
+
+            if not match_row:
+                raise HTTPException(410, "This match no longer exists")
+
+            if match_row[0] != "waiting":
+                _status_label = {
+                    "in_progress": "started",
+                    "completed":   "completed",
+                    "cancelled":   "cancelled",
+                }.get(match_row[0], match_row[0])
+                raise HTTPException(
+                    409,
+                    f"This match has already {_status_label} and is no longer accepting players.",
+                )
+
+            session.commit()
+
+            return {
+                "action":           "accept",
+                "match_id":         match_id,
+                "code":             match_row[4],
+                "game":             match_row[1],
+                "bet_amount":       str(match_row[2]) if match_row[2] is not None else "0",
+                "stake_currency":   match_row[3] or "CRYPTO",
+                "status":           match_row[0],
+                "mode":             match_row[5],
+                "max_players":      match_row[6],
+                "max_per_team":     match_row[7],
+                "inviter_username": metadata.get("inviter_username", "") if isinstance(metadata, dict) else "",
+            }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("respond_to_notification error: %s", exc)
+        raise HTTPException(500, "Failed to process response. Please try again.")
 
 
 # ── Disputes ───────────────────────────────────────────────────────────────────

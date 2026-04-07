@@ -165,6 +165,157 @@ class TestDeleteNotification:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# POST /notifications/:id/respond — accept or decline a match invite
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestNotificationRespond:
+    """POST /notifications/:id/respond — accept/decline a match_invite notification."""
+
+    def _notif_row(self, notif_type="match_invite", match_id=None):
+        """Notification row: (id, type, metadata_dict)."""
+        meta = {
+            "match_id":         match_id or _MATCH_ID,
+            "inviter_username": "HostPlayer",
+            "code":             "ARENA-ABCDE",
+            "game":             "CS2",
+            "bet_amount":       "10",
+            "stake_currency":   "AT",
+        }
+        return (_NOTIF_ID, notif_type, meta)
+
+    def _match_row(self, status="waiting"):
+        """Match row: (status, game, bet_amount, stake_currency, code, mode, max_players, max_per_team)."""
+        return (status, "CS2", 10.0, "AT", "ARENA-ABCDE", "1v1", 2, 1)
+
+    def _session_for_accept(self, notif_type="match_invite", match_status="waiting"):
+        """Session for accept path: notif SELECT → UPDATE read → match SELECT."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchone.side_effect = [
+            self._notif_row(notif_type=notif_type),  # notif lookup
+            self._match_row(match_status),            # match lookup (accept path only)
+        ]
+        return ctx, session
+
+    def _session_for_decline(self):
+        """Session for decline path: notif SELECT → UPDATE read (no match SELECT)."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchone.return_value = self._notif_row()
+        return ctx, session
+
+    def test_decline_returns_decline_action(self):
+        """Decline marks as read and returns {action: 'decline'}."""
+        ctx, _ = self._session_for_decline()
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/notifications/{_NOTIF_ID}/respond",
+                json={"action": "decline"},
+                headers=_USER_HEADERS,
+            )
+        assert resp.status_code == 200
+        assert resp.json()["action"] == "decline"
+
+    def test_accept_returns_match_data(self):
+        """Accept match_invite → returns all fields needed to navigate to MatchLobby."""
+        ctx, _ = self._session_for_accept()
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/notifications/{_NOTIF_ID}/respond",
+                json={"action": "accept"},
+                headers=_USER_HEADERS,
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["action"] == "accept"
+        assert data["match_id"] == _MATCH_ID
+        assert data["code"] == "ARENA-ABCDE"
+        assert data["game"] == "CS2"
+        assert data["stake_currency"] == "AT"
+        assert data["inviter_username"] == "HostPlayer"
+
+    def test_accept_started_match_returns_409(self):
+        """Match already in_progress → 409 with user-friendly message."""
+        ctx, _ = self._session_for_accept(match_status="in_progress")
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/notifications/{_NOTIF_ID}/respond",
+                json={"action": "accept"},
+                headers=_USER_HEADERS,
+            )
+        assert resp.status_code == 409
+        assert "started" in resp.json()["detail"].lower()
+
+    def test_accept_cancelled_match_returns_409(self):
+        """Match cancelled → 409."""
+        ctx, _ = self._session_for_accept(match_status="cancelled")
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/notifications/{_NOTIF_ID}/respond",
+                json={"action": "accept"},
+                headers=_USER_HEADERS,
+            )
+        assert resp.status_code == 409
+
+    def test_accept_nonexistent_match_returns_410(self):
+        """Notification points to a deleted match → 410 Gone."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchone.side_effect = [
+            self._notif_row(),  # notif found
+            None,               # match not found
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/notifications/{_NOTIF_ID}/respond",
+                json={"action": "accept"},
+                headers=_USER_HEADERS,
+            )
+        assert resp.status_code == 410
+
+    def test_notification_not_found_returns_404(self):
+        """Wrong notification ID (or another user's) → 404."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchone.return_value = None
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/notifications/{_NOTIF_ID}/respond",
+                json={"action": "accept"},
+                headers=_USER_HEADERS,
+            )
+        assert resp.status_code == 404
+
+    def test_invalid_action_returns_400(self):
+        """Action not 'accept'|'decline' → 400 before any DB call."""
+        with patch("main.SessionLocal") as mock_sl:
+            resp = client.post(
+                f"/notifications/{_NOTIF_ID}/respond",
+                json={"action": "maybe"},
+                headers=_USER_HEADERS,
+            )
+        assert resp.status_code == 400
+        mock_sl.assert_not_called()
+
+    def test_accept_non_invite_notification_returns_generic_accept(self):
+        """Non-invite notification accepted → generic {action: 'accept'} without match data."""
+        ctx, _ = self._session_for_accept(notif_type="system")
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/notifications/{_NOTIF_ID}/respond",
+                json={"action": "accept"},
+                headers=_USER_HEADERS,
+            )
+        assert resp.status_code == 200
+        assert resp.json()["action"] == "accept"
+        assert "match_id" not in resp.json()
+
+    def test_requires_auth_returns_422(self):
+        """No token → 422."""
+        resp = client.post(
+            f"/notifications/{_NOTIF_ID}/respond",
+            json={"action": "decline"},
+        )
+        assert resp.status_code == 422
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Disputes
 # ═══════════════════════════════════════════════════════════════════════════════
 

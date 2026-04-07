@@ -64,6 +64,18 @@ class TestAuthUtils:
         assert payload["sub"] == FAKE_UUID
         assert payload["email"] == "test@arena.gg"
 
+    def test_issue_token_includes_username(self):
+        """JWT payload must carry username so UI never shows raw UUID on refresh."""
+        token = auth.issue_token(FAKE_UUID, "test@arena.gg", "DUNELZ")
+        payload = auth.decode_token(token)
+        assert payload["username"] == "DUNELZ"
+
+    def test_issue_token_username_defaults_to_empty_string(self):
+        """Backward-compat: callers that don't pass username get '' in the token."""
+        token = auth.issue_token(FAKE_UUID, "test@arena.gg")
+        payload = auth.decode_token(token)
+        assert payload["username"] == ""
+
     def test_expired_token_raises(self):
         import jwt
         from datetime import datetime, timezone, timedelta
