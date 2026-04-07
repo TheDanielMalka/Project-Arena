@@ -669,10 +669,11 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "waiting", None, "CRYPTO", None, 2),  # match lookup (6 values: +password, +max_players)
+            ("CS2", "waiting", None, "CRYPTO", None, 2, 1),  # match lookup (+max_per_team)
             self._user_steam(),  # user lookup
             None,                # active-room guard → no active room
             None,                # already-joined check → not joined yet
+            (1,),                # team_a_count = 1 ≥ max_per_team 1 → Team B
             (1,),                # COUNT(*) = 1 player (below max 2 → no auto-start)
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -689,7 +690,7 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "waiting", None, "CRYPTO", None, 2),  # match lookup
+            ("CS2", "waiting", None, "CRYPTO", None, 2, 1),  # match lookup (+max_per_team)
             self._user_steam(),
             (str(uuid.uuid4()),),                # active-room guard → already in a room
         ]
@@ -706,8 +707,8 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "waiting", None, "CRYPTO", None, 2),  # match lookup
-            self._user_none(),                             # no steam_id → 403
+            ("CS2", "waiting", None, "CRYPTO", None, 2, 1),  # match lookup (+max_per_team)
+            self._user_none(),                                 # no steam_id → 403
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
@@ -722,8 +723,8 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("Valorant", "waiting", None, "CRYPTO", None, 2),  # match lookup
-            self._user_none(),                                   # no riot_id → 403
+            ("Valorant", "waiting", None, "CRYPTO", None, 2, 1),  # match lookup (+max_per_team)
+            self._user_none(),                                      # no riot_id → 403
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
@@ -749,7 +750,7 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "in_progress", None, "CRYPTO", None, 2),  # match already started → 409
+            ("CS2", "in_progress", None, "CRYPTO", None, 2, 1),  # match already started → 409
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
@@ -763,7 +764,7 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "waiting", None, "CRYPTO", None, 2),  # match lookup
+            ("CS2", "waiting", None, "CRYPTO", None, 2, 1),  # match lookup (+max_per_team)
             self._user_steam(),  # user lookup
             None,                # active-room guard → no other active room
             (1,),                # already-joined check → duplicate in same match
@@ -785,8 +786,8 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
-            ("CS2", "waiting", None, "CRYPTO", None, 2),  # match lookup
-            self._user_steam_no_wallet(),                   # steam but no wallet → 400
+            ("CS2", "waiting", None, "CRYPTO", None, 2, 1),  # match lookup (+max_per_team)
+            self._user_steam_no_wallet(),                      # steam but no wallet → 400
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
