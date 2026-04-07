@@ -731,3 +731,104 @@ class TestExpiredMatchCleanupSQL:
                     mock_refund.assert_called_once_with(expired_match_id)
 
         asyncio.run(_run_once())
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GET /match/active — restore lobby state + last_seen keep-alive
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestGetActiveMatch:
+    """
+    GET /match/active — returns current active match and touches last_seen
+    so the 3-second frontend poll acts as a keep-alive (no separate heartbeat call needed).
+    """
+
+    # 13-field tuple matching the SELECT in get_active_match:
+    # id, game, status, bet_amount, stake_currency, type, code, created_at,
+    # mode, host_id, host_username, max_players, max_per_team
+    _MATCH_ROW = (
+        _MATCH_ID,        # id
+        "CS2",            # game
+        "waiting",        # status
+        "10.00",          # bet_amount
+        "AT",             # stake_currency
+        "public",         # type
+        "ARENA-ABCDE",    # code
+        datetime(2026, 4, 7, 12, 0, 0, tzinfo=timezone.utc),  # created_at
+        "1v1",            # mode
+        _USER_ID,         # host_id
+        "HostPlayer",     # host_username
+        2,                # max_players
+        1,                # max_per_team
+    )
+
+    _PLAYERS = [
+        (_USER_ID, "HostPlayer", None, "ARENA-HH", "A"),
+    ]
+
+    def _make_active_session(self, match_row=None, players=None):
+        """
+        Build a session mock for get_active_match.
+
+        Execute call order:
+          1. SELECT match → fetchone()
+          2. UPDATE last_seen → execute() (no fetchone/fetchall needed)
+          3. SELECT players → fetchall()
+        """
+        ctx, session = _make_session()
+        session.execute.return_value.fetchone.return_value = match_row or self._MATCH_ROW
+        session.execute.return_value.fetchall.return_value = players or self._PLAYERS
+        return ctx, session
+
+    def test_active_match_returns_match_and_players(self):
+        """When user is in a match → returns full match object with players."""
+        ctx, session = self._make_active_session()
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/match/active", headers=_AUTH_HEADERS)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["match"] is not None
+        assert data["match"]["match_id"] == _MATCH_ID
+        assert data["match"]["status"] == "waiting"
+        assert data["match"]["your_user_id"] == _USER_ID
+        assert isinstance(data["match"]["players"], list)
+
+    def test_active_match_returns_your_team(self):
+        """your_team is correctly extracted from the players list."""
+        ctx, session = self._make_active_session()
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/match/active", headers=_AUTH_HEADERS)
+        assert resp.status_code == 200
+        assert resp.json()["match"]["your_team"] == "A"
+
+    def test_active_match_updates_last_seen(self):
+        """get_active_match must execute an UPDATE last_seen statement (keep-alive)."""
+        ctx, session = self._make_active_session()
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/match/active", headers=_AUTH_HEADERS)
+        assert resp.status_code == 200
+
+        # Collect all SQL strings passed to session.execute
+        sql_calls = [
+            str(call.args[0]).lower()
+            for call in session.execute.call_args_list
+            if call.args
+        ]
+        assert any("last_seen" in sql for sql in sql_calls), (
+            "get_active_match must UPDATE last_seen so the 3-second frontend poll "
+            "acts as a keep-alive and prevents false stale-player removal.\n"
+            f"SQL calls seen: {sql_calls}"
+        )
+        assert session.commit.called, "session.commit() must be called after updating last_seen"
+
+    def test_active_match_no_match_returns_none(self):
+        """When user is not in any match → returns {match: None}."""
+        ctx, session = _make_session(fetchone=None, fetchall=[])
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/match/active", headers=_AUTH_HEADERS)
+        assert resp.status_code == 200
+        assert resp.json()["match"] is None
+
+    def test_active_match_requires_auth(self):
+        resp = client.get("/match/active")
+        assert resp.status_code in (401, 422)
