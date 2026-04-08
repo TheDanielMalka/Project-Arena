@@ -312,7 +312,45 @@ jobs:
             });
 
   # ══════════════════════════════════════════════════════════════════════════════
-  # 7. PR SYNC — auto-assign + inherit labels/milestone from linked issue
+  # 7. DEPLOY — SSH into EC2, rebuild engine + frontend, leave DB untouched
+  #    Triggers ONLY on push to main (i.e. after a PR is merged).
+  #    Tests ran on the PR — this job just ships the green code.
+  # ══════════════════════════════════════════════════════════════════════════════
+  deploy:
+    name: Deploy to EC2
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH → pull → rebuild → health check
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+
+            cd ~/Project-Arena
+
+            echo "=== git pull ==="
+            git pull origin main
+
+            echo "=== rebuild engine + frontend (DB untouched) ==="
+            docker compose build arena-engine arena-frontend
+
+            echo "=== restart containers ==="
+            docker compose up -d arena-engine arena-frontend
+
+            echo "=== waiting for engine to come up ==="
+            sleep 8
+
+            echo "=== health check ==="
+            curl -sf http://localhost:8001/health \
+              && echo "✅ Deploy OK at $(date)" \
+              || { echo "❌ Health check failed"; exit 1; }
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # 8. PR SYNC — auto-assign + inherit labels/milestone from linked issue
   # ══════════════════════════════════════════════════════════════════════════════
   sync-and-assign:
     name: PR Sync & Assign
