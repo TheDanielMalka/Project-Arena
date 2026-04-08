@@ -332,8 +332,8 @@ jobs:
 
             cd ~/Project-Arena
 
-            echo "=== running restart script ==="
-            bash restart
+            echo "=== running restart ==="
+            source ~/.bashrc && restart
 
             echo "=== waiting for engine to come up ==="
             sleep 8
