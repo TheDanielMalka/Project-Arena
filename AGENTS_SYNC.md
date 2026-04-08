@@ -152,13 +152,17 @@ HTTP Status codes to handle:
 
 ## Coordination Log
 
-> Every agent appends here after completing a task. Format:
-> `[AGENT] [DATE] [ACTION]`
+> Every agent appends here after completing a task.
+> **Required format:** `[AGENT] [YYYY-MM-DD HH:MM UTC] [branch] [ACTION]`
+> - AGENT: CLAUDE | CURSOR | DB | TESTS | CONTRACTS
+> - Timestamp: exact UTC time of completion
+> - branch: the branch that was merged/pushed (e.g. feat/admin-live-backend)
+> - ACTION: short description + test count if applicable
 
-- [CLAUDE] 2026-04-08 Built kick endpoint + heartbeat full metadata. 796 tests pass.
-- [CLAUDE] 2026-04-08 Wrote AGENTS_SYNC.md + all agent rule files.
-- [CLAUDE] 2026-04-08 Added Agent Dispatch Protocol to CLAUDE.md — Claude now outputs dispatch block after every task.
-- [ENGINE] 2026-04-09 M8 kill switch: POST /admin/freeze + GET /admin/freeze/status. 27 tests pass.
-- [ENGINE] 2026-04-09 M8 daily stake limit: _check_daily_stake_limit 500 AT/24h wired into create_match + join_match. 6 tests pass.
-- [ENGINE] 2026-04-09 M8 penalty system: _assert_not_suspended + POST /admin/users/{id}/penalty + GET /admin/fraud/report + migration 016. 851 tests pass.
-- [CLAUDE] 2026-04-09 Admin live backend Step 1: GET /admin/users, GET /admin/disputes, GET+PUT /platform/config, GET /admin/audit-log, _log_audit() wired into freeze+penalty+declare-winner. 842 tests pass.
+- [CLAUDE]  2026-04-08 09:00 UTC  feat/engine-kick-heartbeat         Built kick endpoint + heartbeat full metadata. 796 tests pass.
+- [CLAUDE]  2026-04-08 10:00 UTC  feat/engine-kick-heartbeat         Wrote AGENTS_SYNC.md + all agent rule files.
+- [CLAUDE]  2026-04-08 11:00 UTC  feat/engine-kick-heartbeat         Added Agent Dispatch Protocol to CLAUDE.md.
+- [CLAUDE]  2026-04-09 08:00 UTC  feat/m8-kill-switch                M8 kill switch: POST /admin/freeze + GET /admin/freeze/status. 817 tests pass.
+- [CLAUDE]  2026-04-09 09:00 UTC  feat/m8-kill-switch                M8 daily stake limit + _assert_not_suspended + penalty system + fraud report + migration 016. 842 tests pass.
+- [CLAUDE]  2026-04-09 14:30 UTC  feat/admin-live-backend            Admin live backend Step 1: GET /admin/users, GET /admin/disputes, GET+PUT /platform/config, GET /admin/audit-log, _log_audit() wired. 842 tests pass.
+- [CLAUDE]  2026-04-09 15:00 UTC  fix/deploy-migrations              arena.yml deploy: added idempotent migration runner (all 0XX-*.sql files). AGENTS_SYNC timestamp+branch format added.
