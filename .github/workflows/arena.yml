@@ -321,7 +321,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - name: SSH → pull → rebuild → health check
+      - name: SSH → restart → health check
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -332,14 +332,8 @@ jobs:
 
             cd ~/Project-Arena
 
-            echo "=== git pull ==="
-            git pull origin main
-
-            echo "=== rebuild engine + frontend (DB untouched) ==="
-            docker compose build arena-engine arena-frontend
-
-            echo "=== restart containers ==="
-            docker compose up -d arena-engine arena-frontend
+            echo "=== running restart ==="
+            source ~/.bashrc && restart
 
             echo "=== waiting for engine to come up ==="
             sleep 8
