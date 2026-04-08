@@ -472,3 +472,141 @@ class TestAdminFreezeKillSwitch:
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.get("/admin/freeze/status", headers=_USER_HEADERS)
         assert resp.status_code == 403
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# POST /admin/users/{id}/penalty  — M8 Penalty System
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestAdminPenalty:
+    """Admin penalty endpoint — escalation logic."""
+
+    _TARGET_ID = str(uuid.uuid4())
+
+    def _session_with_count(self, prior_count: int, user_exists: bool = True):
+        session = MagicMock()
+        responses = []
+        if user_exists:
+            responses.append((self._TARGET_ID,))   # user exists
+        else:
+            responses.append(None)                  # user not found
+        responses.append((prior_count,))            # COUNT(*) from player_penalties
+        session.execute.return_value.fetchone.side_effect = responses
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=session)
+        ctx.__exit__  = MagicMock(return_value=False)
+        return ctx
+
+    def test_first_offense_suspended_24h(self, as_admin):
+        """1st offense → suspended_24h action."""
+        ctx = self._session_with_count(0)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/admin/users/{self._TARGET_ID}/penalty",
+                json={"offense_type": "rage_quit"},
+                headers=_ADMIN_HEADERS,
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["action"] == "suspended_24h"
+        assert data["offense_count"] == 1
+        assert data["suspended_until"] is not None
+        assert data["banned_at"] is None
+
+    def test_second_offense_suspended_7d(self, as_admin):
+        """2nd offense → suspended_7d action."""
+        ctx = self._session_with_count(1)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/admin/users/{self._TARGET_ID}/penalty",
+                json={"offense_type": "kick_abuse"},
+                headers=_ADMIN_HEADERS,
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["action"] == "suspended_7d"
+        assert data["offense_count"] == 2
+
+    def test_third_offense_permanent_ban(self, as_admin):
+        """3rd+ offense → banned_permanent action."""
+        ctx = self._session_with_count(2)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/admin/users/{self._TARGET_ID}/penalty",
+                json={"offense_type": "fraud"},
+                headers=_ADMIN_HEADERS,
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["action"] == "banned_permanent"
+        assert data["banned_at"] is not None
+        assert data["suspended_until"] is None
+
+    def test_user_not_found_returns_404(self, as_admin):
+        """Unknown user_id → 404."""
+        ctx = self._session_with_count(0, user_exists=False)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/admin/users/{uuid.uuid4()}/penalty",
+                json={"offense_type": "rage_quit"},
+                headers=_ADMIN_HEADERS,
+            )
+        assert resp.status_code == 404
+
+    def test_requires_admin(self):
+        """Non-admin cannot issue penalties — 403."""
+        ctx, _ = _make_session(fetchone=None)  # no admin role row
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/admin/users/{self._TARGET_ID}/penalty",
+                json={"offense_type": "fraud"},
+                headers=_USER_HEADERS,
+            )
+        assert resp.status_code == 403
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GET /admin/fraud/report  — M8 Anomaly Detection
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestAdminFraudReport:
+    """Fraud report returns correct structure."""
+
+    def _empty_session(self):
+        session = MagicMock()
+        session.execute.return_value.fetchall.return_value = []
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=session)
+        ctx.__exit__  = MagicMock(return_value=False)
+        return ctx
+
+    def test_report_structure(self, as_admin):
+        """Response contains all expected keys."""
+        with patch("main.SessionLocal", return_value=self._empty_session()):
+            resp = client.get("/admin/fraud/report", headers=_ADMIN_HEADERS)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "generated_at"    in data
+        assert "flagged_players"  in data
+        assert "suspicious_pairs" in data
+        assert "repeat_offenders" in data
+        assert "recently_banned"  in data
+        assert "summary"          in data
+        assert "total_flagged"    in data["summary"]
+
+    def test_empty_db_returns_zeros(self, as_admin):
+        """With no data, all lists are empty and total_flagged=0."""
+        with patch("main.SessionLocal", return_value=self._empty_session()):
+            resp = client.get("/admin/fraud/report", headers=_ADMIN_HEADERS)
+        data = resp.json()
+        assert data["summary"]["total_flagged"] == 0
+        assert data["flagged_players"] == []
+        assert data["suspicious_pairs"] == []
+
+    def test_requires_admin(self):
+        """Non-admin cannot access fraud report — 403."""
+        ctx = self._empty_session()
+        ctx.__enter__.return_value.execute.return_value.fetchone.return_value = None
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/admin/fraud/report", headers=_USER_HEADERS)
+        assert resp.status_code == 403

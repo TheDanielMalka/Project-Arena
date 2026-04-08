@@ -697,6 +697,21 @@ CREATE INDEX idx_client_sessions_wallet    ON client_sessions(wallet_address, la
 CREATE INDEX idx_client_sessions_match     ON client_sessions(match_id) WHERE match_id IS NOT NULL;
 CREATE INDEX idx_client_sessions_heartbeat ON client_sessions(last_heartbeat);
 
+-- ── Migration 016 — M8 player penalties ──────────────────────────────────────
+CREATE TABLE IF NOT EXISTS player_penalties (
+    id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    offense_type    VARCHAR(100) NOT NULL,
+    notes           TEXT,
+    offense_count   INT          NOT NULL DEFAULT 1,
+    suspended_until TIMESTAMPTZ,
+    banned_at       TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by      UUID         REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_player_penalties_user_id  ON player_penalties(user_id);
+CREATE INDEX IF NOT EXISTS idx_player_penalties_created_at ON player_penalties(created_at);
+
 -- Auto-disconnect sessions whose heartbeat has not been received for >60s.
 -- Called by the engine's background task (or a DB CRON job).
 CREATE OR REPLACE FUNCTION expire_stale_client_sessions()

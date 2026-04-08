@@ -2,7 +2,7 @@ import os
 import logging
 import threading
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import time as _time
 from collections import defaultdict as _defaultdict
@@ -2102,6 +2102,67 @@ _AT_FEE_PCT = 0.05  # 5% platform fee on AT match winnings — mirrors ArenaEscr
 _PAYOUTS_FROZEN: bool = False
 
 
+AT_DAILY_STAKE_LIMIT = 500  # M8: max AT a user can stake across all matches per 24h
+
+
+def _check_daily_stake_limit(session, user_id: str, new_stake: int) -> None:
+    """
+    M8: Block match create/join if user has already staked >= AT_DAILY_STAKE_LIMIT AT today.
+
+    Reads transactions.amount WHERE type='escrow_lock' in the last 24 hours.
+    Raises HTTP 429 if adding new_stake would exceed the daily cap.
+
+    DB-ready: transactions table (type, amount, created_at, user_id).
+    """
+    row = session.execute(
+        text(
+            "SELECT COALESCE(SUM(ABS(amount)), 0) FROM transactions "
+            "WHERE user_id = :uid AND type = 'escrow_lock' "
+            "AND created_at > NOW() - INTERVAL '24 hours'"
+        ),
+        {"uid": user_id},
+    ).fetchone()
+    daily_staked = int(row[0]) if row else 0
+    if daily_staked + new_stake > AT_DAILY_STAKE_LIMIT:
+        remaining = max(0, AT_DAILY_STAKE_LIMIT - daily_staked)
+        raise HTTPException(
+            429,
+            f"Daily staking limit reached. "
+            f"You can stake up to {remaining} more AT today "
+            f"(limit: {AT_DAILY_STAKE_LIMIT} AT / 24h).",
+        )
+
+
+def _assert_not_suspended(session, user_id: str) -> None:
+    """
+    M8: Raise 403 if player has an active suspension or a permanent ban.
+
+    Reads the most recent row from player_penalties for the user.
+    - banned_at IS NOT NULL → permanent ban → 403
+    - suspended_until > NOW() → active suspension → 403 with expiry time
+
+    DB-ready: player_penalties table (migration 016).
+    """
+    row = session.execute(
+        text(
+            "SELECT suspended_until, banned_at FROM player_penalties "
+            "WHERE user_id = :uid ORDER BY created_at DESC LIMIT 1"
+        ),
+        {"uid": user_id},
+    ).fetchone()
+    if not row:
+        return
+    suspended_until, banned_at = row
+    if banned_at:
+        raise HTTPException(403, "Your account has been permanently banned.")
+    if suspended_until and suspended_until > datetime.now(timezone.utc):
+        raise HTTPException(
+            403,
+            f"Your account is suspended until "
+            f"{suspended_until.strftime('%Y-%m-%d %H:%M UTC')}.",
+        )
+
+
 def _assert_at_balance(session, user_id: str, required: int) -> None:
     """Raise 402 if user's at_balance < required AT."""
     row = session.execute(
@@ -2312,9 +2373,13 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
                     "Leave or finish your current room before opening a new one.",
                 )
 
-            # ── AT balance check (before creating the match row) ──────────────
+            # ── Suspension / ban check ────────────────────────────────────────
+            _assert_not_suspended(session, user_id)
+
+            # ── AT balance + daily stake limit (before creating the match row) ──
             if stake_currency == "AT":
                 _assert_at_balance(session, user_id, at_stake)
+                _check_daily_stake_limit(session, user_id, at_stake)
 
             # ── Generate unique room code ─────────────────────────────────────
             import secrets as _secrets
@@ -2438,11 +2503,15 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
             steam_id, riot_id, wallet_address = user_row
             _assert_game_account(game, steam_id, riot_id)
 
+            # ── Suspension / ban check ────────────────────────────────────────
+            _assert_not_suspended(session, user_id)
+
             # ── Currency-specific balance checks ──────────────────────────────
             if stake_currency == "AT":
-                # AT match: check arena token balance (no wallet needed)
+                # AT match: check arena token balance + daily stake cap
                 at_stake = int(stake_amount or 0)
                 _assert_at_balance(session, user_id, at_stake)
+                _check_daily_stake_limit(session, user_id, at_stake)
             else:
                 # CRYPTO match: wallet must be linked + on-chain balance check
                 if not wallet_address:
@@ -6040,3 +6109,257 @@ async def admin_freeze_status(payload: dict = Depends(require_admin)):
       frozen: bool  — True if payouts are currently suspended
     """
     return {"frozen": _PAYOUTS_FROZEN}
+
+
+# ── Admin — Penalty System (M8) ───────────────────────────────────────────────
+
+
+class PenaltyRequest(BaseModel):
+    offense_type: str   # e.g. "rage_quit", "kick_abuse", "fraud", "cheating"
+    notes: str = ""     # admin note for audit trail
+
+
+@app.post("/admin/users/{user_id}/penalty", status_code=200)
+async def admin_issue_penalty(
+    user_id: str,
+    req: PenaltyRequest,
+    payload: dict = Depends(require_admin),
+):
+    """
+    M8: Issue a penalty to a player.
+
+    Escalation logic:
+      1st offense → suspended_until = NOW() + 24h
+      2nd offense → suspended_until = NOW() + 7 days
+      3rd+ offense → banned_at = NOW() (permanent)
+
+    Each call inserts a new row in player_penalties with the cumulative offense_count.
+    Admin-only.
+
+    DB-ready: player_penalties (migration 016).
+    """
+    admin_id = payload.get("sub")
+    try:
+        with SessionLocal() as session:
+            # ── Verify target user exists ─────────────────────────────────────
+            user_row = session.execute(
+                text("SELECT id FROM users WHERE id = :uid"),
+                {"uid": user_id},
+            ).fetchone()
+            if not user_row:
+                raise HTTPException(404, "User not found")
+
+            # ── Count prior offenses ──────────────────────────────────────────
+            count_row = session.execute(
+                text("SELECT COUNT(*) FROM player_penalties WHERE user_id = :uid"),
+                {"uid": user_id},
+            ).fetchone()
+            prior_count = int(count_row[0]) if count_row else 0
+            offense_count = prior_count + 1
+
+            # ── Escalation ────────────────────────────────────────────────────
+            suspended_until = None
+            banned_at       = None
+            now_utc         = datetime.now(timezone.utc)
+
+            if offense_count == 1:
+                suspended_until = now_utc + timedelta(hours=24)
+                action = "suspended_24h"
+            elif offense_count == 2:
+                suspended_until = now_utc + timedelta(days=7)
+                action = "suspended_7d"
+            else:
+                banned_at = now_utc
+                action = "banned_permanent"
+
+            session.execute(
+                text(
+                    "INSERT INTO player_penalties "
+                    "  (user_id, offense_type, notes, offense_count, "
+                    "   suspended_until, banned_at, created_by) "
+                    "VALUES (:uid, :otype, :notes, :cnt, :sus, :ban, :admin)"
+                ),
+                {
+                    "uid":   user_id,
+                    "otype": req.offense_type.strip(),
+                    "notes": req.notes.strip() or None,
+                    "cnt":   offense_count,
+                    "sus":   suspended_until,
+                    "ban":   banned_at,
+                    "admin": admin_id,
+                },
+            )
+            session.commit()
+
+        logger.warning(
+            "admin_issue_penalty: user=%s action=%s offense=%d admin=%s",
+            user_id, action, offense_count, admin_id,
+        )
+        return {
+            "penalized":      True,
+            "user_id":        user_id,
+            "offense_count":  offense_count,
+            "action":         action,
+            "suspended_until": suspended_until.isoformat() if suspended_until else None,
+            "banned_at":      banned_at.isoformat() if banned_at else None,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("admin_issue_penalty error: user=%s error=%s", user_id, exc)
+        raise HTTPException(500, "Failed to issue penalty")
+
+
+# ── Admin — Fraud Report (M8 Anomaly Detection) ───────────────────────────────
+
+
+@app.get("/admin/fraud/report", status_code=200)
+async def admin_fraud_report(payload: dict = Depends(require_admin)):
+    """
+    M8 Anomaly Detection — scan for suspicious activity patterns.
+
+    Runs 4 queries:
+      1. High win-rate players: win_rate > 80% with 10+ matches
+      2. Player-pair farming: same two players matched >3 times in 24h
+      3. Repeat offenders: players with 2+ penalties in player_penalties
+      4. Recently banned: players banned in the last 7 days
+
+    Response: { generated_at, flagged_players, suspicious_pairs,
+                repeat_offenders, recently_banned, summary }
+
+    DB-ready: user_stats, match_players, player_penalties (migration 016).
+    """
+    try:
+        with SessionLocal() as session:
+
+            # ── 1. High win-rate players (win_rate > 80%, 10+ matches) ────────
+            wr_rows = session.execute(
+                text(
+                    "SELECT us.user_id, u.username, us.win_rate, us.matches, us.wins "
+                    "FROM user_stats us "
+                    "JOIN users u ON u.id = us.user_id "
+                    "WHERE us.win_rate > 80 AND us.matches >= 10 "
+                    "ORDER BY us.win_rate DESC "
+                    "LIMIT 50"
+                )
+            ).fetchall()
+            flagged_players = [
+                {
+                    "user_id":  str(r[0]),
+                    "username": r[1],
+                    "win_rate": float(r[2]),
+                    "matches":  int(r[3]),
+                    "wins":     int(r[4]),
+                    "reason":   "win_rate_anomaly",
+                }
+                for r in wr_rows
+            ]
+
+            # ── 2. Player-pair farming (same pair >3 matches in 24h) ──────────
+            pair_rows = session.execute(
+                text(
+                    "SELECT mp1.user_id, u1.username, mp2.user_id, u2.username, "
+                    "       COUNT(*) AS match_count "
+                    "FROM match_players mp1 "
+                    "JOIN match_players mp2 "
+                    "  ON mp1.match_id = mp2.match_id AND mp1.user_id < mp2.user_id "
+                    "JOIN users u1 ON u1.id = mp1.user_id "
+                    "JOIN users u2 ON u2.id = mp2.user_id "
+                    "JOIN matches m ON m.id = mp1.match_id "
+                    "WHERE m.created_at > NOW() - INTERVAL '24 hours' "
+                    "GROUP BY mp1.user_id, u1.username, mp2.user_id, u2.username "
+                    "HAVING COUNT(*) > 3 "
+                    "ORDER BY match_count DESC "
+                    "LIMIT 50"
+                )
+            ).fetchall()
+            suspicious_pairs = [
+                {
+                    "player_a":    str(r[0]),
+                    "username_a":  r[1],
+                    "player_b":    str(r[2]),
+                    "username_b":  r[3],
+                    "match_count": int(r[4]),
+                    "reason":      "pair_farming",
+                }
+                for r in pair_rows
+            ]
+
+            # ── 3. Repeat offenders (2+ penalties) ────────────────────────────
+            repeat_rows = session.execute(
+                text(
+                    "SELECT pp.user_id, u.username, COUNT(*) AS penalty_count, "
+                    "       MAX(pp.offense_type) AS last_offense, "
+                    "       BOOL_OR(pp.banned_at IS NOT NULL) AS is_banned "
+                    "FROM player_penalties pp "
+                    "JOIN users u ON u.id = pp.user_id "
+                    "GROUP BY pp.user_id, u.username "
+                    "HAVING COUNT(*) >= 2 "
+                    "ORDER BY penalty_count DESC "
+                    "LIMIT 50"
+                )
+            ).fetchall()
+            repeat_offenders = [
+                {
+                    "user_id":       str(r[0]),
+                    "username":      r[1],
+                    "penalty_count": int(r[2]),
+                    "last_offense":  r[3],
+                    "is_banned":     bool(r[4]),
+                    "reason":        "repeat_offender",
+                }
+                for r in repeat_rows
+            ]
+
+            # ── 4. Recently banned players (last 7 days) ──────────────────────
+            banned_rows = session.execute(
+                text(
+                    "SELECT pp.user_id, u.username, pp.banned_at, pp.offense_type, pp.notes "
+                    "FROM player_penalties pp "
+                    "JOIN users u ON u.id = pp.user_id "
+                    "WHERE pp.banned_at IS NOT NULL "
+                    "  AND pp.banned_at > NOW() - INTERVAL '7 days' "
+                    "ORDER BY pp.banned_at DESC "
+                    "LIMIT 50"
+                )
+            ).fetchall()
+            recently_banned = [
+                {
+                    "user_id":      str(r[0]),
+                    "username":     r[1],
+                    "banned_at":    r[2].isoformat() if r[2] else None,
+                    "offense_type": r[3],
+                    "notes":        r[4],
+                    "reason":       "recently_banned",
+                }
+                for r in banned_rows
+            ]
+
+        total_flagged = (
+            len(flagged_players)
+            + len(suspicious_pairs)
+            + len(repeat_offenders)
+            + len(recently_banned)
+        )
+
+        return {
+            "generated_at":    datetime.now(timezone.utc).isoformat(),
+            "flagged_players":  flagged_players,
+            "suspicious_pairs": suspicious_pairs,
+            "repeat_offenders": repeat_offenders,
+            "recently_banned":  recently_banned,
+            "summary": {
+                "total_flagged":       total_flagged,
+                "high_winrate":        len(flagged_players),
+                "pair_farming":        len(suspicious_pairs),
+                "repeat_offenders":    len(repeat_offenders),
+                "recently_banned":     len(recently_banned),
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("admin_fraud_report error: %s", exc)
+        raise HTTPException(500, "Fraud report generation failed")

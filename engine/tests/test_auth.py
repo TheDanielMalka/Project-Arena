@@ -27,6 +27,14 @@ import src.auth as auth
 client = TestClient(app)
 
 
+# Bypass suspension + daily-stake checks for all auth tests (tested separately)
+@pytest.fixture(autouse=True)
+def no_suspension_check():
+    with patch("main._assert_not_suspended", return_value=None), \
+         patch("main._check_daily_stake_limit", return_value=None):
+        yield
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _make_session_mock(fetchone_return=None):
