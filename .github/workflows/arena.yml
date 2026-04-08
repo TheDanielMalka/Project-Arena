@@ -321,7 +321,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - name: SSH → restart → health check
+      - name: SSH → restart → migrate → health check
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -332,11 +332,30 @@ jobs:
 
             cd ~/Project-Arena
 
-            echo "=== running restart ==="
-            docker system prune -af && git pull origin main && docker-compose down && docker-compose up -d --build
+            echo "=== git pull ==="
+            git pull origin main
+
+            echo "=== rebuild containers ==="
+            docker system prune -af
+            docker-compose down
+            docker-compose up -d --build
+
+            echo "=== waiting for DB to accept connections ==="
+            for i in $(seq 1 15); do
+              docker exec arena-db pg_isready -U arena_admin -d arena \
+                && break \
+                || { echo "DB not ready yet ($i/15)..."; sleep 2; }
+            done
+
+            echo "=== running migrations (idempotent — safe every deploy) ==="
+            for FILE in ~/Project-Arena/infra/sql/0[0-9][0-9]-*.sql; do
+              echo "  → applying $(basename $FILE)"
+              docker exec -i arena-db psql -U arena_admin -d arena < "$FILE"
+            done
+            echo "✅ Migrations complete"
 
             echo "=== waiting for engine to come up ==="
-            sleep 8
+            sleep 5
 
             echo "=== health check ==="
             curl -sf http://localhost:8001/health \
