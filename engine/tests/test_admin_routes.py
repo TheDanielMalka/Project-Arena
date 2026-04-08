@@ -3,6 +3,8 @@ Tests for Step 4 — Admin routes:
 
   GET  /admin/oracle/status                   — listener health
   POST /admin/oracle/sync?from_block=N        — recovery sync with optional from_block
+  POST /admin/freeze                          — M8 kill switch (suspend/resume payouts)
+  GET  /admin/freeze/status                   — current kill switch state
   POST /admin/match/{id}/declare-winner       — manual winner declaration
 
 All tests mock SessionLocal; no real DB / blockchain needed.
@@ -356,4 +358,117 @@ class TestAdminDeclareWinner:
                 headers=_USER_HEADERS,   # normal user token
             )
 
+        assert resp.status_code == 403
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# POST /admin/freeze  +  GET /admin/freeze/status  — M8 Kill Switch
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestAdminFreezeKillSwitch:
+    """M8 kill switch — suspend and resume all payout disbursement."""
+
+    def setup_method(self):
+        """Reset _PAYOUTS_FROZEN to False before every test."""
+        import main as m
+        m._PAYOUTS_FROZEN = False
+
+    def test_freeze_payouts(self, as_admin):
+        """POST /admin/freeze {freeze: true} → frozen=true."""
+        resp = client.post(
+            "/admin/freeze",
+            json={"freeze": True},
+            headers=_ADMIN_HEADERS,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["frozen"] is True
+        assert "FROZEN" in data["message"]
+
+    def test_unfreeze_payouts(self, as_admin):
+        """POST /admin/freeze {freeze: false} → frozen=false."""
+        import main as m
+        m._PAYOUTS_FROZEN = True  # start frozen
+
+        resp = client.post(
+            "/admin/freeze",
+            json={"freeze": False},
+            headers=_ADMIN_HEADERS,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["frozen"] is False
+        assert "RESUMED" in data["message"]
+
+    def test_freeze_status_reflects_state(self, as_admin):
+        """GET /admin/freeze/status returns current _PAYOUTS_FROZEN value."""
+        import main as m
+
+        m._PAYOUTS_FROZEN = False
+        resp = client.get("/admin/freeze/status", headers=_ADMIN_HEADERS)
+        assert resp.status_code == 200
+        assert resp.json()["frozen"] is False
+
+        m._PAYOUTS_FROZEN = True
+        resp = client.get("/admin/freeze/status", headers=_ADMIN_HEADERS)
+        assert resp.status_code == 200
+        assert resp.json()["frozen"] is True
+
+    def test_freeze_blocks_at_payout(self, as_admin):
+        """When frozen, _auto_payout skips _settle_at_match entirely."""
+        import main as m
+        m._PAYOUTS_FROZEN = True
+
+        with patch("main._settle_at_match") as mock_settle, \
+             patch("main.SessionLocal", return_value=_make_session(
+                 fetchone=("in_progress", "AT", str(uuid.uuid4()))
+             )[0]):
+            m._auto_payout_on_consensus(str(uuid.uuid4()), "victory")
+
+        mock_settle.assert_not_called()
+
+    def test_unfreeze_allows_at_payout(self, as_admin):
+        """When not frozen, _auto_payout calls _settle_at_match normally."""
+        import main as m
+        m._PAYOUTS_FROZEN = False
+
+        winner_id = str(uuid.uuid4())
+        match_id  = str(uuid.uuid4())
+
+        ctx, session = _make_session()
+        # fetchone called multiple times — first for winner lookup, then for match
+        session.execute.return_value.fetchone.side_effect = [
+            (winner_id, "AT"),        # stake_currency + winner from consensus
+            ("in_progress", "AT", winner_id),  # match status row
+        ]
+        session.execute.return_value.fetchall.return_value = [
+            (winner_id, "victory"),   # consensus votes
+        ]
+
+        with patch("main._settle_at_match") as mock_settle, \
+             patch("main.SessionLocal", return_value=ctx):
+            m._auto_payout_on_consensus(match_id, "victory")
+
+        mock_settle.assert_called_once_with(match_id, winner_id)
+
+    def test_requires_admin_freeze(self):
+        """Non-admin cannot toggle the kill switch — 403."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchone.return_value = None  # no admin role
+
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/admin/freeze",
+                json={"freeze": True},
+                headers=_USER_HEADERS,
+            )
+        assert resp.status_code == 403
+
+    def test_requires_admin_status(self):
+        """Non-admin cannot read kill switch status — 403."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchone.return_value = None  # no admin role
+
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/admin/freeze/status", headers=_USER_HEADERS)
         assert resp.status_code == 403

@@ -614,6 +614,14 @@ def _auto_payout_on_consensus(match_id: str, agreed_result: str) -> None:
             return
 
         # ── Release payout ────────────────────────────────────────────────────
+        if _PAYOUTS_FROZEN:
+            logger.warning(
+                "_auto_payout FROZEN: match=%s winner=%s currency=%s — "
+                "funds withheld until admin unfreezes via POST /admin/freeze",
+                match_id, winner_id, stake_currency,
+            )
+            return
+
         if stake_currency == "AT":
             _settle_at_match(match_id, winner_id)
         elif _escrow_client:
@@ -2086,6 +2094,12 @@ class JoinMatchRequest(BaseModel):
 
 _VALID_CURRENCIES = {"CRYPTO", "AT"}
 _AT_FEE_PCT = 0.05  # 5% platform fee on AT match winnings — mirrors ArenaEscrow fee
+
+# ── M8 Kill Switch ─────────────────────────────────────────────────────────────
+# When True: all payout disbursement is suspended (AT credit + CRYPTO on-chain).
+# Match is still marked completed with winner_id set — only fund release is frozen.
+# Toggle via POST /admin/freeze  (admin-only).
+_PAYOUTS_FROZEN: bool = False
 
 
 def _assert_at_balance(session, user_id: str, required: int) -> None:
@@ -5974,3 +5988,55 @@ async def admin_declare_winner(
             "admin_declare_winner error: match=%s error=%s", match_id, exc
         )
         raise HTTPException(500, "Winner declaration failed")
+
+
+# ── Admin — Kill Switch ────────────────────────────────────────────────────────
+
+
+class FreezeRequest(BaseModel):
+    freeze: bool  # True = suspend payouts, False = resume
+
+
+@app.post("/admin/freeze", status_code=200)
+async def admin_freeze_payouts(
+    req: FreezeRequest,
+    payload: dict = Depends(require_admin),
+):
+    """
+    M8 Kill Switch — suspend or resume all payout disbursement globally.
+
+    When freeze=True:
+      - _PAYOUTS_FROZEN is set to True
+      - _auto_payout() skips fund release (AT credit + CRYPTO on-chain)
+      - Match is still marked completed with winner_id — only funds are frozen
+      - All frozen matches can be manually settled via POST /admin/match/{id}/declare-winner
+
+    When freeze=False:
+      - _PAYOUTS_FROZEN is set to False
+      - All subsequent payouts proceed normally
+      - Already-frozen matches must be settled manually (they were skipped, not queued)
+
+    Admin-only. Requires role=admin in user_roles.
+    """
+    global _PAYOUTS_FROZEN
+    _PAYOUTS_FROZEN = req.freeze
+    action = "FROZEN" if req.freeze else "RESUMED"
+    logger.warning(
+        "admin_freeze_payouts: payouts %s by admin=%s",
+        action, payload.get("sub"),
+    )
+    return {
+        "frozen":  _PAYOUTS_FROZEN,
+        "message": f"Payouts {action}. All fund releases are {'suspended' if req.freeze else 'active'}.",
+    }
+
+
+@app.get("/admin/freeze/status", status_code=200)
+async def admin_freeze_status(payload: dict = Depends(require_admin)):
+    """
+    Return current state of the M8 kill switch.
+
+    Response:
+      frozen: bool  — True if payouts are currently suspended
+    """
+    return {"frozen": _PAYOUTS_FROZEN}
