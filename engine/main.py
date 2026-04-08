@@ -6039,9 +6039,16 @@ async def admin_declare_winner(
                 "admin_declare_winner: inbox notification failed (non-fatal): %s", exc
             )
 
+        admin_id = payload.get("sub")
         logger.info(
             "admin_declare_winner: match=%s winner=%s admin=%s reason=%r",
-            match_id, req.winner_id, payload.get("sub"), req.reason,
+            match_id, req.winner_id, admin_id, req.reason,
+        )
+        _log_audit(
+            admin_id,
+            "declare_winner",
+            target=match_id,
+            detail=f"winner={req.winner_id} reason={req.reason!r}",
         )
         return {
             "declared":       True,
@@ -6090,9 +6097,16 @@ async def admin_freeze_payouts(
     global _PAYOUTS_FROZEN
     _PAYOUTS_FROZEN = req.freeze
     action = "FROZEN" if req.freeze else "RESUMED"
+    admin_id = payload.get("sub")
     logger.warning(
         "admin_freeze_payouts: payouts %s by admin=%s",
-        action, payload.get("sub"),
+        action, admin_id,
+    )
+    _log_audit(
+        admin_id,
+        "freeze_payouts",
+        target="global",
+        detail=f"payouts {action}",
     )
     return {
         "frozen":  _PAYOUTS_FROZEN,
@@ -6194,6 +6208,12 @@ async def admin_issue_penalty(
         logger.warning(
             "admin_issue_penalty: user=%s action=%s offense=%d admin=%s",
             user_id, action, offense_count, admin_id,
+        )
+        _log_audit(
+            admin_id,
+            "penalty_issued",
+            target=user_id,
+            detail=f"offense={req.offense_type} count={offense_count} action={action}",
         )
         return {
             "penalized":      True,
@@ -6363,3 +6383,444 @@ async def admin_fraud_report(payload: dict = Depends(require_admin)):
     except Exception as exc:
         logger.error("admin_fraud_report error: %s", exc)
         raise HTTPException(500, "Fraud report generation failed")
+
+
+# ── Admin — Audit Logging helper ──────────────────────────────────────────────
+
+
+def _log_audit(
+    admin_id: str,
+    action: str,
+    target: str | None = None,
+    detail: str | None = None,
+) -> None:
+    """
+    Insert a row into audit_logs for every admin action.
+    Non-fatal — if the insert fails it logs a warning and continues.
+
+    DB-ready: audit_logs (id, admin_id, action, target, detail, created_at).
+    """
+    try:
+        with SessionLocal() as session:
+            session.execute(
+                text(
+                    "INSERT INTO audit_logs (admin_id, action, target, detail) "
+                    "VALUES (:admin_id, :action, :target, :detail)"
+                ),
+                {
+                    "admin_id": admin_id,
+                    "action":   action,
+                    "target":   target,
+                    "detail":   detail,
+                },
+            )
+            session.commit()
+    except Exception as exc:
+        logger.warning("_log_audit failed (non-fatal): %s", exc)
+
+
+# ── Admin — Users list ────────────────────────────────────────────────────────
+
+
+@app.get("/admin/users", status_code=200)
+async def admin_list_users(
+    search: str | None = None,
+    status: str | None = None,
+    flagged: bool | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    payload: dict = Depends(require_admin),
+):
+    """
+    Return a paginated list of all users with risk/suspension data.
+
+    Query params:
+      search  — filter by username (ILIKE %search%)
+      status  — filter by users.status ('active','flagged','banned','suspended')
+      flagged — if true, only users who have at least 1 penalty
+      limit   — page size (max 200)
+      offset  — pagination offset
+
+    Each user row includes:
+      id, username, email, status, rank, created_at,
+      matches, wins, win_rate (from user_stats),
+      penalty_count, is_suspended, is_banned, suspended_until (from player_penalties)
+
+    DB-ready: users + user_stats + player_penalties (migrations 001 + 016).
+    """
+    limit = min(limit, 200)
+    try:
+        with SessionLocal() as session:
+            # Build WHERE clauses dynamically
+            conditions = []
+            params: dict = {"limit": limit, "offset": offset}
+
+            if search:
+                conditions.append("u.username ILIKE :search")
+                params["search"] = f"%{search}%"
+            if status:
+                conditions.append("u.status = :status")
+                params["status"] = status
+
+            where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+            # Base query: users + user_stats LEFT JOIN
+            base_sql = (
+                "SELECT u.id, u.username, u.email, u.status, u.rank, u.created_at, "
+                "       COALESCE(us.matches, 0) AS matches, "
+                "       COALESCE(us.wins, 0)    AS wins, "
+                "       COALESCE(us.win_rate, 0) AS win_rate, "
+                "       COALESCE(pp.penalty_count, 0) AS penalty_count, "
+                "       pp.latest_suspended_until, "
+                "       pp.latest_banned_at "
+                "FROM users u "
+                "LEFT JOIN user_stats us ON us.user_id = u.id "
+                "LEFT JOIN ( "
+                "    SELECT user_id, "
+                "           COUNT(*) AS penalty_count, "
+                "           MAX(suspended_until) AS latest_suspended_until, "
+                "           MAX(banned_at) AS latest_banned_at "
+                "    FROM player_penalties "
+                "    GROUP BY user_id "
+                ") pp ON pp.user_id = u.id "
+                + where_clause
+            )
+
+            if flagged:
+                joiner = " AND " if conditions else " WHERE "
+                base_sql += joiner + "pp.penalty_count > 0"
+
+            rows = session.execute(
+                text(base_sql + " ORDER BY u.created_at DESC LIMIT :limit OFFSET :offset"),
+                params,
+            ).fetchall()
+
+            now_utc = datetime.now(timezone.utc)
+            users_out = []
+            for r in rows:
+                (
+                    uid, username, email, ustatus, rank, created_at,
+                    matches, wins, win_rate,
+                    penalty_count, suspended_until, banned_at,
+                ) = r
+                is_banned     = banned_at is not None
+                is_suspended  = (
+                    not is_banned
+                    and suspended_until is not None
+                    and suspended_until > now_utc
+                )
+                users_out.append({
+                    "id":              str(uid),
+                    "username":        username,
+                    "email":           email,
+                    "status":          ustatus,
+                    "rank":            rank,
+                    "created_at":      created_at.isoformat() if created_at else None,
+                    "matches":         int(matches),
+                    "wins":            int(wins),
+                    "win_rate":        float(win_rate),
+                    "penalty_count":   int(penalty_count),
+                    "is_suspended":    is_suspended,
+                    "is_banned":       is_banned,
+                    "suspended_until": suspended_until.isoformat() if suspended_until else None,
+                })
+
+            # Total count (no pagination)
+            count_sql = (
+                "SELECT COUNT(*) FROM users u "
+                "LEFT JOIN ( "
+                "    SELECT user_id, COUNT(*) AS penalty_count "
+                "    FROM player_penalties GROUP BY user_id "
+                ") pp ON pp.user_id = u.id "
+                + where_clause
+            )
+            count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
+            if flagged:
+                joiner = " AND " if conditions else " WHERE "
+                count_sql += joiner + "pp.penalty_count > 0"
+
+            total_row = session.execute(text(count_sql), count_params).fetchone()
+            total = int(total_row[0]) if total_row else 0
+
+        return {"users": users_out, "total": total, "limit": limit, "offset": offset}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("admin_list_users error: %s", exc)
+        raise HTTPException(500, "Failed to fetch users")
+
+
+# ── Admin — Disputes list ─────────────────────────────────────────────────────
+
+
+@app.get("/admin/disputes", status_code=200)
+async def admin_list_disputes(
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    payload: dict = Depends(require_admin),
+):
+    """
+    Return a paginated list of disputes with player usernames and match info.
+
+    Query params:
+      status — filter by dispute status ('open','reviewing','resolved','escalated')
+      limit  — page size (max 200)
+      offset — pagination offset
+
+    DB-ready: disputes + users + matches.
+    """
+    limit = min(limit, 200)
+    try:
+        with SessionLocal() as session:
+            conditions = []
+            params: dict = {"limit": limit, "offset": offset}
+
+            if status:
+                conditions.append("d.status = :status")
+                params["status"] = status
+
+            where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+            rows = session.execute(
+                text(
+                    "SELECT d.id, d.match_id, d.player_a, d.player_b, "
+                    "       ua.username AS username_a, ub.username AS username_b, "
+                    "       d.reason, d.status, d.resolution, d.admin_notes, "
+                    "       d.created_at, d.resolved_at, "
+                    "       m.game, m.bet_amount, m.stake_currency "
+                    "FROM disputes d "
+                    "JOIN users ua ON ua.id = d.player_a "
+                    "JOIN users ub ON ub.id = d.player_b "
+                    "JOIN matches m ON m.id = d.match_id "
+                    + where_clause
+                    + " ORDER BY d.created_at DESC LIMIT :limit OFFSET :offset"
+                ),
+                params,
+            ).fetchall()
+
+            disputes_out = [
+                {
+                    "id":          str(r[0]),
+                    "match_id":    str(r[1]),
+                    "player_a":    str(r[2]),
+                    "player_b":    str(r[3]),
+                    "username_a":  r[4],
+                    "username_b":  r[5],
+                    "reason":      r[6],
+                    "status":      r[7],
+                    "resolution":  r[8],
+                    "admin_notes": r[9],
+                    "created_at":  r[10].isoformat() if r[10] else None,
+                    "resolved_at": r[11].isoformat() if r[11] else None,
+                    "game":        r[12],
+                    "bet_amount":  float(r[13]) if r[13] else None,
+                    "stake_currency": r[14],
+                }
+                for r in rows
+            ]
+
+            count_sql = (
+                "SELECT COUNT(*) FROM disputes d "
+                + where_clause
+            )
+            count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
+            total_row = session.execute(text(count_sql), count_params).fetchone()
+            total = int(total_row[0]) if total_row else 0
+
+        return {"disputes": disputes_out, "total": total, "limit": limit, "offset": offset}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("admin_list_disputes error: %s", exc)
+        raise HTTPException(500, "Failed to fetch disputes")
+
+
+# ── Platform Config ───────────────────────────────────────────────────────────
+
+
+class PlatformConfigUpdate(BaseModel):
+    """Body for PUT /platform/config."""
+    fee_percent:             float | None = None
+    daily_betting_max:       float | None = None
+    maintenance_mode:        bool  | None = None
+    registration_open:       bool  | None = None
+    auto_dispute_escalation: bool  | None = None
+    kill_switch_active:      bool  | None = None
+
+
+@app.get("/platform/config", status_code=200)
+async def get_platform_config(payload: dict = Depends(require_admin)):
+    """
+    Return the current platform configuration from platform_settings.
+
+    DB-ready: platform_settings (single-row table, id=1).
+    """
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT fee_percent, daily_betting_max, maintenance_mode, "
+                    "       registration_open, auto_dispute_escalation, "
+                    "       kill_switch_active, updated_at "
+                    "FROM platform_settings WHERE id = 1"
+                )
+            ).fetchone()
+        if not row:
+            raise HTTPException(500, "Platform config not initialised")
+        return {
+            "fee_percent":             float(row[0]),
+            "daily_betting_max":       float(row[1]),
+            "maintenance_mode":        bool(row[2]),
+            "registration_open":       bool(row[3]),
+            "auto_dispute_escalation": bool(row[4]),
+            "kill_switch_active":      bool(row[5]),
+            "updated_at":              row[6].isoformat() if row[6] else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("get_platform_config error: %s", exc)
+        raise HTTPException(500, "Failed to fetch platform config")
+
+
+@app.put("/platform/config", status_code=200)
+async def update_platform_config(
+    req: PlatformConfigUpdate,
+    payload: dict = Depends(require_admin),
+):
+    """
+    Update one or more platform config fields. Only provided fields are updated.
+
+    Validates:
+      fee_percent: 0–50 (percent)
+      daily_betting_max: must be positive
+
+    DB-ready: platform_settings (single-row UPDATE WHERE id = 1).
+    """
+    admin_id = payload.get("sub")
+
+    # Collect fields to update
+    updates: dict = {}
+    if req.fee_percent is not None:
+        if not (0 <= req.fee_percent <= 50):
+            raise HTTPException(400, "fee_percent must be between 0 and 50")
+        updates["fee_percent"] = req.fee_percent
+    if req.daily_betting_max is not None:
+        if req.daily_betting_max <= 0:
+            raise HTTPException(400, "daily_betting_max must be positive")
+        updates["daily_betting_max"] = req.daily_betting_max
+    if req.maintenance_mode is not None:
+        updates["maintenance_mode"] = req.maintenance_mode
+    if req.registration_open is not None:
+        updates["registration_open"] = req.registration_open
+    if req.auto_dispute_escalation is not None:
+        updates["auto_dispute_escalation"] = req.auto_dispute_escalation
+    if req.kill_switch_active is not None:
+        updates["kill_switch_active"] = req.kill_switch_active
+
+    if not updates:
+        raise HTTPException(400, "No fields provided to update")
+
+    try:
+        set_clause = ", ".join(f"{k} = :{k}" for k in updates)
+        updates["admin_id"] = admin_id
+
+        with SessionLocal() as session:
+            session.execute(
+                text(
+                    f"UPDATE platform_settings "
+                    f"SET {set_clause}, updated_at = NOW(), updated_by = :admin_id "
+                    f"WHERE id = 1"
+                ),
+                updates,
+            )
+            session.commit()
+
+        logger.info("update_platform_config: admin=%s fields=%s", admin_id, list(updates.keys()))
+        _log_audit(
+            admin_id,
+            "platform_config_update",
+            target="platform_settings",
+            detail=str({k: v for k, v in updates.items() if k != "admin_id"}),
+        )
+        return {"updated": True, "fields": [k for k in updates if k != "admin_id"]}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("update_platform_config error: %s", exc)
+        raise HTTPException(500, "Failed to update platform config")
+
+
+# ── Admin — Audit Log ─────────────────────────────────────────────────────────
+
+
+@app.get("/admin/audit-log", status_code=200)
+async def admin_audit_log(
+    limit: int = 50,
+    offset: int = 0,
+    action: str | None = None,
+    payload: dict = Depends(require_admin),
+):
+    """
+    Return paginated admin audit log.
+
+    Query params:
+      action — filter by action type (e.g. 'freeze_payouts', 'penalty_issued')
+      limit  — page size (max 200)
+      offset — pagination offset
+
+    DB-ready: audit_logs + users (admin username).
+    """
+    limit = min(limit, 200)
+    try:
+        with SessionLocal() as session:
+            conditions = []
+            params: dict = {"limit": limit, "offset": offset}
+
+            if action:
+                conditions.append("al.action = :action")
+                params["action"] = action
+
+            where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+            rows = session.execute(
+                text(
+                    "SELECT al.id, al.admin_id, u.username AS admin_username, "
+                    "       al.action, al.target, al.detail, al.created_at "
+                    "FROM audit_logs al "
+                    "LEFT JOIN users u ON u.id = al.admin_id "
+                    + where_clause
+                    + " ORDER BY al.created_at DESC LIMIT :limit OFFSET :offset"
+                ),
+                params,
+            ).fetchall()
+
+            entries = [
+                {
+                    "id":             str(r[0]),
+                    "admin_id":       str(r[1]) if r[1] else None,
+                    "admin_username": r[2],
+                    "action":         r[3],
+                    "target":         r[4],
+                    "detail":         r[5],
+                    "created_at":     r[6].isoformat() if r[6] else None,
+                }
+                for r in rows
+            ]
+
+            count_sql = "SELECT COUNT(*) FROM audit_logs al " + where_clause
+            count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
+            total_row = session.execute(text(count_sql), count_params).fetchone()
+            total = int(total_row[0]) if total_row else 0
+
+        return {"entries": entries, "total": total, "limit": limit, "offset": offset}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("admin_audit_log error: %s", exc)
+        raise HTTPException(500, "Failed to fetch audit log")

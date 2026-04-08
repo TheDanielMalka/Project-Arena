@@ -610,3 +610,468 @@ class TestAdminFraudReport:
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.get("/admin/fraud/report", headers=_USER_HEADERS)
         assert resp.status_code == 403
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GET /admin/users  — live user list with risk data
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestAdminListUsers:
+    """GET /admin/users — paginated users with suspension/penalty data."""
+
+    def _make_user_row(
+        self,
+        uid=None,
+        username="player1",
+        email="p1@arena.gg",
+        status="active",
+        rank="Gold",
+        created_at=None,
+        matches=10,
+        wins=6,
+        win_rate=60.0,
+        penalty_count=0,
+        suspended_until=None,
+        banned_at=None,
+    ):
+        from datetime import datetime, timezone
+        return (
+            uid or _USER_ID,
+            username,
+            email,
+            status,
+            rank,
+            created_at or datetime(2025, 1, 1, tzinfo=timezone.utc),
+            matches,
+            wins,
+            win_rate,
+            penalty_count,
+            suspended_until,
+            banned_at,
+        )
+
+    def test_returns_user_list(self, as_admin):
+        """Basic call returns users array and total."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchall.return_value = [self._make_user_row()]
+        session.execute.return_value.fetchone.return_value = (1,)
+
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/admin/users", headers=_ADMIN_HEADERS)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "users" in data
+        assert "total" in data
+        assert len(data["users"]) == 1
+
+    def test_user_fields_present(self, as_admin):
+        """Each user row has all required fields."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchall.return_value = [self._make_user_row()]
+        session.execute.return_value.fetchone.return_value = (1,)
+
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/admin/users", headers=_ADMIN_HEADERS)
+
+        u = resp.json()["users"][0]
+        for field in ("id", "username", "email", "status", "rank",
+                      "matches", "wins", "win_rate",
+                      "penalty_count", "is_suspended", "is_banned"):
+            assert field in u, f"Missing field: {field}"
+
+    def test_is_banned_true_when_banned_at_set(self, as_admin):
+        """User with banned_at is_banned=True."""
+        from datetime import datetime, timezone
+        banned_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
+        ctx, session = _make_session()
+        session.execute.return_value.fetchall.return_value = [
+            self._make_user_row(banned_at=banned_at)
+        ]
+        session.execute.return_value.fetchone.return_value = (1,)
+
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/admin/users", headers=_ADMIN_HEADERS)
+
+        u = resp.json()["users"][0]
+        assert u["is_banned"] is True
+        assert u["is_suspended"] is False
+
+    def test_is_suspended_true_when_active_suspension(self, as_admin):
+        """User with suspended_until in the future → is_suspended=True."""
+        from datetime import datetime, timezone, timedelta
+        future = datetime.now(timezone.utc) + timedelta(hours=12)
+        ctx, session = _make_session()
+        session.execute.return_value.fetchall.return_value = [
+            self._make_user_row(suspended_until=future)
+        ]
+        session.execute.return_value.fetchone.return_value = (1,)
+
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/admin/users", headers=_ADMIN_HEADERS)
+
+        u = resp.json()["users"][0]
+        assert u["is_suspended"] is True
+        assert u["is_banned"] is False
+
+    def test_empty_db_returns_empty_list(self, as_admin):
+        """No users → empty list, total=0."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchall.return_value = []
+        session.execute.return_value.fetchone.return_value = (0,)
+
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/admin/users", headers=_ADMIN_HEADERS)
+
+        data = resp.json()
+        assert data["users"] == []
+        assert data["total"] == 0
+
+    def test_requires_admin(self):
+        """Non-admin cannot list users — 403."""
+        ctx, session = _make_session(fetchone=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/admin/users", headers=_USER_HEADERS)
+        assert resp.status_code == 403
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GET /admin/disputes  — live disputes list
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestAdminListDisputes:
+    """GET /admin/disputes — paginated disputes with player usernames."""
+
+    def _make_dispute_row(self):
+        from datetime import datetime, timezone
+        return (
+            _MATCH_ID,          # id
+            _MATCH_ID,          # match_id
+            _USER_ID,           # player_a
+            _WINNER_ID,         # player_b
+            "alice",            # username_a
+            "bob",              # username_b
+            "screenshot differs",  # reason
+            "open",             # status
+            "pending",          # resolution
+            None,               # admin_notes
+            datetime(2025, 1, 1, tzinfo=timezone.utc),  # created_at
+            None,               # resolved_at
+            "CS2",              # game
+            50.0,               # bet_amount
+            "AT",               # stake_currency
+        )
+
+    def test_returns_disputes_list(self, as_admin):
+        """Basic call returns disputes array and total."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchall.return_value = [self._make_dispute_row()]
+        session.execute.return_value.fetchone.return_value = (1,)
+
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/admin/disputes", headers=_ADMIN_HEADERS)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "disputes" in data
+        assert len(data["disputes"]) == 1
+
+    def test_dispute_fields_present(self, as_admin):
+        """Each dispute has all required fields."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchall.return_value = [self._make_dispute_row()]
+        session.execute.return_value.fetchone.return_value = (1,)
+
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/admin/disputes", headers=_ADMIN_HEADERS)
+
+        d = resp.json()["disputes"][0]
+        for field in ("id", "match_id", "player_a", "player_b",
+                      "username_a", "username_b", "reason",
+                      "status", "resolution", "game", "bet_amount"):
+            assert field in d, f"Missing field: {field}"
+
+    def test_empty_db_returns_empty_list(self, as_admin):
+        """No disputes → empty list, total=0."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchall.return_value = []
+        session.execute.return_value.fetchone.return_value = (0,)
+
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/admin/disputes", headers=_ADMIN_HEADERS)
+
+        data = resp.json()
+        assert data["disputes"] == []
+        assert data["total"] == 0
+
+    def test_requires_admin(self):
+        """Non-admin cannot list disputes — 403."""
+        ctx, session = _make_session(fetchone=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/admin/disputes", headers=_USER_HEADERS)
+        assert resp.status_code == 403
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GET /platform/config  +  PUT /platform/config
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestPlatformConfig:
+    """Platform config read + update."""
+
+    def _config_row(self):
+        from datetime import datetime, timezone
+        return (
+            5.0,    # fee_percent
+            500.0,  # daily_betting_max
+            False,  # maintenance_mode
+            True,   # registration_open
+            True,   # auto_dispute_escalation
+            False,  # kill_switch_active
+            datetime(2025, 1, 1, tzinfo=timezone.utc),  # updated_at
+        )
+
+    def test_get_returns_all_fields(self, as_admin):
+        """GET /platform/config returns all config fields."""
+        ctx, session = _make_session(fetchone=self._config_row())
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/platform/config", headers=_ADMIN_HEADERS)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        for field in ("fee_percent", "daily_betting_max", "maintenance_mode",
+                      "registration_open", "auto_dispute_escalation",
+                      "kill_switch_active", "updated_at"):
+            assert field in data, f"Missing field: {field}"
+
+    def test_get_fee_percent_value(self, as_admin):
+        """fee_percent is returned as float."""
+        ctx, session = _make_session(fetchone=self._config_row())
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/platform/config", headers=_ADMIN_HEADERS)
+        assert resp.json()["fee_percent"] == 5.0
+
+    def test_put_updates_fields(self, as_admin):
+        """PUT with valid fields → 200, updated=True."""
+        ctx, session = _make_session()
+        with patch("main.SessionLocal", return_value=ctx), \
+             patch("main._log_audit"):
+            resp = client.put(
+                "/platform/config",
+                json={"fee_percent": 7.5, "maintenance_mode": True},
+                headers=_ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["updated"] is True
+        assert "fee_percent" in data["fields"]
+        assert "maintenance_mode" in data["fields"]
+
+    def test_put_invalid_fee_returns_400(self, as_admin):
+        """fee_percent > 50 → 400."""
+        ctx, session = _make_session()
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.put(
+                "/platform/config",
+                json={"fee_percent": 99.0},
+                headers=_ADMIN_HEADERS,
+            )
+        assert resp.status_code == 400
+
+    def test_put_negative_daily_max_returns_400(self, as_admin):
+        """daily_betting_max <= 0 → 400."""
+        ctx, session = _make_session()
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.put(
+                "/platform/config",
+                json={"daily_betting_max": -10.0},
+                headers=_ADMIN_HEADERS,
+            )
+        assert resp.status_code == 400
+
+    def test_put_no_fields_returns_400(self, as_admin):
+        """Empty body → 400."""
+        ctx, session = _make_session()
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.put(
+                "/platform/config",
+                json={},
+                headers=_ADMIN_HEADERS,
+            )
+        assert resp.status_code == 400
+
+    def test_get_requires_admin(self):
+        """Non-admin cannot GET config — 403."""
+        ctx, session = _make_session(fetchone=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/platform/config", headers=_USER_HEADERS)
+        assert resp.status_code == 403
+
+    def test_put_requires_admin(self):
+        """Non-admin cannot PUT config — 403."""
+        ctx, session = _make_session(fetchone=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.put(
+                "/platform/config",
+                json={"fee_percent": 5.0},
+                headers=_USER_HEADERS,
+            )
+        assert resp.status_code == 403
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GET /admin/audit-log
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestAdminAuditLog:
+    """GET /admin/audit-log — paginated audit trail."""
+
+    def _make_entry_row(self):
+        from datetime import datetime, timezone
+        return (
+            _MATCH_ID,          # id
+            _ADMIN_ID,          # admin_id
+            "arena_admin",      # admin_username
+            "penalty_issued",   # action
+            _USER_ID,           # target
+            "offense=rage_quit count=1 action=suspended_24h",  # detail
+            datetime(2025, 1, 1, tzinfo=timezone.utc),         # created_at
+        )
+
+    def test_returns_entries_list(self, as_admin):
+        """GET /admin/audit-log returns entries array and total."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchall.return_value = [self._make_entry_row()]
+        session.execute.return_value.fetchone.return_value = (1,)
+
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/admin/audit-log", headers=_ADMIN_HEADERS)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "entries" in data
+        assert "total" in data
+        assert len(data["entries"]) == 1
+
+    def test_entry_fields_present(self, as_admin):
+        """Each entry has id, admin_id, action, target, detail, created_at."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchall.return_value = [self._make_entry_row()]
+        session.execute.return_value.fetchone.return_value = (1,)
+
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/admin/audit-log", headers=_ADMIN_HEADERS)
+
+        e = resp.json()["entries"][0]
+        for field in ("id", "admin_id", "admin_username", "action",
+                      "target", "detail", "created_at"):
+            assert field in e, f"Missing field: {field}"
+
+    def test_empty_db_returns_empty_list(self, as_admin):
+        """No audit entries → empty list, total=0."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchall.return_value = []
+        session.execute.return_value.fetchone.return_value = (0,)
+
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/admin/audit-log", headers=_ADMIN_HEADERS)
+
+        data = resp.json()
+        assert data["entries"] == []
+        assert data["total"] == 0
+
+    def test_requires_admin(self):
+        """Non-admin cannot access audit log — 403."""
+        ctx, session = _make_session(fetchone=None)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/admin/audit-log", headers=_USER_HEADERS)
+        assert resp.status_code == 403
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# _log_audit  — audit wiring on existing admin actions
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestAuditWiring:
+    """Verify _log_audit is called (non-fatal) when admin actions succeed."""
+
+    def setup_method(self):
+        """Reset _PAYOUTS_FROZEN before every test to avoid state leakage."""
+        import main as m
+        m._PAYOUTS_FROZEN = False
+
+    def teardown_method(self):
+        """Ensure _PAYOUTS_FROZEN is always reset after each test."""
+        import main as m
+        m._PAYOUTS_FROZEN = False
+
+    def test_freeze_calls_log_audit(self, as_admin):
+        """POST /admin/freeze → _log_audit called once."""
+        import main as m
+        m._PAYOUTS_FROZEN = False
+
+        with patch("main._log_audit") as mock_audit:
+            resp = client.post(
+                "/admin/freeze",
+                json={"freeze": True},
+                headers=_ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        mock_audit.assert_called_once()
+        call_kwargs = mock_audit.call_args
+        assert call_kwargs[0][1] == "freeze_payouts"
+
+    def test_penalty_calls_log_audit(self, as_admin):
+        """POST /admin/users/{id}/penalty → _log_audit called once."""
+        target_id = str(uuid.uuid4())
+        session = MagicMock()
+        session.execute.return_value.fetchone.side_effect = [
+            (target_id,),  # user exists
+            (0,),          # prior_count = 0
+        ]
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=session)
+        ctx.__exit__  = MagicMock(return_value=False)
+
+        with patch("main.SessionLocal", return_value=ctx), \
+             patch("main._log_audit") as mock_audit:
+            resp = client.post(
+                f"/admin/users/{target_id}/penalty",
+                json={"offense_type": "rage_quit"},
+                headers=_ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        mock_audit.assert_called_once()
+        assert mock_audit.call_args[0][1] == "penalty_issued"
+
+    def test_declare_winner_calls_log_audit(self, as_admin):
+        """POST /admin/match/{id}/declare-winner → _log_audit called once."""
+        session = MagicMock()
+        session.execute.return_value.fetchone.side_effect = [
+            ("in_progress", "AT"),  # match row
+        ]
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=session)
+        ctx.__exit__  = MagicMock(return_value=False)
+
+        with patch("main.SessionLocal", return_value=ctx), \
+             patch("main._settle_at_match"), \
+             patch("main._send_system_inbox"), \
+             patch("main._log_audit") as mock_audit:
+            resp = client.post(
+                f"/admin/match/{_MATCH_ID}/declare-winner",
+                json={"winner_id": _WINNER_ID},
+                headers=_ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        mock_audit.assert_called_once()
+        assert mock_audit.call_args[0][1] == "declare_winner"
