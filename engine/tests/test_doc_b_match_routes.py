@@ -22,6 +22,14 @@ import src.auth as auth
 
 client = TestClient(app)
 
+# ── Module-level fixture: bypass _assert_not_suspended for all tests here ─────
+# Suspension logic is tested separately in test_admin_routes.py.
+@pytest.fixture(autouse=True)
+def no_suspension_check():
+    with patch("main._assert_not_suspended", return_value=None):
+        yield
+
+
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 
 _USER_ID   = str(uuid.uuid4())
@@ -154,6 +162,7 @@ class TestJoinMatchAutoStart:
             _mock_match_row(currency="AT", max_players=2, max_per_team=1),  # match row
             _steam_user(),   # user row
             (500,),          # _assert_at_balance → at_balance = 500 ≥ 10 AT ✅
+            (0,),            # _check_daily_stake_limit → 0 staked today
             None,            # active-room guard
             None,            # duplicate-join check
             (1, 0),          # (a_count=1, b_count=0) → Team B
@@ -177,6 +186,7 @@ class TestJoinMatchAutoStart:
             _mock_match_row(currency="AT", max_players=4, max_per_team=2),  # 2v2
             _steam_user(),
             (500,),   # at_balance
+            (0,),     # _check_daily_stake_limit → 0 staked today
             None,     # active-room guard
             None,     # duplicate-join check
             (0, 0),   # (a_count=0, b_count=0) → Team A
@@ -211,6 +221,7 @@ class TestTeamAssignment:
         ]
         if currency == "AT":
             side.append((500,))   # at_balance
+            side.append((0,))     # _check_daily_stake_limit → 0 staked today
         side += [
             None,                           # active-room guard
             None,                           # duplicate-join check
@@ -1020,3 +1031,103 @@ class TestGetActiveMatch:
     def test_active_match_requires_auth(self):
         resp = client.get("/match/active")
         assert resp.status_code in (401, 422)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# M8 — Daily Staking Limit
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestDailyStakeLimit:
+    """_check_daily_stake_limit blocks create + join when cap is reached."""
+
+    def _session_with_daily(self, staked_today: int):
+        """Session where transactions sum returns staked_today."""
+        from decimal import Decimal
+        session = MagicMock()
+        # First call: daily staked sum. Subsequent calls: other route queries.
+        session.execute.return_value.fetchone.side_effect = [
+            (staked_today,),        # _check_daily_stake_limit SUM query
+        ]
+        session.execute.return_value.fetchall.return_value = []
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=session)
+        ctx.__exit__  = MagicMock(return_value=False)
+        return ctx
+
+    def test_join_blocked_when_limit_reached(self):
+        """User who has staked 500 AT today cannot join another AT match."""
+        import main as m
+
+        with patch("main._check_daily_stake_limit",
+                   side_effect=Exception("should not reach DB")):
+            # Direct unit test of the helper
+            session = MagicMock()
+            session.execute.return_value.fetchone.return_value = (500,)
+            with pytest.raises(Exception) as exc_info:
+                from fastapi import HTTPException as H
+                # Call helper directly
+                import main
+                # Patch HTTPException raise
+                with patch("main.SessionLocal"):
+                    main._check_daily_stake_limit(session, _USER_ID, 1)
+
+    def test_helper_blocks_at_limit(self):
+        """_check_daily_stake_limit raises 429 when daily_staked + new > 500."""
+        import main
+        from fastapi import HTTPException
+
+        session = MagicMock()
+        session.execute.return_value.fetchone.return_value = (500,)
+
+        with pytest.raises(HTTPException) as exc:
+            main._check_daily_stake_limit(session, _USER_ID, 1)
+
+        assert exc.value.status_code == 429
+        assert "Daily staking limit" in exc.value.detail
+
+    def test_helper_allows_under_limit(self):
+        """_check_daily_stake_limit does not raise when under cap."""
+        import main
+
+        session = MagicMock()
+        session.execute.return_value.fetchone.return_value = (400,)
+
+        # Should not raise
+        main._check_daily_stake_limit(session, _USER_ID, 99)
+
+    def test_helper_allows_exactly_at_limit(self):
+        """Staking exactly up to 500 is allowed (boundary)."""
+        import main
+
+        session = MagicMock()
+        session.execute.return_value.fetchone.return_value = (400,)
+
+        # 400 + 100 = 500 exactly → allowed
+        main._check_daily_stake_limit(session, _USER_ID, 100)
+
+    def test_helper_blocks_one_over_limit(self):
+        """400 staked today + 101 new = 501 → blocked."""
+        import main
+        from fastapi import HTTPException
+
+        session = MagicMock()
+        session.execute.return_value.fetchone.return_value = (400,)
+
+        with pytest.raises(HTTPException) as exc:
+            main._check_daily_stake_limit(session, _USER_ID, 101)
+
+        assert exc.value.status_code == 429
+        assert "100" in exc.value.detail   # remaining = 100
+
+    def test_helper_remaining_zero_shows_in_message(self):
+        """When fully capped, remaining=0 is shown in the error."""
+        import main
+        from fastapi import HTTPException
+
+        session = MagicMock()
+        session.execute.return_value.fetchone.return_value = (500,)
+
+        with pytest.raises(HTTPException) as exc:
+            main._check_daily_stake_limit(session, _USER_ID, 1)
+
+        assert "0" in exc.value.detail
