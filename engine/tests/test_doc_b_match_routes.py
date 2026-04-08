@@ -543,6 +543,12 @@ class TestInvitePreValidation:
 # POST /matches/{id}/heartbeat — lobby keep-alive + stale player cleanup
 # ═══════════════════════════════════════════════════════════════════════════════
 
+_HOST_ID = str(uuid.uuid4())
+
+# Shared datetime for heartbeat match_info tuple
+_CREATED_AT = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+
 class TestMatchHeartbeat:
     """POST /matches/{id}/heartbeat — keep-alive, roster refresh, stale cleanup."""
 
@@ -552,16 +558,20 @@ class TestMatchHeartbeat:
         stale_rows: list | None = None,
         players: list | None = None,
         match_status: str = "waiting",
+        match_type: str = "custom",
+        bet_amount: int = 50,
+        stake_currency: str = "AT",
     ):
         """Build a mock session for the heartbeat route.
 
         Fetchone chain:
           1. UPDATE match_players RETURNING → player row (or None if not in match)
+          2. match_info SELECT → 11-column tuple
+             (status, game, mode, code, max_players, max_per_team,
+              host_id, type, bet_amount, stake_currency, created_at)
         Fetchall chain:
           1. stale SELECT → stale rows
           2. players SELECT → roster
-        Fetchone chain (continued):
-          3. match_info SELECT → (status, game, mode, code, max_players, max_per_team)
         """
         ctx, session = _make_session()
 
@@ -575,21 +585,24 @@ class TestMatchHeartbeat:
             (str(uuid.uuid4()), "Player2",    None, "ARENA-P2", "B"),
         ]
 
+        # 11-element tuple — must match the expanded SELECT in match_heartbeat
+        match_info = (
+            match_status,   # [0] status
+            "CS2",          # [1] game
+            "1v1",          # [2] mode
+            "ARENA-ABCDE",  # [3] code
+            2,              # [4] max_players
+            1,              # [5] max_per_team
+            _HOST_ID,       # [6] host_id
+            match_type,     # [7] type
+            bet_amount,     # [8] bet_amount
+            stake_currency, # [9] stake_currency
+            _CREATED_AT,    # [10] created_at
+        )
+
         session.execute.return_value.fetchone.side_effect = [
             (_USER_ID,),  # UPDATE RETURNING — in match
-        ]
-
-        session.execute.return_value.fetchall.side_effect = [
-            stale,   # stale player SELECT
-            roster,  # fresh roster SELECT
-        ]
-
-        # match_info fetchone — append after fetchall calls are consumed
-        match_info = (match_status, "CS2", "1v1", "ARENA-ABCDE", 2, 1)
-        # Re-configure: fetchone needs second call for match_info
-        session.execute.return_value.fetchone.side_effect = [
-            (_USER_ID,),   # UPDATE RETURNING
-            match_info,    # match SELECT
+            match_info,   # match SELECT
         ]
         session.execute.return_value.fetchall.side_effect = [
             stale,   # stale players
@@ -638,6 +651,181 @@ class TestMatchHeartbeat:
             )
         assert resp.status_code == 200
         assert resp.json()["status"] == "in_progress"
+
+    def test_heartbeat_returns_full_match_metadata(self):
+        """Heartbeat response must include host_id, type, bet_amount,
+        stake_currency, created_at — same fields as GET /match/active.
+        Cursor uses these to render the lobby without a second API call.
+        """
+        ctx = self._session_heartbeat(
+            match_type="custom",
+            bet_amount=100,
+            stake_currency="AT",
+        )
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{_MATCH_ID}/heartbeat",
+                headers=_AUTH_HEADERS,
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["host_id"] == _HOST_ID
+        assert data["type"] == "custom"
+        assert data["bet_amount"] == "100"
+        assert data["stake_currency"] == "AT"
+        assert data["created_at"] is not None  # ISO string
+
+    def test_heartbeat_null_match_info_is_safe(self):
+        """If match row is somehow missing, fields are None — no crash."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchone.side_effect = [
+            (_USER_ID,),  # UPDATE RETURNING — in match
+            None,          # match info row missing
+        ]
+        session.execute.return_value.fetchall.side_effect = [
+            [],  # no stale
+            [],  # empty roster
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{_MATCH_ID}/heartbeat",
+                headers=_AUTH_HEADERS,
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["host_id"] is None
+        assert data["bet_amount"] is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# POST /matches/{id}/kick — host removes a player from a waiting lobby
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_GUEST_ID = str(uuid.uuid4())
+_GUEST_TOKEN = auth.issue_token(_GUEST_ID, "guest@arena.gg")
+
+
+def _session_for_kick(
+    host_id: str = _USER_ID,
+    status: str = "waiting",
+    currency: str = "AT",
+    bet: float = 50.0,
+    target_in_room: bool = True,
+):
+    """Mock session for kick_player.
+
+    Fetchone chain:
+      1. SELECT host_id, status, stake_currency, bet_amount FROM matches → match_row
+      2. SELECT 1 FROM match_players (target in room?) → (1,) or None
+    """
+    ctx, session = _make_session()
+    session.execute.return_value.fetchone.side_effect = [
+        (host_id, status, currency, bet),  # match_row
+        (1,) if target_in_room else None,  # in_room check
+    ]
+    return ctx, session
+
+
+class TestKickPlayer:
+    """POST /matches/{id}/kick — host removes a player from a waiting lobby."""
+
+    def test_kick_happy_path_host_removes_guest(self):
+        """Host kicks guest from AT room → 200, AT refunded."""
+        ctx, session = _session_for_kick()
+        with patch("main.SessionLocal", return_value=ctx), \
+             patch("main._credit_at") as mock_credit:
+            resp = client.post(
+                f"/matches/{_MATCH_ID}/kick",
+                json={"user_id": _GUEST_ID},
+                headers=_AUTH_HEADERS,
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["kicked"] is True
+        assert data["match_id"] == _MATCH_ID
+        assert data["user_id"] == _GUEST_ID
+        mock_credit.assert_called_once()
+        _, kwargs_uid, kwargs_amt = mock_credit.call_args[0][:3]
+        assert kwargs_uid == _GUEST_ID
+        assert kwargs_amt == 50
+
+    def test_kick_crypto_room_no_at_refund(self):
+        """CRYPTO match: kick player without AT refund."""
+        ctx, session = _session_for_kick(currency="CRYPTO")
+        with patch("main.SessionLocal", return_value=ctx), \
+             patch("main._credit_at") as mock_credit:
+            resp = client.post(
+                f"/matches/{_MATCH_ID}/kick",
+                json={"user_id": _GUEST_ID},
+                headers=_AUTH_HEADERS,
+            )
+        assert resp.status_code == 200
+        mock_credit.assert_not_called()
+
+    def test_kick_non_host_returns_403(self):
+        """Guest cannot kick another player → 403."""
+        ctx, session = _session_for_kick(host_id=str(uuid.uuid4()))  # different host
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{_MATCH_ID}/kick",
+                json={"user_id": _GUEST_ID},
+                headers=_AUTH_HEADERS,  # _USER_ID is not the host
+            )
+        assert resp.status_code == 403
+        assert "host" in resp.json()["detail"].lower()
+
+    def test_kick_in_progress_match_returns_409(self):
+        """Cannot kick from a match that has already started."""
+        ctx, session = _session_for_kick(status="in_progress")
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{_MATCH_ID}/kick",
+                json={"user_id": _GUEST_ID},
+                headers=_AUTH_HEADERS,
+            )
+        assert resp.status_code == 409
+
+    def test_kick_target_not_in_room_returns_404(self):
+        """Target player not in match_players → 404."""
+        ctx, session = _session_for_kick(target_in_room=False)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{_MATCH_ID}/kick",
+                json={"user_id": _GUEST_ID},
+                headers=_AUTH_HEADERS,
+            )
+        assert resp.status_code == 404
+
+    def test_kick_yourself_returns_400(self):
+        """Host cannot kick themselves."""
+        ctx, session = _session_for_kick()
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{_MATCH_ID}/kick",
+                json={"user_id": _USER_ID},  # same as caller
+                headers=_AUTH_HEADERS,
+            )
+        assert resp.status_code == 400
+        assert "yourself" in resp.json()["detail"].lower()
+
+    def test_kick_match_not_found_returns_404(self):
+        """Match doesn't exist → 404."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchone.return_value = None
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{_MATCH_ID}/kick",
+                json={"user_id": _GUEST_ID},
+                headers=_AUTH_HEADERS,
+            )
+        assert resp.status_code == 404
+
+    def test_kick_requires_auth(self):
+        resp = client.post(
+            f"/matches/{_MATCH_ID}/kick",
+            json={"user_id": _GUEST_ID},
+        )
+        assert resp.status_code == 422
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
