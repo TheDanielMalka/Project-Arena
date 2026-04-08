@@ -2674,6 +2674,106 @@ async def leave_match(match_id: str, payload: dict = Depends(verify_token)):
     return {"left": True, "match_id": match_id}
 
 
+class KickPlayerRequest(BaseModel):
+    """POST /matches/{match_id}/kick body."""
+    user_id: str
+
+
+@app.post("/matches/{match_id}/kick", status_code=200)
+async def kick_player(
+    match_id: str,
+    req: KickPlayerRequest,
+    payload: dict = Depends(verify_token),
+):
+    """
+    POST /matches/{match_id}/kick — host removes a player from a waiting lobby.
+
+    Rules:
+      - Caller must be the match host → 403 otherwise
+      - Match must be in 'waiting' status → 409 if already in_progress
+      - Cannot kick yourself (host cannot kick themselves) → 400
+      - Target user must be in the room → 404 if not
+      - AT match: refunds the kicked player's stake immediately
+
+    Detection on the kicked client:
+      Next heartbeat call returns in_match=False → client navigates away.
+      No extra push/websocket mechanism needed until Phase 7.
+
+    DB-ready: DELETE FROM match_players; refund via _credit_at.
+    """
+    user_id: str = payload["sub"]
+    _check_rate_limit(f"kick:{user_id}", max_calls=10, window_secs=60)
+
+    target_id = req.user_id.strip()
+    if target_id == user_id:
+        raise HTTPException(400, "You cannot kick yourself from the room")
+
+    try:
+        with SessionLocal() as session:
+            # ── Verify match + host ownership ─────────────────────────────────
+            match_row = session.execute(
+                text(
+                    "SELECT host_id, status, stake_currency, bet_amount "
+                    "FROM matches WHERE id = :mid"
+                ),
+                {"mid": match_id},
+            ).fetchone()
+
+            if not match_row:
+                raise HTTPException(404, "Match not found")
+
+            host_id, status, stake_currency, bet_amount = match_row
+
+            if str(host_id) != user_id:
+                raise HTTPException(403, "Only the host can kick players")
+
+            if status != "waiting":
+                raise HTTPException(
+                    409,
+                    f"Cannot kick a player from a match with status '{status}'"
+                )
+
+            # ── Verify target is in room ──────────────────────────────────────
+            in_room = session.execute(
+                text(
+                    "SELECT 1 FROM match_players "
+                    "WHERE match_id = :mid AND user_id = :uid"
+                ),
+                {"mid": match_id, "uid": target_id},
+            ).fetchone()
+
+            if not in_room:
+                raise HTTPException(404, "Player is not in this match")
+
+            # ── Remove target from room ───────────────────────────────────────
+            session.execute(
+                text(
+                    "DELETE FROM match_players "
+                    "WHERE match_id = :mid AND user_id = :uid"
+                ),
+                {"mid": match_id, "uid": target_id},
+            )
+
+            # ── Refund AT stake to kicked player ──────────────────────────────
+            if (stake_currency or "").upper() == "AT":
+                at_amount = int(float(bet_amount)) if bet_amount else 0
+                if at_amount > 0:
+                    _credit_at(
+                        session, target_id, at_amount, match_id,
+                        "escrow_refund_kicked"
+                    )
+
+            session.commit()
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("kick_player error: %s", exc)
+        raise HTTPException(500, "Kick failed")
+
+    return {"kicked": True, "match_id": match_id, "user_id": target_id}
+
+
 @app.post("/matches/{match_id}/heartbeat", status_code=200)
 async def match_heartbeat(match_id: str, payload: dict = Depends(verify_token)):
     """
@@ -2761,7 +2861,8 @@ async def match_heartbeat(match_id: str, payload: dict = Depends(verify_token)):
 
             match_info = session.execute(
                 text(
-                    "SELECT status, game, mode, code, max_players, max_per_team "
+                    "SELECT status, game, mode, code, max_players, max_per_team, "
+                    "       host_id, type, bet_amount, stake_currency, created_at "
                     "FROM matches WHERE id = :mid"
                 ),
                 {"mid": match_id},
@@ -2771,18 +2872,25 @@ async def match_heartbeat(match_id: str, payload: dict = Depends(verify_token)):
 
         your_team = next((p[4] for p in players if str(p[0]) == user_id), None)
 
+        # Indices: 0=status 1=game 2=mode 3=code 4=max_players 5=max_per_team
+        #          6=host_id 7=type 8=bet_amount 9=stake_currency 10=created_at
         return {
-            "in_match":      True,
-            "match_id":      match_id,
-            "status":        match_info[0] if match_info else None,
-            "game":          match_info[1] if match_info else None,
-            "mode":          match_info[2] if match_info else None,
-            "code":          match_info[3] if match_info else None,
-            "max_players":   match_info[4] if match_info else None,
-            "max_per_team":  match_info[5] if match_info else None,
-            "your_user_id":  user_id,
-            "your_team":     your_team,
-            "stale_removed": len(stale),
+            "in_match":       True,
+            "match_id":       match_id,
+            "status":         match_info[0]  if match_info else None,
+            "game":           match_info[1]  if match_info else None,
+            "mode":           match_info[2]  if match_info else None,
+            "code":           match_info[3]  if match_info else None,
+            "max_players":    match_info[4]  if match_info else None,
+            "max_per_team":   match_info[5]  if match_info else None,
+            "host_id":        str(match_info[6]) if match_info and match_info[6] else None,
+            "type":           match_info[7]  if match_info else None,
+            "bet_amount":     str(match_info[8]) if match_info and match_info[8] is not None else None,
+            "stake_currency": match_info[9]  if match_info else None,
+            "created_at":     match_info[10].isoformat() if match_info and match_info[10] else None,
+            "your_user_id":   user_id,
+            "your_team":      your_team,
+            "stale_removed":  len(stale),
             "players": [
                 {"user_id": str(p[0]), "username": p[1], "avatar": p[2],
                  "arena_id": p[3], "team": p[4]}
