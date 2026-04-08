@@ -333,7 +333,7 @@ jobs:
             cd ~/Project-Arena
 
             echo "=== running restart ==="
-            source ~/.bashrc && restart
+            docker system prune -af && git pull origin main && docker-compose down && docker-compose up -d --build
 
             echo "=== waiting for engine to come up ==="
             sleep 8
