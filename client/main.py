@@ -1536,13 +1536,29 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         win.after(60_000, _poll_profile_sync)
 
     def _do_lobby_poll():
-        """Background thread: heartbeat the active match and apply result on main thread."""
-        mid   = monitor.current_match_id
+        """
+        Background thread: polls GET /match/active every 5s independently.
+        Does NOT depend on monitor.current_match_id — shows lobby card
+        whenever the user is in a room, even before a game process launches.
+        """
         token = auth.access_token or ""
-
-        if not mid or not token:
+        if not token:
             win.after(0, lambda: _rebuild_lobby_body(None))
             return
+
+        # Always ask server directly — independent of game process detection
+        mid = monitor.engine.get_active_match(token)
+
+        if not mid:
+            if monitor.current_match_id:
+                monitor.current_match_id = None
+                _lobby_result_cache[0]   = None
+            win.after(0, lambda: _rebuild_lobby_body(None))
+            return
+
+        # Sync monitor so heartbeat + game status card stay consistent
+        if not monitor.current_match_id:
+            monitor.set_match_id(mid)
 
         data = monitor.engine.match_heartbeat(mid, token)
 
