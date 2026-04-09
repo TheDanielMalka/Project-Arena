@@ -104,6 +104,7 @@ DEFAULT_CONFIG = {
     "email":               None,
     "rank":                None,
     "xp":                  0,
+    "xp_to_next_level":    1000,
     "avatar_url":          None,
     # Phase 4: stable UUID persisted per-install; sent in every heartbeat
     "session_id":          None,
@@ -220,6 +221,10 @@ class AuthManager:
         return int(self._config.get("xp") or 0)
 
     @property
+    def xp_to_next_level(self) -> int:
+        return max(int(self._config.get("xp_to_next_level") or 1000), 1)
+
+    @property
     def avatar_url(self) -> str | None:
         return self._config.get("avatar_url")
 
@@ -235,6 +240,7 @@ class AuthManager:
                   username: str | None = None, email: str | None = None,
                   wallet_address: str | None = None,
                   rank: str | None = None, xp: int | None = None,
+                  xp_to_next_level: int | None = None,
                   avatar_url: str | None = None,
                   avatar_bg: str | None = None,
                   equipped_badge_icon: str | None = None):
@@ -245,6 +251,7 @@ class AuthManager:
         if wallet_address      is not None: self._config["wallet_address"]      = wallet_address
         if rank                is not None: self._config["rank"]                = rank
         if xp                  is not None: self._config["xp"]                  = xp
+        if xp_to_next_level    is not None: self._config["xp_to_next_level"]    = xp_to_next_level
         if avatar_url          is not None: self._config["avatar_url"]          = avatar_url
         if avatar_bg           is not None: self._config["avatar_bg"]           = avatar_bg
         if equipped_badge_icon is not None: self._config["equipped_badge_icon"] = equipped_badge_icon
@@ -396,17 +403,58 @@ class EngineClient:
         except Exception:
             return None
 
-    def get_active_match(self, wallet_address: str) -> str | None:
-        """GET /client/match — DB-ready: queries matches + match_players."""
+    def get_active_match(self, token: str) -> str | None:
+        """GET /match/active — returns match_id of the user's current active match."""
         try:
             r = self.client.get(
-                f"{self.base_url}/client/match",
-                params={"wallet_address": wallet_address}, timeout=5,
+                f"{self.base_url}/match/active",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=5,
             )
             if r.status_code == 200:
-                return r.json().get("match_id")
+                match_data = r.json().get("match") or {}
+                return match_data.get("match_id")
         except Exception as e:
             logger.debug(f"Active match poll: {e}")
+        return None
+
+    def match_heartbeat(self, match_id: str, token: str) -> dict | None:
+        """
+        POST /matches/{match_id}/heartbeat — poll live match state.
+        Body is always empty {}; match_id is path-param only.
+        Returns: { in_match, match_id, status, game, mode, code, max_players,
+                   max_per_team, host_id, type, bet_amount, stake_currency,
+                   created_at, your_user_id, your_team, stale_removed, players[] }
+        """
+        try:
+            r = self.client.post(
+                f"{self.base_url}/matches/{match_id}/heartbeat",
+                json={},
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=5,
+            )
+            if r.status_code == 200:
+                return r.json()
+        except Exception as e:
+            logger.debug(f"Match heartbeat: {e}")
+        return None
+
+    def get_match_status(self, match_id: str, token: str) -> dict | None:
+        """
+        GET /match/{match_id}/status — fetch final match result after completion.
+        # TODO(Claude): confirm exact response shape — need result/score fields
+        # for displaying victory/defeat card in the lobby.
+        """
+        try:
+            r = self.client.get(
+                f"{self.base_url}/match/{match_id}/status",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=5,
+            )
+            if r.status_code == 200:
+                return r.json()
+        except Exception as e:
+            logger.debug(f"Match status: {e}")
         return None
 
     def upload_screenshot(self, match_id: str, filepath: str) -> dict | None:
@@ -543,9 +591,10 @@ class MatchMonitor:
         self.current_match_id: str | None = None
         self._thread:           threading.Thread | None = None
         self._heartbeat_thread: threading.Thread | None = None
-        self._capture_count    = 0
-        self._heartbeat_stop   = threading.Event()
-        self._session_id       = get_or_create_session_id(config)
+        self._capture_count      = 0
+        self._last_screenshot: str | None = None
+        self._heartbeat_stop     = threading.Event()
+        self._session_id         = get_or_create_session_id(config)
 
     def start(self):
         if self.running:
@@ -580,10 +629,11 @@ class MatchMonitor:
                         self.monitoring = True
 
                     if not self.current_match_id:
-                        wallet = self.config.get("wallet_address", "unknown")
-                        mid = self.engine.get_active_match(wallet)
-                        if mid:
-                            self.set_match_id(mid)
+                        token = self.config.get("auth_token", "")
+                        if token:
+                            mid = self.engine.get_active_match(token)
+                            if mid:
+                                self.set_match_id(mid)
 
                     game_dir = os.path.join(
                         self.config["screenshot_dir"], game.replace(" ", "_"))
@@ -594,6 +644,7 @@ class MatchMonitor:
                     )
                     if filepath:
                         self._capture_count += 1
+                        self._last_screenshot = filepath
                         if self.current_match_id:
                             result = self.engine.upload_screenshot(
                                 self.current_match_id, filepath)
@@ -779,7 +830,8 @@ def _resolve_badge_emoji(equipped_badge_icon: str | None) -> str | None:
 
 
 def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
-                         config: dict, ico_path: str | None = None) -> None:
+                         config: dict, ico_path: str | None = None,
+                         notify_fn: "callable | None" = None) -> None:
     """
     Arena Client window — dark gaming aesthetic matching the website.
 
@@ -1079,14 +1131,18 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                      font=ctk.CTkFont(size=12, weight="bold"),
                      text_color=rank_color).pack(anchor="w", pady=(0, 4))
 
-        ctk.CTkLabel(parent, text=f"XP: {auth.xp:,}",
+        # TODO(Claude): confirm /auth/me returns xp_to_next_level field.
+        # Currently reading it from profile; falls back to 1000 if not present.
+        # Once Claude confirms the field name, remove this comment.
+        xp_to_next = auth.xp_to_next_level
+        xp_ratio   = max(0.0, min(1.0, auth.xp / xp_to_next))
+        ctk.CTkLabel(parent, text=f"XP: {auth.xp:,} / {xp_to_next:,}",
                      font=ctk.CTkFont(size=11),
                      text_color=BRAND["text_muted"]).pack(anchor="w", pady=(0, 4))
-        # Phase 3: set real xp / xp_to_next_level ratio once profile API returns it
         xp_bar = ctk.CTkProgressBar(parent, height=5, corner_radius=3,
                                      progress_color=BRAND["accent"],
                                      fg_color=BRAND["bg_hover"])
-        xp_bar.set(0.0)
+        xp_bar.set(xp_ratio)
         xp_bar.pack(fill="x", pady=(0, 10))
 
         def _do_logout():
@@ -1121,10 +1177,118 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                                font=ctk.CTkFont(size=11), text_color=BRAND["warning"])
     match_lbl.pack(anchor="w", padx=14, pady=(0, 10))
 
+    # ── Match Lobby Card — hidden until monitor.current_match_id is set ───────
+    # Always exists in layout (between game_card and mon_card); shown/hidden via pack.
+    lobby_container = ctk.CTkFrame(ov, fg_color="transparent")
+    lobby_container.pack(fill="x")
+
+    lobby_outer = ctk.CTkFrame(lobby_container, fg_color=BRAND["bg_card"],
+                                corner_radius=8, border_width=1,
+                                border_color=BRAND["border"])
+    ctk.CTkLabel(lobby_outer, text="MATCH LOBBY",
+                 font=ctk.CTkFont(size=9, weight="bold"),
+                 text_color=BRAND["text_muted"]).pack(anchor="w", padx=14, pady=(10, 2))
+
+    lobby_body_ref: list = []
+    _lobby_result_cache: list[dict | None] = [None]
+
+    def _rebuild_lobby_body(data: dict | None, result: dict | None = None):
+        """Rebuild lobby card content. Always called on main thread via win.after."""
+        for w in lobby_body_ref:
+            try: w.destroy()
+            except Exception: pass
+        lobby_body_ref.clear()
+
+        if data is None:
+            lobby_outer.pack_forget()
+            return
+
+        if not lobby_outer.winfo_ismapped():
+            lobby_outer.pack(fill="x", padx=14, pady=(8, 0))
+
+        code      = data.get("code") or "—"
+        game_name = data.get("game") or "—"
+        mode      = data.get("mode") or "—"
+        your_team = (data.get("your_team") or "—").capitalize()
+        status    = data.get("status") or ""
+
+        # Info row
+        info_row = ctk.CTkFrame(lobby_outer, fg_color="transparent")
+        info_row.pack(fill="x", padx=14, pady=(0, 4))
+        lobby_body_ref.append(info_row)
+
+        ctk.CTkLabel(info_row,
+                     text=f"Code: {code}  ·  {game_name}  ·  {mode}",
+                     font=ctk.CTkFont(size=12, weight="bold"),
+                     text_color=BRAND["text"]).pack(side="left")
+        ctk.CTkLabel(info_row,
+                     text=f"Team: {your_team}",
+                     font=ctk.CTkFont(size=11),
+                     text_color=BRAND["warning"]).pack(side="right")
+
+        # Status chip
+        status_colors = {
+            "waiting":     BRAND["text_muted"],
+            "starting":    BRAND["warning"],
+            "in_progress": BRAND["accent"],
+            "completed":   BRAND["text_muted"],
+        }
+        status_lbl = ctk.CTkLabel(lobby_outer,
+                                   text=status.replace("_", " ").upper(),
+                                   font=ctk.CTkFont(size=10),
+                                   text_color=status_colors.get(status, BRAND["text_muted"]))
+        status_lbl.pack(anchor="w", padx=14, pady=(0, 6))
+        lobby_body_ref.append(status_lbl)
+
+        # Players split by team
+        players = data.get("players") or []
+        teams: dict[str, list[str]] = {}
+        for p in players:
+            t = (p.get("team") or "none").capitalize()
+            teams.setdefault(t, []).append(
+                p.get("username") or (p.get("user_id") or "?")[:8])
+
+        if teams:
+            teams_row = ctk.CTkFrame(lobby_outer, fg_color="transparent")
+            teams_row.pack(fill="x", padx=14, pady=(0, 8))
+            lobby_body_ref.append(teams_row)
+            for team_name, members in teams.items():
+                col = ctk.CTkFrame(teams_row, fg_color=BRAND["bg_hover"], corner_radius=4)
+                col.pack(side="left", fill="x", expand=True, padx=(0, 4))
+                ctk.CTkLabel(col, text=team_name,
+                             font=ctk.CTkFont(size=10, weight="bold"),
+                             text_color=BRAND["text_muted"]).pack(anchor="w", padx=8, pady=(4, 2))
+                for m in members:
+                    ctk.CTkLabel(col, text=f"· {m}",
+                                 font=ctk.CTkFont(size=11),
+                                 text_color=BRAND["text"]).pack(anchor="w", padx=8, pady=(0, 2))
+                ctk.CTkLabel(col, text="").pack(pady=(0, 4))
+
+        # Result banner — shown when match completed and result was fetched
+        # TODO(Claude): confirm GET /match/{id}/status response shape.
+        # Need 'result' (victory/defeat) and 'score' fields to display the banner.
+        # Once confirmed, remove this comment.
+        if result:
+            res_val   = (result.get("result") or "").upper()
+            score_val = result.get("score") or ""
+            res_color = BRAND["warning"] if res_val == "VICTORY" else BRAND["accent"]
+            res_text  = res_val + (f"  ·  {score_val}" if score_val else "")
+            res_banner = ctk.CTkLabel(lobby_outer, text=res_text,
+                                      font=ctk.CTkFont(size=14, weight="bold"),
+                                      text_color=res_color)
+            res_banner.pack(anchor="w", padx=14, pady=(0, 10))
+            lobby_body_ref.append(res_banner)
+        elif status == "completed":
+            wait_lbl = ctk.CTkLabel(lobby_outer, text="Fetching result…",
+                                     font=ctk.CTkFont(size=11),
+                                     text_color=BRAND["text_muted"])
+            wait_lbl.pack(anchor="w", padx=14, pady=(0, 10))
+            lobby_body_ref.append(wait_lbl)
+
     # Monitoring toggle card
     mon_card = _card(ov, "Monitoring")
     mon_row  = ctk.CTkFrame(mon_card, fg_color="transparent")
-    mon_row.pack(fill="x", padx=14, pady=(0, 12))
+    mon_row.pack(fill="x", padx=14, pady=(0, 6))
 
     mon_var = ctk.BooleanVar(value=monitor.running)
     mon_lbl = ctk.CTkLabel(mon_row,
@@ -1151,6 +1315,20 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         button_hover_color=BRAND["accent_dark"],
         progress_color=BRAND["accent_dark"],
     ).pack(side="left", padx=(8, 0))
+
+    cap_lbl = ctk.CTkLabel(mon_row, text="0 captures",
+                            font=ctk.CTkFont(size=10),
+                            text_color=BRAND["text_muted"])
+    cap_lbl.pack(side="right")
+
+    # Screenshot thumbnail row
+    thumb_row = ctk.CTkFrame(mon_card, fg_color="transparent")
+    thumb_row.pack(fill="x", padx=14, pady=(0, 12))
+    thumb_img_lbl = ctk.CTkLabel(thumb_row, text="No screenshot yet",
+                                  font=ctk.CTkFont(size=10),
+                                  text_color=BRAND["text_muted"])
+    thumb_img_lbl.pack(side="left")
+    _last_shown_fp: list[str | None] = [None]
 
     ctk.CTkLabel(ov, text="", height=10).pack()
 
@@ -1274,9 +1452,9 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             if health and health.get("status") == "ok":
                 db = health.get("db", "?")
                 eng_lbl.configure(text=f"Connected  ·  DB: {db}", text_color=BRAND["text"])
-                eng_dot.configure(text_color=BRAND["accent"])
-                hdr_eng_dot.configure(text_color=BRAND["accent"])
-                hdr_eng_lbl.configure(text_color=BRAND["accent"])
+                eng_dot.configure(text_color="#22C55E")
+                hdr_eng_dot.configure(text_color="#22C55E")
+                hdr_eng_lbl.configure(text_color="#22C55E")
             else:
                 eng_lbl.configure(text="Engine offline", text_color=BRAND["text_muted"])
                 eng_dot.configure(text_color=BRAND["error"])
@@ -1300,6 +1478,22 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             match_lbl.configure(text=f"Match #{monitor.current_match_id[:8]}…")
         else:
             match_lbl.configure(text="")
+
+        # Update capture count
+        cap_lbl.configure(text=f"{monitor._capture_count} captures")
+
+        # Update screenshot thumbnail when a new screenshot is available
+        last_fp = monitor._last_screenshot
+        if last_fp and last_fp != _last_shown_fp[0] and os.path.exists(last_fp):
+            try:
+                pil_img  = Image.open(last_fp).resize((60, 34), Image.LANCZOS)
+                ctk_img  = ctk.CTkImage(light_image=pil_img, dark_image=pil_img,
+                                        size=(60, 34))
+                thumb_img_lbl.configure(image=ctk_img, text="")
+                _last_shown_fp[0] = last_fp
+            except Exception:
+                pass
+
         win.after(3_000, _poll_game)
 
     def _poll_events():
@@ -1314,16 +1508,17 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         win.after(30_000, _poll_events)
 
     def _poll_profile_sync():
-        """Phase 3: re-sync rank/XP/avatar from /auth/me every 60s."""
+        """Phase 3: re-sync rank/XP/avatar/xp_to_next_level from /auth/me every 60s."""
         if auth.is_authenticated:
             token = auth.access_token or ""
             def _fetch():
                 profile = monitor.engine.get_profile(token)
                 if profile:
                     changed = (
-                        profile.get("rank")                != auth.rank
-                        or profile.get("xp")              != auth.xp
-                        or profile.get("avatar_bg")        != auth.avatar_bg
+                        profile.get("rank")                   != auth.rank
+                        or profile.get("xp")                 != auth.xp
+                        or profile.get("xp_to_next_level")   != auth.xp_to_next_level
+                        or profile.get("avatar_bg")           != auth.avatar_bg
                         or profile.get("equipped_badge_icon") != auth.equipped_badge_icon
                     )
                     if changed:
@@ -1331,6 +1526,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                             token=token,
                             rank=profile.get("rank"),
                             xp=profile.get("xp"),
+                            xp_to_next_level=profile.get("xp_to_next_level"),
                             avatar_url=profile.get("avatar_url"),
                             avatar_bg=profile.get("avatar_bg"),
                             equipped_badge_icon=profile.get("equipped_badge_icon"),
@@ -1339,10 +1535,67 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             threading.Thread(target=_fetch, daemon=True).start()
         win.after(60_000, _poll_profile_sync)
 
+    def _do_lobby_poll():
+        """
+        Background thread: polls GET /match/active every 5s independently.
+        Does NOT depend on monitor.current_match_id — shows lobby card
+        whenever the user is in a room, even before a game process launches.
+        """
+        token = auth.access_token or ""
+        if not token:
+            win.after(0, lambda: _rebuild_lobby_body(None))
+            return
+
+        # Always ask server directly — independent of game process detection
+        mid = monitor.engine.get_active_match(token)
+
+        if not mid:
+            if monitor.current_match_id:
+                monitor.current_match_id = None
+                _lobby_result_cache[0]   = None
+            win.after(0, lambda: _rebuild_lobby_body(None))
+            return
+
+        # Sync monitor so heartbeat + game status card stay consistent
+        if not monitor.current_match_id:
+            monitor.set_match_id(mid)
+
+        data = monitor.engine.match_heartbeat(mid, token)
+
+        def _apply():
+            if data is None:
+                return  # network hiccup — keep previous state visible
+
+            if not data.get("in_match", True):
+                monitor.current_match_id = None
+                _lobby_result_cache[0]   = None
+                _rebuild_lobby_body(None)
+                if notify_fn:
+                    try: notify_fn("Removed from match")
+                    except Exception: pass
+                return
+
+            _rebuild_lobby_body(data, _lobby_result_cache[0])
+
+            if data.get("status") == "completed" and _lobby_result_cache[0] is None:
+                def _fetch_result():
+                    res = monitor.engine.get_match_status(mid, token)
+                    if res:
+                        _lobby_result_cache[0] = res
+                        win.after(0, lambda: _rebuild_lobby_body(data, res))
+                threading.Thread(target=_fetch_result, daemon=True).start()
+
+        win.after(0, _apply)
+
+    def _poll_lobby():
+        threading.Thread(target=_do_lobby_poll, daemon=True).start()
+        win.after(5_000, _poll_lobby)
+
     # Kick off all polls
     win.after(500,    _poll_engine)
     win.after(1_000,  _poll_game)
     win.after(2_000,  _poll_events)
+    win.after(2_500,  _poll_lobby)
     win.after(60_000, _poll_profile_sync)
 
     win.mainloop()
@@ -1463,7 +1716,11 @@ class ArenaTray:
         self.icon.run_detached()
         logger.info("Arena Desktop Client started")
 
-        _build_client_window(self.monitor, self.auth, self.config, ico_path=ico_path)
+        _build_client_window(
+            self.monitor, self.auth, self.config, ico_path=ico_path,
+            notify_fn=lambda msg: (
+                self.icon.notify("Arena Client", msg) if self.icon else None),
+        )
 
 
 # ── Entry Point ────────────────────────────────────────────────────────────────
