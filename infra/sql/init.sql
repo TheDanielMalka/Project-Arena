@@ -839,3 +839,8 @@ CREATE INDEX IF NOT EXISTS idx_disputes_player_a   ON disputes(player_a);
 
 -- ── Migration 019 — Ensure matches.host_id is indexed ────────────────────────
 CREATE INDEX IF NOT EXISTS idx_matches_host ON matches(host_id);
+
+-- ── Migration 020 — Raise daily AT bet limit: 500 → 50000 ────────────────────
+INSERT INTO platform_config (key, value)
+VALUES ('daily_bet_max_at', '50000')
+ON CONFLICT (key) DO UPDATE SET value = '50000', updated_at = NOW();

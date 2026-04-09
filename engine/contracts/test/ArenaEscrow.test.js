@@ -188,8 +188,8 @@ describe("ArenaEscrow", function () {
         escrow.connect(players[1]).joinMatch(0, 1, { value: STAKE })
       )
         .to.emit(escrow, "PlayerDeposited")
-        .withArgs(0n, players[1].address, 1, 1, 1);
-                                       // matchId, player, team=B(1), depositsA=1, depositsB=1
+        .withArgs(0n, players[1].address, 1, STAKE, 1, 1);
+                                       // matchId, player, team=B(1), stakePerPlayer, depositsA=1, depositsB=1
     });
 
     it("1v1 match activates when both slots are filled — emits MatchActive", async function () {

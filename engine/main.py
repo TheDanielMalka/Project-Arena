@@ -1783,6 +1783,7 @@ async def me(payload: dict = Depends(verify_token)):
         daily_staked = _get_daily_staked(session, user_id)
     except Exception:
         daily_staked = 0
+    daily_limit = _get_daily_limit()
     return UserProfile(
         user_id=str(row[0]),
         username=row[1],
@@ -1795,7 +1796,7 @@ async def me(payload: dict = Depends(verify_token)):
         xp=xp_val,
         xp_to_next_level=((xp_val // 1000) + 1) * 1000,
         daily_staked_at=daily_staked,
-        daily_limit_at=_at_daily_limit,
+        daily_limit_at=daily_limit,
         wins=int(row[9]),
         losses=int(row[10]),
         avatar=row[11],
