@@ -22,6 +22,7 @@ from src.config import API_SECRET
 _JWT_SECRET: str = API_SECRET
 _JWT_ALGORITHM: str = "HS256"
 _JWT_EXPIRY_HOURS: int = 24 * 7   # 7 days — refresh not needed at this stage
+_JWT_2FA_PENDING_MINS: int = 5    # short-lived token after password OK, before TOTP
 
 
 # ── Password helpers ──────────────────────────────────────────────────────────
@@ -44,21 +45,38 @@ def issue_token(user_id: str, email: str, username: str = "") -> str:
     Issue a signed JWT for the given user.
 
     Payload:
-      sub      — user UUID (PK in users table)
-      email    — for display / quick lookup
-      username — display name; included so the UI can show it immediately
-                 on refresh before /auth/me finishes loading, preventing
-                 the UUID flash where username briefly shows as the raw sub.
-      iat      — issued-at timestamp
-      exp      — expiry (7 days from now)
+      sub        — user UUID (PK in users table)
+      email      — for display / quick lookup
+      username   — display name; included so the UI can show it immediately
+                   on refresh before /auth/me finishes loading, preventing
+                   the UUID flash where username briefly shows as the raw sub.
+      token_use  — "access" (default) — required for protected routes
+      iat        — issued-at timestamp
+      exp        — expiry (7 days from now)
     """
     now = datetime.now(timezone.utc)
     payload = {
-        "sub":      user_id,
-        "email":    email,
-        "username": username,
-        "iat":      now,
-        "exp":      now + timedelta(hours=_JWT_EXPIRY_HOURS),
+        "sub":        user_id,
+        "email":      email,
+        "username":   username,
+        "token_use":  "access",
+        "iat":        now,
+        "exp":        now + timedelta(hours=_JWT_EXPIRY_HOURS),
+    }
+    return jwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM)
+
+
+def issue_2fa_pending_token(user_id: str) -> str:
+    """
+    Short-lived JWT after password verification when totp_enabled is true.
+    Must be exchanged via POST /auth/2fa/confirm for a full access token.
+    """
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub":        user_id,
+        "token_use":  "2fa_pending",
+        "iat":        now,
+        "exp":        now + timedelta(minutes=_JWT_2FA_PENDING_MINS),
     }
     return jwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM)
 
@@ -71,7 +89,11 @@ def decode_token(token: str) -> dict:
       jwt.ExpiredSignatureError  — token is expired
       jwt.InvalidTokenError      — signature invalid / malformed
     """
-    return jwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALGORITHM])
+    data = jwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALGORITHM])
+    # Legacy tokens issued before token_use was added — treat as full access
+    if "token_use" not in data:
+        data["token_use"] = "access"
+    return data
 
 
 # ── Game account format validators ───────────────────────────────────────────

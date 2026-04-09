@@ -1,6 +1,8 @@
+import hashlib
 import os
 import logging
 import threading
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 
@@ -9,6 +11,7 @@ from collections import defaultdict as _defaultdict
 
 from fastapi import FastAPI, HTTPException, Depends, Header, Query, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, model_validator
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -28,11 +31,14 @@ except ImportError:
         return None
 import src.auth as auth
 
+import pyotp
+
 # ── Config ────────────────────────────────────────────────────────────────────
 DB_URL = DATABASE_URL or "postgresql://arena_admin:arena_secret_change_me@arena-db:5432/arena"
 API_SECRET = os.getenv("API_SECRET", "change_me_in_production")
 SCREENSHOT_DIR = os.getenv("SCREENSHOT_DIR", "/app/screenshots")
 EVIDENCE_DIR = os.getenv("EVIDENCE_DIR", "/app/evidence")
+UPLOAD_REPORTS_DIR = os.getenv("UPLOAD_REPORTS_DIR", os.path.join(os.getcwd(), "uploads", "reports"))
 
 logger = logging.getLogger("arena.engine")
 
@@ -166,7 +172,7 @@ async def _expired_match_cleanup_loop(interval: int = 300) -> None:
 async def lifespan(app: FastAPI):
     # Create runtime directories at startup, not at import time.
     # Gracefully skipped in CI / restricted environments (tests still run).
-    for d in (SCREENSHOT_DIR, EVIDENCE_DIR):
+    for d in (SCREENSHOT_DIR, EVIDENCE_DIR, UPLOAD_REPORTS_DIR):
         try:
             os.makedirs(d, exist_ok=True)
         except PermissionError:
@@ -307,11 +313,14 @@ async def verify_token(authorization: str = Header(...)) -> dict:
         raise HTTPException(401, "Invalid token format")
     token = authorization.removeprefix("Bearer ")
     try:
-        return auth.decode_token(token)
+        payload = auth.decode_token(token)
     except _jwt.ExpiredSignatureError:
         raise HTTPException(401, "Token expired")
     except _jwt.InvalidTokenError:
         raise HTTPException(401, "Invalid token")
+    if payload.get("token_use") == "2fa_pending":
+        raise HTTPException(401, "Complete 2FA — use POST /auth/2fa/confirm with temp_token")
+    return payload
 
 
 async def require_admin(payload: dict = Depends(verify_token)) -> dict:
@@ -391,13 +400,16 @@ class LoginRequest(BaseModel):
 
 class AuthResponse(BaseModel):
     # DB-ready: user_id maps to users.id (UUID)
-    access_token: str
+    # When requires_2fa=True (login only), access_token is omitted — use temp_token + POST /auth/2fa/confirm
+    access_token: str | None = None
     token_type: str = "bearer"
-    user_id: str
-    username: str
-    email: str
+    user_id: str | None = None
+    username: str | None = None
+    email: str | None = None
     arena_id: str | None = None
     wallet_address: str | None = None   # DB-ready: from users.wallet_address
+    requires_2fa: bool = False
+    temp_token: str | None = None
 
 
 class UserProfile(BaseModel):
@@ -427,6 +439,7 @@ class UserProfile(BaseModel):
     equipped_badge_icon: str | None = None
     forge_unlocked_item_ids: list[str] = []
     vip_expires_at: str | None = None
+    region: str = "EU"  # user_settings.region — EU | NA | ASIA | SA | OCE | ME
 
 
 # ── Request / Response models ─────────────────────────────────────────────────
@@ -1677,6 +1690,13 @@ async def register(req: RegisterRequest, request: Request):
             session.execute(text("INSERT INTO user_stats (user_id) VALUES (:uid)"),    {"uid": user_id})
             session.execute(text("INSERT INTO user_balances (user_id) VALUES (:uid)"), {"uid": user_id})
             session.execute(text("INSERT INTO user_roles (user_id, role) VALUES (:uid, 'user')"), {"uid": user_id})
+            session.execute(
+                text(
+                    "INSERT INTO user_settings (user_id) VALUES (:uid) "
+                    "ON CONFLICT (user_id) DO NOTHING"
+                ),
+                {"uid": user_id},
+            )
             session.commit()
 
     except HTTPException:
@@ -1697,6 +1717,7 @@ async def register(req: RegisterRequest, request: Request):
         username=username,
         email=email,
         arena_id=arena_id,
+        requires_2fa=False,
     )
 
 
@@ -1706,27 +1727,35 @@ async def login(req: LoginRequest, request: Request):
     Login with email OR username + password.
 
     DB-ready: SELECT from users table; verifies bcrypt hash.
+    When totp_enabled, returns requires_2fa + temp_token (5 min); full JWT from POST /auth/2fa/confirm.
     """
     _check_rate_limit(f"login:{request.client.host}", max_calls=10, window_secs=60)
     try:
         with SessionLocal() as session:
             row = session.execute(
                 text(
-                    "SELECT id, username, email, password_hash, arena_id, wallet_address "
+                    "SELECT id, username, email, password_hash, arena_id, wallet_address, "
+                    "       COALESCE(totp_enabled, FALSE), totp_secret "
                     "FROM users "
-                    "WHERE email = :id OR username = :id"
+                    "WHERE lower(email) = lower(:id) OR lower(username) = lower(:id)"
                 ),
-                {"id": req.identifier},
+                {"id": req.identifier.strip()},
             ).fetchone()
     except Exception as exc:
         logger.error("login db error: %s", exc)
         raise HTTPException(500, "Login failed")
 
+    totp_enabled = bool(row[6]) if row and len(row) >= 8 else False
+
     if not row or not auth.verify_password(req.password, row[3]):
         raise HTTPException(401, "Invalid credentials")
 
     user_id = str(row[0])
-    token = auth.issue_token(user_id, row[2], row[1])  # email=row[2], username=row[1]
+    if totp_enabled:
+        temp = auth.issue_2fa_pending_token(user_id)
+        return AuthResponse(requires_2fa=True, temp_token=temp)
+
+    token = auth.issue_token(user_id, row[2], row[1])
     return AuthResponse(
         access_token=token,
         user_id=user_id,
@@ -1734,6 +1763,7 @@ async def login(req: LoginRequest, request: Request):
         email=row[2],
         arena_id=row[4],
         wallet_address=row[5],
+        requires_2fa=False,
     )
 
 
@@ -1764,26 +1794,29 @@ async def me(payload: dict = Depends(verify_token)):
                     "                      WHERE mr.user_id = u.id AND mr.role = 'moderator') "
                     "           THEN 'moderator' "
                     "         ELSE 'user' "
-                    "       END "
+                    "       END, "
+                    "       COALESCE(us.region, 'EU') "
                     "FROM users u "
                     "LEFT JOIN user_stats s ON s.user_id = u.id "
+                    "LEFT JOIN user_settings us ON us.user_id = u.id "
                     "WHERE u.id = :uid"
                 ),
                 {"uid": user_id},
             ).fetchone()
+            if not row:
+                raise HTTPException(404, "User not found")
+            xp_val = int(row[8])
+            try:
+                daily_staked = _get_daily_staked(session, user_id)
+            except Exception:
+                daily_staked = 0
+            daily_limit = _get_daily_limit()
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("me db error: %s", exc)
         raise HTTPException(500, "Profile fetch failed")
 
-    if not row:
-        raise HTTPException(404, "User not found")
-
-    xp_val = int(row[8])
-    try:
-        daily_staked = _get_daily_staked(session, user_id)
-    except Exception:
-        daily_staked = 0
-    daily_limit = _get_daily_limit()
     return UserProfile(
         user_id=str(row[0]),
         username=row[1],
@@ -1806,6 +1839,7 @@ async def me(payload: dict = Depends(verify_token)):
         vip_expires_at=row[15].isoformat() if row[15] else None,
         at_balance=int(row[16]),
         role=str(row[17]) if row[17] is not None else "user",
+        region=str(row[18]) if len(row) > 18 and row[18] else "EU",
     )
 
 
@@ -1929,6 +1963,232 @@ async def patch_user_me(req: PatchUserRequest, payload: dict = Depends(verify_to
     # Return fresh profile
     return await me(payload)
 
+
+class UserSettingsRegionPatch(BaseModel):
+    """PATCH /users/settings — region only (Phase 2)."""
+    region: str
+
+
+_ALLOWED_REGIONS = frozenset({"EU", "NA", "ASIA", "SA", "OCE", "ME"})
+
+
+@app.patch("/users/settings")
+async def patch_user_settings(
+    req: UserSettingsRegionPatch,
+    payload: dict = Depends(verify_token),
+):
+    """Update user_settings.region (EU | NA | ASIA | SA | OCE | ME)."""
+    r = req.region.strip().upper()
+    if r not in _ALLOWED_REGIONS:
+        raise HTTPException(400, f"region must be one of: {', '.join(sorted(_ALLOWED_REGIONS))}")
+    uid = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            session.execute(
+                text(
+                    "INSERT INTO user_settings (user_id, region) VALUES (:uid, :reg) "
+                    "ON CONFLICT (user_id) DO UPDATE SET "
+                    "region = EXCLUDED.region, updated_at = NOW()"
+                ),
+                {"uid": uid, "reg": r},
+            )
+            session.commit()
+    except Exception as exc:
+        logger.error("patch_user_settings error: %s", exc)
+        raise HTTPException(500, "Failed to update settings")
+    return {"region": r}
+
+
+class DeleteAccountBody(BaseModel):
+    confirm_text: str
+
+
+@app.delete("/users/me")
+async def delete_my_account(
+    body: DeleteAccountBody,
+    payload: dict = Depends(verify_token),
+):
+    """Permanently delete the authenticated account (FK-safe). Type 'delete' to confirm."""
+    if body.confirm_text != "delete":
+        raise HTTPException(400, "Type 'delete' to confirm")
+    uid = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            try:
+                _delete_user_account(session, uid)
+                session.commit()
+            except HTTPException:
+                session.rollback()
+                raise
+            except Exception as exc:
+                session.rollback()
+                logger.error("delete_my_account error: %s", exc)
+                raise HTTPException(500, "Account deletion failed")
+    except HTTPException:
+        raise
+    return {"deleted": True}
+
+
+class TwoFAVerifyBody(BaseModel):
+    code: str
+
+
+class TwoFADisableBody(BaseModel):
+    password: str
+    code: str
+
+
+class TwoFAConfirmBody(BaseModel):
+    temp_token: str
+    code: str
+
+
+@app.post("/auth/2fa/setup")
+async def twofa_setup(payload: dict = Depends(verify_token)):
+    """Generate TOTP secret (not enabled until POST /auth/2fa/verify)."""
+    uid = payload["sub"]
+    secret = pyotp.random_base32()
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("SELECT email FROM users WHERE id = :uid"),
+                {"uid": uid},
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "User not found")
+            email = row[0]
+            session.execute(
+                text(
+                    "UPDATE users SET totp_secret = :sec, totp_enabled = FALSE WHERE id = :uid"
+                ),
+                {"sec": secret, "uid": uid},
+            )
+            session.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("twofa_setup error: %s", exc)
+        raise HTTPException(500, "2FA setup failed")
+    qr_uri = (
+        f"otpauth://totp/ProjectArena:{email}?secret={secret}&issuer=ProjectArena"
+    )
+    return {"secret": secret, "qr_uri": qr_uri}
+
+
+@app.post("/auth/2fa/verify")
+async def twofa_verify(req: TwoFAVerifyBody, payload: dict = Depends(verify_token)):
+    """Verify first TOTP code and enable 2FA."""
+    uid = payload["sub"]
+    code = req.code.strip().replace(" ", "")
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("SELECT totp_secret FROM users WHERE id = :uid"),
+                {"uid": uid},
+            ).fetchone()
+            if not row or not row[0]:
+                raise HTTPException(400, "Run POST /auth/2fa/setup first")
+            if not pyotp.TOTP(row[0]).verify(code, valid_window=1):
+                raise HTTPException(400, "Invalid verification code")
+            session.execute(
+                text("UPDATE users SET totp_enabled = TRUE WHERE id = :uid"),
+                {"uid": uid},
+            )
+            session.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("twofa_verify error: %s", exc)
+        raise HTTPException(500, "2FA verify failed")
+    return {"enabled": True}
+
+
+@app.delete("/auth/2fa")
+async def twofa_disable(req: TwoFADisableBody, payload: dict = Depends(verify_token)):
+    """Disable 2FA after password + TOTP verification."""
+    uid = payload["sub"]
+    code = req.code.strip().replace(" ", "")
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT password_hash, totp_secret, totp_enabled FROM users WHERE id = :uid"
+                ),
+                {"uid": uid},
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "User not found")
+            ph, sec, en = row[0], row[1], bool(row[2])
+            if not en:
+                raise HTTPException(400, "2FA is not enabled")
+            if not auth.verify_password(req.password, ph):
+                raise HTTPException(401, "Invalid password")
+            if not sec or not pyotp.TOTP(sec).verify(code, valid_window=1):
+                raise HTTPException(400, "Invalid verification code")
+            session.execute(
+                text(
+                    "UPDATE users SET totp_enabled = FALSE, totp_secret = NULL WHERE id = :uid"
+                ),
+                {"uid": uid},
+            )
+            session.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("twofa_disable error: %s", exc)
+        raise HTTPException(500, "2FA disable failed")
+    return {"disabled": True}
+
+
+@app.post("/auth/2fa/confirm", response_model=AuthResponse)
+async def twofa_confirm(req: TwoFAConfirmBody, request: Request):
+    """Exchange temp_token (from login) + TOTP for a full access JWT."""
+    _check_rate_limit(f"2fa_confirm:{request.client.host}", max_calls=20, window_secs=60)
+    try:
+        pl = auth.decode_token(req.temp_token.strip())
+    except _jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Temporary token expired — log in again")
+    except _jwt.InvalidTokenError:
+        raise HTTPException(401, "Invalid temporary token")
+    if pl.get("token_use") != "2fa_pending":
+        raise HTTPException(401, "Not a 2FA pending token")
+    uid = pl["sub"]
+    code = req.code.strip().replace(" ", "")
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT username, email, arena_id, wallet_address, totp_secret, totp_enabled "
+                    "FROM users WHERE id = :uid"
+                ),
+                {"uid": uid},
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "User not found")
+            if not row[5] or not row[4]:
+                raise HTTPException(400, "2FA not configured")
+            if not pyotp.TOTP(row[4]).verify(code, valid_window=1):
+                raise HTTPException(400, "Invalid verification code")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("twofa_confirm error: %s", exc)
+        raise HTTPException(500, "2FA confirmation failed")
+
+    token = auth.issue_token(uid, row[1], row[0])
+    return AuthResponse(
+        access_token=token,
+        user_id=uid,
+        username=row[0],
+        email=row[1],
+        arena_id=row[2],
+        wallet_address=row[3],
+        requires_2fa=False,
+    )
+
+
+# TODO[GOOGLE]: POST /auth/google — verify Google id_token, create/find user by google_id
+# (Phase 0 plan). Do NOT implement until Client ID + DB columns google_id / auth_provider exist.
 
 @app.post("/auth/logout", status_code=200)
 async def logout(payload: dict = Depends(verify_token)):
@@ -2269,6 +2529,147 @@ def _assert_at_balance(session, user_id: str, required: int) -> None:
             402,
             f"Insufficient Arena Tokens — you need {required} AT but have {int(row[0])} AT.",
         )
+
+
+def _cleanup_report_attachments_for_ticket(session, ticket_id: str) -> None:
+    """Remove attachment files on disk and DB rows for a support ticket."""
+    rows = session.execute(
+        text("SELECT file_path FROM report_attachments WHERE ticket_id = :tid"),
+        {"tid": ticket_id},
+    ).fetchall()
+    root = os.path.abspath(UPLOAD_REPORTS_DIR)
+    for (fp,) in rows:
+        if not fp:
+            continue
+        try:
+            abs_fp = os.path.abspath(fp)
+            if abs_fp.startswith(root) and os.path.isfile(abs_fp):
+                os.remove(abs_fp)
+        except OSError:
+            pass
+    session.execute(text("DELETE FROM report_attachments WHERE ticket_id = :tid"), {"tid": ticket_id})
+
+
+def _delete_user_account(session, user_id: str) -> None:
+    """
+    FK-safe account deletion: backup row in deleted_accounts, purge dependent rows, DELETE user.
+    DB-ready: migrations 022–024 (totp, deleted_accounts, report_attachments).
+    """
+    active = session.execute(
+        text(
+            "SELECT 1 FROM match_players mp "
+            "JOIN matches m ON m.id = mp.match_id "
+            "WHERE mp.user_id = :uid AND m.status IN ('waiting','in_progress','disputed')"
+        ),
+        {"uid": user_id},
+    ).fetchone()
+    if active:
+        raise HTTPException(
+            409,
+            "Cannot delete account while in a waiting, in-progress, or disputed match. Leave or finish first.",
+        )
+
+    urow = session.execute(
+        text(
+            "SELECT steam_id, riot_id, wallet_address, email, username "
+            "FROM users WHERE id = :uid"
+        ),
+        {"uid": user_id},
+    ).fetchone()
+    if not urow:
+        raise HTTPException(404, "User not found")
+
+    steam_id, riot_id, wallet, email, username = urow
+    eh = hashlib.sha256(email.encode()).hexdigest() if email else None
+    uh = hashlib.sha256(username.encode()).hexdigest() if username else None
+    session.execute(
+        text(
+            "INSERT INTO deleted_accounts "
+            "(steam_id, riot_id, wallet_address, email_hash, username_hash) "
+            "VALUES (:s, :r, :w, :eh, :uh)"
+        ),
+        {"s": steam_id, "r": riot_id, "w": wallet, "eh": eh, "uh": uh},
+    )
+
+    tix = session.execute(
+        text("SELECT id FROM support_tickets WHERE reporter_id = :uid"),
+        {"uid": user_id},
+    ).fetchall()
+    for (tid,) in tix:
+        _cleanup_report_attachments_for_ticket(session, str(tid))
+    session.execute(text("DELETE FROM support_tickets WHERE reporter_id = :uid"), {"uid": user_id})
+    session.execute(
+        text("UPDATE support_tickets SET reported_id = NULL WHERE reported_id = :uid"),
+        {"uid": user_id},
+    )
+
+    session.execute(text("DELETE FROM transactions WHERE user_id = :uid"), {"uid": user_id})
+    session.execute(
+        text("DELETE FROM disputes WHERE player_a = :uid OR player_b = :uid"),
+        {"uid": user_id},
+    )
+    session.execute(text("UPDATE admin_audit_log SET admin_id = NULL WHERE admin_id = :uid"), {"uid": user_id})
+    session.execute(text("UPDATE platform_config SET updated_by = NULL WHERE updated_by = :uid"), {"uid": user_id})
+    session.execute(
+        text("UPDATE player_penalties SET created_by = NULL WHERE created_by = :uid"),
+        {"uid": user_id},
+    )
+    session.execute(text("UPDATE audit_logs SET admin_id = NULL WHERE admin_id = :uid"), {"uid": user_id})
+    try:
+        session.execute(
+            text("UPDATE platform_settings SET updated_by = NULL WHERE updated_by = :uid"),
+            {"uid": user_id},
+        )
+    except Exception:
+        pass
+
+    for table, col in [
+        ("notifications", "user_id"),
+    ]:
+        session.execute(text(f"DELETE FROM {table} WHERE {col} = :uid"), {"uid": user_id})
+
+    session.execute(
+        text("DELETE FROM direct_messages WHERE sender_id = :uid OR receiver_id = :uid"),
+        {"uid": user_id},
+    )
+    session.execute(
+        text("DELETE FROM inbox_messages WHERE sender_id = :uid OR receiver_id = :uid"),
+        {"uid": user_id},
+    )
+
+    session.execute(text("DELETE FROM match_players WHERE user_id = :uid"), {"uid": user_id})
+    session.execute(text("UPDATE matches SET winner_id = NULL WHERE winner_id = :uid"), {"uid": user_id})
+    session.execute(
+        text(
+            "UPDATE matches m SET host_id = ("
+            "  SELECT mp.user_id FROM match_players mp WHERE mp.match_id = m.id "
+            "  ORDER BY mp.joined_at NULLS LAST LIMIT 1"
+            ") "
+            "WHERE m.host_id = :uid "
+            "AND EXISTS (SELECT 1 FROM match_players mp2 WHERE mp2.match_id = m.id)"
+        ),
+        {"uid": user_id},
+    )
+    session.execute(
+        text(
+            "DELETE FROM matches m "
+            "WHERE m.host_id = :uid "
+            "AND NOT EXISTS (SELECT 1 FROM match_players mp WHERE mp.match_id = m.id)"
+        ),
+        {"uid": user_id},
+    )
+
+    rem = session.execute(
+        text("SELECT 1 FROM matches WHERE host_id = :uid"),
+        {"uid": user_id},
+    ).fetchone()
+    if rem:
+        raise HTTPException(
+            409,
+            "Account still hosts matches that could not be reassigned. Cancel those matches first.",
+        )
+
+    session.execute(text("DELETE FROM users WHERE id = :uid"), {"uid": user_id})
 
 
 def _deduct_at(session, user_id: str, amount: int, match_id: str, tx_type: str = "escrow_lock") -> None:
@@ -4228,6 +4629,33 @@ async def send_message(req: SendMessageRequest, payload: dict = Depends(verify_t
     }
 
 
+@app.get("/messages/unread/count")
+async def messages_unread_count(payload: dict = Depends(verify_token)):
+    """Unread DM + inbox (formal) messages for the authenticated user."""
+    me: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            dm = session.execute(
+                text(
+                    "SELECT COUNT(*) FROM direct_messages "
+                    "WHERE receiver_id = :me AND read = FALSE"
+                ),
+                {"me": me},
+            ).scalar()
+            ib = session.execute(
+                text(
+                    "SELECT COUNT(*) FROM inbox_messages "
+                    "WHERE receiver_id = :me AND read = FALSE AND deleted = FALSE"
+                ),
+                {"me": me},
+            ).scalar()
+    except Exception as exc:
+        logger.error("messages_unread_count error: %s", exc)
+        raise HTTPException(500, "Failed to count unread messages")
+    total = int(dm or 0) + int(ib or 0)
+    return {"count": total}
+
+
 @app.get("/messages/{friend_id}")
 async def get_conversation(
     friend_id: str,
@@ -5730,6 +6158,300 @@ async def get_support_tickets(
             for r in rows
         ]
     }
+
+
+_REPORT_UPLOAD_MIME = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+_REPORT_MAX_BYTES = 10 * 1024 * 1024
+
+
+class AdminSupportTicketPatch(BaseModel):
+    status: str | None = None
+    admin_note: str | None = None
+
+
+@app.patch("/admin/support/tickets/{ticket_id}", status_code=200)
+async def admin_patch_support_ticket(
+    ticket_id: str,
+    req: AdminSupportTicketPatch,
+    _admin: dict = Depends(require_admin),
+):
+    """Admin: update ticket status / note. Resolved or dismissed → purge attachment files + rows."""
+    _valid = {"open", "investigating", "dismissed", "resolved"}
+    if req.status is not None and req.status not in _valid:
+        raise HTTPException(400, f"status must be one of: {', '.join(sorted(_valid))}")
+    if req.status is None and req.admin_note is None:
+        raise HTTPException(400, "Provide status and/or admin_note")
+
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("SELECT status FROM support_tickets WHERE id = :tid"),
+                {"tid": ticket_id},
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "Ticket not found")
+            if req.status in ("resolved", "dismissed"):
+                _cleanup_report_attachments_for_ticket(session, ticket_id)
+            parts: list[str] = []
+            params: dict = {"tid": ticket_id}
+            if req.status is not None:
+                parts.append("status = :st")
+                params["st"] = req.status
+            if req.admin_note is not None:
+                parts.append("admin_note = :note")
+                params["note"] = req.admin_note
+            if parts:
+                session.execute(
+                    text(f"UPDATE support_tickets SET {', '.join(parts)} WHERE id = :tid"),
+                    params,
+                )
+            session.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("admin_patch_support_ticket error: %s", exc)
+        raise HTTPException(500, "Ticket update failed")
+    return {"updated": True, "id": ticket_id}
+
+
+@app.post("/support/tickets/{ticket_id}/attachments", status_code=201)
+async def upload_support_ticket_attachment(
+    ticket_id: str,
+    payload: dict = Depends(verify_token),
+    file: UploadFile = File(...),
+):
+    """Reporter uploads an image file for their support ticket (max 10MB)."""
+    me: str = payload["sub"]
+    ct = (file.content_type or "").split(";")[0].strip().lower()
+    if ct not in _REPORT_UPLOAD_MIME:
+        raise HTTPException(400, "Allowed types: PNG, JPEG, WebP, GIF")
+    ext = _REPORT_UPLOAD_MIME[ct]
+    body = await file.read()
+    if len(body) > _REPORT_MAX_BYTES:
+        raise HTTPException(400, "File too large (max 10MB)")
+    try:
+        os.makedirs(UPLOAD_REPORTS_DIR, exist_ok=True)
+    except OSError:
+        pass
+    file_token = str(uuid.uuid4())
+    safe_name = f"{file_token}{ext}"
+    abs_path = os.path.abspath(os.path.join(UPLOAD_REPORTS_DIR, safe_name))
+    root = os.path.abspath(UPLOAD_REPORTS_DIR)
+    if not abs_path.startswith(root):
+        raise HTTPException(500, "Invalid upload path")
+    try:
+        with open(abs_path, "wb") as f:
+            f.write(body)
+    except OSError as exc:
+        logger.error("upload_support_ticket_attachment write error: %s", exc)
+        raise HTTPException(500, "Failed to save file")
+
+    db_id = file_token
+    try:
+        with SessionLocal() as session:
+            t = session.execute(
+                text("SELECT reporter_id FROM support_tickets WHERE id = :tid"),
+                {"tid": ticket_id},
+            ).fetchone()
+            if not t:
+                try:
+                    os.remove(abs_path)
+                except OSError:
+                    pass
+                raise HTTPException(404, "Ticket not found")
+            if str(t[0]) != me:
+                try:
+                    os.remove(abs_path)
+                except OSError:
+                    pass
+                raise HTTPException(403, "Only the ticket reporter may upload attachments")
+            ins = session.execute(
+                text(
+                    "INSERT INTO report_attachments "
+                    "(ticket_id, filename, content_type, file_path, file_size, uploaded_by) "
+                    "VALUES (:tid, :fn, :ct, :fp, :sz, :uid) "
+                    "RETURNING id"
+                ),
+                {
+                    "tid": ticket_id,
+                    "fn": file.filename or safe_name,
+                    "ct": ct,
+                    "fp": abs_path,
+                    "sz": len(body),
+                    "uid": me,
+                },
+            ).fetchone()
+            session.commit()
+            db_id = str(ins[0]) if ins else file_token
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("upload_support_ticket_attachment db error: %s", exc)
+        try:
+            os.remove(abs_path)
+        except OSError:
+            pass
+        raise HTTPException(500, "Failed to record attachment")
+
+    return {
+        "id":           db_id,
+        "ticket_id":    ticket_id,
+        "filename":     file.filename or safe_name,
+        "content_type": ct,
+        "file_size":    len(body),
+    }
+
+
+@app.get("/admin/support/tickets/{ticket_id}/attachments")
+async def admin_list_ticket_attachments(
+    ticket_id: str,
+    _admin: dict = Depends(require_admin),
+):
+    """Admin: list metadata for all attachments on a ticket."""
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(
+                text(
+                    "SELECT id, filename, content_type, file_size, uploaded_at, uploaded_by "
+                    "FROM report_attachments WHERE ticket_id = :tid ORDER BY uploaded_at"
+                ),
+                {"tid": ticket_id},
+            ).fetchall()
+    except Exception as exc:
+        logger.error("admin_list_ticket_attachments error: %s", exc)
+        raise HTTPException(500, "Failed to list attachments")
+    return {
+        "attachments": [
+            {
+                "id":           str(r[0]),
+                "filename":     r[1],
+                "content_type": r[2],
+                "file_size":    r[3],
+                "uploaded_at":  r[4].isoformat() if r[4] else None,
+                "uploaded_by":  str(r[5]) if r[5] else None,
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.get("/attachments/{attachment_id}")
+async def download_attachment(attachment_id: str, payload: dict = Depends(verify_token)):
+    """Download an attachment if you are the ticket reporter or an admin."""
+    me: str = payload["sub"]
+    root = os.path.abspath(UPLOAD_REPORTS_DIR)
+    try:
+        with SessionLocal() as session:
+            is_admin = session.execute(
+                text("SELECT 1 FROM user_roles WHERE user_id = :uid AND role = 'admin'"),
+                {"uid": me},
+            ).fetchone()
+            row = session.execute(
+                text(
+                    "SELECT ra.file_path, ra.content_type, ra.filename, st.reporter_id "
+                    "FROM report_attachments ra "
+                    "JOIN support_tickets st ON st.id = ra.ticket_id "
+                    "WHERE ra.id = :aid"
+                ),
+                {"aid": attachment_id},
+            ).fetchone()
+    except Exception as exc:
+        logger.error("download_attachment error: %s", exc)
+        raise HTTPException(500, "Failed to load attachment")
+    if not row:
+        raise HTTPException(404, "Attachment not found")
+    fp, ctype, fname, reporter = row[0], row[1], row[2], str(row[3]) if row[3] else None
+    if not is_admin and reporter != me:
+        raise HTTPException(403, "Not allowed to access this attachment")
+    abs_fp = os.path.abspath(fp)
+    if not abs_fp.startswith(root) or not os.path.isfile(abs_fp):
+        raise HTTPException(404, "File missing")
+    return FileResponse(abs_fp, media_type=ctype or "application/octet-stream", filename=fname or "attachment")
+
+
+@app.delete("/attachments/{attachment_id}", status_code=200)
+async def delete_attachment_admin(
+    attachment_id: str,
+    _admin: dict = Depends(require_admin),
+):
+    """Admin: delete attachment row and file on disk."""
+    root = os.path.abspath(UPLOAD_REPORTS_DIR)
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("SELECT file_path FROM report_attachments WHERE id = :aid"),
+                {"aid": attachment_id},
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "Attachment not found")
+            fp = row[0]
+            session.execute(
+                text("DELETE FROM report_attachments WHERE id = :aid"),
+                {"aid": attachment_id},
+            )
+            session.commit()
+        if fp:
+            abs_fp = os.path.abspath(fp)
+            if abs_fp.startswith(root) and os.path.isfile(abs_fp):
+                try:
+                    os.remove(abs_fp)
+                except OSError:
+                    pass
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("delete_attachment_admin error: %s", exc)
+        raise HTTPException(500, "Delete failed")
+    return {"deleted": True, "id": attachment_id}
+
+
+# ── Phase 6 format-only verify stubs (real API when keys in platform_config) ──
+
+@app.get("/verify/steam")
+async def verify_steam_stub(steam_id: str = Query(..., description="Steam64 ID")):
+    # TODO[VERIF]: Steam Web API ownership check when steam_api_key in platform_config
+    sid = steam_id.strip()
+    valid = auth.validate_steam_id(sid) is None
+    unique = True
+    if valid:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("SELECT 1 FROM users WHERE steam_id = :s"),
+                {"s": sid},
+            ).fetchone()
+            unique = row is None
+    return {"valid": valid, "unique": unique, "verified_by": "format"}
+
+
+@app.get("/verify/riot")
+async def verify_riot_stub(riot_id: str = Query(...)):
+    # TODO[VERIF]: Riot API when riot_api_key in platform_config
+    rid = riot_id.strip()
+    valid = auth.validate_riot_id(rid) is None
+    unique = True
+    if valid:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("SELECT 1 FROM users WHERE riot_id = :r"),
+                {"r": rid},
+            ).fetchone()
+            unique = row is None
+    return {"valid": valid, "unique": unique, "verified_by": "format"}
+
+
+@app.get("/verify/discord")
+async def verify_discord_stub(discord_id: str = Query(...)):
+    import re as _re
+
+    did = discord_id.strip()
+    valid = bool(_re.fullmatch(r"\d{17,19}", did))
+    return {"valid": valid, "verified_by": "format"}
 
 
 # ── Forge Challenges ───────────────────────────────────────────────────────────
