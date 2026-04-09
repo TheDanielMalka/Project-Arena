@@ -1274,9 +1274,9 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             if health and health.get("status") == "ok":
                 db = health.get("db", "?")
                 eng_lbl.configure(text=f"Connected  ·  DB: {db}", text_color=BRAND["text"])
-                eng_dot.configure(text_color=BRAND["accent"])
-                hdr_eng_dot.configure(text_color=BRAND["accent"])
-                hdr_eng_lbl.configure(text_color=BRAND["accent"])
+                eng_dot.configure(text_color="#22C55E")
+                hdr_eng_dot.configure(text_color="#22C55E")
+                hdr_eng_lbl.configure(text_color="#22C55E")
             else:
                 eng_lbl.configure(text="Engine offline", text_color=BRAND["text_muted"])
                 eng_dot.configure(text_color=BRAND["error"])
