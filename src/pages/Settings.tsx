@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useState, useEffect, useRef } from "react";
+import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -25,7 +25,15 @@ import { PASSWORD_RULES, isPasswordValid } from "@/lib/passwordValidation";
 import { SupportTicketDialog } from "@/components/support/SupportTicketDialog";
 import { useClientStore } from "@/stores/clientStore";
 import { clearArenaLocalPreferences } from "@/lib/localArenaPrefs";
-import { apiChangePassword } from "@/lib/engine-api";
+import type { UserSettingsRegion } from "@/types";
+import {
+  apiChangePassword,
+  apiAuth2faSetup,
+  apiAuth2faVerify,
+  apiAuth2faDisable,
+  apiPatchUserSettings,
+  apiDeleteMyAccount,
+} from "@/lib/engine-api";
 
 // ─── Nav sections ──────────────────────────────────────────────
 const SECTIONS = [
@@ -61,9 +69,19 @@ const SectionTitle = ({ icon: Icon, label, color }: { icon: React.ElementType; l
 );
 
 // ─── Main component ────────────────────────────────────────────
+const ENGINE_REGION_OPTIONS: { value: UserSettingsRegion; label: string }[] = [
+  { value: "EU", label: "Europe (EU)" },
+  { value: "NA", label: "North America" },
+  { value: "ASIA", label: "Asia" },
+  { value: "SA", label: "South America" },
+  { value: "OCE", label: "Oceania" },
+  { value: "ME", label: "Middle East" },
+];
+
 const SettingsPage = () => {
+  const navigate = useNavigate();
   const { toast } = useToast();
-  const { user, greetingType, token, logout } = useUserStore();
+  const { user, greetingType, token, logout, updateProfile } = useUserStore();
   const clientStatusLabel = useClientStore((s) => s.statusLabel);
   const clientVersion = useClientStore((s) => s.version);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -73,8 +91,13 @@ const SettingsPage = () => {
 
   const [active, setActive] = useState<SectionId>("account");
   const [supportTicketOpen, setSupportTicketOpen] = useState(false);
-  const [deleteConfirmName, setDeleteConfirmName] = useState("");
+  const [deleteInput, setDeleteInput] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteCountdown, setDeleteCountdown] = useState<number | null>(null);
+  const [deleteReady, setDeleteReady] = useState(false);
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
+  const deleteTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const deleteCountdownStartedRef = useRef(false);
   const [showCurrentPw, setShowCurrentPw] = useState(false);
   const [showNewPw, setShowNewPw] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -129,59 +152,131 @@ const SettingsPage = () => {
   type TwoFAStep = "idle" | "setup-qr" | "setup-verify" | "setup-backup" | "disable-confirm";
   const [twoFAStep, setTwoFAStep]       = useState<TwoFAStep>("idle");
   const [twoFAEnabled, setTwoFAEnabled] = useState(false);
-  // Simulated secret — DB-ready: returned by POST /api/auth/2fa/setup
-  const SIMULATED_SECRET = "JBSWY3DPEHPK3PXP";
-  const SIMULATED_BACKUP = ["A1B2-C3D4", "E5F6-G7H8", "I9J0-K1L2", "M3N4-O5P6", "Q7R8-S9T0", "U1V2-W3X4"];
+  const [twoFAQrUri, setTwoFAQrUri]     = useState("");
+  const [twoFASecret, setTwoFASecret]   = useState("");
+  const [twoFASetupBusy, setTwoFASetupBusy] = useState(false);
   const [twoFACode, setTwoFACode]           = useState("");
   const [twoFACodeError, setTwoFACodeError] = useState(false);
   const [disablePw, setDisablePw]           = useState("");
+  const [disableTotp, setDisableTotp]     = useState("");
   const [copiedSecret, setCopiedSecret]     = useState(false);
-  const [copiedBackup, setCopiedBackup]     = useState(false);
 
-  const handleCopySecret = () => {
-    navigator.clipboard.writeText(SIMULATED_SECRET);
-    setCopiedSecret(true); setTimeout(() => setCopiedSecret(false), 2000);
-  };
-  const handleCopyBackup = () => {
-    navigator.clipboard.writeText(SIMULATED_BACKUP.join("\n"));
-    setCopiedBackup(true); setTimeout(() => setCopiedBackup(false), 2000);
+  useEffect(() => {
+    setTwoFAEnabled(user?.twoFactorEnabled ?? false);
+  }, [user?.twoFactorEnabled]);
+
+  useEffect(() => {
+    return () => {
+      if (deleteTimerRef.current) clearInterval(deleteTimerRef.current);
+    };
+  }, []);
+
+  const resetDeleteFlow = () => {
+    if (deleteTimerRef.current) {
+      clearInterval(deleteTimerRef.current);
+      deleteTimerRef.current = null;
+    }
+    deleteCountdownStartedRef.current = false;
+    setDeleteInput("");
+    setDeleteCountdown(null);
+    setDeleteReady(false);
+    setShowDeleteConfirm(false);
   };
 
-  const handleTwoFAToggle = (v: boolean) => {
-    if (v) {
-      // DB-ready: call POST /api/auth/2fa/setup first — get secret + QR URL
-      setTwoFACode(""); setTwoFACodeError(false);
-      setTwoFAStep("setup-qr");
-    } else {
-      setDisablePw(""); setTwoFAStep("disable-confirm");
+  const onDeleteInputChange = (v: string) => {
+    setDeleteInput(v);
+    if (v !== "delete") {
+      deleteCountdownStartedRef.current = false;
+      if (deleteTimerRef.current) {
+        clearInterval(deleteTimerRef.current);
+        deleteTimerRef.current = null;
+      }
+      setDeleteCountdown(null);
+      setDeleteReady(false);
+      return;
+    }
+    if (showDeleteConfirm && !deleteCountdownStartedRef.current) {
+      deleteCountdownStartedRef.current = true;
+      setDeleteCountdown(10);
+      setDeleteReady(false);
+      deleteTimerRef.current = setInterval(() => {
+        setDeleteCountdown((c) => {
+          if (c <= 1) {
+            if (deleteTimerRef.current) {
+              clearInterval(deleteTimerRef.current);
+              deleteTimerRef.current = null;
+            }
+            setDeleteReady(true);
+            return 0;
+          }
+          return c - 1;
+        });
+      }, 1000);
     }
   };
 
-  const handleTwoFAVerify = () => {
-    // DB-ready: POST /api/auth/2fa/verify { code: twoFACode }
-    //           server validates TOTP code against stored secret (30s window ±1)
-    //           on success: UPDATE users SET totp_enabled=true
+  const handleCopySecret = () => {
+    if (!twoFASecret) return;
+    navigator.clipboard.writeText(twoFASecret);
+    setCopiedSecret(true); setTimeout(() => setCopiedSecret(false), 2000);
+  };
+
+  const handleTwoFAToggle = async (v: boolean) => {
+    if (!token) {
+      toast({ title: "Sign in required", variant: "destructive" });
+      return;
+    }
+    if (v) {
+      setTwoFACode(""); setTwoFACodeError(false);
+      setTwoFASetupBusy(true);
+      const r = await apiAuth2faSetup(token);
+      setTwoFASetupBusy(false);
+      if (r.ok === false) {
+        toast({ title: "2FA setup failed", description: r.detail ?? "Try again later.", variant: "destructive" });
+        return;
+      }
+      setTwoFAQrUri(r.qr_uri);
+      setTwoFASecret(r.secret);
+      setTwoFAStep("setup-qr");
+    } else {
+      setDisablePw(""); setDisableTotp(""); setTwoFAStep("disable-confirm");
+    }
+  };
+
+  const handleTwoFAVerify = async () => {
+    if (!token) return;
     if (twoFACode.length !== 6 || !/^\d{6}$/.test(twoFACode)) {
       setTwoFACodeError(true); return;
     }
     setTwoFACodeError(false);
+    const r = await apiAuth2faVerify(token, twoFACode);
+    if (r.ok === false) {
+      toast({ title: "Invalid code", description: r.detail ?? "Check your authenticator app.", variant: "destructive" });
+      return;
+    }
     setTwoFAStep("setup-backup");
   };
 
   const handleTwoFAFinish = () => {
     setTwoFAEnabled(true);
+    updateProfile({ twoFactorEnabled: true });
     setSecurity((p) => ({ ...p, twoFactor: true }));
     setTwoFAStep("idle"); setTwoFACode("");
+    setTwoFAQrUri(""); setTwoFASecret("");
     toast({ title: "🔐 2FA Enabled", description: "Your account is now protected with two-factor authentication." });
   };
 
-  const handleTwoFADisable = () => {
-    // DB-ready: DELETE /api/auth/2fa { password: disablePw }
-    //           server verifies password then: UPDATE users SET totp_enabled=false, totp_secret=null
-    if (!disablePw) return;
+  const handleTwoFADisable = async () => {
+    if (!token || !disablePw || disableTotp.length !== 6) return;
+    const r = await apiAuth2faDisable(token, disablePw, disableTotp);
+    if (r.ok === false) {
+      toast({ title: "Could not disable 2FA", description: r.detail ?? "Check password and code.", variant: "destructive" });
+      return;
+    }
     setTwoFAEnabled(false);
+    updateProfile({ twoFactorEnabled: false });
     setSecurity((p) => ({ ...p, twoFactor: false }));
-    setTwoFAStep("idle"); setDisablePw("");
+    setTwoFAStep("idle"); setDisablePw(""); setDisableTotp("");
     toast({ title: "2FA Disabled", description: "Two-factor authentication has been turned off.", variant: "destructive" });
   };
 
@@ -324,17 +419,34 @@ const SettingsPage = () => {
                     </div>
                   )}
                 </SettingRow>
-                <SettingRow label="Region" desc="Affects matchmaking pool" last>
-                  <Select defaultValue="eu-west">
-                    <SelectTrigger className="h-8 w-36 bg-secondary/60 border-border text-xs">
+                <SettingRow label="Region" desc="Affects matchmaking pool (saved to your account)" last>
+                  <Select
+                    value={(user?.region as UserSettingsRegion) || "EU"}
+                    onValueChange={async (v) => {
+                      if (!token) return;
+                      const region = v as UserSettingsRegion;
+                      const r = await apiPatchUserSettings(token, region);
+                      if (r.ok === false) {
+                        toast({
+                          title: "Could not save region",
+                          description: r.detail ?? "Try again.",
+                          variant: "destructive",
+                        });
+                        return;
+                      }
+                      updateProfile({ region: r.region });
+                      toast({ title: "Region saved", description: `Your region is set to ${r.region}.` });
+                    }}
+                  >
+                    <SelectTrigger className="h-8 w-44 bg-secondary/60 border-border text-xs">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="eu-west">EU West</SelectItem>
-                      <SelectItem value="us-east">US East</SelectItem>
-                      <SelectItem value="us-west">US West</SelectItem>
-                      <SelectItem value="asia">Asia</SelectItem>
-                      <SelectItem value="me">Middle East</SelectItem>
+                      {ENGINE_REGION_OPTIONS.map(({ value, label }) => (
+                        <SelectItem key={value} value={value} className="text-xs">
+                          {label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </SettingRow>
@@ -383,7 +495,8 @@ const SettingsPage = () => {
                     )}
                     <Switch
                       checked={twoFAEnabled}
-                      onCheckedChange={handleTwoFAToggle}
+                      disabled={twoFASetupBusy}
+                      onCheckedChange={(v) => void handleTwoFAToggle(v)}
                     />
                   </div>
                 </SettingRow>
@@ -630,7 +743,17 @@ const SettingsPage = () => {
                   variant="destructive"
                   size="sm"
                   className="font-display text-xs"
-                  onClick={() => setShowDeleteConfirm(true)}
+                  onClick={() => {
+                    setShowDeleteConfirm(true);
+                    setDeleteInput("");
+                    deleteCountdownStartedRef.current = false;
+                    setDeleteCountdown(null);
+                    setDeleteReady(false);
+                    if (deleteTimerRef.current) {
+                      clearInterval(deleteTimerRef.current);
+                      deleteTimerRef.current = null;
+                    }
+                  }}
                 >
                   <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete Account
                 </Button>
@@ -638,32 +761,50 @@ const SettingsPage = () => {
                 <div className="space-y-3 p-4 rounded-lg border border-destructive/30 bg-destructive/5">
                   <div className="flex items-center gap-2 text-destructive text-xs">
                     <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                    <span>Type <span className="font-mono font-bold">{user?.username ?? "your username"}</span> to confirm</span>
+                    <span>Type <span className="font-mono font-bold">delete</span> exactly to begin the safety countdown</span>
                   </div>
                   <Input
-                    placeholder="Enter your username..."
-                    value={deleteConfirmName}
-                    onChange={(e) => setDeleteConfirmName(e.target.value)}
+                    placeholder='Type "delete"'
+                    value={deleteInput}
+                    onChange={(e) => onDeleteInputChange(e.target.value)}
                     className="h-8 bg-secondary border-border font-mono text-xs"
                   />
-                  <div className="flex gap-2">
+                  {deleteInput === "delete" && deleteCountdown !== null && deleteCountdown > 0 && (
+                    <p className="text-xs text-muted-foreground font-display">
+                      Deleting in {deleteCountdown}…
+                    </p>
+                  )}
+                  <div className="flex gap-2 flex-wrap">
                     <Button
                       variant="destructive"
                       size="sm"
                       className="font-display text-xs"
-                      disabled={deleteConfirmName !== (user?.username ?? "")}
-                      onClick={() => {
-                        toast({ title: "Account Deleted", description: "Your account has been permanently removed.", variant: "destructive" });
-                        setShowDeleteConfirm(false);
-                        setDeleteConfirmName("");
+                      disabled={!deleteReady || !token || deleteSubmitting}
+                      onClick={async () => {
+                        if (!token) return;
+                        setDeleteSubmitting(true);
+                        const r = await apiDeleteMyAccount(token, "delete");
+                        setDeleteSubmitting(false);
+                        if (r.ok === false) {
+                          toast({
+                            title: "Deletion failed",
+                            description: r.detail ?? "Please try again.",
+                            variant: "destructive",
+                          });
+                          resetDeleteFlow();
+                          return;
+                        }
+                        toast({ title: "Account deleted", description: "Your session has ended.", variant: "destructive" });
+                        logout();
+                        navigate("/");
                       }}
                     >
-                      Confirm Delete
+                      {deleteSubmitting ? "Deleting…" : "Delete my account permanently"}
                     </Button>
                     <Button
                       variant="ghost" size="sm"
                       className="text-muted-foreground text-xs"
-                      onClick={() => { setShowDeleteConfirm(false); setDeleteConfirmName(""); }}
+                      onClick={resetDeleteFlow}
                     >
                       Cancel
                     </Button>
@@ -810,14 +951,16 @@ const SettingsPage = () => {
         <div className="px-5 py-4 space-y-4">
           {/* QR placeholder — DB-ready: render <img src={otpauthUrl as QR}> via qrcode library */}
           <div className="flex flex-col items-center gap-2">
-            <div className="w-36 h-36 rounded-xl border-2 border-dashed border-border/60 bg-secondary/40 flex flex-col items-center justify-center gap-2">
-              {/* DB-ready: <QRCodeSVG value={otpauthUrl} size={128} /> via 'qrcode.react' package */}
-              <div className="grid grid-cols-5 gap-0.5 opacity-40">
-                {Array.from({ length: 25 }).map((_, i) => (
-                  <div key={i} className={cn("w-2.5 h-2.5 rounded-[1px]", Math.random() > 0.4 ? "bg-foreground" : "bg-transparent")} />
-                ))}
-              </div>
-              <p className="text-[9px] text-muted-foreground font-mono">QR code here</p>
+            <div className="w-40 h-40 rounded-xl border border-border/60 bg-white p-1 flex items-center justify-center overflow-hidden">
+              {twoFAQrUri ? (
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=152x152&data=${encodeURIComponent(twoFAQrUri)}`}
+                  alt="Authenticator QR"
+                  className="w-[152px] h-[152px]"
+                />
+              ) : (
+                <p className="text-[10px] text-muted-foreground p-2 text-center">Loading QR…</p>
+              )}
             </div>
             <p className="text-[11px] text-muted-foreground text-center leading-relaxed">
               Open <span className="text-foreground font-medium">Google Authenticator</span> or any TOTP app and scan this QR code
@@ -827,7 +970,7 @@ const SettingsPage = () => {
           <div>
             <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1.5 font-display">Or enter key manually</p>
             <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-secondary/40 px-3 py-2">
-              <code className="flex-1 font-mono text-xs text-arena-cyan tracking-widest">{SIMULATED_SECRET}</code>
+              <code className="flex-1 font-mono text-xs text-arena-cyan tracking-widest break-all">{twoFASecret || "—"}</code>
               <button onClick={handleCopySecret} className="text-muted-foreground hover:text-foreground transition-colors">
                 {copiedSecret ? <Check className="h-3.5 w-3.5 text-arena-green" /> : <Copy className="h-3.5 w-3.5" />}
               </button>
@@ -838,8 +981,12 @@ const SettingsPage = () => {
         <div className="flex gap-2 px-5 pb-5">
           <Button variant="ghost" size="sm" className="flex-1 text-xs font-display border border-border/60"
             onClick={() => setTwoFAStep("idle")}>Cancel</Button>
-          <Button size="sm" className="flex-1 text-xs font-display bg-arena-cyan hover:bg-arena-cyan/80 text-black font-bold"
-            onClick={() => { setTwoFACode(""); setTwoFACodeError(false); setTwoFAStep("setup-verify"); }}>
+          <Button
+            size="sm"
+            className="flex-1 text-xs font-display bg-arena-cyan hover:bg-arena-cyan/80 text-black font-bold"
+            disabled={!twoFASecret || twoFASetupBusy}
+            onClick={() => { setTwoFACode(""); setTwoFACodeError(false); setTwoFAStep("setup-verify"); }}
+          >
             Next — Enter Code
           </Button>
         </div>
@@ -890,7 +1037,7 @@ const SettingsPage = () => {
             onClick={() => setTwoFAStep("setup-qr")}>Back</Button>
           <Button size="sm" className="flex-1 text-xs font-display bg-arena-cyan hover:bg-arena-cyan/80 text-black font-bold"
             disabled={twoFACode.length !== 6}
-            onClick={handleTwoFAVerify}>
+            onClick={() => void handleTwoFAVerify()}>
             <ShieldCheck className="mr-1.5 h-3.5 w-3.5" /> Verify & Enable
           </Button>
         </div>
@@ -909,31 +1056,22 @@ const SettingsPage = () => {
             <DialogHeader>
               <DialogTitle className="font-display text-sm font-bold tracking-wide text-arena-green">2FA Enabled!</DialogTitle>
             </DialogHeader>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Save your backup codes before closing</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Confirmation</p>
           </div>
         </div>
         <div className="px-5 py-4 space-y-3">
           <p className="text-xs text-muted-foreground leading-relaxed">
-            If you lose access to your authenticator app, use one of these codes to sign in.
-            <span className="text-destructive font-medium"> Each code can only be used once.</span>
+            The server does not issue one-time backup codes yet. Store your authenticator secret safely, or use your app&apos;s
+            account recovery if you lose the device.
           </p>
-          {/* DB-ready: backup codes generated server-side, bcrypt-hashed before storage */}
-          <div className="rounded-lg border border-border/60 bg-secondary/40 p-3">
-            <div className="grid grid-cols-2 gap-1.5">
-              {SIMULATED_BACKUP.map((code) => (
-                <code key={code} className="font-mono text-xs text-foreground tracking-widest text-center py-0.5">{code}</code>
-              ))}
-            </div>
-          </div>
-          <button onClick={handleCopyBackup}
-            className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
-            {copiedBackup ? <Check className="h-3 w-3 text-arena-green" /> : <Copy className="h-3 w-3" />}
-            {copiedBackup ? "Copied!" : "Copy all backup codes"}
-          </button>
+          <p className="text-[10px] text-arena-orange/90 border border-arena-orange/25 rounded-md px-2 py-1.5 bg-arena-orange/5">
+            {/* TODO[VERIF]: optional recovery codes when backend adds hashed backup_codes */}
+            Backup codes may be added in a future engine release.
+          </p>
         </div>
         <div className="px-5 pb-5">
           <Button size="sm" className="w-full text-xs font-display glow-green" onClick={handleTwoFAFinish}>
-            <Check className="mr-1.5 h-3.5 w-3.5" /> I've saved my backup codes
+            <Check className="mr-1.5 h-3.5 w-3.5" /> Done
           </Button>
         </div>
       </DialogContent>
@@ -965,14 +1103,23 @@ const SettingsPage = () => {
             onChange={(e) => setDisablePw(e.target.value)}
             className="h-9 bg-secondary/60 border-border text-sm"
           />
-          {/* DB-ready: DELETE /api/auth/2fa { password } → verify bcrypt → set totp_enabled=false */}
+          <p className="text-[11px] text-muted-foreground">Authenticator code</p>
+          <Input
+            type="text"
+            inputMode="numeric"
+            placeholder="000000"
+            maxLength={6}
+            value={disableTotp}
+            onChange={(e) => setDisableTotp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            className="h-9 bg-secondary/60 border-border text-sm font-mono tracking-widest text-center"
+          />
         </div>
         <div className="flex gap-2 px-5 pb-5">
           <Button variant="ghost" size="sm" className="flex-1 text-xs font-display border border-border/60"
             onClick={() => setTwoFAStep("idle")}>Cancel</Button>
           <Button size="sm" variant="destructive" className="flex-1 text-xs font-display font-bold"
-            disabled={!disablePw}
-            onClick={handleTwoFADisable}>
+            disabled={!disablePw || disableTotp.length !== 6}
+            onClick={() => void handleTwoFADisable()}>
             <ShieldOff className="mr-1.5 h-3.5 w-3.5" /> Disable 2FA
           </Button>
         </div>

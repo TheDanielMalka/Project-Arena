@@ -22,7 +22,7 @@ const XP_ICON_MAP: Record<string, LucideIcon> = {
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const { user, token, showLoginGreeting, greetingType, clearLoginGreeting } = useUserStore();
+  const { user, token, showLoginGreeting, greetingType, clearLoginGreeting, refreshProfileFromServer } = useUserStore();
   const { matches } = useMatchStore();
   useMatchListLivePoll(user && token ? token : null);
 
@@ -34,6 +34,12 @@ const Dashboard = () => {
   useEffect(() => {
     setShowClientSetupBanner(hasPendingClientSetup());
   }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    const id = window.setInterval(() => void refreshProfileFromServer(), 15_000);
+    return () => window.clearInterval(id);
+  }, [token, refreshProfileFromServer]);
 
   useEffect(() => {
     if (!showLoginGreeting) return;

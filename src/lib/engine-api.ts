@@ -35,6 +35,7 @@ import type {
   Match,
   MatchStatus,
   PublicPlayerProfile,
+  UserSettingsRegion,
   UserStatus,
 } from "@/types";
 import { notifyAuth401 } from "@/lib/authSession";
@@ -408,18 +409,23 @@ export async function getMatchStatus(matchId: string): Promise<EngineMatchStatus
 
 // ── Auth / Identity (Phase 3: real website auth) ──────────────────────────────
 
-// POST /auth/login
-export async function apiLogin(
-  identifier: string,
-  password: string,
-): Promise<{
+export type ApiLoginSuccess = {
   access_token: string;
   user_id: string;
   username: string;
   email: string;
   arena_id: string | null;
   wallet_address: string | null;
-} | { _rate_limited: true } | null> {
+};
+
+export type ApiLoginResult =
+  | ApiLoginSuccess
+  | { requires_2fa: true; temp_token: string }
+  | { _rate_limited: true }
+  | null;
+
+// POST /auth/login
+export async function apiLogin(identifier: string, password: string): Promise<ApiLoginResult> {
   try {
     const res = await fetch(`${ENGINE_BASE}/auth/login`, {
       method: "POST",
@@ -427,15 +433,16 @@ export async function apiLogin(
       body: JSON.stringify({ identifier, password }),
     });
     if (res.status === 429) return { _rate_limited: true };
+    const raw = (await res.json().catch(() => null)) as Record<string, unknown> | null;
     if (!res.ok) return null;
-    return (await res.json()) as {
-      access_token: string;
-      user_id: string;
-      username: string;
-      email: string;
-      arena_id: string | null;
-      wallet_address: string | null;
-    };
+    if (!raw) return null;
+    if (raw.requires_2fa === true && typeof raw.temp_token === "string") {
+      return { requires_2fa: true, temp_token: raw.temp_token };
+    }
+    if (typeof raw.access_token === "string") {
+      return raw as ApiLoginSuccess;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -550,6 +557,8 @@ export async function apiGetMe(token: string): Promise<{
   /** Daily AT staking usage — from _check_daily_stake_limit in engine */
   daily_staked_at?: number;
   daily_limit_at?: number;
+  region?: string | null;
+  two_factor_enabled?: boolean;
 } | null> {
   try {
     const res = await arenaUserFetch(`${ENGINE_BASE}/auth/me`, token, {});
@@ -575,9 +584,314 @@ export async function apiGetMe(token: string): Promise<{
       role?: string;
       daily_staked_at?: number;
       daily_limit_at?: number;
+      region?: string | null;
+      two_factor_enabled?: boolean;
     };
   } catch {
     return null;
+  }
+}
+
+const USER_SETTINGS_REGIONS = new Set<string>(["EU", "NA", "ASIA", "SA", "OCE", "ME"]);
+
+function normalizeUserSettingsRegion(raw: string | null | undefined): UserSettingsRegion | undefined {
+  if (raw == null || typeof raw !== "string") return undefined;
+  const u = raw.trim().toUpperCase();
+  return USER_SETTINGS_REGIONS.has(u) ? (u as UserSettingsRegion) : undefined;
+}
+
+/** POST /auth/2fa/confirm — exchange temp_token + TOTP for access_token */
+export async function apiAuth2faConfirm(
+  temp_token: string,
+  code: string,
+): Promise<ApiLoginSuccess | null> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/auth/2fa/confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ temp_token, code: code.trim() }),
+    });
+    if (!res.ok) return null;
+    const raw = (await res.json()) as Record<string, unknown>;
+    if (typeof raw.access_token !== "string") return null;
+    return raw as ApiLoginSuccess;
+  } catch {
+    return null;
+  }
+}
+
+/** DELETE /users/me — body { confirm_text } */
+export async function apiDeleteMyAccount(
+  token: string,
+  confirm_text: string,
+): Promise<{ ok: true } | { ok: false; detail: string | null }> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/users/me`, token, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm_text }),
+    });
+    if (!res.ok) {
+      const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
+      return { ok: false, detail: parseFastApiDetail(raw.detail) };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, detail: "Network error" };
+  }
+}
+
+/** PATCH /users/settings — { region } */
+export async function apiPatchUserSettings(
+  token: string,
+  region: UserSettingsRegion,
+): Promise<{ ok: true; region: UserSettingsRegion } | { ok: false; detail: string | null }> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/users/settings`, token, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ region }),
+    });
+    const raw = (await res.json().catch(() => ({}))) as { detail?: unknown; region?: string };
+    if (!res.ok) {
+      return { ok: false, detail: parseFastApiDetail(raw.detail) };
+    }
+    const nr = normalizeUserSettingsRegion(raw.region ?? region);
+    return { ok: true, region: nr ?? region };
+  } catch {
+    return { ok: false, detail: "Network error" };
+  }
+}
+
+/** POST /auth/2fa/setup */
+export async function apiAuth2faSetup(
+  token: string,
+): Promise<
+  | { ok: true; secret: string; qr_uri: string }
+  | { ok: false; detail: string | null }
+> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/auth/2fa/setup`, token, { method: "POST" });
+    const raw = (await res.json().catch(() => ({}))) as {
+      detail?: unknown;
+      secret?: string;
+      qr_uri?: string;
+    };
+    if (!res.ok) {
+      return { ok: false, detail: parseFastApiDetail(raw.detail) };
+    }
+    const secret = typeof raw.secret === "string" ? raw.secret : "";
+    const qr_uri = typeof raw.qr_uri === "string" ? raw.qr_uri : "";
+    if (!secret || !qr_uri) return { ok: false, detail: "Invalid setup response" };
+    return { ok: true, secret, qr_uri };
+  } catch {
+    return { ok: false, detail: "Network error" };
+  }
+}
+
+/** POST /auth/2fa/verify — { code } */
+export async function apiAuth2faVerify(
+  token: string,
+  code: string,
+): Promise<{ ok: true } | { ok: false; detail: string | null }> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/auth/2fa/verify`, token, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: code.trim() }),
+    });
+    if (!res.ok) {
+      const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
+      return { ok: false, detail: parseFastApiDetail(raw.detail) };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, detail: "Network error" };
+  }
+}
+
+/** DELETE /auth/2fa — { password, code } */
+export async function apiAuth2faDisable(
+  token: string,
+  password: string,
+  code: string,
+): Promise<{ ok: true } | { ok: false; detail: string | null }> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/auth/2fa`, token, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password, code: code.trim() }),
+    });
+    if (!res.ok) {
+      const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
+      return { ok: false, detail: parseFastApiDetail(raw.detail) };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, detail: "Network error" };
+  }
+}
+
+/** GET /messages/unread/count */
+export async function apiGetUnreadCount(token: string): Promise<{ count: number } | null> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/messages/unread/count`, token, {});
+    if (!res.ok) return null;
+    const raw = (await res.json()) as { count?: unknown };
+    const c = raw.count;
+    return { count: typeof c === "number" ? c : Number(c) || 0 };
+  } catch {
+    return null;
+  }
+}
+
+export type VerifyPlatformResult = {
+  valid: boolean;
+  unique?: boolean;
+  verified_by?: string;
+};
+
+/** GET /verify/steam?steam_id= */
+export async function apiVerifySteam(steamId: string): Promise<VerifyPlatformResult> {
+  const q = encodeURIComponent(steamId.trim());
+  try {
+    const res = await fetch(`${ENGINE_BASE}/verify/steam?steam_id=${q}`);
+    if (!res.ok) return { valid: false, unique: true };
+    return (await res.json()) as VerifyPlatformResult;
+  } catch {
+    return { valid: false };
+  }
+}
+
+/** GET /verify/riot?riot_id= */
+export async function apiVerifyRiot(riotId: string): Promise<VerifyPlatformResult> {
+  const q = encodeURIComponent(riotId.trim());
+  try {
+    const res = await fetch(`${ENGINE_BASE}/verify/riot?riot_id=${q}`);
+    if (!res.ok) return { valid: false, unique: true };
+    return (await res.json()) as VerifyPlatformResult;
+  } catch {
+    return { valid: false };
+  }
+}
+
+/** GET /verify/discord?discord_id= */
+export async function apiVerifyDiscord(discordId: string): Promise<VerifyPlatformResult> {
+  const q = encodeURIComponent(discordId.trim());
+  try {
+    const res = await fetch(`${ENGINE_BASE}/verify/discord?discord_id=${q}`);
+    if (!res.ok) return { valid: false, unique: true };
+    return (await res.json()) as VerifyPlatformResult;
+  } catch {
+    return { valid: false };
+  }
+}
+
+export type AdminTicketAttachmentMeta = {
+  id: string;
+  content_type: string;
+  filename?: string;
+  file_size?: number;
+};
+
+/** GET /support/tickets/{id}/attachments */
+export async function apiAdminListSupportTicketAttachments(
+  token: string,
+  ticketId: string,
+): Promise<AdminTicketAttachmentMeta[]> {
+  try {
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/support/tickets/${encodeURIComponent(ticketId)}/attachments`,
+      token,
+      {},
+    );
+    if (!res.ok) return [];
+    const raw = (await res.json()) as unknown;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((row): AdminTicketAttachmentMeta | null => {
+        const o = row as Record<string, unknown>;
+        const id = typeof o.id === "string" ? o.id : null;
+        const content_type = typeof o.content_type === "string" ? o.content_type : "application/octet-stream";
+        if (!id) return null;
+        return {
+          id,
+          content_type,
+          filename: typeof o.filename === "string" ? o.filename : undefined,
+          file_size: typeof o.file_size === "number" ? o.file_size : undefined,
+        };
+      })
+      .filter((x): x is AdminTicketAttachmentMeta => x !== null);
+  } catch {
+    return [];
+  }
+}
+
+/** GET blob for attachment preview (path aligned with DELETE /attachments/{id}) */
+export async function apiGetAttachmentBlob(token: string, attachmentId: string): Promise<Blob | null> {
+  try {
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/attachments/${encodeURIComponent(attachmentId)}`,
+      token,
+      {},
+    );
+    if (!res.ok) return null;
+    return await res.blob();
+  } catch {
+    return null;
+  }
+}
+
+/** DELETE /attachments/{id} */
+export async function apiDeleteAttachment(token: string, attachmentId: string): Promise<boolean> {
+  try {
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/attachments/${encodeURIComponent(attachmentId)}`,
+      token,
+      { method: "DELETE" },
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** POST /support/tickets/{id}/attachments — multipart file */
+export async function apiPostSupportTicketAttachment(
+  token: string,
+  ticketId: string,
+  file: File,
+): Promise<
+  | { ok: true; id: string; filename: string; content_type: string; file_size: number }
+  | { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/support/tickets/${encodeURIComponent(ticketId)}/attachments`,
+      token,
+      { method: "POST", body: fd },
+    );
+    const raw = (await res.json().catch(() => ({}))) as {
+      detail?: unknown;
+      id?: string;
+      filename?: string;
+      content_type?: string;
+      file_size?: number;
+    };
+    if (!res.ok) {
+      return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    }
+    return {
+      ok: true,
+      id: String(raw.id ?? ""),
+      filename: String(raw.filename ?? file.name),
+      content_type: String(raw.content_type ?? file.type ?? "application/octet-stream"),
+      file_size: typeof raw.file_size === "number" ? raw.file_size : file.size,
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "Network error" };
   }
 }
 

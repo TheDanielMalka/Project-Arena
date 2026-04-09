@@ -51,6 +51,11 @@ import {
   apiAdminOracleStatus,
   apiAdminOracleSync,
   apiAdminDeclareWinner,
+  apiAdminListSupportTicketAttachments,
+  apiGetAttachmentBlob,
+  apiDeleteAttachment,
+  apiPostSupportTicketAttachment,
+  type AdminTicketAttachmentMeta,
 } from "@/lib/engine-api";
 import type { FraudReport, OracleStatus, PlatformConfig } from "@/lib/engine-api";
 
@@ -79,6 +84,111 @@ function exportCSV(filename: string, headers: string[], rows: string[][]) {
 }
 
 const ROWS_PER_PAGE = 8;
+
+function AdminReportAttachmentThumb({
+  attachmentId,
+  token,
+  contentType,
+  onDelete,
+}: {
+  attachmentId: string;
+  token: string;
+  contentType: string;
+  onDelete: () => void;
+}) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let created: string | null = null;
+    void apiGetAttachmentBlob(token, attachmentId).then((blob) => {
+      if (!blob || !blob.size) return;
+      created = URL.createObjectURL(blob);
+      setSrc(created);
+    });
+    return () => {
+      if (created) URL.revokeObjectURL(created);
+    };
+  }, [attachmentId, token]);
+  return (
+    <div className="relative inline-block group/thumb">
+      {src && contentType.startsWith("image/") ? (
+        <img src={src} alt="" className="h-16 w-16 rounded border border-border object-cover" />
+      ) : (
+        <div className="h-16 w-16 rounded border border-border bg-secondary/40 text-[8px] flex items-center justify-center p-1 text-center">
+          file
+        </div>
+      )}
+      <Button
+        type="button"
+        size="sm"
+        variant="destructive"
+        className="absolute -top-1 -right-1 h-5 w-5 p-0 text-[10px] opacity-0 group-hover/thumb:opacity-100 transition-opacity"
+        onClick={async () => {
+          const ok = await apiDeleteAttachment(token, attachmentId);
+          if (ok) onDelete();
+        }}
+      >
+        ×
+      </Button>
+    </div>
+  );
+}
+
+function AdminTicketAttachmentsBlock({ ticketId, token }: { ticketId: string; token: string | null }) {
+  const { toast } = useToast();
+  const [attachments, setAttachments] = useState<AdminTicketAttachmentMeta[]>([]);
+  const load = useCallback(async () => {
+    if (!token) return;
+    const list = await apiAdminListSupportTicketAttachments(token, ticketId);
+    setAttachments(list ?? []);
+  }, [token, ticketId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const onUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !token) return;
+    const r = await apiPostSupportTicketAttachment(token, ticketId, file);
+    if (r.ok === false) {
+      toast({
+        title: "Upload failed",
+        description: r.detail ?? "Only the ticket reporter can upload from the client; admins manage files here.",
+        variant: "destructive",
+      });
+      return;
+    }
+    toast({ title: "Attachment added", description: r.filename });
+    void load();
+  };
+
+  return (
+    <div className="mt-2 space-y-2">
+      <p className="text-[10px] text-muted-foreground font-display uppercase tracking-wider">Ticket attachments</p>
+      <label className="inline-flex items-center gap-2 cursor-pointer text-[10px] text-primary hover:underline">
+        <input
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          className="hidden"
+          onChange={(ev) => void onUpload(ev)}
+        />
+        + Upload image (reporter-only on live tickets)
+      </label>
+      <div className="flex flex-wrap gap-2">
+        {attachments.map((a) => (
+          <AdminReportAttachmentThumb
+            key={a.id}
+            attachmentId={a.id}
+            token={token!}
+            contentType={a.content_type}
+            onDelete={() => void load()}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // ─── Activity templates (local live feed) ────────────────────
 const ACTIVITY_TEMPLATES: Omit<AdminActivityEvent, "id" | "timestamp">[] = [
@@ -877,13 +987,15 @@ const Admin = () => {
 
                           {t.attachmentDataUrl && (
                             <div className="mb-3">
-                              <p className="text-[10px] text-muted-foreground mb-1">Attachment</p>
+                              <p className="text-[10px] text-muted-foreground mb-1">Attachment (legacy preview)</p>
                               <a href={t.attachmentDataUrl} target="_blank" rel="noreferrer" className="inline-block">
                                 <img src={t.attachmentDataUrl} alt="Ticket attachment"
                                   className="max-h-32 rounded border border-border object-contain" />
                               </a>
                             </div>
                           )}
+
+                          {token && <AdminTicketAttachmentsBlock ticketId={t.id} token={token} />}
 
                           {t.adminNote && (
                             <p className="text-[10px] text-arena-cyan bg-arena-cyan/10 border border-arena-cyan/20 rounded-md px-2 py-1 mb-3">

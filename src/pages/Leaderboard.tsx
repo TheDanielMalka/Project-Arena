@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -563,24 +563,28 @@ const Leaderboard = () => {
   const [selectedTopPlayer, setSelectedTopPlayer] = useState<LeaderboardEntry>(PLACEHOLDER_LEADER);
   const [expandedRowPlayer, setExpandedRowPlayer] = useState<string | null>(null);
 
-  useEffect(() => {
+  const loadLeaderboard = useCallback(() => {
     if (tab === "Fortnite" || tab === "Apex Legends") {
       setEntriesByTab((prev) => ({ ...prev, [tab]: [] }));
       return;
     }
-    let cancelled = false;
     void apiGetLeaderboard({
       game: tab === "all" ? undefined : tab,
       limit: 50,
       range: timeRange,
     }).then((rows) => {
-      if (cancelled) return;
       setEntriesByTab((prev) => ({ ...prev, [tab]: rows ?? [] }));
     });
-    return () => {
-      cancelled = true;
-    };
   }, [tab, timeRange]);
+
+  useEffect(() => {
+    loadLeaderboard();
+  }, [loadLeaderboard]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => loadLeaderboard(), 60_000);
+    return () => window.clearInterval(id);
+  }, [loadLeaderboard]);
 
   const tabFetched = entriesByTab[tab];
   const entries = tabFetched ?? [];

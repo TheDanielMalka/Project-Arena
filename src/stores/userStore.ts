@@ -5,13 +5,16 @@ import type {
   ForgeCategory,
   ShopEntitlement,
   UserRole,
+  UserSettingsRegion,
 } from "@/types";
 import { setPendingClientSetupAfterSignup } from "@/lib/localArenaPrefs";
 import {
+  apiAuth2faConfirm,
   apiGetMe,
   apiLogin,
   apiPatchMe,
   apiRegister,
+  type ApiLoginSuccess,
   type RegisterConflictField,
 } from "@/lib/engine-api";
 import {
@@ -38,7 +41,12 @@ interface UserState {
   showLoginGreeting: boolean;
   greetingType: "login" | "signup" | "google" | null;
   // DB-ready: replace with POST /api/auth/login
-  login: (email: string, password: string) => Promise<boolean | "rate_limited">;
+  login: (
+    email: string,
+    password: string,
+  ) => Promise<boolean | "rate_limited" | { needs_2fa: true; temp_token: string }>;
+  /** After login returned needs_2fa — POST /auth/2fa/confirm then same hydration as login */
+  completeTwoFactorLogin: (temp_token: string, code: string) => Promise<boolean>;
   // DB-ready: replace with POST /api/auth/signup
   signup: (
     username: string,
@@ -107,6 +115,8 @@ const MOCK_USER: UserProfile = {
     inEscrow: 50,
   },
   atBalance: 200,
+  region: "EU",
+  twoFactorEnabled: false,
 };
 
 const ADMIN_EMAILS = new Set(["admin@arena.gg"]);
@@ -157,6 +167,14 @@ function scheduleSocialSyncAfterAuth() {
 
 type MeProfile = NonNullable<Awaited<ReturnType<typeof apiGetMe>>>;
 
+const ME_REGIONS = new Set<string>(["EU", "NA", "ASIA", "SA", "OCE", "ME"]);
+
+function regionFromMe(raw: string | null | undefined): UserSettingsRegion | undefined {
+  if (raw == null || typeof raw !== "string") return undefined;
+  const u = raw.trim().toUpperCase();
+  return ME_REGIONS.has(u) ? (u as UserSettingsRegion) : undefined;
+}
+
 function userProfileFromMe(profile: MeProfile): UserProfile {
   const normalizedEmail = profile.email.trim().toLowerCase();
   const wallet = profile.wallet_address ?? null;
@@ -195,6 +213,8 @@ function userProfileFromMe(profile: MeProfile): UserProfile {
     },
     balance: { total: 0, available: 0, inEscrow: 0 },
     atBalance: profile.at_balance,
+    region: regionFromMe(profile.region ?? undefined),
+    twoFactorEnabled: !!profile.two_factor_enabled,
   };
 }
 
@@ -207,15 +227,41 @@ export const useUserStore = create<UserState>((set, get) => ({
   showLoginGreeting: false,
   greetingType: null,
 
-  login: async (email: string, password: string): Promise<boolean | "rate_limited"> => {
+  login: async (email: string, password: string) => {
     const data = await apiLogin(email, password);
     if (!data) return false;
     if ("_rate_limited" in data) return "rate_limited";
-    const profile = await apiGetMe(data.access_token);
+    if ("requires_2fa" in data && data.requires_2fa) {
+      return { needs_2fa: true as const, temp_token: data.temp_token };
+    }
+    const creds = data as ApiLoginSuccess;
+    const profile = await apiGetMe(creds.access_token);
     if (!profile) return false;
 
     const user = userProfileFromMe(profile);
 
+    writeStoredAccessToken(creds.access_token);
+    set({
+      user,
+      token: creds.access_token,
+      isAuthenticated: true,
+      authHydrated: true,
+      walletConnected: !!user.walletAddress,
+      showLoginGreeting: true,
+      greetingType: "login",
+    });
+    hydrateWalletForgeAfterAuth(user);
+    scheduleSyncForgePurchasesToProfile();
+    scheduleSocialSyncAfterAuth();
+    return true;
+  },
+
+  completeTwoFactorLogin: async (temp_token: string, code: string) => {
+    const data = await apiAuth2faConfirm(temp_token, code);
+    if (!data?.access_token) return false;
+    const profile = await apiGetMe(data.access_token);
+    if (!profile) return false;
+    const user = userProfileFromMe(profile);
     writeStoredAccessToken(data.access_token);
     set({
       user,
@@ -349,6 +395,8 @@ export const useUserStore = create<UserState>((set, get) => ({
         xp: profile.xp ?? user.stats.xp,
       },
       atBalance: profile.at_balance,
+      region: regionFromMe(profile.region ?? undefined) ?? user.region,
+      twoFactorEnabled: profile.two_factor_enabled ?? user.twoFactorEnabled,
     };
     set({ user: next, walletConnected: !!w });
     hydrateWalletForgeAfterAuth(next);
