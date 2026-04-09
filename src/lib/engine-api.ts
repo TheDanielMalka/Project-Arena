@@ -547,6 +547,9 @@ export async function apiGetMe(token: string): Promise<{
   at_balance: number;
   /** From user_roles via GET /auth/me (admin > moderator > user) */
   role?: string;
+  /** Daily AT staking usage — from _check_daily_stake_limit in engine */
+  daily_staked_at?: number;
+  daily_limit_at?: number;
 } | null> {
   try {
     const res = await arenaUserFetch(`${ENGINE_BASE}/auth/me`, token, {});
@@ -570,6 +573,8 @@ export async function apiGetMe(token: string): Promise<{
       vip_expires_at: string | null;
       at_balance: number;
       role?: string;
+      daily_staked_at?: number;
+      daily_limit_at?: number;
     };
   } catch {
     return null;

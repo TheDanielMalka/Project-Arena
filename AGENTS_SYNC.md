@@ -182,6 +182,7 @@ HTTP Status codes to handle:
 - [CLAUDE]  2026-04-09 17:00 UTC  feat/admin-engine-sync             Migration 017 (platform_config key-value + admin_audit_log). All admin endpoints on correct tables. UPPERCASE action names. 844 tests pass.
 - [CLAUDE]  2026-04-09 17:30 UTC  feat/admin-engine-sync             Migration 018 — 5 indexes for admin queries (users.status, users.created_at, disputes.status, disputes.created_at, disputes.player_a).
 - [CURSOR]  2026-04-09 15:41 UTC  audit/db-ui-sync-check             DB→API→UI audit: 5 fields checked. Migration 019 (idx_matches_host IF NOT EXISTS) created.
+- [DB]      2026-04-09 16:30 UTC  fix/db-daily-bet-limit-50000       Migration 020 — daily_bet_max_at raised 500→50000 in platform_config + init.sql.
 - [CURSOR]  2026-04-09 18:48 UTC  test/frontend-p0-p1-coverage       Added apiMatchHeartbeat, apiKickPlayer, apiRespondToNotification + team in join to engine-api.ts; 8 fetch-stub vitest tests. 501/501 vitest pass.
 - [CURSOR]  2026-04-09 19:05 UTC  test/oracle-coverage               Verified test_state_machine.py (18 tests) + test_consensus.py (23 tests) cover required state transitions and consensus logic. 41/41 pass.
 - [CURSOR]  2026-04-09 19:30 UTC  test/risk-fraud-coverage           Created engine/tests/test_risk_fraud.py (14 tests: KillSwitch/DailyStakeLimit/PenaltySystem/FraudReport). Added 3 tests to test_api_routes.py (process-time header, validate fields, match result). Added x-process-time-ms middleware to main.py. 17 new tests pass.

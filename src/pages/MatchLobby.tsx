@@ -32,6 +32,7 @@ import {
   apiInviteToMatch,
   apiKickPlayer,
   apiListFriends,
+  apiGetMe,
   mapApiMatchRowToMatch,
   type ApiFriendRow,
 } from "@/lib/engine-api";
@@ -378,6 +379,22 @@ const MatchLobby = () => {
   const [kickingUserId,        setKickingUserId]        = useState<string | null>(null);
   const [createRateLimited,    setCreateRateLimited]    = useState(false);
   const [inviteRateLimitedIds, setInviteRateLimitedIds] = useState<Set<string>>(new Set());
+  const [dailyAtStaked,        setDailyAtStaked]        = useState<number | null>(null);
+  const [dailyAtLimit,         setDailyAtLimit]         = useState<number | null>(null);
+
+  // Fetch daily AT usage from /auth/me when create form opens with AT selected
+  useEffect(() => {
+    if (!createMode || createStakeCurrency !== "AT" || !token) {
+      setDailyAtStaked(null);
+      setDailyAtLimit(null);
+      return;
+    }
+    void apiGetMe(token).then((me) => {
+      if (!me) return;
+      setDailyAtStaked(me.daily_staked_at ?? 0);
+      setDailyAtLimit(me.daily_limit_at ?? 500);
+    });
+  }, [createMode, createStakeCurrency, token]);
 
   const publicMatches = matches.filter(m => m.type === "public" && (m.status === "waiting" || m.status === "in_progress"));
   const customMatches = matches.filter(m => m.type === "custom" && (m.status === "waiting" || m.status === "in_progress"));
@@ -1721,6 +1738,18 @@ const MatchLobby = () => {
                       Arena Tokens (AT)
                     </button>
                   </div>
+                  {createStakeCurrency === "AT" && dailyAtStaked !== null && dailyAtLimit !== null && (
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-arena-purple/10 border border-arena-purple/25 text-xs mb-3">
+                      <TrendingUp className="h-3 w-3 text-arena-purple shrink-0" />
+                      <span className="text-muted-foreground">Daily remaining:</span>
+                      <span className="font-semibold text-arena-purple">
+                        {(dailyAtLimit - dailyAtStaked).toLocaleString()} AT
+                      </span>
+                      <span className="text-muted-foreground">
+                        (${((dailyAtLimit - dailyAtStaked) / 100).toFixed(2)})
+                      </span>
+                    </div>
+                  )}
                   <label className="text-xs text-muted-foreground mb-2 block uppercase tracking-wider">Bet amount</label>
                   <div className="flex gap-2 flex-wrap">
                     {(createStakeCurrency === "AT" ? AT_BET_AMOUNTS : CREATE_BET_AMOUNTS).map((a) => (
