@@ -13,6 +13,10 @@ export default defineConfig({
     setupFiles: [path.resolve(projectRoot, "src/test/setup.ts")],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     pool: "forks",
+    poolOptions: {
+      forks: { maxForks: 4 },
+    },
+    testTimeout: 15000,
   },
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },
