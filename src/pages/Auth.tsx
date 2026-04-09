@@ -162,7 +162,10 @@ const Auth = () => {
 
   const handleGoogle = () => {
     loginWithGoogle();
-    navigate("/dashboard");
+    toast({
+      title: "Google sign-in not available",
+      description: "OAuth will be enabled when the Google Client ID is configured. Use email and password for now.",
+    });
   };
 
   if (forgotMode) {

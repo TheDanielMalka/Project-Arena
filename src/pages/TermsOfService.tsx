@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { operatorLegalCopy } from "@/lib/operatorLegalCopy";
 import {
   FileText, Scale, ShieldAlert, Gavel, AlertOctagon,
   Swords, Trophy, Wallet, Globe, Lock, Eye, ChevronDown, ChevronUp,
@@ -408,14 +409,14 @@ const SECTIONS: Section[] = [
     content: (
       <div className="space-y-3">
         <p>
-          These Terms are governed by the laws of <strong className="text-foreground">[Insert governing jurisdiction]</strong>,
+          These Terms are governed by the laws of <strong className="text-foreground">{operatorLegalCopy.governingLaw}</strong>,
           without regard to conflict-of-law principles, and subject to mandatory consumer protections applicable in your
           country of residence.
         </p>
         <p>
           Any dispute arising from or related to these Terms that cannot be resolved informally shall be submitted to
-          binding arbitration under the rules of <strong className="text-foreground">[Insert arbitration body]</strong>,
-          conducted in <strong className="text-foreground">[Insert seat of arbitration]</strong>. The language of
+          binding arbitration under the rules of <strong className="text-foreground">{operatorLegalCopy.arbitrationBody}</strong>,
+          conducted in <strong className="text-foreground">{operatorLegalCopy.arbitrationSeat}</strong>. The language of
           arbitration shall be English.
         </p>
         <p>

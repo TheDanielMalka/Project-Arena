@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { operatorLegalCopy } from "@/lib/operatorLegalCopy";
 import {
   Shield, Globe, Lock, UserCheck, Mail, Eye, Database,
   Cpu, ChevronDown, ChevronUp, AlertTriangle, Swords,
@@ -58,10 +59,10 @@ const SECTIONS: Section[] = [
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
           {[
-            { label: "Data Controller", value: "[Insert legal entity name]" },
-            { label: "Registered Address", value: "[Insert registered address]" },
+            { label: "Data Controller", value: operatorLegalCopy.dataController },
+            { label: "Registered Address", value: operatorLegalCopy.registeredAddress },
             { label: "Privacy Contact", value: "privacy@arena.gg" },
-            { label: "DPO (if appointed)", value: "[Insert DPO details]" },
+            { label: "DPO (if appointed)", value: operatorLegalCopy.dpoDetails },
           ].map((item) => (
             <div key={item.label} className="bg-secondary/40 border border-border/50 rounded-lg px-3 py-2">
               <p className="text-[10px] font-mono text-muted-foreground/50 uppercase tracking-widest">{item.label}</p>
@@ -530,8 +531,8 @@ const SECTIONS: Section[] = [
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {[
             { label: "Privacy Email", value: "privacy@arena.gg" },
-            { label: "DPO Contact", value: "[Insert DPO contact]" },
-            { label: "Postal Address", value: "[Insert registered address]" },
+            { label: "DPO Contact", value: operatorLegalCopy.dpoContact },
+            { label: "Postal Address", value: operatorLegalCopy.registeredAddress },
           ].map((item) => (
             <div key={item.label} className="bg-secondary/40 border border-border/50 rounded-lg px-3 py-3">
               <p className="text-[10px] font-mono text-muted-foreground/50 uppercase tracking-widest">{item.label}</p>

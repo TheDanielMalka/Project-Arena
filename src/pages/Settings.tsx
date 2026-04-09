@@ -300,6 +300,12 @@ const SettingsPage = () => {
     autoReady: false,
   });
 
+  useEffect(() => {
+    if (!user) return;
+    setSecurity((p) => ({ ...p, twoFactor: !!user.twoFactorEnabled }));
+    setGame((g) => ({ ...g, defaultGame: user.preferredGame ?? "CS2" }));
+  }, [user?.id, user?.twoFactorEnabled, user?.preferredGame]);
+
   // Deep link: /settings?section=support, /settings?section=support&openTicket=1
   useEffect(() => {
     const sec = searchParams.get("section");

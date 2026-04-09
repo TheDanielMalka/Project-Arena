@@ -81,44 +81,6 @@ interface UserState {
   clearLoginGreeting: () => void;
 }
 
-const MOCK_USER: UserProfile = {
-  id: "user-001",
-  role: "user",
-  username: "ArenaPlayer_01",
-  email: "player@arena.gg",
-  steamId: "76561198XXXXXXXX",
-  riotId: null,
-  walletAddress: "0x7a3F9c2E1b8D4a5C6f7e8d9B0c1A2b3C4d5E6f7A",
-  walletShort: "0x7a3...6f7A",
-  rank: "Gold III",
-  tier: "Gold",
-  verified: true,
-  avatarInitials: "AP",
-  preferredGame: "CS2",
-  arenaId: "ARENA-AP0001",
-  memberSince: "March 2026",
-  status: "active",
-  avatar: "initials",
-  avatarBg: "default",
-  stats: {
-    matches: 147,
-    wins: 94,
-    losses: 53,
-    winRate: 64.2,
-    totalEarnings: 2847,
-    inEscrow: 50,
-    xp: 840,
-  },
-  balance: {
-    total: 7248.20,
-    available: 7198.20,
-    inEscrow: 50,
-  },
-  atBalance: 200,
-  region: "EU",
-  twoFactorEnabled: false,
-};
-
 const ADMIN_EMAILS = new Set(["admin@arena.gg"]);
 
 /** Prefer GET /auth/me `role` (from user_roles); fallback for legacy engine or dev allowlist. */
@@ -332,19 +294,7 @@ export const useUserStore = create<UserState>((set, get) => ({
   },
 
   loginWithGoogle: () => {
-    clearStoredAccessToken();
-    const u: UserProfile = { ...MOCK_USER, role: "user" };
-    set({
-      user: u,
-      token: null,
-      isAuthenticated: true,
-      authHydrated: true,
-      walletConnected: true,
-      showLoginGreeting: true,
-      greetingType: "google",
-    });
-    hydrateWalletForgeAfterAuth(u);
-    scheduleSyncForgePurchasesToProfile();
+    // TODO[GOOGLE]: wire handleGoogle() to POST /auth/google when Client ID is set
   },
 
   logout: () => {
