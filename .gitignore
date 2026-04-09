@@ -2,8 +2,10 @@
 # Agent instructions (local only — never committed)
 # -----------------------------
 CLAUDE.md
+AGENTS_SYNC.md
 .cursorrules
-.cursor/rules/
+.cursor/
+*.mdc
 
 # -----------------------------
 # OS / Editor
