@@ -829,3 +829,10 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_log_created ON admin_audit_log(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_log_admin   ON admin_audit_log(admin_id, created_at DESC);
+
+-- ── Migration 018 — Admin Query Indexes ──────────────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_users_status      ON users(status);
+CREATE INDEX IF NOT EXISTS idx_users_created_at  ON users(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_disputes_status   ON disputes(status);
+CREATE INDEX IF NOT EXISTS idx_disputes_created_at ON disputes(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_disputes_player_a ON disputes(player_a);
