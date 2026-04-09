@@ -97,6 +97,24 @@ def clean():
             print(f"Warning: Could not remove {d} (file in use?)")
 
 
+def _copy_distribution_extras() -> None:
+    """
+    Copy arena_cert.cer + setup.ps1 into dist/ next to the EXE so testers get
+    a complete bundle (zip these three files for S3 download).
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    dist_dir = os.path.join(script_dir, "dist")
+    os.makedirs(dist_dir, exist_ok=True)
+    for name in ("arena_cert.cer", "setup.ps1"):
+        src = os.path.join(script_dir, name)
+        dst = os.path.join(dist_dir, name)
+        if os.path.isfile(src):
+            shutil.copy2(src, dst)
+            print(f"  Dist bundle: copied {name} -> dist/\n")
+        else:
+            print(f"  WARNING: {name} missing next to build.py - add it for S3 bundle.\n")
+
+
 def _sign_exe(abs_exe: str) -> None:
     """
     Sign the built EXE with the self-signed ArenaClient certificate.
@@ -179,6 +197,7 @@ def build():
             # does not block it. arena_sign.pfx must exist next to build.py.
             if sys.platform == "win32":
                 _sign_exe(os.path.abspath(exe_path))
+            _copy_distribution_extras()
     else:
         print("Build failed!")
         sys.exit(1)
