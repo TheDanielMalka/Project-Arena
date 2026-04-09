@@ -704,7 +704,7 @@ const Admin = () => {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <button className="font-display text-sm font-bold hover:text-primary transition-colors"
-                            onClick={() => void navigate(`/profile/${u.username}`)}>
+                            onClick={() => void navigate(`/players/${u.username}`)}>
                             {u.username}
                           </button>
                           <Badge className={cn("text-[9px] border px-1.5 py-0", userStatusBadge[u.status])}>{u.status}</Badge>
@@ -1148,7 +1148,7 @@ const Admin = () => {
                             </div>
                             <div className="flex-1 min-w-0">
                               <button className="font-display text-xs font-bold hover:text-primary transition-colors"
-                                onClick={() => void navigate(`/profile/${p.username}`)}>
+                                onClick={() => void navigate(`/players/${p.username}`)}>
                                 @{p.username}
                               </button>
                               <div className="flex items-center gap-2 mt-0.5">

@@ -443,3 +443,70 @@ class TestPatchWalletAddress:
             resp = self._patch({"avatar": "avatar_01"})
         # Should not hit wallet validation path at all
         assert resp.status_code != 400
+
+
+# ── Standalone contract assertions ────────────────────────────────────────────
+
+
+def test_health_has_process_time_header():
+    """GET /health must include x-process-time-ms header (timing middleware)."""
+    resp = client.get("/health")
+    assert "x-process-time-ms" in resp.headers, (
+        "x-process-time-ms header missing — add timing middleware to main.py"
+    )
+
+
+def test_validate_screenshot_returns_fields(tmp_path):
+    """POST /validate/screenshot must return result, confidence, and accepted."""
+    import io
+    import cv2
+    import numpy as np
+
+    grey = np.full((200, 400, 3), 128, dtype=np.uint8)
+    path = str(tmp_path / "grey.png")
+    cv2.imwrite(path, grey)
+    with open(path, "rb") as f:
+        raw = f.read()
+
+    with patch("main.SCREENSHOT_DIR", str(tmp_path)):
+        resp = client.post(
+            "/validate/screenshot?match_id=CONTRACT-001&game=CS2",
+            files={"file": ("grey.png", io.BytesIO(raw), "image/png")},
+            headers=_AUTH_HEADER,
+        )
+    data = resp.json()
+    assert "result"     in data, "result missing from /validate/screenshot response"
+    assert "confidence" in data, "confidence missing from /validate/screenshot response"
+    assert "accepted"   in data, "accepted missing from /validate/screenshot response"
+
+
+def test_match_result_settles_at():
+    """POST /match/result with valid payload must return 200 (AT settlement path)."""
+    from unittest.mock import MagicMock
+
+    match_id  = str(uuid.uuid4())
+    winner_id = str(uuid.uuid4())
+
+    session = MagicMock()
+    session.execute.return_value.fetchone.return_value = (
+        "in_progress", "AT", winner_id
+    )
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=session)
+    ctx.__exit__  = MagicMock(return_value=False)
+
+    with patch("main.SessionLocal", return_value=ctx), \
+         patch("main._settle_at_match"):
+        resp = client.post(
+            "/match/result",
+            json={
+                "match_id":          match_id,
+                "winner_id":         winner_id,
+                "game":              "CS2",
+                "agents_detected":   [],
+                "players_detected":  [],
+                "score":             "13-7",
+            },
+            headers=_AUTH_HEADER,
+        )
+    assert resp.status_code == 200
