@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useUserStore } from "@/stores/userStore";
 import { Link } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -54,7 +54,7 @@ const TX_PER_PAGE = 8;
 
 const WalletPage = () => {
   const { toast } = useToast();
-  const { user, connectWallet: syncProfileWalletConnected } = useUserStore();
+  const { user, token, connectWallet: syncProfileWalletConnected, refreshProfileFromServer } = useUserStore();
   const {
     connectedAddress, selectedNetwork,
     usdtBalance, atBalance,
@@ -92,6 +92,12 @@ const WalletPage = () => {
 
   const txPages  = Math.max(1, Math.ceil(filteredTx.length / TX_PER_PAGE));
   const pagedTx  = filteredTx.slice((txPage - 1) * TX_PER_PAGE, txPage * TX_PER_PAGE);
+
+  useEffect(() => {
+    if (!token) return;
+    const id = window.setInterval(() => void refreshProfileFromServer(), 15_000);
+    return () => window.clearInterval(id);
+  }, [token, refreshProfileFromServer]);
 
   const matchWins   = transactions.filter((t) => t.type === "match_win").length;
   const matchLosses = transactions.filter((t) => t.type === "match_loss").length;

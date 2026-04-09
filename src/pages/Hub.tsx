@@ -16,6 +16,7 @@ import { useFriendStore }  from "@/stores/friendStore";
 import { useMessageStore } from "@/stores/messageStore";
 import { useInboxStore }   from "@/stores/inboxStore";
 import { useUserStore }    from "@/stores/userStore";
+import { useServerUnreadMessagesCount } from "@/hooks/useServerUnreadMessagesCount";
 import { useNotificationStore } from "@/stores/notificationStore";
 import type { DirectMessage, Game, Friendship, InboxMessage, PublicPlayerProfile } from "@/types";
 
@@ -644,6 +645,7 @@ export default function Hub() {
   const totalChatUnread  = getChatUnread();
   const totalInboxUnread = inboxUnreadCount;
   const totalMsgUnread   = totalChatUnread + totalInboxUnread;
+  const serverMsgUnread  = useServerUnreadMessagesCount(token);
 
   // Handlers
   const handleAddFriend = (player: PublicPlayerProfile) => {
@@ -808,9 +810,9 @@ export default function Hub() {
                   {pendingReceived.length}
                 </span>
               )}
-              {key === "messages" && totalMsgUnread > 0 && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground">
-                  {totalMsgUnread}
+              {key === "messages" && serverMsgUnread > 0 && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-destructive text-destructive-foreground font-bold min-w-[1.25rem] text-center">
+                  {serverMsgUnread > 99 ? "99+" : serverMsgUnread}
                 </span>
               )}
             </button>

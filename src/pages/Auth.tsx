@@ -1,3 +1,4 @@
+// TODO[GOOGLE]: POST /auth/google — implement after Client ID received
 import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,6 +11,12 @@ import { useToast } from "@/hooks/use-toast";
 import { PASSWORD_RULES, isPasswordValid } from "@/lib/passwordValidation";
 import { cn } from "@/lib/utils";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   isValidRiotId,
   isValidSteamId,
   RIOT_ID_HINT,
@@ -18,7 +25,7 @@ import {
 
 const Auth = () => {
   const navigate = useNavigate();
-  const { login, signup, loginWithGoogle, isAuthenticated } = useUserStore();
+  const { login, signup, loginWithGoogle, isAuthenticated, completeTwoFactorLogin } = useUserStore();
   const { toast } = useToast();
   const [showPassword, setShowPassword] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
@@ -37,6 +44,9 @@ const Auth = () => {
   >({});
   const [loginRateLimited, setLoginRateLimited] = useState(false);
   const [signupRateLimited, setSignupRateLimited] = useState(false);
+  const [loginAuthPhase, setLoginAuthPhase] = useState<"credentials" | "2fa">("credentials");
+  const [loginTempToken, setLoginTempToken] = useState("");
+  const [loginTwoFaCode, setLoginTwoFaCode] = useState("");
 
   // Redirect if already logged in (do NOT navigate during render)
   useEffect(() => {
@@ -51,17 +61,41 @@ const Auth = () => {
       toast({ title: "Missing fields", description: "Please enter email and password.", variant: "destructive" });
       return;
     }
-    const ok = await login(loginEmail, loginPassword);
-    if (ok === "rate_limited") {
+    const result = await login(loginEmail, loginPassword);
+    if (result === "rate_limited") {
       toast({ title: "Too many requests", description: "Too many requests — please wait a moment and try again", variant: "destructive" });
       setLoginRateLimited(true);
       setTimeout(() => setLoginRateLimited(false), 3000);
       return;
     }
-    if (!ok) {
+    if (typeof result === "object" && result !== null && "needs_2fa" in result) {
+      setLoginTempToken(result.temp_token);
+      setLoginTwoFaCode("");
+      setLoginAuthPhase("2fa");
+      return;
+    }
+    if (!result) {
       toast({ title: "Login failed", description: "Invalid email or password.", variant: "destructive" });
       return;
     }
+    navigate("/dashboard");
+  };
+
+  const handleLogin2fa = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const code = loginTwoFaCode.replace(/\D/g, "").slice(0, 6);
+    if (code.length !== 6) {
+      toast({ title: "Invalid code", description: "Enter the 6-digit code from your authenticator app.", variant: "destructive" });
+      return;
+    }
+    const ok = await completeTwoFactorLogin(loginTempToken, code);
+    if (!ok) {
+      toast({ title: "Verification failed", description: "Code was not accepted. Try again.", variant: "destructive" });
+      return;
+    }
+    setLoginAuthPhase("credentials");
+    setLoginTempToken("");
+    setLoginTwoFaCode("");
     navigate("/dashboard");
   };
 
@@ -170,6 +204,7 @@ const Auth = () => {
   }
 
   return (
+    <TooltipProvider delayDuration={200}>
     <div className="min-h-screen flex flex-col items-center justify-center bg-background px-4 gap-4">
       <Card className="w-full max-w-md bg-card border-border">
         <CardHeader className="text-center">
@@ -177,7 +212,17 @@ const Auth = () => {
           <p className="text-sm text-muted-foreground">Play for Stakes</p>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="login" className="w-full">
+          <Tabs
+            defaultValue="login"
+            className="w-full"
+            onValueChange={(v) => {
+              if (v === "login") {
+                setLoginAuthPhase("credentials");
+                setLoginTempToken("");
+                setLoginTwoFaCode("");
+              }
+            }}
+          >
             <TabsList className="w-full bg-secondary border border-border mb-4">
               <TabsTrigger value="login" className="flex-1 font-display data-[state=active]:bg-primary/20 data-[state=active]:text-primary">
                 Login
@@ -189,6 +234,41 @@ const Auth = () => {
 
             {/* LOGIN */}
             <TabsContent value="login">
+              {loginAuthPhase === "2fa" ? (
+                <form onSubmit={handleLogin2fa} className="space-y-4">
+                  <p className="text-sm text-muted-foreground text-center">
+                    Two-factor authentication is enabled. Enter the 6-digit code from your authenticator app.
+                  </p>
+                  <div>
+                    <label className="text-sm text-muted-foreground mb-1 block">Authenticator code</label>
+                    <Input
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      placeholder="000000"
+                      value={loginTwoFaCode}
+                      onChange={(e) => setLoginTwoFaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                      className="bg-secondary border-border font-mono text-center text-lg tracking-[0.3em]"
+                    />
+                  </div>
+                  <Button type="submit" className="w-full glow-green font-display text-base">
+                    <Swords className="mr-2 h-4 w-4" /> Verify &amp; enter
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="w-full text-muted-foreground text-sm"
+                    onClick={() => {
+                      setLoginAuthPhase("credentials");
+                      setLoginTempToken("");
+                      setLoginTwoFaCode("");
+                    }}
+                  >
+                    Back to email &amp; password
+                  </Button>
+                </form>
+              ) : (
               <form onSubmit={handleLogin} className="space-y-4">
                 <div>
                   <label className="text-sm text-muted-foreground mb-1 block">Email</label>
@@ -238,10 +318,27 @@ const Auth = () => {
                   <div className="h-px flex-1 bg-border" />
                 </div>
 
-                <Button type="button" variant="outline" className="w-full border-border hover:bg-secondary font-display" onClick={handleGoogle}>
-                  <Chrome className="mr-2 h-4 w-4" /> Continue with Google
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="w-full block">
+                      {/* TODO[GOOGLE]: remove disabled, wire handleGoogle() to POST /auth/google when Client ID is set */}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full border-border hover:bg-secondary font-display"
+                        disabled
+                        onClick={handleGoogle}
+                      >
+                        <Chrome className="mr-2 h-4 w-4" /> Continue with Google
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    <p>Coming soon</p>
+                  </TooltipContent>
+                </Tooltip>
               </form>
+              )}
             </TabsContent>
 
             {/* SIGN UP */}
@@ -450,9 +547,25 @@ const Auth = () => {
                   <div className="h-px flex-1 bg-border" />
                 </div>
 
-                <Button type="button" variant="outline" className="w-full border-border hover:bg-secondary font-display" onClick={handleGoogle}>
-                  <Chrome className="mr-2 h-4 w-4" /> Sign up with Google
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="w-full block">
+                      {/* TODO[GOOGLE]: remove disabled, wire handleGoogle() to POST /auth/google when Client ID is set */}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full border-border hover:bg-secondary font-display"
+                        disabled
+                        onClick={handleGoogle}
+                      >
+                        <Chrome className="mr-2 h-4 w-4" /> Sign up with Google
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    <p>Coming soon</p>
+                  </TooltipContent>
+                </Tooltip>
               </form>
             </TabsContent>
           </Tabs>
@@ -474,6 +587,7 @@ const Auth = () => {
         </Link>
       </div>
     </div>
+    </TooltipProvider>
   );
 };
 

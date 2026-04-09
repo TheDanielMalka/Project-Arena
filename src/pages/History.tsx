@@ -249,6 +249,12 @@ const History = () => {
     void refreshMatchesFromServer(token);
   }, [user, token, refreshMatchesFromServer]);
 
+  useEffect(() => {
+    if (!user || !token) return;
+    const id = window.setInterval(() => void refreshMatchesFromServer(token), 30_000);
+    return () => window.clearInterval(id);
+  }, [user?.id, token, refreshMatchesFromServer]);
+
   const canAppealMatch = (m: Match) =>
     m.status === "completed" || m.status === "disputed" || m.status === "cancelled";
 

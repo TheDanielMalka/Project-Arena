@@ -7,6 +7,7 @@ import {
 import { NavLink } from "@/components/NavLink";
 import { useNavigate } from "react-router-dom";
 import { useUserStore }    from "@/stores/userStore";
+import { useServerUnreadMessagesCount } from "@/hooks/useServerUnreadMessagesCount";
 import { useInboxStore }   from "@/stores/inboxStore";
 import { useMessageStore } from "@/stores/messageStore";
 import { getXpInfo }       from "@/lib/xp";
@@ -59,6 +60,7 @@ export function ArenaSidebar() {
   const refreshInboxBadge = useInboxStore((s) => s.refreshUnreadBadge);
   const chatUnread    = useMessageStore((s) => s.getTotalUnread)();
   const totalUnread   = inboxUnread + chatUnread;
+  const serverMsgUnread = useServerUnreadMessagesCount(token);
 
   useEffect(() => {
     if (!user || !token) return;
@@ -248,7 +250,7 @@ export function ArenaSidebar() {
               {/* Quick links */}
               <div className="p-1.5 space-y-px">
                 {QUICK_LINKS.map(({ label, url, icon: Icon }) => {
-                  const badge = url === "/hub?tab=messages" && totalUnread > 0 ? totalUnread : 0;
+                  const msgBadge = url === "/hub?tab=messages" && serverMsgUnread > 0 ? serverMsgUnread : 0;
                   return (
                     <button
                       key={url}
@@ -257,9 +259,9 @@ export function ArenaSidebar() {
                     >
                       <Icon className="h-3.5 w-3.5 text-muted-foreground/60 group-hover:text-primary transition-colors shrink-0" />
                       <span className="text-[12px] font-medium flex-1 text-foreground/80 group-hover:text-foreground transition-colors">{label}</span>
-                      {badge > 0 && (
-                        <span className="text-[8px] font-bold bg-primary text-primary-foreground rounded-full w-4 h-4 flex items-center justify-center leading-none">
-                          {badge > 9 ? "9+" : badge}
+                      {msgBadge > 0 && (
+                        <span className="text-[8px] font-bold bg-destructive text-destructive-foreground rounded-full min-w-[1rem] h-4 px-1 flex items-center justify-center leading-none">
+                          {msgBadge > 9 ? "9+" : msgBadge}
                         </span>
                       )}
                     </button>

@@ -170,6 +170,33 @@ vi.mock("@/lib/engine-api", async () => {
     apiPatchInboxRead: vi.fn(async () => true),
     apiPatchInboxReadAll: vi.fn(async () => true),
     apiDeleteInbox: vi.fn(async () => true),
+    apiAdminListSupportTicketAttachments: vi.fn(async () => []),
+    apiGetAttachmentBlob: vi.fn(async () => new Blob([], { type: "image/png" })),
+    apiDeleteAttachment: vi.fn(async () => true),
+    apiPostSupportTicketAttachment: vi.fn(async () => ({
+      ok: true as const,
+      id: "att-1",
+      filename: "t.png",
+      content_type: "image/png",
+      file_size: 4,
+    })),
+    apiVerifySteam: vi.fn(async () => ({ valid: true, unique: true, verified_by: "format" })),
+    apiVerifyRiot: vi.fn(async () => ({ valid: true, unique: true, verified_by: "format" })),
+    apiVerifyDiscord: vi.fn(async () => ({ valid: true, verified_by: "format" })),
+    apiDeleteMyAccount: vi.fn(async () => ({ ok: true as const })),
+    apiPatchUserSettings: vi.fn(async (_t: string, region: string) => ({ ok: true as const, region })),
+    apiAuth2faSetup: vi.fn(async () => ({ ok: true as const, secret: "SECRETTEST", qr_uri: "otpauth://totp/X" })),
+    apiAuth2faVerify: vi.fn(async () => ({ ok: true as const })),
+    apiAuth2faDisable: vi.fn(async () => ({ ok: true as const })),
+    apiAuth2faConfirm: vi.fn(async () => ({
+      access_token: "token-user",
+      user_id: "user-001",
+      username: "ArenaPlayer_01",
+      email: "player@arena.gg",
+      arena_id: "ARENA-AP0001",
+      wallet_address: "0x7a3F9c2E1b8D4a5C6f7e8d9B0c1A2b3C4d5E6f7A",
+    })),
+    apiGetUnreadCount: vi.fn(async () => ({ count: 0 })),
   };
 });
 

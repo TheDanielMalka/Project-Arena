@@ -17,6 +17,9 @@ export type Network = "bsc" | "solana" | "ethereum";
 export type UserRole = "user" | "admin" | "moderator";
 export type UserStatus = "active" | "flagged" | "banned" | "suspended";
 
+/** Saved via PATCH /users/settings — must match engine enum */
+export type UserSettingsRegion = "EU" | "NA" | "ASIA" | "SA" | "OCE" | "ME";
+
 // ─── Arena ID ─────────────────────────────────────────────────
 // Immutable public identifier — format: ARENA-XXXXXX
 // DB: users.arena_id (VARCHAR(12) UNIQUE NOT NULL)
@@ -71,6 +74,10 @@ export interface UserProfile {
   balance: UserBalance;
   /** DB: users.at_balance — from GET /auth/me as `at_balance` (int, always present) */
   atBalance: number;
+  /** From GET /auth/me `region` + PATCH /users/settings */
+  region?: UserSettingsRegion;
+  /** From GET /auth/me `two_factor_enabled` */
+  twoFactorEnabled?: boolean;
 }
 
 export interface UserStats {
