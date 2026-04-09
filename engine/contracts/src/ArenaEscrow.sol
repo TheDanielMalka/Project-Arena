@@ -45,11 +45,15 @@ pragma solidity 0.8.28;
  *   MatchState.CANCELLED → 'cancelled'   (creator cancelled OR waiting timeout)
  *
  * ── DB alignment (transactions.tx_type) ────────────────────────────────────────
- *   MatchCreated    event → 'escrow_lock'  for creator (teamA[0])
- *   PlayerDeposited event → 'escrow_lock'  for each joining player
- *   WinnerDeclared  event → 'match_win'    for each winner + 'fee' for platform
- *   MatchRefunded   event → 'refund'       for all players
- *   MatchCancelled  event → 'refund'       for all depositors
+ *   MatchCreated    event → 'crypto_escrow_lock'  for creator (teamA[0])
+ *   PlayerDeposited event → 'crypto_escrow_lock'  for each joining player
+ *   WinnerDeclared  event → 'match_win'           for each winner + 'fee' for platform
+ *   MatchRefunded   event → 'refund'              for all players
+ *   MatchCancelled  event → 'refund'              for all depositors
+ *
+ * NOTE: 'crypto_escrow_lock' is intentionally distinct from AT's 'escrow_lock'.
+ *   _check_daily_stake_limit() in engine/main.py must count BOTH types toward the daily cap.
+ *   The stake_amount for the limit check is stakePerPlayer (emitted in both events below).
  *
  * ── DB alignment (match_players table) ─────────────────────────────────────────
  *   PlayerDeposited event → SET has_deposited=TRUE, deposited_at=NOW(), deposit_amount=stakePerPlayer
@@ -117,7 +121,9 @@ contract ArenaEscrow {
     // Vision Engine listens to these to sync Postgres + user balances
 
     event MatchCreated   (uint256 indexed matchId, address indexed creator, uint8 teamSize, uint256 stakePerPlayer);
-    event PlayerDeposited(uint256 indexed matchId, address indexed player, uint8 team, uint8 depositsTeamA, uint8 depositsTeamB);
+    // stakePerPlayer included so the backend can INSERT transactions(type='crypto_escrow_lock', amount=stakePerPlayer)
+    // without an extra contract call — required for _check_daily_stake_limit() to count CRYPTO deposits.
+    event PlayerDeposited(uint256 indexed matchId, address indexed player, uint8 team, uint256 stakePerPlayer, uint8 depositsTeamA, uint8 depositsTeamB);
     event MatchActive    (uint256 indexed matchId);                                             // all players deposited
     event WinnerDeclared (uint256 indexed matchId, uint8 winningTeam, uint256 payoutPerWinner, uint256 fee);
     event MatchRefunded  (uint256 indexed matchId);
@@ -197,7 +203,7 @@ contract ArenaEscrow {
      *                        max_players=teamSize*2, on_chain_match_id=matchId,
      *                        bet_amount=stakePerPlayer, stake_per_player=stakePerPlayer)
      *   INSERT INTO match_players (user_id=creator, team='A', wallet_address=creator, has_deposited=TRUE)
-     *   INSERT INTO transactions  (type='escrow_lock', user_id=creator, amount=stakePerPlayer)
+     *   INSERT INTO transactions  (type='crypto_escrow_lock', user_id=creator, amount=stakePerPlayer)
      *   UPDATE user_balances SET in_escrow = in_escrow + stakePerPlayer WHERE user_id=creator
      *
      * @param teamSize  Players per team: 1 (1v1), 2 (2v2), 4 (4v4), or 5 (5v5).
@@ -238,7 +244,7 @@ contract ArenaEscrow {
      * DB side (Vision Engine handles on PlayerDeposited event):
      *   INSERT INTO match_players (user_id=..., team=team==0?'A':'B', wallet_address=player,
      *                              has_deposited=TRUE, deposited_at=NOW(), deposit_amount=stakePerPlayer)
-     *   INSERT INTO transactions  (type='escrow_lock', user_id=..., amount=stakePerPlayer)
+     *   INSERT INTO transactions  (type='crypto_escrow_lock', user_id=..., amount=stakePerPlayer)
      *   UPDATE matches SET deposits_received = deposits_received + 1
      *   UPDATE user_balances SET in_escrow = in_escrow + stakePerPlayer
      *
@@ -274,7 +280,7 @@ contract ArenaEscrow {
 
         hasDeposited[matchId][msg.sender] = true;
 
-        emit PlayerDeposited(matchId, msg.sender, team, m.depositsTeamA, m.depositsTeamB);
+        emit PlayerDeposited(matchId, msg.sender, team, m.stakePerPlayer, m.depositsTeamA, m.depositsTeamB);
 
         // All players deposited → activate match
         if (m.depositsTeamA == m.teamSize && m.depositsTeamB == m.teamSize) {
