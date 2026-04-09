@@ -94,6 +94,8 @@ This file is the **single source of truth** for all active agents (Cursor + Clau
 | ArenaEscrow.sol — CRYPTO match escrow | ✅ Written, not deployed |
 | AT match settlement (off-chain, in main.py) | ✅ Complete |
 | AT burn on fee (5% fee, 95% winner) | ✅ Implemented in _settle_at_match |
+| PlayerDeposited event — stakePerPlayer added | ✅ feat/contracts-crypto-escrow-lock |
+| tx_type renamed: escrow_lock → crypto_escrow_lock | ✅ feat/contracts-crypto-escrow-lock |
 | Testnet deploy | ⏳ Phase 6 |
 | env vars (ESCROW_ADDRESS, CHAIN_ID) | ⏳ After deploy |
 
@@ -186,5 +188,5 @@ HTTP Status codes to handle:
 - [CURSOR]  2026-04-09 19:30 UTC  test/risk-fraud-coverage           Created engine/tests/test_risk_fraud.py (14 tests: KillSwitch/DailyStakeLimit/PenaltySystem/FraudReport). Added 3 tests to test_api_routes.py (process-time header, validate fields, match result). Added x-process-time-ms middleware to main.py. 17 new tests pass.
 - [CURSOR]  2026-04-09 20:30 UTC  feat/frontend-p1-kick-ux           P1 kick UX: apiJoinMatch+team, apiMatchHeartbeat, apiKickPlayer, apiRespondToNotification in engine-api.ts; useActiveRoomServerSync heartbeat polling (4s); MatchLobby kick button (host only); NotificationCenter accept-invite flow; Auth/MatchLobby 429 toast+disable-3s. 493/493 vitest pass.
 - [CURSOR]  2026-04-09 21:00 UTC  feat/frontend-db-sync-fixes        DB-audit fix 1/3: added your_user_id + your_team to ActiveMatchResponse type in engine-api.ts (fixes 2 missing fields returned by GET /match/active). Fix 2+3 already live from feat/frontend-p1-kick-ux (heartbeat in_match=false + kick button). 0 tsc errors.
-- [CURSOR]  2026-04-09 21:30 UTC  feat/frontend-daily-at-limit       Create form: "Daily remaining: X AT ($Y)" banner when AT selected. Added daily_staked_at + daily_limit_at to apiGetMe type. useEffect fetches /auth/me on form open. 0 tsc errors.
+- [CONTRACTS] 2026-04-09 22:00 UTC  feat/contracts-crypto-escrow-lock  PlayerDeposited event: added stakePerPlayer field. tx_type renamed escrow_lock→crypto_escrow_lock in NatSpec+DB-alignment comments. ⚠️ Claude must update _check_daily_stake_limit + event listener. ⚠️ DB-Sync must allow crypto_escrow_lock in transactions.tx_type.
 - [CLIENT]  2026-04-09 22:00 UTC  feat/client-lobby-heartbeat        P0 fix: get_active_match → GET /match/active with Bearer token. Added match_heartbeat()+get_match_status() to EngineClient. Match Lobby Card (5s poll, in_match=false clears, completed→result). XP bar with real ratio (xp/xp_to_next_level). Capture count + screenshot thumbnail in Monitoring card. notify_fn wired to tray. TODO(Claude): confirm xp_to_next_level field in /auth/me + GET /match/{id}/status response shape (result+score fields).
