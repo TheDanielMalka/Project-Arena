@@ -2399,7 +2399,7 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
               and match_players (match_id, user_id, wallet_address).
     """
     user_id: str = payload["sub"]
-    _check_rate_limit(f"matches:{user_id}", max_calls=5, window_secs=60)
+    _check_rate_limit(f"matches:{user_id}", max_calls=20, window_secs=60)
     game = _normalize_game(req.game)
 
     if game not in _VALID_GAMES:
