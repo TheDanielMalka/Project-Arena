@@ -2157,7 +2157,7 @@ _at_daily_limit: int = AT_DAILY_STAKE_LIMIT  # runtime cache — reloaded from p
 
 def _reload_at_daily_limit() -> None:
     """
-    Load daily_bet_max_at from platform_settings into the in-memory cache.
+    Load daily_bet_max_at from platform_config (key-value table, migration 017).
     Called at startup and after admin updates the value via PUT /platform/config.
     Non-fatal: leaves _at_daily_limit unchanged if DB is unavailable.
     """
@@ -2165,7 +2165,7 @@ def _reload_at_daily_limit() -> None:
     try:
         with SessionLocal() as s:
             row = s.execute(
-                text("SELECT value FROM platform_settings WHERE key = 'daily_bet_max_at'")
+                text("SELECT value FROM platform_config WHERE key = 'daily_bet_max_at'")
             ).fetchone()
             if row and row[0]:
                 _at_daily_limit = max(1, int(float(row[0])))
@@ -2188,8 +2188,10 @@ def _get_daily_staked(session, user_id: str) -> int:
             text(
                 "SELECT COALESCE(SUM(ABS(amount)), 0) FROM transactions "
                 "WHERE user_id = :uid "
-                "  AND type IN ('escrow_lock', 'crypto_escrow_lock') "
+                "  AND type = 'escrow_lock' "
                 "  AND created_at > NOW() - INTERVAL '24 hours'"
+                # CONTRACT-ready Phase 6: add OR type = 'crypto_escrow_lock'
+                # only after that enum value is added to tx_type in the DB.
             ),
             {"uid": user_id},
         ).fetchone()
