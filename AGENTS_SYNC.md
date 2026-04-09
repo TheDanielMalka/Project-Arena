@@ -30,11 +30,14 @@ This file is the **single source of truth** for all active agents (Cursor + Clau
 | GET /platform/config + PUT /platform/config — platform_settings | ✅ Complete | 2026-04-09 |
 | GET /admin/audit-log — paginated admin action history | ✅ Complete | 2026-04-09 |
 | _log_audit() — wired into freeze + penalty + declare-winner | ✅ Complete | 2026-04-09 |
+| Migration 017 — platform_config (key-value) + admin_audit_log | ✅ Complete | 2026-04-09 |
+| All admin endpoints migrated to correct tables (017 schema) | ✅ Complete | 2026-04-09 |
+| Action names UPPERCASE: FREEZE_PAYOUT, BAN_USER, SUSPEND_USER, DECLARE_WINNER, CONFIG_UPDATE | ✅ Complete | 2026-04-09 |
 | ArenaEscrow deploy to testnet | ⏳ Phase 6 | — |
 | AT→BNB on-chain transfer | ⏳ Phase 6 | — |
 | SSE / WebSocket | ⏳ Phase 7 | — |
 
-**Tests:** 842 / 842 passing ✅
+**Tests:** 844 / 844 passing ✅
 
 ---
 
@@ -134,11 +137,19 @@ POST /admin/freeze                    → { frozen: bool, message: str }
 GET  /admin/freeze/status             → { frozen: bool }
 POST /admin/users/{id}/penalty        → { penalized, user_id, offense_count, action, suspended_until, banned_at }
 GET  /admin/fraud/report              → { generated_at, flagged_players[], suspicious_pairs[], repeat_offenders[], recently_banned[], summary }
-GET  /admin/users                     → { users[], total, limit, offset }  — each user: id, username, email, status, rank, matches, wins, win_rate, penalty_count, is_suspended, is_banned, suspended_until
-GET  /admin/disputes                  → { disputes[], total, limit, offset } — each: id, match_id, player_a/b, username_a/b, reason, status, resolution, game, bet_amount, stake_currency
-GET  /platform/config                 → { fee_percent, daily_betting_max, maintenance_mode, registration_open, auto_dispute_escalation, kill_switch_active, updated_at }
-PUT  /platform/config                 → { updated: bool, fields: str[] }
-GET  /admin/audit-log                 → { entries[], total, limit, offset } — each: id, admin_id, admin_username, action, target, detail, created_at
+GET  /admin/users                     → { users[], total, limit, offset }
+                                         each user: user_id, username, email, status, rank, at_balance, wallet_address,
+                                                    matches, wins, win_rate, penalty_count, is_suspended, is_banned,
+                                                    suspended_until, banned_at
+GET  /admin/disputes                  → { disputes[], total, limit, offset }
+                                         each: id, match_id, raised_by, raised_by_username, reason, status,
+                                               resolution, game, bet_amount, stake_currency
+GET  /platform/config                 → { fee_pct, daily_bet_max_at, maintenance_mode, new_registrations, auto_escalate_disputes }
+PUT  /platform/config                 body: { fee_pct?, daily_bet_max_at?, maintenance_mode?, new_registrations?, auto_escalate_disputes? }
+                                         → { updated: bool, fields: str[] }
+GET  /admin/audit-log                 → { entries[], total, limit, offset }
+                                         each: id, admin_id, admin_username, action, target_id, notes, created_at
+                                         action values: FREEZE_PAYOUT | UNFREEZE_PAYOUT | BAN_USER | SUSPEND_USER | DECLARE_WINNER | CONFIG_UPDATE
 JWT payload                   → { sub: uuid, email, username, iat, exp }
 
 HTTP Status codes to handle:
@@ -166,3 +177,4 @@ HTTP Status codes to handle:
 - [CLAUDE]  2026-04-09 09:00 UTC  feat/m8-kill-switch                M8 daily stake limit + _assert_not_suspended + penalty system + fraud report + migration 016. 842 tests pass.
 - [CLAUDE]  2026-04-09 14:30 UTC  feat/admin-live-backend            Admin live backend Step 1: GET /admin/users, GET /admin/disputes, GET+PUT /platform/config, GET /admin/audit-log, _log_audit() wired. 842 tests pass.
 - [CLAUDE]  2026-04-09 15:00 UTC  fix/deploy-migrations              arena.yml deploy: added idempotent migration runner (all 0XX-*.sql files). AGENTS_SYNC timestamp+branch format added.
+- [CLAUDE]  2026-04-09 17:00 UTC  feat/admin-engine-sync             Migration 017 (platform_config key-value + admin_audit_log). All admin endpoints on correct tables. UPPERCASE action names. 844 tests pass.

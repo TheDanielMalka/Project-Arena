@@ -6046,9 +6046,9 @@ async def admin_declare_winner(
         )
         _log_audit(
             admin_id,
-            "declare_winner",
-            target=match_id,
-            detail=f"winner={req.winner_id} reason={req.reason!r}",
+            "DECLARE_WINNER",
+            target_id=match_id,
+            notes=f"winner={req.winner_id}" + (f" reason={req.reason}" if req.reason else ""),
         )
         return {
             "declared":       True,
@@ -6102,12 +6102,8 @@ async def admin_freeze_payouts(
         "admin_freeze_payouts: payouts %s by admin=%s",
         action, admin_id,
     )
-    _log_audit(
-        admin_id,
-        "freeze_payouts",
-        target="global",
-        detail=f"payouts {action}",
-    )
+    audit_action = "FREEZE_PAYOUT" if req.freeze else "UNFREEZE_PAYOUT"
+    _log_audit(admin_id, audit_action, target_id="global")
     return {
         "frozen":  _PAYOUTS_FROZEN,
         "message": f"Payouts {action}. All fund releases are {'suspended' if req.freeze else 'active'}.",
@@ -6209,11 +6205,12 @@ async def admin_issue_penalty(
             "admin_issue_penalty: user=%s action=%s offense=%d admin=%s",
             user_id, action, offense_count, admin_id,
         )
+        audit_action = "BAN_USER" if action == "banned_permanent" else "SUSPEND_USER"
         _log_audit(
             admin_id,
-            "penalty_issued",
-            target=user_id,
-            detail=f"offense={req.offense_type} count={offense_count} action={action}",
+            audit_action,
+            target_id=user_id,
+            notes=f"offense={req.offense_type} count={offense_count}",
         )
         return {
             "penalized":      True,
@@ -6391,27 +6388,31 @@ async def admin_fraud_report(payload: dict = Depends(require_admin)):
 def _log_audit(
     admin_id: str,
     action: str,
-    target: str | None = None,
-    detail: str | None = None,
+    target_id: str | None = None,
+    notes: str | None = None,
 ) -> None:
     """
-    Insert a row into audit_logs for every admin action.
+    Insert a row into admin_audit_log for every admin action.
     Non-fatal — if the insert fails it logs a warning and continues.
 
-    DB-ready: audit_logs (id, admin_id, action, target, detail, created_at).
+    Action names (UPPERCASE constants):
+      FREEZE_PAYOUT, UNFREEZE_PAYOUT, BAN_USER, SUSPEND_USER,
+      DECLARE_WINNER, CONFIG_UPDATE
+
+    DB-ready: admin_audit_log (migration 017).
     """
     try:
         with SessionLocal() as session:
             session.execute(
                 text(
-                    "INSERT INTO audit_logs (admin_id, action, target, detail) "
-                    "VALUES (:admin_id, :action, :target, :detail)"
+                    "INSERT INTO admin_audit_log (admin_id, action, target_id, notes) "
+                    "VALUES (:admin_id, :action, :target_id, :notes)"
                 ),
                 {
-                    "admin_id": admin_id,
-                    "action":   action,
-                    "target":   target,
-                    "detail":   detail,
+                    "admin_id":  admin_id,
+                    "action":    action,
+                    "target_id": target_id,
+                    "notes":     notes,
                 },
             )
             session.commit()
@@ -6464,11 +6465,12 @@ async def admin_list_users(
 
             where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
-            # Base query: users + user_stats LEFT JOIN
+            # Base query: users + user_stats + at_balance + player_penalties
             base_sql = (
                 "SELECT u.id, u.username, u.email, u.status, u.rank, u.created_at, "
-                "       COALESCE(us.matches, 0) AS matches, "
-                "       COALESCE(us.wins, 0)    AS wins, "
+                "       u.at_balance, u.wallet_address, "
+                "       COALESCE(us.matches, 0)  AS matches, "
+                "       COALESCE(us.wins, 0)     AS wins, "
                 "       COALESCE(us.win_rate, 0) AS win_rate, "
                 "       COALESCE(pp.penalty_count, 0) AS penalty_count, "
                 "       pp.latest_suspended_until, "
@@ -6500,6 +6502,7 @@ async def admin_list_users(
             for r in rows:
                 (
                     uid, username, email, ustatus, rank, created_at,
+                    at_balance, wallet_address,
                     matches, wins, win_rate,
                     penalty_count, suspended_until, banned_at,
                 ) = r
@@ -6510,12 +6513,14 @@ async def admin_list_users(
                     and suspended_until > now_utc
                 )
                 users_out.append({
-                    "id":              str(uid),
+                    "user_id":         str(uid),
                     "username":        username,
                     "email":           email,
                     "status":          ustatus,
                     "rank":            rank,
                     "created_at":      created_at.isoformat() if created_at else None,
+                    "at_balance":      int(at_balance) if at_balance is not None else 0,
+                    "wallet_address":  wallet_address,
                     "matches":         int(matches),
                     "wins":            int(wins),
                     "win_rate":        float(win_rate),
@@ -6523,6 +6528,7 @@ async def admin_list_users(
                     "is_suspended":    is_suspended,
                     "is_banned":       is_banned,
                     "suspended_until": suspended_until.isoformat() if suspended_until else None,
+                    "banned_at":       banned_at.isoformat() if banned_at else None,
                 })
 
             # Total count (no pagination)
@@ -6585,14 +6591,13 @@ async def admin_list_disputes(
 
             rows = session.execute(
                 text(
-                    "SELECT d.id, d.match_id, d.player_a, d.player_b, "
-                    "       ua.username AS username_a, ub.username AS username_b, "
+                    "SELECT d.id, d.match_id, d.player_a, "
+                    "       ua.username AS raised_by_username, "
                     "       d.reason, d.status, d.resolution, d.admin_notes, "
                     "       d.created_at, d.resolved_at, "
                     "       m.game, m.bet_amount, m.stake_currency "
                     "FROM disputes d "
                     "JOIN users ua ON ua.id = d.player_a "
-                    "JOIN users ub ON ub.id = d.player_b "
                     "JOIN matches m ON m.id = d.match_id "
                     + where_clause
                     + " ORDER BY d.created_at DESC LIMIT :limit OFFSET :offset"
@@ -6602,21 +6607,19 @@ async def admin_list_disputes(
 
             disputes_out = [
                 {
-                    "id":          str(r[0]),
-                    "match_id":    str(r[1]),
-                    "player_a":    str(r[2]),
-                    "player_b":    str(r[3]),
-                    "username_a":  r[4],
-                    "username_b":  r[5],
-                    "reason":      r[6],
-                    "status":      r[7],
-                    "resolution":  r[8],
-                    "admin_notes": r[9],
-                    "created_at":  r[10].isoformat() if r[10] else None,
-                    "resolved_at": r[11].isoformat() if r[11] else None,
-                    "game":        r[12],
-                    "bet_amount":  float(r[13]) if r[13] else None,
-                    "stake_currency": r[14],
+                    "id":                 str(r[0]),
+                    "match_id":           str(r[1]),
+                    "raised_by":          str(r[2]),
+                    "raised_by_username": r[3],
+                    "reason":             r[4],
+                    "status":             r[5],
+                    "resolution":         r[6],
+                    "admin_notes":        r[7],
+                    "created_at":         r[8].isoformat() if r[8] else None,
+                    "resolved_at":        r[9].isoformat() if r[9] else None,
+                    "game":               r[10],
+                    "bet_amount":         float(r[11]) if r[11] else None,
+                    "stake_currency":     r[12],
                 }
                 for r in rows
             ]
@@ -6639,45 +6642,51 @@ async def admin_list_disputes(
 
 
 # ── Platform Config ───────────────────────────────────────────────────────────
+# Uses platform_config (key-value table, migration 017).
+# Known keys: fee_pct, daily_bet_max_at, maintenance_mode,
+#             new_registrations, auto_escalate_disputes
+
+_PLATFORM_CONFIG_KEYS = {
+    "fee_pct",
+    "daily_bet_max_at",
+    "maintenance_mode",
+    "new_registrations",
+    "auto_escalate_disputes",
+}
 
 
 class PlatformConfigUpdate(BaseModel):
-    """Body for PUT /platform/config."""
-    fee_percent:             float | None = None
-    daily_betting_max:       float | None = None
-    maintenance_mode:        bool  | None = None
-    registration_open:       bool  | None = None
-    auto_dispute_escalation: bool  | None = None
-    kill_switch_active:      bool  | None = None
+    """Body for PUT /platform/config — partial update, all fields optional."""
+    fee_pct:                 str | None = None   # e.g. "5" (percent, 0–50)
+    daily_bet_max_at:        str | None = None   # e.g. "500"
+    maintenance_mode:        str | None = None   # "true" | "false"
+    new_registrations:       str | None = None   # "true" | "false"
+    auto_escalate_disputes:  str | None = None   # "true" | "false"
 
 
 @app.get("/platform/config", status_code=200)
 async def get_platform_config(payload: dict = Depends(require_admin)):
     """
-    Return the current platform configuration from platform_settings.
+    Return all platform config keys from platform_config (key-value table).
 
-    DB-ready: platform_settings (single-row table, id=1).
+    Response: { fee_pct, daily_bet_max_at, maintenance_mode,
+                new_registrations, auto_escalate_disputes }
+
+    DB-ready: platform_config (migration 017).
     """
     try:
         with SessionLocal() as session:
-            row = session.execute(
-                text(
-                    "SELECT fee_percent, daily_betting_max, maintenance_mode, "
-                    "       registration_open, auto_dispute_escalation, "
-                    "       kill_switch_active, updated_at "
-                    "FROM platform_settings WHERE id = 1"
-                )
-            ).fetchone()
-        if not row:
-            raise HTTPException(500, "Platform config not initialised")
+            rows = session.execute(
+                text("SELECT key, value FROM platform_config WHERE key = ANY(:keys)"),
+                {"keys": list(_PLATFORM_CONFIG_KEYS)},
+            ).fetchall()
+        cfg = {r[0]: r[1] for r in rows}
         return {
-            "fee_percent":             float(row[0]),
-            "daily_betting_max":       float(row[1]),
-            "maintenance_mode":        bool(row[2]),
-            "registration_open":       bool(row[3]),
-            "auto_dispute_escalation": bool(row[4]),
-            "kill_switch_active":      bool(row[5]),
-            "updated_at":              row[6].isoformat() if row[6] else None,
+            "fee_pct":                cfg.get("fee_pct", "5"),
+            "daily_bet_max_at":       cfg.get("daily_bet_max_at", "500"),
+            "maintenance_mode":       cfg.get("maintenance_mode", "false"),
+            "new_registrations":      cfg.get("new_registrations", "true"),
+            "auto_escalate_disputes": cfg.get("auto_escalate_disputes", "false"),
         }
     except HTTPException:
         raise
@@ -6692,61 +6701,65 @@ async def update_platform_config(
     payload: dict = Depends(require_admin),
 ):
     """
-    Update one or more platform config fields. Only provided fields are updated.
+    Update one or more platform config keys. Only provided fields are updated.
 
     Validates:
-      fee_percent: 0–50 (percent)
-      daily_betting_max: must be positive
+      fee_pct: numeric 0–50
+      daily_bet_max_at: numeric > 0
 
-    DB-ready: platform_settings (single-row UPDATE WHERE id = 1).
+    DB-ready: platform_config UPSERT per key (migration 017).
     """
     admin_id = payload.get("sub")
 
-    # Collect fields to update
-    updates: dict = {}
-    if req.fee_percent is not None:
-        if not (0 <= req.fee_percent <= 50):
-            raise HTTPException(400, "fee_percent must be between 0 and 50")
-        updates["fee_percent"] = req.fee_percent
-    if req.daily_betting_max is not None:
-        if req.daily_betting_max <= 0:
-            raise HTTPException(400, "daily_betting_max must be positive")
-        updates["daily_betting_max"] = req.daily_betting_max
-    if req.maintenance_mode is not None:
-        updates["maintenance_mode"] = req.maintenance_mode
-    if req.registration_open is not None:
-        updates["registration_open"] = req.registration_open
-    if req.auto_dispute_escalation is not None:
-        updates["auto_dispute_escalation"] = req.auto_dispute_escalation
-    if req.kill_switch_active is not None:
-        updates["kill_switch_active"] = req.kill_switch_active
+    # Collect only provided fields
+    updates: dict[str, str] = {}
+    raw = req.model_dump(exclude_none=True)
+    for key, val in raw.items():
+        updates[key] = str(val)
 
     if not updates:
         raise HTTPException(400, "No fields provided to update")
 
-    try:
-        set_clause = ", ".join(f"{k} = :{k}" for k in updates)
-        updates["admin_id"] = admin_id
+    # Validate numeric ranges
+    if "fee_pct" in updates:
+        try:
+            v = float(updates["fee_pct"])
+        except ValueError:
+            raise HTTPException(400, "fee_pct must be numeric")
+        if not (0 <= v <= 50):
+            raise HTTPException(400, "fee_pct must be between 0 and 50")
+    if "daily_bet_max_at" in updates:
+        try:
+            v = float(updates["daily_bet_max_at"])
+        except ValueError:
+            raise HTTPException(400, "daily_bet_max_at must be numeric")
+        if v <= 0:
+            raise HTTPException(400, "daily_bet_max_at must be positive")
 
+    try:
         with SessionLocal() as session:
-            session.execute(
-                text(
-                    f"UPDATE platform_settings "
-                    f"SET {set_clause}, updated_at = NOW(), updated_by = :admin_id "
-                    f"WHERE id = 1"
-                ),
-                updates,
-            )
+            for key, val in updates.items():
+                session.execute(
+                    text(
+                        "INSERT INTO platform_config (key, value, updated_at, updated_by) "
+                        "VALUES (:key, :val, NOW(), :admin_id) "
+                        "ON CONFLICT (key) DO UPDATE "
+                        "SET value = EXCLUDED.value, "
+                        "    updated_at = NOW(), "
+                        "    updated_by = EXCLUDED.updated_by"
+                    ),
+                    {"key": key, "val": val, "admin_id": admin_id},
+                )
             session.commit()
 
-        logger.info("update_platform_config: admin=%s fields=%s", admin_id, list(updates.keys()))
+        logger.info("update_platform_config: admin=%s keys=%s", admin_id, list(updates.keys()))
         _log_audit(
             admin_id,
-            "platform_config_update",
-            target="platform_settings",
-            detail=str({k: v for k, v in updates.items() if k != "admin_id"}),
+            "CONFIG_UPDATE",
+            target_id="platform_config",
+            notes=str(updates),
         )
-        return {"updated": True, "fields": [k for k in updates if k != "admin_id"]}
+        return {"updated": True, "fields": list(updates.keys())}
 
     except HTTPException:
         raise
@@ -6759,7 +6772,7 @@ async def update_platform_config(
 
 
 @app.get("/admin/audit-log", status_code=200)
-async def admin_audit_log(
+async def admin_audit_log_list(
     limit: int = 50,
     offset: int = 0,
     action: str | None = None,
@@ -6769,11 +6782,13 @@ async def admin_audit_log(
     Return paginated admin audit log.
 
     Query params:
-      action — filter by action type (e.g. 'freeze_payouts', 'penalty_issued')
+      action — filter by action (e.g. 'FREEZE_PAYOUT', 'BAN_USER')
       limit  — page size (max 200)
       offset — pagination offset
 
-    DB-ready: audit_logs + users (admin username).
+    Response: { entries: [{ id, admin_username, action, target_id, notes, created_at }], total }
+
+    DB-ready: admin_audit_log + users (migration 017).
     """
     limit = min(limit, 200)
     try:
@@ -6790,8 +6805,8 @@ async def admin_audit_log(
             rows = session.execute(
                 text(
                     "SELECT al.id, al.admin_id, u.username AS admin_username, "
-                    "       al.action, al.target, al.detail, al.created_at "
-                    "FROM audit_logs al "
+                    "       al.action, al.target_id, al.notes, al.created_at "
+                    "FROM admin_audit_log al "
                     "LEFT JOIN users u ON u.id = al.admin_id "
                     + where_clause
                     + " ORDER BY al.created_at DESC LIMIT :limit OFFSET :offset"
@@ -6805,14 +6820,14 @@ async def admin_audit_log(
                     "admin_id":       str(r[1]) if r[1] else None,
                     "admin_username": r[2],
                     "action":         r[3],
-                    "target":         r[4],
-                    "detail":         r[5],
+                    "target_id":      r[4],
+                    "notes":          r[5],
                     "created_at":     r[6].isoformat() if r[6] else None,
                 }
                 for r in rows
             ]
 
-            count_sql = "SELECT COUNT(*) FROM audit_logs al " + where_clause
+            count_sql = "SELECT COUNT(*) FROM admin_audit_log al " + where_clause
             count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
             total_row = session.execute(text(count_sql), count_params).fetchone()
             total = int(total_row[0]) if total_row else 0
@@ -6822,5 +6837,5 @@ async def admin_audit_log(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("admin_audit_log error: %s", exc)
+        logger.error("admin_audit_log_list error: %s", exc)
         raise HTTPException(500, "Failed to fetch audit log")
