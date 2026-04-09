@@ -286,6 +286,16 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def add_process_time_header(request: Request, call_next):
+    import time as _time
+    start = _time.perf_counter()
+    response = await call_next(request)
+    elapsed_ms = round((_time.perf_counter() - start) * 1000, 2)
+    response.headers["x-process-time-ms"] = str(elapsed_ms)
+    return response
+
+
 # ── Auth dependency ───────────────────────────────────────────────────────────
 async def verify_token(authorization: str = Header(...)) -> dict:
     """Decode and validate a JWT Bearer token. Returns the decoded payload."""
