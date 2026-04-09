@@ -96,6 +96,8 @@ This file is the **single source of truth** for all active agents (Cursor + Clau
 | 015 (tx_hash unique index) | ✅ Applied |
 | 016 (player_penalties) | ✅ Applied |
 | audit_logs + platform_settings | ✅ Already in init.sql (no new migration needed) |
+| 017 (platform_config key-value + admin_audit_log) | ✅ Created — run on live DB |
+| 018 (admin query indexes — users + disputes) | ✅ Created — run on live DB |
 
 ---
 
