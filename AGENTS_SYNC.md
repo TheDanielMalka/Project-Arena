@@ -5,6 +5,8 @@ This file is the shared coordination memory between agents.
 ## Coordination Log
 
 - [CURSOR-DBSYNC] 2026-04-09 15:41 UTC audit/db-ui-sync-check Audited DB→API→UI sync for host_id/your_team/bet_amount/stake_currency/in_match; added migration 019 (idx_matches_host). 0 tests run.
+- [CURSOR] 2026-04-09 18:48 UTC test/frontend-p0-p1-coverage Added apiMatchHeartbeat, apiKickPlayer, apiRespondToNotification + team in join to engine-api.ts; 8 fetch-stub vitest tests. 501/501 vitest pass.
+- [CURSOR] 2026-04-09 19:05 UTC test/oracle-coverage Verified test_state_machine.py (18 tests) covers WAITING→DETECTED→CONFIRMED→REPORTED; test_consensus.py (23 tests) covers majority win + minority flagged. 41/41 pytest pass. No prod code changes.
 
 ## Migration Status (do not edit past migrations)
 
