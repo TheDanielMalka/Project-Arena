@@ -132,6 +132,14 @@ export interface Match {
   teamA?: string[];
   teamB?: string[];
   maxPerTeam?: number;       // alias for teamSize (kept for UI compat)
+  /** Current user's team assignment — from POST /matches/{id}/heartbeat your_team field. */
+  yourTeam?: "A" | "B" | null;
+  /**
+   * Full roster with userId+username pairs — populated from heartbeat response.
+   * Used by host kick button to resolve username→userId without separate lookup.
+   * DB-ready: match_players JOIN users.
+   */
+  playersRoster?: Array<{ userId: string; username: string; team: "A" | "B" | null }>;
 }
 
 // ─── Match Players ───────────────────────────────────────────

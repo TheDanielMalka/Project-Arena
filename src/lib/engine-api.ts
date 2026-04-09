@@ -362,6 +362,9 @@ export async function apiInviteToMatch(
         body: JSON.stringify({ friend_id: friendId }),
       },
     );
+    if (res.status === 429) {
+      return { ok: false as const, status: 429, detail: "Too many requests — please wait a moment and try again" };
+    }
     if (!res.ok) {
       const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
       return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
@@ -414,13 +417,14 @@ export async function apiLogin(
   email: string;
   arena_id: string | null;
   wallet_address: string | null;
-} | null> {
+} | { _rate_limited: true } | null> {
   try {
     const res = await fetch(`${ENGINE_BASE}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ identifier, password }),
     });
+    if (res.status === 429) return { _rate_limited: true };
     if (!res.ok) return null;
     return (await res.json()) as {
       access_token: string;
@@ -502,6 +506,9 @@ export async function apiRegister(
       body: JSON.stringify(body),
     });
     const raw = (await res.json().catch(() => ({}))) as { detail?: unknown } & Partial<ApiRegisterSuccess>;
+    if (res.status === 429) {
+      return { ok: false as const, status: 429, detail: "Too many requests — please wait a moment and try again", field: null };
+    }
     if (!res.ok) {
       const detail = parseFastApiDetail(raw.detail);
       return {
@@ -663,6 +670,9 @@ export async function apiCreateMatch(
       max_per_team?:  number;
       match_type?:    string;
     };
+    if (res.status === 429) {
+      return { ok: false as const, status: 429, detail: "Too many requests — please wait a moment and try again" };
+    }
     if (!res.ok) {
       return {
         ok: false as const,
@@ -736,6 +746,12 @@ export async function apiBuyAtPackage(
       body: JSON.stringify(body),
     });
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (res.status === 429) {
+      return { ok: false as const, status: 429, detail: "Too many requests — please wait a moment and try again" };
+    }
+    if (res.status === 409) {
+      return { ok: false as const, status: 409, detail: "This transaction has already been processed" };
+    }
     if (!res.ok) {
       return {
         ok: false as const,
@@ -796,25 +812,35 @@ export async function apiWithdrawAT(
   }
 }
 
-export type ApiJoinMatchSuccess = { joined: boolean; match_id: string; game: string };
+export type ApiJoinMatchSuccess = {
+  joined: boolean;
+  match_id: string;
+  game: string;
+  stake_currency?: string;
+  team?: "A" | "B" | null;
+  started?: boolean;
+};
 
 /** POST /matches/{match_id}/join — Bearer auth */
 export async function apiJoinMatch(
   token: string,
   matchId: string,
-  opts?: { password?: string },
+  opts?: { password?: string; team?: "A" | "B" },
 ): Promise<{ ok: true; data: ApiJoinMatchSuccess } | { ok: false; status: number; detail: string | null }> {
   try {
     const password = opts?.password?.trim();
+    const team = opts?.team;
+    const bodyFields: Record<string, unknown> = {};
+    if (password) bodyFields[MATCH_JOIN_PASSWORD_FIELD] = password;
+    if (team) bodyFields.team = team;
+    const hasBody = Object.keys(bodyFields).length > 0;
     const res = await arenaUserFetch(
       `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/join`,
       token,
       {
         method: "POST",
-        headers: password ? { "Content-Type": "application/json" } : undefined,
-        body: password
-          ? JSON.stringify({ [MATCH_JOIN_PASSWORD_FIELD]: password })
-          : undefined,
+        headers: hasBody ? { "Content-Type": "application/json" } : undefined,
+        body: hasBody ? JSON.stringify(bodyFields) : undefined,
       },
     );
     const raw = (await res.json().catch(() => ({}))) as {
@@ -822,7 +848,13 @@ export async function apiJoinMatch(
       joined?: boolean;
       match_id?: string;
       game?: string;
+      stake_currency?: string;
+      team?: unknown;
+      started?: boolean;
     };
+    if (res.status === 429) {
+      return { ok: false as const, status: 429, detail: "Too many requests — please wait a moment and try again" };
+    }
     if (!res.ok) {
       return {
         ok: false as const,
@@ -830,18 +862,176 @@ export async function apiJoinMatch(
         detail: parseFastApiDetail(raw.detail),
       };
     }
+    const rawTeam = String(raw.team ?? "").toUpperCase();
+    const serverTeam: "A" | "B" | null = rawTeam === "A" ? "A" : rawTeam === "B" ? "B" : null;
     return {
       ok: true as const,
       data: {
         joined: !!raw.joined,
         match_id: String(raw.match_id ?? matchId),
         game: String(raw.game ?? ""),
+        stake_currency: raw.stake_currency ? String(raw.stake_currency) : undefined,
+        team: serverTeam,
+        started: !!raw.started,
       },
     };
   } catch {
     return { ok: false as const, status: 0, detail: null };
   }
 }
+
+// ── Heartbeat ─────────────────────────────────────────────────────────────────
+
+export type HeartbeatPlayer = {
+  user_id: string;
+  username: string;
+  team: "A" | "B" | null;
+  joined_at: string;
+};
+
+export type HeartbeatResponse = {
+  in_match: boolean;
+  match_id: string;
+  status: string;
+  game: string;
+  mode: string;
+  code: string;
+  max_players: number;
+  max_per_team: number;
+  host_id: string;
+  type: string;
+  bet_amount: number;
+  stake_currency: string;
+  created_at: string;
+  your_user_id: string;
+  your_team: "A" | "B" | null;
+  stale_removed: boolean;
+  players: HeartbeatPlayer[];
+};
+
+/**
+ * POST /matches/{matchId}/heartbeat
+ * Returns HeartbeatResponse or null (network error / non-2xx).
+ */
+export async function apiMatchHeartbeat(
+  token: string,
+  matchId: string,
+  body: { game: string; mode: string; code: string },
+): Promise<HeartbeatResponse | null> {
+  try {
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/heartbeat`,
+      token,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
+    if (!res.ok) return null;
+    const raw = (await res.json().catch(() => null)) as HeartbeatResponse | null;
+    if (!raw) return null;
+    // Normalise team strings to strict "A" | "B" | null
+    const normaliseTeam = (t: unknown): "A" | "B" | null => {
+      const s = String(t ?? "").toUpperCase();
+      return s === "A" ? "A" : s === "B" ? "B" : null;
+    };
+    return {
+      ...raw,
+      your_team: normaliseTeam(raw.your_team),
+      players: (Array.isArray(raw.players) ? raw.players : []).map((p) => ({
+        ...p,
+        team: normaliseTeam(p.team),
+      })),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ── Kick player ───────────────────────────────────────────────────────────────
+
+export async function apiKickPlayer(
+  token: string,
+  matchId: string,
+  userId: string,
+): Promise<{ ok: true } | { ok: false; status: number; detail: string }> {
+  try {
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/kick`,
+      token,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId }),
+      },
+    );
+    if (res.status === 429) {
+      return { ok: false as const, status: 429, detail: "Too many requests — please wait a moment and try again" };
+    }
+    if (res.status === 403) {
+      return { ok: false as const, status: 403, detail: "Only the host can kick players" };
+    }
+    if (res.status === 409) {
+      return { ok: false as const, status: 409, detail: "Cannot kick from an active match" };
+    }
+    if (!res.ok) {
+      const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
+      return { ok: false as const, status: res.status, detail: String(parseFastApiDetail(raw.detail) ?? "Kick failed") };
+    }
+    return { ok: true as const };
+  } catch {
+    return { ok: false as const, status: 0, detail: "Network error" };
+  }
+}
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+
+export type NotificationRespondResult = {
+  action: "accept" | "decline";
+  match_id?: string;
+  game?: string;
+  mode?: string;
+  your_team?: "A" | "B" | null;
+  inviter_username?: string | null;
+} | null;
+
+export async function apiRespondToNotification(
+  token: string,
+  notificationId: string,
+  action: "accept" | "decline",
+): Promise<NotificationRespondResult> {
+  try {
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/notifications/${encodeURIComponent(notificationId)}/respond`,
+      token,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      },
+    );
+    if (!res.ok) return null;
+    const raw = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!raw) return null;
+    const rawAction = String(raw.action ?? action);
+    const resolvedAction: "accept" | "decline" = rawAction === "decline" ? "decline" : "accept";
+    const rawTeam = String(raw.your_team ?? "").toUpperCase();
+    const matchId = raw.match_id ? String(raw.match_id) : undefined;
+    return {
+      action: resolvedAction,
+      ...(matchId ? { match_id: matchId } : {}),
+      game: raw.game ? String(raw.game) : undefined,
+      mode: String(raw.mode ?? ""),
+      your_team: rawTeam === "A" ? "A" : rawTeam === "B" ? "B" : null,
+      inviter_username: raw.inviter_username ? String(raw.inviter_username) : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 // PATCH /users/me — persist avatar, badge, forge changes to DB
 export async function apiPatchMe(

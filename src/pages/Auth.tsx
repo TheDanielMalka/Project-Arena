@@ -35,6 +35,8 @@ const Auth = () => {
   const [signupFieldErrors, setSignupFieldErrors] = useState<
     Partial<Record<"username" | "email" | "steam" | "riot", string>>
   >({});
+  const [loginRateLimited, setLoginRateLimited] = useState(false);
+  const [signupRateLimited, setSignupRateLimited] = useState(false);
 
   // Redirect if already logged in (do NOT navigate during render)
   useEffect(() => {
@@ -50,6 +52,12 @@ const Auth = () => {
       return;
     }
     const ok = await login(loginEmail, loginPassword);
+    if (ok === "rate_limited") {
+      toast({ title: "Too many requests", description: "Too many requests — please wait a moment and try again", variant: "destructive" });
+      setLoginRateLimited(true);
+      setTimeout(() => setLoginRateLimited(false), 3000);
+      return;
+    }
     if (!ok) {
       toast({ title: "Login failed", description: "Invalid email or password.", variant: "destructive" });
       return;
@@ -99,6 +107,12 @@ const Auth = () => {
       riotId: riotTrim || undefined,
     });
     if (result.ok === false) {
+      if (result.status === 429) {
+        toast({ title: "Too many requests", description: "Too many requests — please wait a moment and try again", variant: "destructive" });
+        setSignupRateLimited(true);
+        setTimeout(() => setSignupRateLimited(false), 3000);
+        return;
+      }
       const msg = result.detail ?? "Please check your details and try again.";
       if (result.field === "email") setSignupFieldErrors({ email: msg });
       else if (result.field === "username") setSignupFieldErrors({ username: msg });
@@ -214,8 +228,8 @@ const Auth = () => {
                     Forgot password?
                   </button>
                 </div>
-                <Button type="submit" className="w-full glow-green font-display text-base">
-                  <Swords className="mr-2 h-4 w-4" /> Enter Arena
+                <Button type="submit" className="w-full glow-green font-display text-base" disabled={loginRateLimited}>
+                  <Swords className="mr-2 h-4 w-4" /> {loginRateLimited ? "Please wait…" : "Enter Arena"}
                 </Button>
 
                 <div className="flex items-center gap-3 my-2">
@@ -425,9 +439,9 @@ const Auth = () => {
                 <Button
                   type="submit"
                   className="w-full glow-green font-display text-base"
-                  disabled={!confirmedAge || !agreedToTerms}
+                  disabled={!confirmedAge || !agreedToTerms || signupRateLimited}
                 >
-                  <Swords className="mr-2 h-4 w-4" /> Create Account
+                  <Swords className="mr-2 h-4 w-4" /> {signupRateLimited ? "Please wait…" : "Create Account"}
                 </Button>
 
                 <div className="flex items-center gap-3 my-2">

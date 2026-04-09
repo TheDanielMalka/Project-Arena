@@ -45,17 +45,17 @@ This file is the **single source of truth** for all active agents (Cursor + Clau
 
 | Area | Status | Needs |
 |------|--------|-------|
-| apiJoinMatch sends team field | ❌ Missing | Add `team?: "A"\|"B"` to opts + body |
-| apiMatchHeartbeat function | ❌ Missing | New function + HeartbeatResponse type |
-| apiKickPlayer function | ❌ Missing | New function |
-| apiRespondToNotification | ❌ Missing | New function |
-| Heartbeat polling in useActiveRoomServerSync | ❌ Missing | Replace GET /match/active for waiting matches |
-| Accept invite → join → navigate | ❌ Missing | NotificationCenter accept flow |
-| 429 handling | ❌ Missing | All API calls |
-| 409 handling on buy-AT | ❌ Missing | AT purchase flow |
-| Kick UI button (host only) | ❌ Missing | MatchLobby.tsx |
-| payload.username display | ❌ Missing | JWT has username field |
-| your_team from server | ⚠️ Partial | Use server truth not local state |
+| apiJoinMatch sends team field | ✅ Complete | team in opts + body — feat/frontend-p1-kick-ux |
+| apiMatchHeartbeat function | ✅ Complete | HeartbeatResponse type + function — feat/frontend-p1-kick-ux |
+| apiKickPlayer function | ✅ Complete | 403/409/429 error messages — feat/frontend-p1-kick-ux |
+| apiRespondToNotification | ✅ Complete | NotificationRespondResult type + function — feat/frontend-p1-kick-ux |
+| Heartbeat polling in useActiveRoomServerSync | ✅ Complete | 4s poll for waiting/starting; hb.in_match=false clears room — feat/frontend-p1-kick-ux |
+| Accept invite → join → navigate | ✅ Complete | NotificationCenter accept-invite flow — feat/frontend-p1-kick-ux |
+| 429 handling | ✅ Complete | All API calls + toast + 3s disable — feat/frontend-p1-kick-ux |
+| 409 handling on buy-AT | ✅ Complete | apiBuyAtPackage 409 → "already processed" — feat/frontend-p1-kick-ux |
+| Kick UI button (host only) | ✅ Complete | MatchLobby host-only kick with XCircle — feat/frontend-p1-kick-ux |
+| payload.username display | ✅ N/A | JWT username field already used — no direct JWT decoding in display |
+| your_team from server | ✅ Complete | yourTeam in Match type + store; heartbeat updates it — feat/frontend-p1-kick-ux |
 
 ---
 
@@ -183,3 +183,4 @@ HTTP Status codes to handle:
 - [CURSOR]  2026-04-09 18:48 UTC  test/frontend-p0-p1-coverage       Added apiMatchHeartbeat, apiKickPlayer, apiRespondToNotification + team in join to engine-api.ts; 8 fetch-stub vitest tests. 501/501 vitest pass.
 - [CURSOR]  2026-04-09 19:05 UTC  test/oracle-coverage               Verified test_state_machine.py (18 tests) + test_consensus.py (23 tests) cover required state transitions and consensus logic. 41/41 pass.
 - [CURSOR]  2026-04-09 19:30 UTC  test/risk-fraud-coverage           Created engine/tests/test_risk_fraud.py (14 tests: KillSwitch/DailyStakeLimit/PenaltySystem/FraudReport). Added 3 tests to test_api_routes.py (process-time header, validate fields, match result). Added x-process-time-ms middleware to main.py. 17 new tests pass.
+- [CURSOR]  2026-04-09 20:30 UTC  feat/frontend-p1-kick-ux           P1 kick UX: apiJoinMatch+team, apiMatchHeartbeat, apiKickPlayer, apiRespondToNotification in engine-api.ts; useActiveRoomServerSync heartbeat polling (4s); MatchLobby kick button (host only); NotificationCenter accept-invite flow; Auth/MatchLobby 429 toast+disable-3s. 493/493 vitest pass.

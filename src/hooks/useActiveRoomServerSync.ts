@@ -1,15 +1,27 @@
 import { useEffect, useRef } from "react";
-import { apiGetActiveMatch, mapApiMatchRowToMatch } from "@/lib/engine-api";
+import { toast } from "@/components/ui/sonner";
+import {
+  apiGetActiveMatch,
+  apiMatchHeartbeat,
+  mapApiMatchRowToMatch,
+} from "@/lib/engine-api";
 import { useMatchStore } from "@/stores/matchStore";
 import { looksLikeServerMatchId } from "@/lib/gameAccounts";
+import type { Game, MatchMode, MatchStatus } from "@/types";
 
-/** Fast room-status sync while the user is in a room (doc 6.2). */
-const ACTIVE_ROOM_POLL_MS = 3000;
+/** Heartbeat interval while status is "waiting". */
+const HEARTBEAT_POLL_MS = 4_000;
+
+/** Legacy fallback poll interval when status is "in_progress". */
+const ACTIVE_ROOM_POLL_MS = 3_000;
 
 /**
- * Polls GET /match/active while in a room and updates the local store from server truth.
- * This is the source of truth for status transitions (waiting → in_progress → ...),
- * independent of any optimistic countdown timers.
+ * Polls the room while the user is in it:
+ *  - status "waiting"               -> POST /matches/{id}/heartbeat  (every 4s)
+ *  - status "in_progress"           -> GET  /match/active             (every 3s, legacy)
+ *
+ * When hb.in_match === false: clears activeRoomId + shows toast.
+ * Roster + your_team always come from server truth.
  */
 export function useActiveRoomServerSync(
   token: string | null | undefined,
@@ -25,6 +37,71 @@ export function useActiveRoomServerSync(
 
     const tick = async () => {
       if (cancelled) return;
+
+      const currentMatch = useMatchStore
+        .getState()
+        .matches.find((m) => m.id === activeRoomId);
+      const status = currentMatch?.status ?? "waiting";
+
+      // ── Heartbeat path (waiting) ──────────────────────────────────────────
+      if (status === "waiting") {
+        const hb = await apiMatchHeartbeat(token, activeRoomId, {
+          game: currentMatch?.game ?? "CS2",
+          mode: currentMatch?.mode ?? "1v1",
+          code: currentMatch?.code ?? "",
+        });
+        if (cancelled) return;
+
+        if (!hb || hb.in_match === false) {
+          if (looksLikeServerMatchId(activeRoomId)) {
+            toast.error("You were removed from the room by the host");
+            useMatchStore.getState().setActiveRoomId(null);
+          }
+          return;
+        }
+
+        missesRef.current = 0;
+
+        const teamA = hb.players
+          .filter((p) => p.team === "A")
+          .map((p) => p.username);
+        const teamB = hb.players
+          .filter((p) => p.team === "B")
+          .map((p) => p.username);
+        const playerIds = hb.players.map((p) => p.user_id);
+        const playersRoster = hb.players.map((p) => ({
+          userId: p.user_id,
+          username: p.username,
+          team: p.team,
+        }));
+
+        useMatchStore.getState().addMatch({
+          id: hb.match_id,
+          type: (hb.type as "public" | "custom") ?? "custom",
+          host: currentMatch?.host ?? "",
+          hostId: hb.host_id,
+          game: hb.game as Game,
+          mode: hb.mode as MatchMode,
+          betAmount: hb.bet_amount,
+          stakeCurrency: (hb.stake_currency as "AT" | "CRYPTO") ?? "CRYPTO",
+          players: playerIds,
+          maxPlayers: hb.max_players,
+          maxPerTeam: hb.max_per_team,
+          teamSize: hb.max_per_team,
+          status: hb.status as MatchStatus,
+          code: hb.code,
+          yourTeam: hb.your_team,
+          playersRoster,
+          ...(teamA.length > 0 || teamB.length > 0 ? { teamA, teamB } : {}),
+        });
+
+        if (hb.match_id !== activeRoomId) {
+          useMatchStore.getState().setActiveRoomId(hb.match_id);
+        }
+        return;
+      }
+
+      // ── Legacy GET /match/active path (in_progress) ───────────────────────
       const res = await apiGetActiveMatch(token);
       if (cancelled) return;
 
@@ -71,15 +148,27 @@ export function useActiveRoomServerSync(
       }
     };
 
+    const getPollMs = (): number => {
+      const s = useMatchStore
+        .getState()
+        .matches.find((m) => m.id === activeRoomId)?.status;
+      return s === "waiting"
+        ? HEARTBEAT_POLL_MS
+        : ACTIVE_ROOM_POLL_MS;
+    };
+
+    const scheduleInterval = () => {
+      clearPoll();
+      intervalId = window.setInterval(() => void tick(), getPollMs());
+    };
+
     const onVisibilityOrFocus = () => {
       if (document.visibilityState !== "visible") {
         clearPoll();
         return;
       }
       void tick();
-      if (!intervalId) {
-        intervalId = window.setInterval(() => void tick(), ACTIVE_ROOM_POLL_MS);
-      }
+      scheduleInterval();
     };
 
     onVisibilityOrFocus();
@@ -94,4 +183,3 @@ export function useActiveRoomServerSync(
     };
   }, [token, activeRoomId]);
 }
-
