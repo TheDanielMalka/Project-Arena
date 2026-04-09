@@ -844,3 +844,11 @@ CREATE INDEX IF NOT EXISTS idx_matches_host ON matches(host_id);
 INSERT INTO platform_config (key, value)
 VALUES ('daily_bet_max_at', '50000')
 ON CONFLICT (key) DO UPDATE SET value = '50000', updated_at = NOW();
+
+-- ── Migration 021 — Index for daily staked AT query ──────────────────────────
+CREATE INDEX IF NOT EXISTS idx_match_players_user_id
+    ON match_players(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_matches_status_ended_at
+    ON matches(status, ended_at)
+    WHERE ended_at IS NOT NULL;
