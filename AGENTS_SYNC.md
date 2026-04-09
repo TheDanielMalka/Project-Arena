@@ -109,8 +109,9 @@ This file is the **single source of truth** for all active agents (Cursor + Clau
 |-------|---------|
 | test_doc_b_match_routes.py | 48 / 48 ✅ |
 | test_auth.py | 26 / 26 ✅ |
-| All suites | 796 / 796 ✅ |
-| Frontend (Vitest) | Unknown — Cursor to verify |
+| Phase 4 tests (delete, 2fa, region, unread, attachments, verify stubs) | 30 pass + 1 xfail ✅ |
+| All suites | 895 collected (`pytest engine/tests/`); 1 xfail: test_delete_preserves_match_history until engine NULLs match_players |
+| Frontend (Vitest) | 506 / 506 ✅ (includes settings.delete, settings.2fa, hub.badge) |
 
 ---
 
@@ -192,3 +193,4 @@ HTTP Status codes to handle:
 - [CLIENT]  2026-04-09 22:00 UTC  feat/client-lobby-heartbeat        P0 fix: get_active_match → GET /match/active with Bearer token. Added match_heartbeat()+get_match_status() to EngineClient. Match Lobby Card (5s poll, in_match=false clears, completed→result). XP bar with real ratio (xp/xp_to_next_level). Capture count + screenshot thumbnail in Monitoring card. notify_fn wired to tray. TODO(Claude): confirm xp_to_next_level field in /auth/me + GET /match/{id}/status response shape (result+score fields).
 - [DB Agent] 2026-04-09 22:07 UTC  feat/db-phase1-migrations        Added migrations 022-024: 2FA columns, deleted_accounts, report_attachments.
 - [CLIENT]  2026-04-10 12:00 UTC  feat/client-phase5-sync          2FA modal (temp_token → POST /auth/2fa/confirm); httpx 401 hook → logout + rebuild login UI; tray poll GET /messages/unread/count every 30s + badge on icon; Messages menu opens /messages + clears badge until next poll; region from /auth/me in profile; TODO[GOOGLE]/TODO[VERIF] placeholders. Depends on merged engine /auth/me region + messages unread route.
+- [TESTS]   2026-04-10 14:30 UTC  test/phase4-coverage             Added 6 pytest modules (delete account, 2FA, region, unread count, attachments, verify stubs) + 3 Vitest files (settings.delete, settings.2fa, hub.badge). TODO[GOOGLE]/TODO[VERIF] in test module docstrings. Region invalid: 400 value / 422 type. test_delete_preserves_match_history xfail until engine uses SET user_id=NULL. 895 pytest collected; Vitest 506 pass.
