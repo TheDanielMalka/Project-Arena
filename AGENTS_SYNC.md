@@ -84,6 +84,8 @@ This file is the **single source of truth** for all active agents (Cursor + Clau
 | 015 (tx_hash unique index) | ✅ Applied |
 | 016 (player_penalties) | ✅ Applied |
 | audit_logs + platform_settings | ✅ Already in init.sql (no new migration needed) |
+| 017 (platform_config key-value + admin_audit_log) | ✅ Created — run on live DB |
+| 018 (admin query indexes — users + disputes) | ✅ Created — run on live DB |
 
 ---
 
@@ -178,3 +180,4 @@ HTTP Status codes to handle:
 - [CLAUDE]  2026-04-09 14:30 UTC  feat/admin-live-backend            Admin live backend Step 1: GET /admin/users, GET /admin/disputes, GET+PUT /platform/config, GET /admin/audit-log, _log_audit() wired. 842 tests pass.
 - [CLAUDE]  2026-04-09 15:00 UTC  fix/deploy-migrations              arena.yml deploy: added idempotent migration runner (all 0XX-*.sql files). AGENTS_SYNC timestamp+branch format added.
 - [CLAUDE]  2026-04-09 17:00 UTC  feat/admin-engine-sync             Migration 017 (platform_config key-value + admin_audit_log). All admin endpoints on correct tables. UPPERCASE action names. 844 tests pass.
+- [CLAUDE]  2026-04-09 17:30 UTC  feat/admin-engine-sync             Migration 018 — 5 indexes for admin queries (users.status, users.created_at, disputes.status, disputes.created_at, disputes.player_a).
