@@ -97,6 +97,43 @@ def clean():
             print(f"Warning: Could not remove {d} (file in use?)")
 
 
+def _sign_exe(abs_exe: str) -> None:
+    """
+    Sign the built EXE with the self-signed ArenaClient certificate.
+
+    arena_sign.pfx is generated once via client/make_cert.ps1 (run as admin).
+    It lives in the client/ folder and is listed in .gitignore so the private
+    key is never committed.  If the PFX is absent the build still succeeds but
+    prints a warning — the EXE may be blocked by Windows Smart App Control on
+    machines where the cert is not trusted.
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    pfx_path   = os.path.join(script_dir, "arena_sign.pfx")
+
+    if not os.path.exists(pfx_path):
+        print("  WARNING: arena_sign.pfx not found — EXE not signed.")
+        print("  Run client/make_cert.ps1 as Administrator once to create it.\n")
+        return
+
+    sign_cmd = (
+        f"$b=[System.IO.File]::ReadAllBytes('{pfx_path}');"
+        f"$c=New-Object System.Security.Cryptography.X509Certificates.X509Certificate2("
+        f"$b,'arena2026',"
+        f"[System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable);"
+        f"$r=Set-AuthenticodeSignature -FilePath '{abs_exe}' -Certificate $c -HashAlgorithm SHA256;"
+        f"Write-Host $r.Status"
+    )
+    result = subprocess.run(
+        ["powershell", "-ExecutionPolicy", "Bypass", "-Command", sign_cmd],
+        capture_output=True, text=True,
+    )
+    status = result.stdout.strip()
+    if status == "Valid":
+        print("  Code signing: OK (SAC will not block this EXE)\n")
+    else:
+        print(f"  Code signing failed: {status} {result.stderr.strip()}\n")
+
+
 def build():
     """Build .exe using PyInstaller."""
     ensure_pyinstaller_installed()
@@ -138,19 +175,10 @@ def build():
             print(f"\n  Build successful!")
             print(f"  Output: {exe_path}")
             print(f"  Size: {size_mb:.1f} MB\n")
-            # Remove Windows Zone.Identifier (Mark of the Web) so SmartScreen
-            # does not block the freshly-built EXE on first launch.
+            # Sign the EXE with self-signed cert so SAC (Smart App Control)
+            # does not block it. arena_sign.pfx must exist next to build.py.
             if sys.platform == "win32":
-                abs_exe = os.path.abspath(exe_path)
-                unblock = subprocess.run(
-                    ["powershell", "-Command",
-                     f"Unblock-File -Path '{abs_exe}'"],
-                    capture_output=True,
-                )
-                if unblock.returncode == 0:
-                    print("  SmartScreen unblocked: OK\n")
-                else:
-                    print("  SmartScreen unblock skipped (run as admin if blocked)\n")
+                _sign_exe(os.path.abspath(exe_path))
     else:
         print("Build failed!")
         sys.exit(1)
