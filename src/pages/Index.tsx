@@ -361,13 +361,18 @@ const Index = () => {
                 ))}
               </ul>
               <div className="space-y-2">
-                <Button
-                  size="lg"
-                  className="glow-green font-display tracking-wider"
-                  onClick={() => navigate("/client")}
+                <a
+                  href="https://arena-client-dist.s3.us-east-1.amazonaws.com/setup.zip"
+                  target="_blank"
+                  rel="noopener noreferrer"
                 >
-                  <Download className="mr-2 h-4 w-4" /> Arena Client setup
-                </Button>
+                  <Button
+                    size="lg"
+                    className="glow-green font-display tracking-wider"
+                  >
+                    <Download className="mr-2 h-4 w-4" /> Arena Client setup
+                  </Button>
+                </a>
                 <p className="text-[11px] text-muted-foreground/40 font-mono">
                   Windows 10+ · v1.0.0 · Open Source
                 </p>

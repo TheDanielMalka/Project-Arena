@@ -155,7 +155,7 @@ export function ClientReadinessStrip() {
           </Button>
           {isDisconnected && (
             <a
-              href="https://arena-client-dist.s3.us-east-1.amazonaws.com/ArenaClient.exe"
+              href="https://arena-client-dist.s3.us-east-1.amazonaws.com/setup.zip"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-arena-gold/15 border border-arena-gold/30 text-arena-gold text-xs font-display hover:bg-arena-gold/25 transition-colors"
