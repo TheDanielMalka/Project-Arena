@@ -220,6 +220,10 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("⚠️  DB not available at startup: %s", exc)
 
+    # Load daily stake limit from platform_settings (non-fatal)
+    _reload_at_daily_limit()
+    logger.info("✅ Daily stake limit loaded: %d AT ($%d)", _at_daily_limit, _at_daily_limit // 100)
+
     # Escrow client — optional, requires BLOCKCHAIN_RPC_URL + CONTRACT_ADDRESS + PRIVATE_KEY
     global _escrow_client
     _escrow_client = build_escrow_client(SessionLocal)
@@ -408,6 +412,8 @@ class UserProfile(BaseModel):
     riot_id: str | None = None
     xp: int = 0
     xp_to_next_level: int = 1000
+    daily_staked_at: int = 0       # AT staked in last 24h (AT + CRYPTO combined)
+    daily_limit_at: int = 50000    # current admin-set daily cap (default $500)
     wins: int = 0
     losses: int = 0
     # Arena Tokens — platform currency for Forge store (NOT on-chain)
@@ -1773,6 +1779,10 @@ async def me(payload: dict = Depends(verify_token)):
         raise HTTPException(404, "User not found")
 
     xp_val = int(row[8])
+    try:
+        daily_staked = _get_daily_staked(session, user_id)
+    except Exception:
+        daily_staked = 0
     return UserProfile(
         user_id=str(row[0]),
         username=row[1],
@@ -1784,6 +1794,8 @@ async def me(payload: dict = Depends(verify_token)):
         riot_id=row[7],
         xp=xp_val,
         xp_to_next_level=((xp_val // 1000) + 1) * 1000,
+        daily_staked_at=daily_staked,
+        daily_limit_at=_at_daily_limit,
         wins=int(row[9]),
         losses=int(row[10]),
         avatar=row[11],
@@ -2138,34 +2150,69 @@ _AT_FEE_PCT = 0.05  # 5% platform fee on AT match winnings — mirrors ArenaEscr
 _PAYOUTS_FROZEN: bool = False
 
 
-AT_DAILY_STAKE_LIMIT = 500  # M8: max AT a user can stake across all matches per 24h
+AT_DAILY_STAKE_LIMIT = 50000  # $500/day default (1 AT = $0.01 → 50,000 AT = $500)
+_at_daily_limit: int = AT_DAILY_STAKE_LIMIT  # runtime cache — reloaded from platform_settings at startup
+
+
+def _reload_at_daily_limit() -> None:
+    """
+    Load daily_bet_max_at from platform_settings into the in-memory cache.
+    Called at startup and after admin updates the value via PUT /platform/config.
+    Non-fatal: leaves _at_daily_limit unchanged if DB is unavailable.
+    """
+    global _at_daily_limit
+    try:
+        with SessionLocal() as s:
+            row = s.execute(
+                text("SELECT value FROM platform_settings WHERE key = 'daily_bet_max_at'")
+            ).fetchone()
+            if row and row[0]:
+                _at_daily_limit = max(1, int(float(row[0])))
+    except Exception:
+        pass
+
+
+def _get_daily_limit(_session=None) -> int:
+    """Return the current daily AT stake limit from the in-memory cache."""
+    return _at_daily_limit
+
+
+def _get_daily_staked(session, user_id: str) -> int:
+    """
+    Sum of AT staked (escrow_lock) in the last 24 hours for this user.
+    CONTRACT-ready: when Phase 6 deploys, also sum crypto_escrow_lock type.
+    """
+    try:
+        row = session.execute(
+            text(
+                "SELECT COALESCE(SUM(ABS(amount)), 0) FROM transactions "
+                "WHERE user_id = :uid "
+                "  AND type IN ('escrow_lock', 'crypto_escrow_lock') "
+                "  AND created_at > NOW() - INTERVAL '24 hours'"
+            ),
+            {"uid": user_id},
+        ).fetchone()
+        return int(row[0]) if row else 0
+    except (TypeError, ValueError, Exception):
+        return 0
 
 
 def _check_daily_stake_limit(session, user_id: str, new_stake: int) -> None:
     """
-    M8: Block match create/join if user has already staked >= AT_DAILY_STAKE_LIMIT AT today.
-
-    Reads transactions.amount WHERE type='escrow_lock' in the last 24 hours.
-    Raises HTTP 429 if adding new_stake would exceed the daily cap.
-
-    DB-ready: transactions table (type, amount, created_at, user_id).
+    M8: Block match create/join if staking new_stake would exceed the daily cap.
+    Limit comes from _at_daily_limit (loaded from platform_settings at startup).
+    Admin changes via PUT /platform/config take effect immediately (reloads cache).
+    Covers AT stakes now; CRYPTO stakes added in Phase 6 via crypto_escrow_lock type.
     """
-    row = session.execute(
-        text(
-            "SELECT COALESCE(SUM(ABS(amount)), 0) FROM transactions "
-            "WHERE user_id = :uid AND type = 'escrow_lock' "
-            "AND created_at > NOW() - INTERVAL '24 hours'"
-        ),
-        {"uid": user_id},
-    ).fetchone()
-    daily_staked = int(row[0]) if row else 0
-    if daily_staked + new_stake > AT_DAILY_STAKE_LIMIT:
-        remaining = max(0, AT_DAILY_STAKE_LIMIT - daily_staked)
+    limit        = _at_daily_limit
+    daily_staked = _get_daily_staked(session, user_id)
+    if daily_staked + new_stake > limit:
+        remaining = max(0, limit - daily_staked)
         raise HTTPException(
             429,
             f"Daily staking limit reached. "
             f"You can stake up to {remaining} more AT today "
-            f"(limit: {AT_DAILY_STAKE_LIMIT} AT / 24h).",
+            f"(limit: {limit} AT / 24h = ${limit // 100}).",
         )
 
 
@@ -6694,7 +6741,7 @@ _PLATFORM_CONFIG_KEYS = {
 class PlatformConfigUpdate(BaseModel):
     """Body for PUT /platform/config — partial update, all fields optional."""
     fee_pct:                 str | None = None   # e.g. "5" (percent, 0–50)
-    daily_bet_max_at:        str | None = None   # e.g. "500"
+    daily_bet_max_at:        str | None = None   # e.g. "50000" (1 AT=$0.01 → $500/day)
     maintenance_mode:        str | None = None   # "true" | "false"
     new_registrations:       str | None = None   # "true" | "false"
     auto_escalate_disputes:  str | None = None   # "true" | "false"
@@ -6719,7 +6766,7 @@ async def get_platform_config(payload: dict = Depends(require_admin)):
         cfg = {r[0]: r[1] for r in rows}
         return {
             "fee_pct":                cfg.get("fee_pct", "5"),
-            "daily_bet_max_at":       cfg.get("daily_bet_max_at", "500"),
+            "daily_bet_max_at":       cfg.get("daily_bet_max_at", "50000"),
             "maintenance_mode":       cfg.get("maintenance_mode", "false"),
             "new_registrations":      cfg.get("new_registrations", "true"),
             "auto_escalate_disputes": cfg.get("auto_escalate_disputes", "false"),
@@ -6787,6 +6834,11 @@ async def update_platform_config(
                     {"key": key, "val": val, "admin_id": admin_id},
                 )
             session.commit()
+
+        # Reload daily limit cache immediately if it was changed
+        if "daily_bet_max_at" in updates:
+            _reload_at_daily_limit()
+            logger.info("Daily stake limit reloaded: %d AT ($%d)", _at_daily_limit, _at_daily_limit // 100)
 
         logger.info("update_platform_config: admin=%s keys=%s", admin_id, list(updates.keys()))
         _log_audit(

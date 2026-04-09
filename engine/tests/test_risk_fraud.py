@@ -120,27 +120,37 @@ VALID_STEAM = "76561198000000001"
 
 
 class TestDailyStakeLimit:
-    """M8 daily 500 AT stake limit — enforced in create_match and join_match."""
+    """Daily AT stake limit — enforced in create_match via _check_daily_stake_limit.
+
+    Architecture: limit is stored in _at_daily_limit (in-memory, loaded from
+    platform_settings at startup). _check_daily_stake_limit reads _at_daily_limit
+    directly + makes ONE DB call to sum today's transactions.
+
+    create_match DB call order through SessionLocal:
+      1. user lookup (steam_id, riot_id, wallet_address)
+      2. active room check
+      3. _assert_not_suspended → player_penalties
+      4. _assert_at_balance → at_balance
+      5. _get_daily_staked → transactions SUM  (ONE DB call for the limit check)
+
+    Limit is controlled by patching main._at_daily_limit.
+    """
 
     def _user_row(self, steam=VALID_STEAM, riot=None, wallet="0xABC"):
         return (steam, riot, wallet)
 
     def _make_multi_session(self, today_staked: int, at_balance: int = 1000):
         """
-        Build a session mock that returns, in order:
-          1. user row (steam_id, riot_id, wallet_address)
-          2. None (no active room)
-          3. None (no penalty / not suspended)
-          4. (at_balance,) — AT balance
-          5. (today_staked,) — SUM from transactions for daily limit check
+        Build a session mock for create_match.
+        Limit is controlled separately via patch("main._at_daily_limit", value).
         """
         session = MagicMock()
         session.execute.return_value.fetchone.side_effect = [
-            self._user_row(),                # 1. user lookup
-            None,                            # 2. no active room
-            None,                            # 3. no penalty row
-            (at_balance,),                   # 4. AT balance
-            (today_staked,),                 # 5. daily stake sum
+            self._user_row(),        # 1. user lookup
+            None,                    # 2. no active room
+            None,                    # 3. no penalty row
+            (at_balance,),           # 4. AT balance
+            (today_staked,),         # 5. _get_daily_staked ← transactions SUM
         ]
         ctx = MagicMock()
         ctx.__enter__ = MagicMock(return_value=session)
@@ -150,7 +160,8 @@ class TestDailyStakeLimit:
     def test_400_at_today_plus_200_is_rejected(self):
         """400 AT staked today + 200 new → over 500 cap → 429."""
         ctx = self._make_multi_session(today_staked=400)
-        with patch("main.SessionLocal", return_value=ctx):
+        with patch("main._at_daily_limit", 500), \
+             patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 "/matches",
                 json={"game": "CS2", "stake_amount": 200, "stake_currency": "AT"},
@@ -163,12 +174,12 @@ class TestDailyStakeLimit:
         """0 AT staked today + 200 AT → under cap → match created."""
         session = MagicMock()
         session.execute.return_value.fetchone.side_effect = [
-            self._user_row(),   # user lookup
-            None,               # no active room
-            None,               # no penalty
-            (1000,),            # AT balance
-            (0,),               # daily staked = 0
-            (str(uuid.uuid4()),),  # INSERT match RETURNING id
+            self._user_row(),          # user lookup
+            None,                      # no active room
+            None,                      # no penalty
+            (1000,),                   # AT balance
+            (0,),                      # _get_daily_staked ← 0 staked today
+            (str(uuid.uuid4()),),      # INSERT match RETURNING id
         ]
         ctx = MagicMock()
         ctx.__enter__ = MagicMock(return_value=session)
@@ -182,14 +193,14 @@ class TestDailyStakeLimit:
         assert resp.status_code in (201, 200)
 
     def test_limit_resets_after_24h(self):
-        """If today_staked query returns 0 (old txns outside window), new stake passes."""
+        """SUM query returns 0 (txns older than 24h excluded by SQL WHERE) → stake passes."""
         session = MagicMock()
         session.execute.return_value.fetchone.side_effect = [
             self._user_row(),
-            None,
-            None,
-            (1000,),
-            (0,),               # SUM = 0 (all txns older than 24h, excluded by SQL)
+            None,                      # no active room
+            None,                      # no penalty
+            (1000,),                   # AT balance
+            (0,),                      # _get_daily_staked ← 0 (old txns excluded)
             (str(uuid.uuid4()),),
         ]
         ctx = MagicMock()
@@ -296,7 +307,7 @@ class TestPenaltySystem:
             None,                     # no active room
             None,                     # no penalty row
             (1000,),                  # AT balance
-            (0,),                     # daily staked
+            (0,),                     # _get_daily_staked → 0 staked today
             (str(uuid.uuid4()),),     # INSERT RETURNING id
         ]
         ctx = MagicMock()
