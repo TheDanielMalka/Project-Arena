@@ -27,7 +27,7 @@ import httpx
 import mss
 import mss.tools
 import pystray
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from pystray import MenuItem, Menu
 
 CLIENT_VERSION = "1.0.0"
@@ -111,6 +111,8 @@ DEFAULT_CONFIG = {
     # Phase 5: identity cosmetics — synced from /auth/me after login
     "avatar_bg":           None,   # DB: users.avatar_bg
     "equipped_badge_icon": None,   # DB: users.equipped_badge_icon  e.g. "badge:champions"
+    # Phase 5: user_settings.region from GET /auth/me (EU | NA | ASIA | SA | OCE | ME)
+    "region":             None,
 }
 
 
@@ -186,7 +188,8 @@ class AuthManager:
     """
 
     def __init__(self, config: dict):
-        self._config = config
+        self._config               = config
+        self._pending_2fa_token: str | None = None
 
     @property
     def is_authenticated(self) -> bool:
@@ -236,6 +239,10 @@ class AuthManager:
     def equipped_badge_icon(self) -> str | None:
         return self._config.get("equipped_badge_icon")
 
+    @property
+    def region(self) -> str | None:
+        return self._config.get("region")
+
     def set_token(self, token: str, user_id: str | None = None,
                   username: str | None = None, email: str | None = None,
                   wallet_address: str | None = None,
@@ -243,7 +250,8 @@ class AuthManager:
                   xp_to_next_level: int | None = None,
                   avatar_url: str | None = None,
                   avatar_bg: str | None = None,
-                  equipped_badge_icon: str | None = None):
+                  equipped_badge_icon: str | None = None,
+                  region: str | None = None):
         self._config["auth_token"] = token
         if user_id             is not None: self._config["user_id"]             = user_id
         if username            is not None: self._config["username"]            = username
@@ -255,15 +263,19 @@ class AuthManager:
         if avatar_url          is not None: self._config["avatar_url"]          = avatar_url
         if avatar_bg           is not None: self._config["avatar_bg"]           = avatar_bg
         if equipped_badge_icon is not None: self._config["equipped_badge_icon"] = equipped_badge_icon
+        if region              is not None: self._config["region"]              = region
         save_config(self._config)
         logger.info(f"Logged in: {username or email or user_id}")
 
     def clear(self):
+        self._pending_2fa_token = None
         for k in ("auth_token", "user_id", "username", "email", "rank",
                   "avatar_url", "avatar_bg", "equipped_badge_icon"):
             self._config[k] = "" if k == "auth_token" else None
-        self._config["xp"]             = 0
-        self._config["wallet_address"] = "unknown"
+        self._config["xp"]                 = 0
+        self._config["xp_to_next_level"]   = 1000
+        self._config["wallet_address"]    = "unknown"
+        self._config["region"]             = None
         save_config(self._config)
         logger.info("Auth cleared")
 
@@ -273,13 +285,23 @@ class AuthManager:
         POST /auth/login with {identifier, password}.
         identifier = email — backend also accepts username but email is
         preferred because username is user-changeable in the profile.
-        Returns None on success, error string on failure.
-
         Phase 5: after successful login, calls engine.bind_session() with the
         install's stable session_id so the website's GET /client/status returns
         user_id for this machine.
+
+        Returns:
+          None        — success (full session stored)
+          "__2FA__"   — TOTP required; temp token stored internally for confirm_2fa()
+          str         — error message
         """
+        self._pending_2fa_token = None
         result = engine.login(identifier, password)
+        if result and result.get("requires_2fa"):
+            temp = result.get("temp_token")
+            if not temp:
+                return "Two-factor authentication required but server sent no token"
+            self._pending_2fa_token = temp
+            return "__2FA__"
         if result and result.get("token"):
             self.set_token(
                 token=result["token"],
@@ -299,17 +321,59 @@ class AuthManager:
                     token=result["token"],
                     rank=profile.get("rank") or result.get("rank"),
                     xp=profile.get("xp") or result.get("xp"),
+                    xp_to_next_level=profile.get("xp_to_next_level"),
                     wallet_address=profile.get("wallet_address") or result.get("wallet_address"),
                     avatar_bg=profile.get("avatar_bg"),
                     equipped_badge_icon=profile.get("equipped_badge_icon"),
+                    region=profile.get("region"),
                 )
             # Phase 5: bind session so website can detect this client immediately
             if session_id:
                 engine.bind_session(result["token"], session_id)
+            engine.reset_401_guard()
             return None  # success
         if result and result.get("detail"):
             return result["detail"]
         return "Login failed — check Engine connection"
+
+    def complete_2fa(self, engine: "EngineClient", code: str,
+                       session_id: str | None = None) -> str | None:
+        """
+        POST /auth/2fa/confirm after login returned requires_2fa.
+        Returns None on success, error string on failure.
+        """
+        temp = self._pending_2fa_token
+        if not temp:
+            return "No pending 2FA — sign in again"
+        result = engine.confirm_2fa(temp, code)
+        if result and result.get("token"):
+            self._pending_2fa_token = None
+            self.set_token(
+                token=result["token"],
+                user_id=result.get("user_id"),
+                username=result.get("username"),
+                email=result.get("email"),
+                wallet_address=result.get("wallet_address"),
+            )
+            profile = engine.get_profile(result["token"])
+            if profile:
+                self.set_token(
+                    token=result["token"],
+                    rank=profile.get("rank"),
+                    xp=profile.get("xp"),
+                    xp_to_next_level=profile.get("xp_to_next_level"),
+                    wallet_address=profile.get("wallet_address"),
+                    avatar_bg=profile.get("avatar_bg"),
+                    equipped_badge_icon=profile.get("equipped_badge_icon"),
+                    region=profile.get("region"),
+                )
+            if session_id:
+                engine.bind_session(result["token"], session_id)
+            engine.reset_401_guard()
+            return None
+        if result and result.get("detail"):
+            return result["detail"]
+        return "Invalid verification code"
 
     def logout(self, engine: "EngineClient | None" = None):
         """
@@ -394,7 +458,38 @@ class EngineClient:
     def __init__(self, base_url: str, token: str):
         self.base_url = base_url.rstrip("/")
         self.token    = token
-        self.client   = httpx.Client(timeout=30)
+        self._on_unauthorized: "callable | None" = None
+        self._401_fired = False
+        self.client = httpx.Client(
+            timeout=30,
+            event_hooks={"response": [self._response_hook]},
+        )
+
+    def set_on_unauthorized(self, fn: "callable | None") -> None:
+        """Callback invoked (e.g. on main thread via win.after) when any Bearer request gets 401."""
+        self._on_unauthorized = fn
+
+    def reset_401_guard(self) -> None:
+        """Call after successful login so future 401s are handled again."""
+        self._401_fired = False
+
+    def _response_hook(self, response: httpx.Response) -> None:
+        try:
+            if response.status_code != 401:
+                return
+            url = str(response.request.url)
+            if "/auth/login" in url or "/auth/2fa/confirm" in url:
+                return
+            auth_h = response.request.headers.get("Authorization") or ""
+            if not auth_h.startswith("Bearer "):
+                return
+            if self._401_fired:
+                return
+            self._401_fired = True
+            if self._on_unauthorized:
+                self._on_unauthorized()
+        except Exception:
+            pass
 
     def health(self) -> dict | None:
         try:
@@ -487,6 +582,11 @@ class EngineClient:
             )
             if r.status_code == 200:
                 data = r.json()
+                if data.get("requires_2fa") and data.get("temp_token"):
+                    return {
+                        "requires_2fa": True,
+                        "temp_token":   data["temp_token"],
+                    }
                 # Normalise access_token → token so AuthManager.set_token() works
                 return {
                     "token":          data.get("access_token"),
@@ -504,6 +604,50 @@ class EngineClient:
         except Exception as e:
             logger.error(f"Login failed: {e}")
             return None
+
+    def confirm_2fa(self, temp_token: str, code: str) -> dict | None:
+        """
+        POST /auth/2fa/confirm — { temp_token, code } → full session (access_token, …).
+        Returns same normalised shape as login() on success, or {detail} on error.
+        """
+        try:
+            r = self.client.post(
+                f"{self.base_url}/auth/2fa/confirm",
+                json={"temp_token": temp_token.strip(), "code": code.strip().replace(" ", "")},
+                timeout=10,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                return {
+                    "token":          data.get("access_token"),
+                    "user_id":        data.get("user_id"),
+                    "username":       data.get("username"),
+                    "email":          data.get("email"),
+                    "arena_id":       data.get("arena_id"),
+                    "wallet_address": data.get("wallet_address"),
+                }
+            try:
+                detail = r.json().get("detail", "Verification failed")
+            except Exception:
+                detail = f"2FA failed ({r.status_code})"
+            return {"detail": str(detail)}
+        except Exception as e:
+            logger.error(f"2FA confirm failed: {e}")
+            return None
+
+    def get_messages_unread_count(self, token: str) -> int | None:
+        """GET /messages/unread/count → { count } (DM + inbox)."""
+        try:
+            r = self.client.get(
+                f"{self.base_url}/messages/unread/count",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=5,
+            )
+            if r.status_code == 200:
+                return int(r.json().get("count", 0))
+        except Exception as e:
+            logger.debug(f"Unread messages count: {e}")
+        return None
 
     def get_profile(self, token: str) -> dict | None:
         """
@@ -700,7 +844,8 @@ class MatchMonitor:
 
 
 # ── Icon Rendering ─────────────────────────────────────────────────────────────
-def _draw_arena_icon(size: int = 64, state: str = "idle") -> Image.Image:
+def _draw_arena_icon(size: int = 64, state: str = "idle",
+                     badge_count: int = 0) -> Image.Image:
     """
     Arena 'A' tray icon.
     Drawn at 4× resolution then downscaled for smooth anti-aliasing at small sizes.
@@ -710,6 +855,8 @@ def _draw_arena_icon(size: int = 64, state: str = "idle") -> Image.Image:
       match  → gold 'A'  (match in progress)
       error  → dim red   (engine offline)
       idle   → gray 'A'  (monitoring OFF)
+
+    badge_count: unread messages — red dot with digit (1–9, 9+) bottom-right.
 
     Background is transparent so Windows tray colour shows through cleanly.
     A small filled circle behind the glyph ensures the 'A' is always legible.
@@ -757,7 +904,28 @@ def _draw_arena_icon(size: int = 64, state: str = "idle") -> Image.Image:
     draw.line([cb_l, cb_r], fill=glyph_color, width=max(6, s // 16))
 
     # Downscale with LANCZOS for smooth anti-aliasing
-    return img.resize((size, size), Image.LANCZOS)
+    img = img.resize((size, size), Image.LANCZOS)
+
+    if badge_count and badge_count > 0:
+        draw = ImageDraw.Draw(img)
+        label = "9+" if badge_count > 9 else str(int(badge_count))
+        br = max(size // 5, 10)
+        cx, cy = size - br // 2 - 1, size - br // 2 - 1
+        pad = max(1, br // 8)
+        draw.ellipse(
+            [cx - br // 2 + pad, cy - br // 2 + pad,
+             cx + br // 2 - pad, cy + br // 2 - pad],
+            fill=(239, 68, 68, 255),
+        )
+        try:
+            windir = os.environ.get("WINDIR", r"C:\Windows")
+            font_path = os.path.join(windir, "Fonts", "segoeui.ttf")
+            font = ImageFont.truetype(font_path, size=max(7, size // 5))
+        except OSError:
+            font = ImageFont.load_default()
+        draw.text((cx, cy), label, fill=(255, 255, 255, 255), font=font, anchor="mm")
+
+    return img
 
 
 def generate_ico_file(path: str):
@@ -831,7 +999,8 @@ def _resolve_badge_emoji(equipped_badge_icon: str | None) -> str | None:
 
 def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                          config: dict, ico_path: str | None = None,
-                         notify_fn: "callable | None" = None) -> None:
+                         notify_fn: "callable | None" = None,
+                         tray_app: "ArenaTray | None" = None) -> None:
     """
     Arena Client window — dark gaming aesthetic matching the website.
 
@@ -1017,6 +1186,85 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                                 text_color=BRAND["error"])
         err_lbl.pack(anchor="w", pady=(0, 4))
 
+        def _open_2fa_modal():
+            """POST /auth/2fa/confirm after login returned requires_2fa + temp_token."""
+            modal = ctk.CTkToplevel(win)
+            modal.title("Two-factor authentication")
+            modal.geometry("340x220")
+            modal.resizable(False, False)
+            modal.configure(fg_color=BRAND["bg"])
+            modal.transient(win)
+            modal.grab_set()
+
+            ctk.CTkLabel(
+                modal, text="Enter your 2FA code",
+                font=ctk.CTkFont(size=14, weight="bold"),
+                text_color=BRAND["text"],
+            ).pack(pady=(18, 8))
+
+            code_entry = ctk.CTkEntry(
+                modal, placeholder_text="6-digit code",
+                height=36, corner_radius=6,
+                fg_color=BRAND["bg_hover"],
+                border_color=BRAND["border"],
+                border_width=1,
+                text_color=BRAND["text"],
+                placeholder_text_color=BRAND["text_muted"],
+                font=ctk.CTkFont(size=15),
+            )
+            code_entry.pack(fill="x", padx=20, pady=4)
+
+            err_m = ctk.CTkLabel(
+                modal, text="",
+                font=ctk.CTkFont(size=11),
+                text_color=BRAND["error"],
+            )
+            err_m.pack(anchor="w", padx=20, pady=(0, 4))
+
+            verify_btn = ctk.CTkButton(
+                modal, text="Verify", height=36, corner_radius=6,
+                fg_color=BRAND["accent"], hover_color=BRAND["accent_dark"],
+                text_color="#FFFFFF", font=ctk.CTkFont(size=13, weight="bold"),
+            )
+
+            def _submit_2fa():
+                raw = code_entry.get().strip().replace(" ", "")
+                if not raw.isdigit() or len(raw) != 6:
+                    err_m.configure(text="Enter a valid 6-digit code")
+                    return
+                err_m.configure(text="")
+                verify_btn.configure(state="disabled", text="Verifying…")
+
+                def _t():
+                    terr = auth.complete_2fa(
+                        monitor.engine, raw, session_id=monitor._session_id)
+
+                    def _af():
+                        verify_btn.configure(state="normal", text="Verify")
+                        if terr:
+                            err_m.configure(text=terr)
+                        else:
+                            try:
+                                modal.destroy()
+                            except Exception:
+                                pass
+                            monitor.engine.token = auth.access_token or ""
+                            if not monitor.running:
+                                monitor.start()
+                            _rebuild_identity()
+                            if tray_app is not None:
+                                tray_app.request_unread_refresh()
+
+                    win.after(0, _af)
+
+                threading.Thread(target=_t, daemon=True).start()
+
+            verify_btn.configure(command=_submit_2fa)
+            verify_btn.pack(fill="x", padx=20, pady=(8, 16))
+            code_entry.bind("<Return>", lambda e: _submit_2fa())
+            code_entry.focus()
+            modal.protocol("WM_DELETE_WINDOW", lambda: (modal.grab_release(), modal.destroy()))
+
         def _do_login():
             ident = id_entry.get().strip()
             pwd   = pw_entry.get()
@@ -1032,7 +1280,10 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                                    session_id=monitor._session_id)
                 def _after():
                     login_btn.configure(state="normal", text="Sign In")
-                    if error:
+                    if error == "__2FA__":
+                        err_lbl.configure(text="")
+                        _open_2fa_modal()
+                    elif error:
                         err_lbl.configure(text=error, text_color=BRAND["error"])
                     else:
                         monitor.engine.token = auth.access_token or ""
@@ -1040,6 +1291,8 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                         if not monitor.running:
                             monitor.start()
                         _rebuild_identity()
+                        if tray_app is not None:
+                            tray_app.request_unread_refresh()
                 win.after(0, _after)
             threading.Thread(target=_thread, daemon=True).start()
 
@@ -1064,6 +1317,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         ctk.CTkFrame(div_row, height=1, fg_color=BRAND["border"]).pack(
             side="left", fill="x", expand=True, pady=6)
 
+        # TODO[GOOGLE]: wire Google sign-in to POST /auth/google when Client ID is set
         ctk.CTkButton(
             parent, text="Open Arena Website", height=32, corner_radius=6,
             fg_color=BRAND["bg_hover"], hover_color=BRAND["border"],
@@ -1119,6 +1373,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
         wallet = auth.wallet_address
         if wallet and wallet != "unknown":
+            # TODO[VERIF]: show linked Steam/Riot IDs from API when keys exist in platform_config
             ctk.CTkLabel(info,
                          text=f"{wallet[:6]}…{wallet[-4:]}",
                          font=ctk.CTkFont(size=11),
@@ -1130,6 +1385,14 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         ctk.CTkLabel(parent, text=f"Rank: {rank}",
                      font=ctk.CTkFont(size=12, weight="bold"),
                      text_color=rank_color).pack(anchor="w", pady=(0, 4))
+
+        reg = auth.region
+        if reg:
+            ctk.CTkLabel(
+                parent, text=f"Region: {reg}",
+                font=ctk.CTkFont(size=10, weight="bold"),
+                text_color=BRAND["warning"],
+            ).pack(anchor="w", pady=(0, 4))
 
         # TODO(Claude): confirm /auth/me returns xp_to_next_level field.
         # Currently reading it from profile; falls back to 1000 if not present.
@@ -1152,6 +1415,10 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             # Phase 5: tell engine to disconnect sessions before clearing local state
             auth.logout(engine=monitor.engine)
             monitor.engine.token = ""
+            monitor.engine.reset_401_guard()
+            if tray_app is not None:
+                tray_app._tray_unread_count = 0
+                tray_app._apply_tray_icon()
             win.after(0, _rebuild_identity)
 
         ctk.CTkButton(
@@ -1163,6 +1430,27 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         ).pack(anchor="w")
 
     _rebuild_identity()
+
+    def _handle_session_expired():
+        """Any Bearer API returned 401 — clear local session and return to login."""
+        try:
+            monitor.stop()
+        except Exception:
+            pass
+        auth.logout(engine=None)
+        monitor.engine.token = ""
+        monitor.engine.reset_401_guard()
+        if tray_app is not None:
+            tray_app._tray_unread_count = 0
+            tray_app._apply_tray_icon()
+        if notify_fn:
+            try:
+                notify_fn("Session expired — please sign in again")
+            except Exception:
+                pass
+        _rebuild_identity()
+
+    monitor.engine.set_on_unauthorized(lambda: win.after(0, _handle_session_expired))
 
     # Game status card
     game_card  = _card(ov, "Game Status")
@@ -1520,6 +1808,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                         or profile.get("xp_to_next_level")   != auth.xp_to_next_level
                         or profile.get("avatar_bg")           != auth.avatar_bg
                         or profile.get("equipped_badge_icon") != auth.equipped_badge_icon
+                        or profile.get("region")              != auth.region
                     )
                     if changed:
                         auth.set_token(
@@ -1530,6 +1819,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                             avatar_url=profile.get("avatar_url"),
                             avatar_bg=profile.get("avatar_bg"),
                             equipped_badge_icon=profile.get("equipped_badge_icon"),
+                            region=profile.get("region"),
                         )
                         win.after(0, _rebuild_identity)
             threading.Thread(target=_fetch, daemon=True).start()
@@ -1610,6 +1900,9 @@ class ArenaTray:
         self.icon:   pystray.Icon | None = None
         self._monitoring_enabled = False
         self._selected_game      = self.config.get("game", "AUTO")
+        self._tray_unread_count  = 0
+        self._unread_stop        = threading.Event()
+        self._unread_thread: threading.Thread | None = None
 
     def _icon_state(self) -> str:
         if self.monitor.current_match_id: return "match"
@@ -1632,16 +1925,59 @@ class ArenaTray:
         def _checked(item):      return self._selected_game == game
         return MenuItem(label, _action, checked=_checked)
 
+    def _apply_tray_icon(self) -> None:
+        if not self.icon:
+            return
+        try:
+            n = self._tray_unread_count if self.auth.is_authenticated else 0
+            self.icon.icon = _draw_arena_icon(
+                128, state=self._icon_state(), badge_count=n)
+        except Exception as e:
+            logger.debug(f"Tray icon update: {e}")
+
+    def request_unread_refresh(self) -> None:
+        """Poll unread count once (e.g. right after login)."""
+
+        def _go():
+            tok = self.auth.access_token
+            if not tok:
+                return
+            c = self.monitor.engine.get_messages_unread_count(tok)
+            if c is not None:
+                self._tray_unread_count = c
+                self._apply_tray_icon()
+
+        threading.Thread(target=_go, daemon=True).start()
+
+    def _unread_poll_loop(self) -> None:
+        while not self._unread_stop.wait(30.0):
+            if not self.auth.is_authenticated:
+                continue
+            tok = self.auth.access_token
+            if not tok:
+                continue
+            c = self.monitor.engine.get_messages_unread_count(tok)
+            if c is not None:
+                self._tray_unread_count = c
+                self._apply_tray_icon()
+
+    def _on_messages(self, icon, item):
+        import webbrowser
+        base = (self.config.get("frontend_url") or "http://localhost:3000").rstrip("/")
+        webbrowser.open(f"{base}/messages")
+        self._tray_unread_count = 0
+        self._apply_tray_icon()
+
     def _toggle_monitoring(self, icon, item):
         if self._monitoring_enabled:
             self.monitor.stop()
             self._monitoring_enabled = False
-            icon.icon = _draw_arena_icon(128, state="idle")
+            self._apply_tray_icon()
             icon.notify("Arena Client", "Client Offline — monitoring stopped")
         else:
             self.monitor.start()
             self._monitoring_enabled = True
-            icon.icon = _draw_arena_icon(128, state="active")
+            self._apply_tray_icon()
             icon.notify("Arena Client", "Client Ready — monitoring started")
 
     def _on_open(self, icon, item):
@@ -1669,6 +2005,7 @@ class ArenaTray:
 
     def _shutdown(self):
         logger.info("Shutting down…")
+        self._unread_stop.set()
         self.monitor.stop()
         if self.icon:
             try: self.icon.stop()
@@ -1688,6 +2025,7 @@ class ArenaTray:
             MenuItem("Arena Client", None, enabled=False),
             Menu.SEPARATOR,
             MenuItem("Open Arena",    self._on_open, default=True),
+            MenuItem("Messages",      self._on_messages),
             Menu.SEPARATOR,
             MenuItem("Monitoring", self._toggle_monitoring,
                      checked=lambda item: self._monitoring_enabled),
@@ -1702,12 +2040,19 @@ class ArenaTray:
         )
 
         self.icon = pystray.Icon(
-            "Arena", _draw_arena_icon(128, state=self._icon_state()),
+            "Arena",
+            _draw_arena_icon(128, state=self._icon_state(),
+                             badge_count=self._tray_unread_count),
             "Arena - Match Monitor", menu,
         )
 
         if self._monitoring_enabled:
             self.monitor.start()
+
+        self._unread_stop.clear()
+        self._unread_thread = threading.Thread(
+            target=self._unread_poll_loop, daemon=True, name="ArenaUnreadPoll")
+        self._unread_thread.start()
 
         def _sig(sig, frame): self._shutdown()
         signal.signal(signal.SIGINT,  _sig)
@@ -1718,6 +2063,7 @@ class ArenaTray:
 
         _build_client_window(
             self.monitor, self.auth, self.config, ico_path=ico_path,
+            tray_app=self,
             notify_fn=lambda msg: (
                 self.icon.notify("Arena Client", msg) if self.icon else None),
         )
