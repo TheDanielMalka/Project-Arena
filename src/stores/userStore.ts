@@ -26,7 +26,7 @@ import {
 
 export type SignupResult =
   | { ok: true }
-  | { ok: false; detail?: string; field?: RegisterConflictField | null };
+  | { ok: false; status?: number; detail?: string; field?: RegisterConflictField | null };
 
 interface UserState {
   user: UserProfile | null;
@@ -38,7 +38,7 @@ interface UserState {
   showLoginGreeting: boolean;
   greetingType: "login" | "signup" | "google" | null;
   // DB-ready: replace with POST /api/auth/login
-  login: (email: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<boolean | "rate_limited">;
   // DB-ready: replace with POST /api/auth/signup
   signup: (
     username: string,
@@ -207,9 +207,10 @@ export const useUserStore = create<UserState>((set, get) => ({
   showLoginGreeting: false,
   greetingType: null,
 
-  login: async (email: string, password: string): Promise<boolean> => {
+  login: async (email: string, password: string): Promise<boolean | "rate_limited"> => {
     const data = await apiLogin(email, password);
     if (!data) return false;
+    if ("_rate_limited" in data) return "rate_limited";
     const profile = await apiGetMe(data.access_token);
     if (!profile) return false;
 
@@ -244,6 +245,7 @@ export const useUserStore = create<UserState>((set, get) => ({
     if (reg.ok === false) {
       return {
         ok: false as const,
+        status: reg.status,
         detail: reg.detail ?? undefined,
         field: reg.field,
       };

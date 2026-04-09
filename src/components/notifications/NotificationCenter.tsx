@@ -1,16 +1,20 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bell, Check, CheckCheck, Trash2, X } from "lucide-react";
+import { Bell, Check, CheckCheck, Loader2, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
+import { toast } from "@/components/ui/sonner";
 import {
   useNotificationStore,
   type Notification,
   type NotificationType,
 } from "@/stores/notificationStore";
+import { useUserStore } from "@/stores/userStore";
+import { useMatchStore } from "@/stores/matchStore";
+import { apiRespondToNotification, apiJoinMatch } from "@/lib/engine-api";
 import { cn } from "@/lib/utils";
 
 const typeStyles: Record<NotificationType, string> = {
@@ -48,22 +52,31 @@ function NotificationItem({
   onRead,
   onRemove,
   onNavigate,
+  onAcceptInvite,
+  acceptingId,
 }: {
   notification: Notification;
   onRead: (id: string) => void;
   onRemove: (id: string) => void;
   onNavigate: (type: NotificationType) => void;
+  onAcceptInvite?: (notifId: string) => void;
+  acceptingId?: string | null;
 }) {
+  const isInvite = notification.type === "match_invite";
+  const isAccepting = acceptingId === notification.id;
+
   return (
     <div
       className={cn(
-        "relative px-4 py-3 border-l-2 transition-colors cursor-pointer group hover:bg-secondary/80",
+        "relative px-4 py-3 border-l-2 transition-colors group hover:bg-secondary/80",
         typeStyles[notification.type],
         notification.read
           ? "bg-transparent opacity-60"
-          : "bg-secondary/50"
+          : "bg-secondary/50",
+        !isInvite && "cursor-pointer",
       )}
       onClick={() => {
+        if (isInvite) return;
         if (!notification.read) onRead(notification.id);
         onNavigate(notification.type);
       }}
@@ -84,6 +97,39 @@ function NotificationItem({
           <span className="text-[10px] text-muted-foreground/60 mt-1 block">
             {timeAgo(notification.timestamp)}
           </span>
+          {isInvite && onAcceptInvite && (
+            <div className="flex gap-2 mt-2">
+              <button
+                type="button"
+                disabled={isAccepting}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRead(notification.id);
+                  onAcceptInvite(notification.id);
+                }}
+                className="flex items-center gap-1 px-3 py-1 rounded-lg bg-primary/10 border border-primary/30 text-primary text-[10px] font-bold hover:bg-primary/20 transition-colors disabled:opacity-50"
+              >
+                {isAccepting ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Check className="h-3 w-3" />
+                )}
+                Accept
+              </button>
+              <button
+                type="button"
+                disabled={isAccepting}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemove(notification.id);
+                }}
+                className="flex items-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-[10px] font-bold hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-colors disabled:opacity-50"
+              >
+                <X className="h-3 w-3" />
+                Decline
+              </button>
+            </div>
+          )}
         </div>
         <Button
           variant="ghost"
@@ -103,14 +149,48 @@ function NotificationItem({
 
 export function NotificationCenter() {
   const [open, setOpen] = useState(false);
+  const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const navigate = useNavigate();
   const { notifications, unreadCount, markAsRead, markAllAsRead, removeNotification, clearAll } =
     useNotificationStore();
+  const token = useUserStore((s) => s.token);
 
   const handleNavigate = (type: NotificationType) => {
     setOpen(false);
     const route = typeRoutes[type];
     if (route) navigate(route);
+  };
+
+  const handleAcceptInvite = async (notifId: string) => {
+    if (!token) return;
+    setAcceptingId(notifId);
+    try {
+      const r = await apiRespondToNotification(token, notifId, "accept");
+      if (!r) {
+        toast.error("Failed to accept invite. Please try again.");
+        return;
+      }
+      if (!r.match_id) {
+        toast.error("Invite expired or already accepted.");
+        removeNotification(notifId);
+        return;
+      }
+      const joinRes = await apiJoinMatch(token, r.match_id, {
+        team: (r.your_team as "A" | "B" | undefined) ?? undefined,
+      });
+      if (joinRes.ok === false) {
+        toast.error(joinRes.detail ?? "Could not join match.");
+        return;
+      }
+      useMatchStore.getState().setActiveRoomId(r.match_id);
+      const inviterName = r.inviter_username ?? "your friend";
+      toast.success(`Joined match vs ${inviterName}`);
+      removeNotification(notifId);
+      setOpen(false);
+      navigate(`/match/${r.match_id}`);
+    } finally {
+      setAcceptingId(null);
+    }
   };
 
   return (
@@ -194,6 +274,8 @@ export function NotificationCenter() {
                   onRead={markAsRead}
                   onRemove={removeNotification}
                   onNavigate={handleNavigate}
+                  onAcceptInvite={handleAcceptInvite}
+                  acceptingId={acceptingId}
                 />
               ))}
             </div>

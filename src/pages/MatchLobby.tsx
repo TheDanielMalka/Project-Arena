@@ -30,6 +30,7 @@ import {
   apiCancelMatch,
   apiLeaveMatch,
   apiInviteToMatch,
+  apiKickPlayer,
   apiListFriends,
   mapApiMatchRowToMatch,
   type ApiFriendRow,
@@ -374,6 +375,9 @@ const MatchLobby = () => {
   const [inviteFriendsLoading, setInviteFriendsLoading] = useState(false);
   const [invitingFriendId,     setInvitingFriendId]     = useState<string | null>(null);
   const [invitedFriendIds,     setInvitedFriendIds]     = useState<Set<string>>(new Set());
+  const [kickingUserId,        setKickingUserId]        = useState<string | null>(null);
+  const [createRateLimited,    setCreateRateLimited]    = useState(false);
+  const [inviteRateLimitedIds, setInviteRateLimitedIds] = useState<Set<string>>(new Set());
 
   const publicMatches = matches.filter(m => m.type === "public" && (m.status === "waiting" || m.status === "in_progress"));
   const customMatches = matches.filter(m => m.type === "custom" && (m.status === "waiting" || m.status === "in_progress"));
@@ -766,6 +770,16 @@ const MatchLobby = () => {
       });
     } else {
       const failResult = result as { ok: false; status?: number; detail: string | null };
+      if (failResult.status === 429) {
+        useNotificationStore.getState().addNotification({
+          type: "system",
+          title: "Too many requests",
+          message: "Too many requests — please wait a moment and try again",
+        });
+        setInviteRateLimitedIds((prev) => { const s = new Set(prev); s.add(friendId); return s; });
+        setTimeout(() => setInviteRateLimitedIds((prev) => { const s = new Set(prev); s.delete(friendId); return s; }), 3000);
+        return;
+      }
       const fail = { status: typeof failResult.status === "number" ? failResult.status : 0, detail: failResult.detail };
       const match = matches.find((m) => m.id === myRoomMatchId) ?? null;
       const sc = match ? matchStakeCurrency(match) : "CRYPTO";
@@ -1165,6 +1179,7 @@ const MatchLobby = () => {
                 const rv = lobbyTeamViewFromMatch(myActiveRoom);
                 const sideA = lobbySlotsForSide(rv.namesA, rv.filledA, rv.maxPerTeam);
                 const sideB = lobbySlotsForSide(rv.namesB, rv.filledB, rv.maxPerTeam);
+                const isHostView = myActiveRoom.hostId === user?.id;
                 const renderSlot = (slot: LobbySlot, i: number, team: "A" | "B") => {
                   const filledCls =
                     team === "A"
@@ -1172,10 +1187,16 @@ const MatchLobby = () => {
                       : "bg-arena-purple/15 border border-arena-purple/30 text-foreground";
                   const openCls = "bg-secondary/30 border border-border/30 text-muted-foreground/40";
                   if (slot.kind === "player") {
+                    const rosterEntry = myActiveRoom.playersRoster?.find((p) => p.username === slot.name);
+                    const canKick =
+                      isHostView &&
+                      !!rosterEntry &&
+                      rosterEntry.userId !== user?.id &&
+                      myActiveRoom.status === "waiting";
                     return (
-                      <div key={i} className={cn("h-6 rounded flex items-center px-2 text-[10px]", filledCls)}>
+                      <div key={i} className={cn("h-6 rounded flex items-center px-2 text-[10px] gap-1", filledCls)}>
                         <button
-                          className="truncate text-left hover:text-primary transition-colors w-full"
+                          className="truncate text-left hover:text-primary transition-colors flex-1 min-w-0"
                           onClick={(e) => {
                             e.stopPropagation();
                             setPlayerPopover({ slotValue: slot.name, rect: e.currentTarget.getBoundingClientRect() });
@@ -1183,6 +1204,30 @@ const MatchLobby = () => {
                         >
                           {slot.name}
                         </button>
+                        {canKick && (
+                          <button
+                            type="button"
+                            title={`Kick ${slot.name}`}
+                            className="shrink-0 text-destructive/50 hover:text-destructive transition-colors disabled:opacity-30"
+                            disabled={kickingUserId === rosterEntry.userId}
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              if (!token || !rosterEntry) return;
+                              setKickingUserId(rosterEntry.userId);
+                              const r = await apiKickPlayer(token, myActiveRoom.id, rosterEntry.userId);
+                              setKickingUserId(null);
+                              if (r.ok === false) {
+                                useNotificationStore.getState().addNotification({
+                                  type: "system",
+                                  title: "Kick failed",
+                                  message: r.detail,
+                                });
+                              }
+                            }}
+                          >
+                            <XCircle className="h-3 w-3" />
+                          </button>
+                        )}
                       </div>
                     );
                   }
@@ -1708,7 +1753,8 @@ const MatchLobby = () => {
                       !newMatchPassword ||
                       !newMatchMode ||
                       !canPlay ||
-                      (createStakeCurrency === "CRYPTO" && !connectedAddress)
+                      (createStakeCurrency === "CRYPTO" && !connectedAddress) ||
+                      createRateLimited
                     }
                     onClick={() => {
                       void (async () => {
@@ -1753,6 +1799,16 @@ const MatchLobby = () => {
                             password:       newMatchPassword,
                           });
                           if (apiRes.ok === false) {
+                            if (apiRes.status === 429) {
+                              useNotificationStore.getState().addNotification({
+                                type: "system",
+                                title: "Too many requests",
+                                message: "Too many requests — please wait a moment and try again",
+                              });
+                              setCreateRateLimited(true);
+                              setTimeout(() => setCreateRateLimited(false), 3000);
+                              return;
+                            }
                             if (apiRes.status === 409) {
                               // 409 = already in a room — restore it from server
                               const active = await apiGetActiveMatch(token!);
@@ -2135,6 +2191,7 @@ const MatchLobby = () => {
                 inviteFriends.map((friend) => {
                   const sent = invitedFriendIds.has(friend.user_id);
                   const loading = invitingFriendId === friend.user_id;
+                  const rateLimited = inviteRateLimitedIds.has(friend.user_id);
                   return (
                     <div
                       key={friend.user_id}
@@ -2157,12 +2214,14 @@ const MatchLobby = () => {
                       </div>
                       {/* Invite button */}
                       <button
-                        disabled={sent || loading}
+                        disabled={sent || loading || rateLimited}
                         onClick={() => void handleInviteFriend(friend.user_id)}
                         className={cn(
                           "shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all",
                           sent
                             ? "bg-green-500/10 border border-green-500/30 text-green-500 cursor-default"
+                            : rateLimited
+                            ? "bg-secondary/50 border border-border text-muted-foreground cursor-default"
                             : "bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20"
                         )}
                       >
@@ -2170,6 +2229,8 @@ const MatchLobby = () => {
                           <Loader2 className="h-3 w-3 animate-spin" />
                         ) : sent ? (
                           <><CheckCircle className="h-3 w-3" /> Sent</>
+                        ) : rateLimited ? (
+                          <>Wait…</>
                         ) : (
                           <><UserPlus className="h-3 w-3" /> Invite</>
                         )}
