@@ -138,6 +138,19 @@ def build():
             print(f"\n  Build successful!")
             print(f"  Output: {exe_path}")
             print(f"  Size: {size_mb:.1f} MB\n")
+            # Remove Windows Zone.Identifier (Mark of the Web) so SmartScreen
+            # does not block the freshly-built EXE on first launch.
+            if sys.platform == "win32":
+                abs_exe = os.path.abspath(exe_path)
+                unblock = subprocess.run(
+                    ["powershell", "-Command",
+                     f"Unblock-File -Path '{abs_exe}'"],
+                    capture_output=True,
+                )
+                if unblock.returncode == 0:
+                    print("  SmartScreen unblocked: OK\n")
+                else:
+                    print("  SmartScreen unblock skipped (run as admin if blocked)\n")
     else:
         print("Build failed!")
         sys.exit(1)
