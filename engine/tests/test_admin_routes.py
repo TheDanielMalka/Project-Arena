@@ -628,6 +628,8 @@ class TestAdminListUsers:
         status="active",
         rank="Gold",
         created_at=None,
+        at_balance=100,
+        wallet_address="0xABC",
         matches=10,
         wins=6,
         win_rate=60.0,
@@ -643,6 +645,8 @@ class TestAdminListUsers:
             status,
             rank,
             created_at or datetime(2025, 1, 1, tzinfo=timezone.utc),
+            at_balance,
+            wallet_address,
             matches,
             wins,
             win_rate,
@@ -667,7 +671,7 @@ class TestAdminListUsers:
         assert len(data["users"]) == 1
 
     def test_user_fields_present(self, as_admin):
-        """Each user row has all required fields."""
+        """Each user row has all required fields including at_balance, wallet_address."""
         ctx, session = _make_session()
         session.execute.return_value.fetchall.return_value = [self._make_user_row()]
         session.execute.return_value.fetchone.return_value = (1,)
@@ -676,13 +680,14 @@ class TestAdminListUsers:
             resp = client.get("/admin/users", headers=_ADMIN_HEADERS)
 
         u = resp.json()["users"][0]
-        for field in ("id", "username", "email", "status", "rank",
+        for field in ("user_id", "username", "email", "status", "rank",
+                      "at_balance", "wallet_address",
                       "matches", "wins", "win_rate",
                       "penalty_count", "is_suspended", "is_banned"):
             assert field in u, f"Missing field: {field}"
 
     def test_is_banned_true_when_banned_at_set(self, as_admin):
-        """User with banned_at is_banned=True."""
+        """User with banned_at → is_banned=True, is_suspended=False."""
         from datetime import datetime, timezone
         banned_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
         ctx, session = _make_session()
@@ -699,7 +704,7 @@ class TestAdminListUsers:
         assert u["is_suspended"] is False
 
     def test_is_suspended_true_when_active_suspension(self, as_admin):
-        """User with suspended_until in the future → is_suspended=True."""
+        """User with suspended_until in future → is_suspended=True."""
         from datetime import datetime, timezone, timedelta
         future = datetime.now(timezone.utc) + timedelta(hours=12)
         ctx, session = _make_session()
@@ -747,21 +752,19 @@ class TestAdminListDisputes:
     def _make_dispute_row(self):
         from datetime import datetime, timezone
         return (
-            _MATCH_ID,          # id
-            _MATCH_ID,          # match_id
-            _USER_ID,           # player_a
-            _WINNER_ID,         # player_b
-            "alice",            # username_a
-            "bob",              # username_b
-            "screenshot differs",  # reason
-            "open",             # status
-            "pending",          # resolution
-            None,               # admin_notes
+            _MATCH_ID,                                   # id
+            _MATCH_ID,                                   # match_id
+            _USER_ID,                                    # raised_by (player_a)
+            "alice",                                     # raised_by_username
+            "screenshot differs",                        # reason
+            "open",                                      # status
+            "pending",                                   # resolution
+            None,                                        # admin_notes
             datetime(2025, 1, 1, tzinfo=timezone.utc),  # created_at
-            None,               # resolved_at
-            "CS2",              # game
-            50.0,               # bet_amount
-            "AT",               # stake_currency
+            None,                                        # resolved_at
+            "CS2",                                       # game
+            50.0,                                        # bet_amount
+            "AT",                                        # stake_currency
         )
 
     def test_returns_disputes_list(self, as_admin):
@@ -779,7 +782,7 @@ class TestAdminListDisputes:
         assert len(data["disputes"]) == 1
 
     def test_dispute_fields_present(self, as_admin):
-        """Each dispute has all required fields."""
+        """Each dispute has raised_by_username (not username_a/username_b)."""
         ctx, session = _make_session()
         session.execute.return_value.fetchall.return_value = [self._make_dispute_row()]
         session.execute.return_value.fetchone.return_value = (1,)
@@ -788,10 +791,11 @@ class TestAdminListDisputes:
             resp = client.get("/admin/disputes", headers=_ADMIN_HEADERS)
 
         d = resp.json()["disputes"][0]
-        for field in ("id", "match_id", "player_a", "player_b",
-                      "username_a", "username_b", "reason",
-                      "status", "resolution", "game", "bet_amount"):
+        for field in ("id", "match_id", "raised_by", "raised_by_username",
+                      "reason", "status", "resolution", "game", "bet_amount"):
             assert field in d, f"Missing field: {field}"
+        assert "username_a" not in d
+        assert "username_b" not in d
 
     def test_empty_db_returns_empty_list(self, as_admin):
         """No disputes → empty list, total=0."""
@@ -820,75 +824,74 @@ class TestAdminListDisputes:
 
 
 class TestPlatformConfig:
-    """Platform config read + update."""
+    """Platform config read + update — key-value table (platform_config)."""
 
-    def _config_row(self):
-        from datetime import datetime, timezone
-        return (
-            5.0,    # fee_percent
-            500.0,  # daily_betting_max
-            False,  # maintenance_mode
-            True,   # registration_open
-            True,   # auto_dispute_escalation
-            False,  # kill_switch_active
-            datetime(2025, 1, 1, tzinfo=timezone.utc),  # updated_at
-        )
+    def _kv_rows(self):
+        """Simulate SELECT key, value FROM platform_config."""
+        return [
+            ("fee_pct",                "5"),
+            ("daily_bet_max_at",       "500"),
+            ("maintenance_mode",       "false"),
+            ("new_registrations",      "true"),
+            ("auto_escalate_disputes", "false"),
+        ]
 
     def test_get_returns_all_fields(self, as_admin):
-        """GET /platform/config returns all config fields."""
-        ctx, session = _make_session(fetchone=self._config_row())
+        """GET /platform/config returns all known config keys."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchall.return_value = self._kv_rows()
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.get("/platform/config", headers=_ADMIN_HEADERS)
 
         assert resp.status_code == 200
         data = resp.json()
-        for field in ("fee_percent", "daily_betting_max", "maintenance_mode",
-                      "registration_open", "auto_dispute_escalation",
-                      "kill_switch_active", "updated_at"):
+        for field in ("fee_pct", "daily_bet_max_at", "maintenance_mode",
+                      "new_registrations", "auto_escalate_disputes"):
             assert field in data, f"Missing field: {field}"
 
-    def test_get_fee_percent_value(self, as_admin):
-        """fee_percent is returned as float."""
-        ctx, session = _make_session(fetchone=self._config_row())
+    def test_get_fee_pct_value(self, as_admin):
+        """fee_pct is returned as string '5'."""
+        ctx, session = _make_session()
+        session.execute.return_value.fetchall.return_value = self._kv_rows()
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.get("/platform/config", headers=_ADMIN_HEADERS)
-        assert resp.json()["fee_percent"] == 5.0
+        assert resp.json()["fee_pct"] == "5"
 
     def test_put_updates_fields(self, as_admin):
-        """PUT with valid fields → 200, updated=True."""
+        """PUT with valid fields → 200, updated=True, correct field names."""
         ctx, session = _make_session()
         with patch("main.SessionLocal", return_value=ctx), \
              patch("main._log_audit"):
             resp = client.put(
                 "/platform/config",
-                json={"fee_percent": 7.5, "maintenance_mode": True},
+                json={"fee_pct": "7", "maintenance_mode": "true"},
                 headers=_ADMIN_HEADERS,
             )
 
         assert resp.status_code == 200
         data = resp.json()
         assert data["updated"] is True
-        assert "fee_percent" in data["fields"]
+        assert "fee_pct" in data["fields"]
         assert "maintenance_mode" in data["fields"]
 
     def test_put_invalid_fee_returns_400(self, as_admin):
-        """fee_percent > 50 → 400."""
+        """fee_pct > 50 → 400."""
         ctx, session = _make_session()
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.put(
                 "/platform/config",
-                json={"fee_percent": 99.0},
+                json={"fee_pct": "99"},
                 headers=_ADMIN_HEADERS,
             )
         assert resp.status_code == 400
 
     def test_put_negative_daily_max_returns_400(self, as_admin):
-        """daily_betting_max <= 0 → 400."""
+        """daily_bet_max_at <= 0 → 400."""
         ctx, session = _make_session()
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.put(
                 "/platform/config",
-                json={"daily_betting_max": -10.0},
+                json={"daily_bet_max_at": "-10"},
                 headers=_ADMIN_HEADERS,
             )
         assert resp.status_code == 400
@@ -917,7 +920,7 @@ class TestPlatformConfig:
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.put(
                 "/platform/config",
-                json={"fee_percent": 5.0},
+                json={"fee_pct": "5"},
                 headers=_USER_HEADERS,
             )
         assert resp.status_code == 403
@@ -937,10 +940,10 @@ class TestAdminAuditLog:
             _MATCH_ID,          # id
             _ADMIN_ID,          # admin_id
             "arena_admin",      # admin_username
-            "penalty_issued",   # action
-            _USER_ID,           # target
-            "offense=rage_quit count=1 action=suspended_24h",  # detail
-            datetime(2025, 1, 1, tzinfo=timezone.utc),         # created_at
+            "SUSPEND_USER",     # action (UPPERCASE)
+            _USER_ID,           # target_id
+            "offense=rage_quit count=1",  # notes
+            datetime(2025, 1, 1, tzinfo=timezone.utc),  # created_at
         )
 
     def test_returns_entries_list(self, as_admin):
@@ -959,7 +962,7 @@ class TestAdminAuditLog:
         assert len(data["entries"]) == 1
 
     def test_entry_fields_present(self, as_admin):
-        """Each entry has id, admin_id, action, target, detail, created_at."""
+        """Each entry has target_id + notes (not target/detail)."""
         ctx, session = _make_session()
         session.execute.return_value.fetchall.return_value = [self._make_entry_row()]
         session.execute.return_value.fetchone.return_value = (1,)
@@ -969,8 +972,10 @@ class TestAdminAuditLog:
 
         e = resp.json()["entries"][0]
         for field in ("id", "admin_id", "admin_username", "action",
-                      "target", "detail", "created_at"):
+                      "target_id", "notes", "created_at"):
             assert field in e, f"Missing field: {field}"
+        assert "target" not in e or "target_id" in e  # new schema
+        assert e["action"] == "SUSPEND_USER"           # UPPERCASE
 
     def test_empty_db_returns_empty_list(self, as_admin):
         """No audit entries → empty list, total=0."""
@@ -1025,16 +1030,30 @@ class TestAuditWiring:
 
         assert resp.status_code == 200
         mock_audit.assert_called_once()
-        call_kwargs = mock_audit.call_args
-        assert call_kwargs[0][1] == "freeze_payouts"
+        assert mock_audit.call_args[0][1] == "FREEZE_PAYOUT"  # UPPERCASE
+
+    def test_unfreeze_calls_log_audit_with_unfreeze_action(self, as_admin):
+        """POST /admin/freeze {freeze:false} → action='UNFREEZE_PAYOUT'."""
+        import main as m
+        m._PAYOUTS_FROZEN = True
+
+        with patch("main._log_audit") as mock_audit:
+            resp = client.post(
+                "/admin/freeze",
+                json={"freeze": False},
+                headers=_ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        assert mock_audit.call_args[0][1] == "UNFREEZE_PAYOUT"
 
     def test_penalty_calls_log_audit(self, as_admin):
-        """POST /admin/users/{id}/penalty → _log_audit called once."""
+        """POST /admin/users/{id}/penalty → _log_audit called with BAN_USER or SUSPEND_USER."""
         target_id = str(uuid.uuid4())
         session = MagicMock()
         session.execute.return_value.fetchone.side_effect = [
             (target_id,),  # user exists
-            (0,),          # prior_count = 0
+            (0,),          # prior_count = 0 → 1st offense → SUSPEND_USER
         ]
         ctx = MagicMock()
         ctx.__enter__ = MagicMock(return_value=session)
@@ -1050,10 +1069,33 @@ class TestAuditWiring:
 
         assert resp.status_code == 200
         mock_audit.assert_called_once()
-        assert mock_audit.call_args[0][1] == "penalty_issued"
+        assert mock_audit.call_args[0][1] == "SUSPEND_USER"
+
+    def test_third_offense_logs_ban_user(self, as_admin):
+        """3rd offense → _log_audit called with 'BAN_USER'."""
+        target_id = str(uuid.uuid4())
+        session = MagicMock()
+        session.execute.return_value.fetchone.side_effect = [
+            (target_id,),  # user exists
+            (2,),          # prior_count = 2 → 3rd offense → BAN_USER
+        ]
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=session)
+        ctx.__exit__  = MagicMock(return_value=False)
+
+        with patch("main.SessionLocal", return_value=ctx), \
+             patch("main._log_audit") as mock_audit:
+            resp = client.post(
+                f"/admin/users/{target_id}/penalty",
+                json={"offense_type": "fraud"},
+                headers=_ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        assert mock_audit.call_args[0][1] == "BAN_USER"
 
     def test_declare_winner_calls_log_audit(self, as_admin):
-        """POST /admin/match/{id}/declare-winner → _log_audit called once."""
+        """POST /admin/match/{id}/declare-winner → _log_audit called with 'DECLARE_WINNER'."""
         session = MagicMock()
         session.execute.return_value.fetchone.side_effect = [
             ("in_progress", "AT"),  # match row
@@ -1074,4 +1116,4 @@ class TestAuditWiring:
 
         assert resp.status_code == 200
         mock_audit.assert_called_once()
-        assert mock_audit.call_args[0][1] == "declare_winner"
+        assert mock_audit.call_args[0][1] == "DECLARE_WINNER"
