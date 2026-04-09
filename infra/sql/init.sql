@@ -852,3 +852,40 @@ CREATE INDEX IF NOT EXISTS idx_match_players_user_id
 CREATE INDEX IF NOT EXISTS idx_matches_status_ended_at
     ON matches(status, ended_at)
     WHERE ended_at IS NOT NULL;
+
+-- ── Migration 022 — TOTP / 2FA columns on users ──────────────────────────────
+-- TODO[GOOGLE]: ADD COLUMN IF NOT EXISTS google_id VARCHAR(100) UNIQUE DEFAULT NULL,
+--               ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(20) NOT NULL DEFAULT 'email'
+-- ^ Add these when Google OAuth is ready (next week). Do NOT add them now.
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS totp_secret VARCHAR(64) DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- ── Migration 023 — deleted_accounts (soft-delete / re-register guard) ─────
+CREATE TABLE IF NOT EXISTS deleted_accounts (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    steam_id       VARCHAR(30),
+    riot_id        VARCHAR(30),
+    wallet_address VARCHAR(255),
+    email_hash     VARCHAR(64),
+    username_hash  VARCHAR(64),
+    deleted_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    flag_reason    TEXT DEFAULT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_deleted_accounts_steam ON deleted_accounts(steam_id);
+CREATE INDEX IF NOT EXISTS idx_deleted_accounts_riot  ON deleted_accounts(riot_id);
+CREATE INDEX IF NOT EXISTS idx_deleted_accounts_wallet ON deleted_accounts(wallet_address);
+
+-- ── Migration 024 — report_attachments (support ticket files) ───────────────
+CREATE TABLE IF NOT EXISTS report_attachments (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ticket_id    UUID NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+    filename     VARCHAR(255) NOT NULL,
+    content_type VARCHAR(50)  NOT NULL,
+    file_path    TEXT         NOT NULL,
+    file_size    INTEGER      NOT NULL,
+    uploaded_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    uploaded_by  UUID REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_report_attachments_ticket ON report_attachments(ticket_id);
