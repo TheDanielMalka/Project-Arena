@@ -1,9 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import Leaderboard from "@/pages/Leaderboard";
 
 // PlayerActionPopover uses useNavigate → tests must wrap in MemoryRouter
+
+
+vi.mock("@/lib/engine-api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/engine-api")>();
+  return {
+    ...actual,
+    apiGetLeaderboard: vi.fn().mockResolvedValue([
+      { id: "u1", arenaId: "ARENA-001", rank: 1, username: "ShadowKing", wins: 120, losses: 20, winRate: 85.7, earnings: 5000, streak: 10, change: "up",   game: "CS2" },
+      { id: "u2", arenaId: "ARENA-002", rank: 2, username: "PixelStorm",  wins: 100, losses: 30, winRate: 76.9, earnings: 3800, streak:  5, change: "same", game: "CS2" },
+      { id: "u3", arenaId: "ARENA-003", rank: 3, username: "BlazeFury",   wins:  90, losses: 40, winRate: 69.2, earnings: 3000, streak:  3, change: "down", game: "CS2" },
+    ]),
+  };
+});
 
 describe("Leaderboard page", () => {
   it("updates top quick stats when a different podium player is clicked", async () => {

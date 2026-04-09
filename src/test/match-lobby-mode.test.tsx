@@ -23,6 +23,18 @@ vi.mock("@/hooks/useMatchPolling", () => ({
   useMatchPolling: () => ({ pollNow: vi.fn(), resetEngineCheck: vi.fn() }),
 }));
 
+vi.mock("@/hooks/useActiveRoomServerSync", () => ({
+  useActiveRoomServerSync: () => undefined,
+}));
+
+vi.mock("@/lib/engine-api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/engine-api")>();
+  return {
+    ...actual,
+    apiGetMe: vi.fn().mockResolvedValue(null),
+  };
+});
+
 const SEED_MATCHES = MATCH_STORE_TEST_FIXTURE;
 
 function renderLobby() {
