@@ -392,7 +392,7 @@ const MatchLobby = () => {
     void apiGetMe(token).then((me) => {
       if (!me) return;
       setDailyAtStaked(me.daily_staked_at ?? 0);
-      setDailyAtLimit(me.daily_limit_at ?? 500);
+      setDailyAtLimit(me.daily_limit_at ?? 50000);
     });
   }, [createMode, createStakeCurrency, token]);
 
