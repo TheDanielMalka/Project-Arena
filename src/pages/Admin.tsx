@@ -301,7 +301,7 @@ const Admin = () => {
           resolutionNote || `Admin resolved dispute ${selectedDispute.id}`,
         );
         if (!r.ok) {
-          toast({ title: "Error", description: r.detail || "Failed to declare winner", variant: "destructive" });
+          toast({ title: "Error", description: ('detail' in r ? r.detail : null) || "Failed to declare winner", variant: "destructive" });
           return;
         }
       }
@@ -325,7 +325,7 @@ const Admin = () => {
     if (!token) return;
     const r = await apiAdminIssuePenalty(token, u.id, "manual_ban", `Admin escalation for ${u.username}`);
     if (!r.ok) {
-      toast({ title: "Error", description: r.detail || "Failed to apply penalty", variant: "destructive" });
+      toast({ title: "Error", description: ('detail' in r ? r.detail : null) || "Failed to apply penalty", variant: "destructive" });
       setBanTarget(null);
       return;
     }
@@ -356,7 +356,7 @@ const Admin = () => {
     const next = !platform.killSwitchActive;
     const r = await apiAdminFreeze(token, next);
     if (!r.ok) {
-      toast({ title: "Error", description: r.detail || "Failed to toggle freeze", variant: "destructive" });
+      toast({ title: "Error", description: ('detail' in r ? r.detail : null) || "Failed to toggle freeze", variant: "destructive" });
       setKillConfirm(false);
       return;
     }
@@ -386,7 +386,7 @@ const Admin = () => {
     });
     setPlatformSaving(false);
     if (!r.ok) {
-      toast({ title: "Error", description: r.detail || "Failed to save settings", variant: "destructive" });
+      toast({ title: "Error", description: ('detail' in r ? r.detail : null) || "Failed to save settings", variant: "destructive" });
       return;
     }
     void loadAuditLog();
@@ -400,7 +400,7 @@ const Admin = () => {
     const r = await apiAdminGetFraudReport(token);
     setFraudLoading(false);
     if (!r.ok) {
-      toast({ title: "Error", description: r.detail || "Failed to load fraud report", variant: "destructive" });
+      toast({ title: "Error", description: ('detail' in r ? r.detail : null) || "Failed to load fraud report", variant: "destructive" });
       return;
     }
     setFraudReport(r);
@@ -413,7 +413,7 @@ const Admin = () => {
     const r = await apiAdminOracleStatus(token);
     setOracleLoading(false);
     if (r.ok) setOracleStatus(r);
-    else toast({ title: "Error", description: r.detail || "Failed to fetch oracle status", variant: "destructive" });
+    else toast({ title: "Error", description: ('detail' in r ? r.detail : null) || "Failed to fetch oracle status", variant: "destructive" });
   };
 
   const handleOracleSync = async () => {
@@ -423,7 +423,7 @@ const Admin = () => {
     const r = await apiAdminOracleSync(token, from);
     setSyncLoading(false);
     if (!r.ok) {
-      toast({ title: "Sync Failed", description: r.detail || "Oracle sync error", variant: "destructive" });
+      toast({ title: "Sync Failed", description: ('detail' in r ? r.detail : null) || "Oracle sync error", variant: "destructive" });
       return;
     }
     toast({ title: "Oracle Synced", description: `${r.events_processed} events from block ${r.from_block} → ${r.to_block}` });
