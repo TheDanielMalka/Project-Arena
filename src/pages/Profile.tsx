@@ -1137,8 +1137,12 @@ const Profile = () => {
           {pickerMode === "avatar" && avatarTab === "event" && (
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
               {EVENT_AVATAR_PRESETS.map((p) => {
-                const unlocked = p.id === sampleEventUnlockedId;
                 const key = avatarPresetKey(p.id);
+                const forgeItem = SEED_ITEMS.find(
+                  (i) => i.category === "avatar" && i.icon === `preset:${p.id}`,
+                );
+                const unlocked =
+                  (!!forgeItem && ownsForgeItem(forgeItem.id)) || selectedAvatar === key;
                 const selected = draftAvatar === key;
                 return (
                   <button
