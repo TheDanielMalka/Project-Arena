@@ -123,15 +123,18 @@ class TestDailyStakeLimit:
     """Daily AT stake limit — enforced in create_match via _check_daily_stake_limit.
 
     Architecture: limit is stored in _at_daily_limit (in-memory, loaded from
-    platform_settings at startup). _check_daily_stake_limit reads _at_daily_limit
-    directly + makes ONE DB call to sum today's transactions.
+    platform_config at startup). _check_daily_stake_limit reads _at_daily_limit
+    directly + makes ONE DB call to sum today's COMPLETED matches.
+
+    Key behavior: opening and cancelling a room does NOT consume the daily limit.
+    Only matches with status='completed' count against the 24h cap.
 
     create_match DB call order through SessionLocal:
       1. user lookup (steam_id, riot_id, wallet_address)
       2. active room check
       3. _assert_not_suspended → player_penalties
       4. _assert_at_balance → at_balance
-      5. _get_daily_staked → transactions SUM  (ONE DB call for the limit check)
+      5. _get_daily_staked → completed matches SUM  (ONE DB call for the limit check)
 
     Limit is controlled by patching main._at_daily_limit.
     """
@@ -193,14 +196,14 @@ class TestDailyStakeLimit:
         assert resp.status_code in (201, 200)
 
     def test_limit_resets_after_24h(self):
-        """SUM query returns 0 (txns older than 24h excluded by SQL WHERE) → stake passes."""
+        """SUM query returns 0 (completed matches older than 24h excluded) → stake passes."""
         session = MagicMock()
         session.execute.return_value.fetchone.side_effect = [
             self._user_row(),
             None,                      # no active room
             None,                      # no penalty
             (1000,),                   # AT balance
-            (0,),                      # _get_daily_staked ← 0 (old txns excluded)
+            (0,),                      # _get_daily_staked ← 0 (old matches excluded)
             (str(uuid.uuid4()),),
         ]
         ctx = MagicMock()
@@ -213,6 +216,38 @@ class TestDailyStakeLimit:
                 headers=_USER_HEADERS,
             )
         assert resp.status_code in (201, 200)
+
+    def test_cancelled_match_does_not_count_against_limit(self):
+        """
+        Opening and cancelling a room must NOT consume the daily limit.
+        _get_daily_staked() only sums status='completed' matches — cancelled
+        rooms return 0 even if AT was locked during the session.
+        """
+        # Simulate: user cancelled a 400 AT match earlier today.
+        # _get_daily_staked returns 0 because that match is 'cancelled', not 'completed'.
+        session = MagicMock()
+        session.execute.return_value.fetchone.side_effect = [
+            self._user_row(),
+            None,                      # no active room
+            None,                      # no penalty
+            (1000,),                   # AT balance
+            (0,),                      # _get_daily_staked ← 0 (cancelled match excluded)
+            (str(uuid.uuid4()),),      # INSERT match RETURNING id
+        ]
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=session)
+        ctx.__exit__  = MagicMock(return_value=False)
+        with patch("main._at_daily_limit", 500), \
+             patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/matches",
+                json={"game": "CS2", "stake_amount": 400, "stake_currency": "AT"},
+                headers=_USER_HEADERS,
+            )
+        # Should succeed — cancelled match does not count
+        assert resp.status_code in (201, 200), (
+            f"Expected 201/200 but got {resp.status_code}: {resp.json()}"
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

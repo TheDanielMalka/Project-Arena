@@ -2180,18 +2180,25 @@ def _get_daily_limit(_session=None) -> int:
 
 def _get_daily_staked(session, user_id: str) -> int:
     """
-    Sum of AT staked (escrow_lock) in the last 24 hours for this user.
-    CONTRACT-ready: when Phase 6 deploys, also sum crypto_escrow_lock type.
+    Sum of AT bet_amount in COMPLETED matches in the last 24 hours for this user.
+
+    Only status='completed' matches count — cancelled / in-progress rooms are excluded.
+    This means opening and cancelling a lobby does NOT consume the daily limit.
+    The limit is consumed only when a match finishes (win or loss).
+
+    DB-ready: uses matches JOIN match_players.
+    CONTRACT-ready Phase 6: extend with stake_currency='CRYPTO' when on-chain.
     """
     try:
         row = session.execute(
             text(
-                "SELECT COALESCE(SUM(ABS(amount)), 0) FROM transactions "
-                "WHERE user_id = :uid "
-                "  AND type = 'escrow_lock' "
-                "  AND created_at > NOW() - INTERVAL '24 hours'"
-                # CONTRACT-ready Phase 6: add OR type = 'crypto_escrow_lock'
-                # only after that enum value is added to tx_type in the DB.
+                "SELECT COALESCE(SUM(m.bet_amount), 0) "
+                "FROM matches m "
+                "JOIN match_players mp ON mp.match_id = m.id "
+                "WHERE mp.user_id = :uid "
+                "  AND m.stake_currency = 'AT' "
+                "  AND m.status = 'completed' "
+                "  AND m.ended_at > NOW() - INTERVAL '24 hours'"
             ),
             {"uid": user_id},
         ).fetchone()
