@@ -796,25 +796,35 @@ export async function apiWithdrawAT(
   }
 }
 
-export type ApiJoinMatchSuccess = { joined: boolean; match_id: string; game: string };
+export type ApiJoinMatchSuccess = {
+  joined: boolean;
+  match_id: string;
+  game: string;
+  stake_currency?: string;
+  team?: "A" | "B" | null;
+  started?: boolean;
+};
 
 /** POST /matches/{match_id}/join — Bearer auth */
 export async function apiJoinMatch(
   token: string,
   matchId: string,
-  opts?: { password?: string },
+  opts?: { password?: string; team?: "A" | "B" | null },
 ): Promise<{ ok: true; data: ApiJoinMatchSuccess } | { ok: false; status: number; detail: string | null }> {
   try {
     const password = opts?.password?.trim();
+    const team = opts?.team ?? undefined;
+    const bodyFields: Record<string, unknown> = {};
+    if (password) bodyFields[MATCH_JOIN_PASSWORD_FIELD] = password;
+    if (team) bodyFields.team = team;
+    const hasBody = Object.keys(bodyFields).length > 0;
     const res = await arenaUserFetch(
       `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/join`,
       token,
       {
         method: "POST",
-        headers: password ? { "Content-Type": "application/json" } : undefined,
-        body: password
-          ? JSON.stringify({ [MATCH_JOIN_PASSWORD_FIELD]: password })
-          : undefined,
+        headers: hasBody ? { "Content-Type": "application/json" } : undefined,
+        body: hasBody ? JSON.stringify(bodyFields) : undefined,
       },
     );
     const raw = (await res.json().catch(() => ({}))) as {
@@ -822,6 +832,9 @@ export async function apiJoinMatch(
       joined?: boolean;
       match_id?: string;
       game?: string;
+      stake_currency?: string;
+      team?: unknown;
+      started?: boolean;
     };
     if (!res.ok) {
       return {
@@ -830,16 +843,197 @@ export async function apiJoinMatch(
         detail: parseFastApiDetail(raw.detail),
       };
     }
+    const rawTeam = String(raw.team ?? "").toUpperCase();
+    const serverTeam: "A" | "B" | null = rawTeam === "A" ? "A" : rawTeam === "B" ? "B" : null;
     return {
       ok: true as const,
       data: {
         joined: !!raw.joined,
         match_id: String(raw.match_id ?? matchId),
         game: String(raw.game ?? ""),
+        stake_currency: raw.stake_currency ? String(raw.stake_currency) : undefined,
+        team: serverTeam,
+        started: !!raw.started,
       },
     };
   } catch {
     return { ok: false as const, status: 0, detail: null };
+  }
+}
+
+// ── Heartbeat ─────────────────────────────────────────────────────────────────
+
+export type HeartbeatPlayer = {
+  user_id: string;
+  username: string;
+  team: "A" | "B" | null;
+  joined_at: string;
+};
+
+export type HeartbeatResponse = {
+  in_match: boolean;
+  match_id: string;
+  status: string;
+  game: string;
+  mode: string;
+  code: string;
+  max_players: number;
+  max_per_team: number;
+  host_id: string;
+  type: string;
+  bet_amount: number;
+  stake_currency: string;
+  created_at: string;
+  your_user_id: string;
+  your_team: "A" | "B" | null;
+  stale_removed: boolean;
+  players: HeartbeatPlayer[];
+};
+
+/**
+ * POST /matches/{matchId}/heartbeat — keep-alive + roster sync.
+ * Returns HeartbeatResponse or null (network error / non-2xx).
+ */
+export async function apiMatchHeartbeat(
+  token: string,
+  matchId: string,
+  body: { game: string; mode: string; code: string },
+): Promise<HeartbeatResponse | null> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8_000);
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/heartbeat`,
+      token,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      },
+    );
+    clearTimeout(tid);
+    if (!res.ok) return null;
+    const raw = (await res.json().catch(() => null)) as HeartbeatResponse | null;
+    if (!raw || typeof raw !== "object") return null;
+
+    const rawTeam = String((raw as Record<string, unknown>).your_team ?? "").toUpperCase();
+    const yourTeam: "A" | "B" | null = rawTeam === "A" ? "A" : rawTeam === "B" ? "B" : null;
+
+    const players: HeartbeatPlayer[] = Array.isArray(raw.players)
+      ? raw.players.map((p) => {
+          const o = p as Record<string, unknown>;
+          const pt = String(o.team ?? "").toUpperCase();
+          return {
+            user_id: String(o.user_id ?? ""),
+            username: String(o.username ?? ""),
+            team: pt === "A" ? "A" : pt === "B" ? "B" : null,
+            joined_at: String(o.joined_at ?? ""),
+          };
+        })
+      : [];
+
+    return {
+      ...raw,
+      your_team: yourTeam,
+      players,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ── Kick ──────────────────────────────────────────────────────────────────────
+
+/**
+ * POST /matches/{matchId}/kick — host removes a player from a waiting match.
+ * 403 → only host can kick; 409 → cannot kick from active match.
+ */
+export async function apiKickPlayer(
+  token: string,
+  matchId: string,
+  userId: string,
+): Promise<{ ok: true } | { ok: false; status: number; detail: string }> {
+  try {
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/kick`,
+      token,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId }),
+      },
+    );
+    if (res.status === 429) {
+      return { ok: false as const, status: 429, detail: "Too many requests — please wait a moment and try again" };
+    }
+    if (res.status === 403) {
+      return { ok: false as const, status: 403, detail: "Only the host can kick players" };
+    }
+    if (res.status === 409) {
+      return { ok: false as const, status: 409, detail: "Cannot kick from an active match" };
+    }
+    if (!res.ok) {
+      const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
+      return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) ?? "Kick failed" };
+    }
+    return { ok: true as const };
+  } catch {
+    return { ok: false as const, status: 0, detail: "Network error" };
+  }
+}
+
+// ── Notification respond ──────────────────────────────────────────────────────
+
+export type NotificationRespondResult = {
+  action: string;
+  match_id?: string;
+  code?: string;
+  game?: string;
+  bet_amount?: number;
+  stake_currency?: string;
+  mode?: string;
+  max_players?: number;
+  max_per_team?: number;
+  inviter_username?: string;
+} | null;
+
+/**
+ * POST /notifications/{notificationId}/respond — accept or decline an invite notification.
+ * On accept: returns match metadata needed to join + navigate.
+ */
+export async function apiRespondToNotification(
+  token: string,
+  notificationId: string,
+  action: "accept" | "decline",
+): Promise<NotificationRespondResult> {
+  try {
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/notifications/${encodeURIComponent(notificationId)}/respond`,
+      token,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      },
+    );
+    if (!res.ok) return null;
+    const raw = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!raw) return null;
+    return {
+      action: String(raw.action ?? action),
+      match_id: raw.match_id ? String(raw.match_id) : undefined,
+      code: raw.code ? String(raw.code) : undefined,
+      game: raw.game ? String(raw.game) : undefined,
+      bet_amount: typeof raw.bet_amount === "number" ? raw.bet_amount : undefined,
+      stake_currency: raw.stake_currency ? String(raw.stake_currency) : undefined,
+      mode: raw.mode ? String(raw.mode) : undefined,
+      max_players: typeof raw.max_players === "number" ? raw.max_players : undefined,
+      max_per_team: typeof raw.max_per_team === "number" ? raw.max_per_team : undefined,
+      inviter_username: raw.inviter_username ? String(raw.inviter_username) : undefined,
+    };
+  } catch {
+    return null;
   }
 }
 
