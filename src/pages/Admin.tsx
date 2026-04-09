@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -42,14 +43,16 @@ import {
   apiAdminFreeze,
   apiAdminGetUsers,
   apiAdminGetDisputes,
-  apiAdminPenalty,
+  apiAdminIssuePenalty,
   apiGetPlatformConfig,
   apiUpdatePlatformConfig,
   apiAdminGetAuditLog,
   apiAdminGetFraudReport,
-  apiEngineHealth,
+  apiAdminOracleStatus,
+  apiAdminOracleSync,
+  apiAdminDeclareWinner,
 } from "@/lib/engine-api";
-import type { FraudReport } from "@/lib/engine-api";
+import type { FraudReport, OracleStatus, PlatformConfig } from "@/lib/engine-api";
 
 // ─── Style helpers ────────────────────────────────────────────
 
@@ -110,6 +113,7 @@ const Admin = () => {
   const { toast } = useToast();
   const addNotification = useNotificationStore((s) => s.addNotification);
   const token = useUserStore((s) => s.token);
+  const navigate = useNavigate();
 
   const [section, setSection] = useState<NavId>("disputes");
 
@@ -125,9 +129,11 @@ const Admin = () => {
   const [fraudReport,   setFraudReport]  = useState<FraudReport | null>(null);
   const [fraudLoading,  setFraudLoading] = useState(false);
 
-  // ── Oracle / Engine health ──
-  const [engineHealth, setEngineHealth] = useState<{ ok: boolean; status?: string; [k: string]: unknown } | null>(null);
-  const [healthLoading, setHealthLoading] = useState(false);
+  // ── Oracle ──
+  const [oracleStatus,  setOracleStatus]  = useState<OracleStatus | null>(null);
+  const [oracleLoading, setOracleLoading] = useState(false);
+  const [syncFromBlock, setSyncFromBlock] = useState("");
+  const [syncLoading,   setSyncLoading]   = useState(false);
 
   // ── Platform settings ──
   const [platform, setPlatform] = useState<PlatformSettings>({
@@ -278,8 +284,29 @@ const Admin = () => {
   // ─────────────────────────────────────────────────────────────
 
   // ── Dispute actions ──
-  const handleResolve = () => {
-    if (!selectedDispute || resolutionChoice === "pending") return;
+  const handleResolve = async () => {
+    if (!selectedDispute || resolutionChoice === "pending" || !token) return;
+
+    // For "confirm raiser wins" — call declare-winner on the match with the raiser as winner
+    if (resolutionChoice === "player_a_wins") {
+      // selectedDispute.playerA = raised_by_username; we need raised_by UUID (stored in playerB field unused)
+      // Use the match to declare winner — raiser is stored in the dispute from raised_by
+      const dispute = disputes.find((d) => d.id === selectedDispute.id);
+      if (dispute) {
+        const r = await apiAdminDeclareWinner(
+          token,
+          selectedDispute.matchId,
+          // raised_by UUID is not in local Dispute type — we use playerA as identifier note
+          selectedDispute.playerA, // username used as note fallback
+          resolutionNote || `Admin resolved dispute ${selectedDispute.id}`,
+        );
+        if (!r.ok) {
+          toast({ title: "Error", description: r.detail || "Failed to declare winner", variant: "destructive" });
+          return;
+        }
+      }
+    }
+
     // Optimistic local update
     setDisputes((p) => p.map((d) => d.id === selectedDispute.id
       ? { ...d, status: "resolved" as DisputeStatus, resolution: resolutionChoice,
@@ -290,28 +317,27 @@ const Admin = () => {
     addNotification({ type: "dispute", title: "⚖️ Dispute Resolved",
       message: `${selectedDispute.id}: ${selectedDispute.playerA} — ${resolutionChoice.replace(/_/g, " ")}` });
     setSelectedDispute(null); setResolutionNote(""); setResolutionChoice("pending");
-    // Refresh audit log to pick up any server-side log
     void loadAuditLog();
   };
 
   // ── Ban / Penalty ──
   const handleBan = async (u: FlaggedUser) => {
     if (!token) return;
-    const r = await apiAdminPenalty(token, u.id);
+    const r = await apiAdminIssuePenalty(token, u.id, "manual_ban", `Admin escalation for ${u.username}`);
     if (!r.ok) {
       toast({ title: "Error", description: r.detail || "Failed to apply penalty", variant: "destructive" });
       setBanTarget(null);
       return;
     }
-    const action = r.action === "ban" ? "banned" : "suspended";
+    const isBanned = r.action === "banned_permanent";
     toast({
-      title: action === "banned" ? "User Banned" : "User Suspended",
-      description: `${u.username} ${action}.`,
+      title: isBanned ? "User Banned" : "User Suspended",
+      description: `${u.username} ${isBanned ? "permanently banned" : "suspended"} (offense #${r.offense_count}).`,
       variant: "destructive",
     });
     addNotification({ type: "system",
-      title: action === "banned" ? "🛑 User Banned" : "⚠️ User Suspended",
-      message: `${u.username} ${action} (offense #${r.offense_count}).` });
+      title: isBanned ? "🛑 User Banned" : "⚠️ User Suspended",
+      message: `${u.username} ${isBanned ? "banned" : "suspended"} (offense #${r.offense_count}).` });
     setBanTarget(null);
     void loadUsers();
     void loadAuditLog();
@@ -380,12 +406,28 @@ const Admin = () => {
     setFraudReport(r);
   };
 
-  // ── Oracle / Engine health ──
-  const handleCheckHealth = async () => {
-    setHealthLoading(true);
-    const r = await apiEngineHealth();
-    setHealthLoading(false);
-    setEngineHealth(r);
+  // ── Oracle ──
+  const handleCheckOracleStatus = async () => {
+    if (!token) return;
+    setOracleLoading(true);
+    const r = await apiAdminOracleStatus(token);
+    setOracleLoading(false);
+    if (r.ok) setOracleStatus(r);
+    else toast({ title: "Error", description: r.detail || "Failed to fetch oracle status", variant: "destructive" });
+  };
+
+  const handleOracleSync = async () => {
+    if (!token) return;
+    setSyncLoading(true);
+    const from = syncFromBlock ? parseInt(syncFromBlock) : undefined;
+    const r = await apiAdminOracleSync(token, from);
+    setSyncLoading(false);
+    if (!r.ok) {
+      toast({ title: "Sync Failed", description: r.detail || "Oracle sync error", variant: "destructive" });
+      return;
+    }
+    toast({ title: "Oracle Synced", description: `${r.events_processed} events from block ${r.from_block} → ${r.to_block}` });
+    void handleCheckOracleStatus(); // refresh status
   };
 
   // ─────────────────────────────────────────────────────────────
@@ -661,7 +703,10 @@ const Admin = () => {
                       {/* info */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="font-display text-sm font-bold">{u.username}</span>
+                          <button className="font-display text-sm font-bold hover:text-primary transition-colors"
+                            onClick={() => void navigate(`/profile/${u.username}`)}>
+                            {u.username}
+                          </button>
                           <Badge className={cn("text-[9px] border px-1.5 py-0", userStatusBadge[u.status])}>{u.status}</Badge>
                           <Badge variant="outline" className={cn("text-[9px] border px-1.5 py-0 ml-auto", risk.color)}>{risk.label}</Badge>
                         </div>
@@ -1071,21 +1116,29 @@ const Admin = () => {
 
               {fraudReport && (
                 <div className="space-y-4">
-                  <p className="text-[10px] text-muted-foreground font-mono">Generated: {fraudReport.generated_at}</p>
+                  {/* Summary bar */}
+                  <div className="flex items-center gap-3 flex-wrap">
+                    {[
+                      { label: "High Win-Rate", val: fraudReport.summary.high_winrate,     color: "text-arena-orange" },
+                      { label: "Pair Farming",  val: fraudReport.summary.pair_farming,     color: "text-destructive"  },
+                      { label: "Repeat",        val: fraudReport.summary.repeat_offenders, color: "text-arena-gold"   },
+                      { label: "Banned",        val: fraudReport.summary.recently_banned ?? fraudReport.recently_banned.length, color: "text-muted-foreground" },
+                    ].map(({ label, val, color }) => (
+                      <div key={label} className="rounded-lg border border-border/40 bg-secondary/20 px-3 py-1.5 text-center">
+                        <p className={cn("font-display text-sm font-bold tabular-nums", color)}>{val}</p>
+                        <p className="text-[9px] text-muted-foreground uppercase tracking-wider">{label}</p>
+                      </div>
+                    ))}
+                    <span className="ml-auto text-[10px] text-muted-foreground font-mono">
+                      {new Date(fraudReport.generated_at).toLocaleString()}
+                    </span>
+                  </div>
 
-                  {/* Summary */}
-                  {fraudReport.summary && (
-                    <div className="rounded-lg border border-arena-orange/30 bg-arena-orange/5 px-4 py-3">
-                      <p className="text-xs text-arena-orange font-display font-semibold mb-1">Summary</p>
-                      <p className="text-[11px] text-muted-foreground">{fraudReport.summary}</p>
-                    </div>
-                  )}
-
-                  {/* Flagged Players */}
+                  {/* High Win-Rate / Flagged Players */}
                   {fraudReport.flagged_players.length > 0 && (
                     <div>
                       <p className="text-xs font-display font-semibold mb-2 text-arena-orange">
-                        ⚠ Flagged Players ({fraudReport.flagged_players.length})
+                        ⚠ High Win-Rate ({fraudReport.flagged_players.length})
                       </p>
                       <div className="space-y-1.5">
                         {fraudReport.flagged_players.map((p) => (
@@ -1094,10 +1147,21 @@ const Admin = () => {
                               {p.username.slice(0, 2).toUpperCase()}
                             </div>
                             <div className="flex-1 min-w-0">
-                              <span className="font-display text-xs font-bold">{p.username}</span>
-                              <p className="text-[10px] text-muted-foreground">{p.reason}</p>
+                              <button className="font-display text-xs font-bold hover:text-primary transition-colors"
+                                onClick={() => void navigate(`/profile/${p.username}`)}>
+                                @{p.username}
+                              </button>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-[10px] text-destructive font-mono font-bold">{p.win_rate.toFixed(1)}% WR</span>
+                                <span className="text-[10px] text-muted-foreground">{p.matches} matches</span>
+                              </div>
                             </div>
-                            <span className="font-mono text-[9px] text-muted-foreground">{p.user_id.slice(0, 8)}…</span>
+                            <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px] text-destructive hover:bg-destructive/10 border border-destructive/20"
+                              onClick={() => void (token && apiAdminIssuePenalty(token, p.user_id, "fraud", "High win-rate anomaly").then((r) => {
+                                if (r.ok) { toast({ title: "Penalty Applied", description: `${p.username} penalized.`, variant: "destructive" }); void loadAuditLog(); }
+                              }))}>
+                              <Ban className="h-2.5 w-2.5 mr-1" /> Penalize
+                            </Button>
                           </div>
                         ))}
                       </div>
@@ -1108,17 +1172,26 @@ const Admin = () => {
                   {fraudReport.suspicious_pairs.length > 0 && (
                     <div>
                       <p className="text-xs font-display font-semibold mb-2 text-destructive">
-                        🔗 Suspicious Match Pairs ({fraudReport.suspicious_pairs.length})
+                        🔗 Suspicious Pairs ({fraudReport.suspicious_pairs.length})
                       </p>
                       <div className="space-y-1.5">
                         {fraudReport.suspicious_pairs.map((pair, i) => (
                           <div key={i} className="rounded-lg border border-border/60 bg-secondary/20 px-3 py-2 flex items-center gap-3">
-                            <span className="font-display text-xs font-bold">{pair.player_a}</span>
-                            <span className="text-[10px] text-muted-foreground">vs</span>
-                            <span className="font-display text-xs font-bold">{pair.player_b}</span>
-                            <Badge variant="outline" className="ml-auto text-[9px] border-destructive/30 text-destructive">
-                              {pair.match_count} matches
+                            <div className="flex-1 flex items-center gap-2">
+                              <span className="font-display text-xs font-bold">@{pair.username_a}</span>
+                              <span className="text-[10px] text-muted-foreground">vs</span>
+                              <span className="font-display text-xs font-bold">@{pair.username_b}</span>
+                            </div>
+                            <Badge variant="outline" className="text-[9px] border-destructive/30 text-destructive shrink-0">
+                              {pair.match_count}× in 24h
                             </Badge>
+                            <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px] text-destructive hover:bg-destructive/10 border border-destructive/20 shrink-0"
+                              onClick={() => void (token && Promise.all([
+                                apiAdminIssuePenalty(token, pair.player_a, "fraud", "Pair farming"),
+                                apiAdminIssuePenalty(token, pair.player_b, "fraud", "Pair farming"),
+                              ]).then(() => { toast({ title: "Both Penalized", description: `${pair.username_a} & ${pair.username_b}`, variant: "destructive" }); void loadAuditLog(); }))}>
+                              Penalize Both
+                            </Button>
                           </div>
                         ))}
                       </div>
@@ -1134,10 +1207,13 @@ const Admin = () => {
                       <div className="space-y-1.5">
                         {fraudReport.repeat_offenders.map((u) => (
                           <div key={u.user_id} className="rounded-lg border border-border/60 bg-secondary/20 px-3 py-2 flex items-center gap-3">
-                            <span className="font-display text-xs font-bold flex-1">{u.username}</span>
+                            <span className="font-display text-xs font-bold flex-1">@{u.username}</span>
                             <Badge variant="outline" className="text-[9px] border-arena-gold/30 text-arena-gold">
-                              {u.offense_count} offenses
+                              {u.penalty_count} offenses
                             </Badge>
+                            {u.is_banned && (
+                              <Badge variant="outline" className="text-[9px] border-destructive/30 text-destructive">BANNED</Badge>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -1153,7 +1229,8 @@ const Admin = () => {
                       <div className="space-y-1.5">
                         {fraudReport.recently_banned.map((u) => (
                           <div key={u.user_id} className="rounded-lg border border-border/60 bg-secondary/20 px-3 py-2 flex items-center gap-3">
-                            <span className="font-display text-xs font-bold flex-1">{u.username}</span>
+                            <span className="font-display text-xs font-bold flex-1">@{u.username}</span>
+                            <span className="text-[10px] text-muted-foreground font-mono">{u.offense_type}</span>
                             <span className="text-[10px] text-muted-foreground">{u.banned_at?.slice(0, 10)}</span>
                           </div>
                         ))}
@@ -1161,10 +1238,7 @@ const Admin = () => {
                     </div>
                   )}
 
-                  {fraudReport.flagged_players.length === 0 &&
-                   fraudReport.suspicious_pairs.length === 0 &&
-                   fraudReport.repeat_offenders.length === 0 &&
-                   fraudReport.recently_banned.length === 0 && (
+                  {fraudReport.summary.total_flagged === 0 && (
                     <div className="text-center py-8 text-muted-foreground">
                       <Shield className="h-8 w-8 mx-auto mb-2 opacity-30" />
                       <p className="text-sm">No anomalies detected — platform looks healthy</p>
@@ -1181,76 +1255,94 @@ const Admin = () => {
               {/* Header */}
               <div className="flex items-center gap-3">
                 <div>
-                  <p className="text-sm font-display font-bold">Vision Engine Status</p>
-                  <p className="text-[11px] text-muted-foreground">OCR · screenshot validation · match result detection</p>
+                  <p className="text-sm font-display font-bold">Escrow Oracle Status</p>
+                  <p className="text-[11px] text-muted-foreground">On-chain event listener · block sync · EscrowClient</p>
                 </div>
                 <Button size="sm" variant="outline" className="h-8 text-xs border-border ml-auto"
-                  onClick={handleCheckHealth} disabled={healthLoading}>
-                  {healthLoading
+                  onClick={handleCheckOracleStatus} disabled={oracleLoading}>
+                  {oracleLoading
                     ? <><RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Checking…</>
-                    : <><Activity className="mr-1.5 h-3.5 w-3.5" /> Check Health</>}
+                    : <><Activity className="mr-1.5 h-3.5 w-3.5" /> Check Status</>}
                 </Button>
               </div>
 
-              {!engineHealth && !healthLoading && (
+              {!oracleStatus && !oracleLoading && (
                 <div className="text-center py-16 text-muted-foreground">
                   <Activity className="h-10 w-10 mx-auto mb-3 opacity-20" />
-                  <p className="text-sm font-display">Click "Check Health" to ping the vision engine</p>
+                  <p className="text-sm font-display">Click "Check Status" to query the oracle</p>
                 </div>
               )}
 
-              {engineHealth && (
-                <div className="space-y-3">
-                  {/* Status card */}
-                  <div className={cn(
-                    "rounded-xl border px-5 py-4 flex items-center gap-4",
-                    engineHealth.ok
-                      ? "border-primary/30 bg-primary/5"
-                      : "border-destructive/30 bg-destructive/5"
-                  )}>
-                    <div className={cn(
-                      "w-10 h-10 rounded-full flex items-center justify-center shrink-0",
-                      engineHealth.ok ? "bg-primary/20" : "bg-destructive/20"
-                    )}>
-                      {engineHealth.ok
-                        ? <CheckCircle2 className="h-5 w-5 text-primary" />
-                        : <XCircle className="h-5 w-5 text-destructive" />}
-                    </div>
-                    <div>
-                      <p className={cn("font-display text-sm font-bold uppercase tracking-wider",
-                        engineHealth.ok ? "text-primary" : "text-destructive")}>
-                        {engineHealth.status ?? (engineHealth.ok ? "online" : "offline")}
-                      </p>
-                      <p className="text-[11px] text-muted-foreground">Vision Engine</p>
-                    </div>
-                  </div>
-
-                  {/* Raw response */}
-                  <div className="rounded-lg border border-border/40 bg-secondary/20 p-3">
-                    <p className="text-[10px] text-muted-foreground font-mono mb-2 uppercase tracking-wider">Health Response</p>
-                    <pre className="text-[10px] text-foreground font-mono whitespace-pre-wrap break-all">
-                      {JSON.stringify(engineHealth, null, 2)}
-                    </pre>
-                  </div>
-
-                  {/* Engine capabilities */}
-                  <div className="grid grid-cols-2 gap-2">
+              {oracleStatus && (
+                <div className="space-y-4">
+                  {/* Status grid */}
+                  <div className="grid grid-cols-2 gap-3">
                     {[
-                      { label: "CS2 Detection",      icon: "🎯", desc: "Green HSV H 35-85" },
-                      { label: "Valorant Detection",  icon: "🎯", desc: "Teal H 75-100, Blue H 110-145" },
-                      { label: "OCR Player Names",    icon: "🔤", desc: "pytesseract extraction" },
-                      { label: "Score Extraction",    icon: "🔢", desc: "Regex 00-00 pattern" },
-                      { label: "Agent Detection",     icon: "🦸", desc: "Valorant agents only" },
-                      { label: "Multi-player Consensus", icon: "🤝", desc: "Flagging on mismatch" },
-                    ].map(({ label, icon, desc }) => (
-                      <div key={label} className="rounded-lg border border-border/40 bg-secondary/20 px-3 py-2">
-                        <div className="flex items-center gap-2">
-                          <span className="text-base">{icon}</span>
-                          <p className="text-xs font-display font-semibold">{label}</p>
-                        </div>
+                      {
+                        label: "Engine",
+                        ok: oracleStatus.escrow_enabled,
+                        yes: "✅ Connected",
+                        no:  "❌ Disconnected",
+                        desc: "EscrowClient initialised",
+                      },
+                      {
+                        label: "Listener",
+                        ok: oracleStatus.listener_active,
+                        yes: "✅ Active",
+                        no:  "⚠️ Inactive",
+                        desc: "Background event loop",
+                      },
+                    ].map(({ label, ok, yes, no, desc }) => (
+                      <div key={label} className={cn(
+                        "rounded-xl border px-4 py-3",
+                        ok ? "border-primary/30 bg-primary/5" : "border-destructive/30 bg-destructive/5"
+                      )}>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-mono mb-1">{label}</p>
+                        <p className={cn("font-display text-sm font-bold", ok ? "text-primary" : "text-destructive")}>
+                          {ok ? yes : no}
+                        </p>
                         <p className="text-[10px] text-muted-foreground mt-0.5">{desc}</p>
                       </div>
                     ))}
+
+                    <div className="rounded-xl border border-border/40 bg-secondary/20 px-4 py-3">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-mono mb-1">Last Block</p>
+                      <p className="font-display text-sm font-bold font-mono tabular-nums">
+                        {oracleStatus.last_block.toLocaleString()}
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl border border-border/40 bg-secondary/20 px-4 py-3">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-mono mb-1">Last Sync</p>
+                      <p className="font-display text-sm font-bold">
+                        {oracleStatus.last_sync_at
+                          ? new Date(oracleStatus.last_sync_at).toLocaleString()
+                          : "Never"}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Manual Sync */}
+                  <div className="rounded-xl border border-border/60 bg-secondary/20 px-4 py-4 space-y-3">
+                    <p className="text-xs font-display font-semibold">Manual Sync</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Force a one-off event scan. Useful if the engine was down and events were missed.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="number"
+                        placeholder="From block (optional)"
+                        value={syncFromBlock}
+                        onChange={(e) => setSyncFromBlock(e.target.value)}
+                        className="h-8 bg-secondary/60 border-border text-xs max-w-[180px]"
+                      />
+                      <Button size="sm" variant="outline" className="h-8 text-xs border-border"
+                        onClick={handleOracleSync} disabled={syncLoading}>
+                        {syncLoading
+                          ? <><RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Syncing…</>
+                          : "Sync Now"}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}

@@ -2059,17 +2059,55 @@ export async function apiClaimForgeChallenge(
 // Admin API
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ── GET /health ──────────────────────────────────────────────────────────────
-export async function apiEngineHealth(): Promise<
-  { ok: true; status: string; [k: string]: unknown } |
-  { ok: false }
+// ── GET /admin/oracle/status ─────────────────────────────────────────────────
+export interface OracleStatus {
+  escrow_enabled:  boolean;
+  listener_active: boolean;
+  last_block:      number;
+  last_sync_at:    string | null;
+}
+
+export async function apiAdminOracleStatus(token: string): Promise<
+  ({ ok: true } & OracleStatus) |
+  { ok: false; status: number; detail: string | null }
 > {
   try {
-    const res = await fetch(`${ENGINE_BASE}/health`);
+    const res = await arenaUserFetch(`${ENGINE_BASE}/admin/oracle/status`, token, {});
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    return { ok: true, status: res.ok ? "online" : "degraded", ...raw };
+    if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    return {
+      ok:              true,
+      escrow_enabled:  raw.escrow_enabled  === true,
+      listener_active: raw.listener_active === true,
+      last_block:      (raw.last_block  as number) ?? 0,
+      last_sync_at:    raw.last_sync_at as string | null ?? null,
+    };
   } catch {
-    return { ok: false };
+    return { ok: false, status: 0, detail: "Network error" };
+  }
+}
+
+// ── POST /admin/oracle/sync ──────────────────────────────────────────────────
+export async function apiAdminOracleSync(token: string, fromBlock?: number): Promise<
+  { ok: true; synced: boolean; from_block: number; to_block: number; events_processed: number } |
+  { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const qs = fromBlock !== undefined ? `?from_block=${fromBlock}` : "";
+    const res = await arenaUserFetch(`${ENGINE_BASE}/admin/oracle/sync${qs}`, token, {
+      method: "POST",
+    });
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    return {
+      ok:               true,
+      synced:           raw.synced === true,
+      from_block:       (raw.from_block       as number) ?? 0,
+      to_block:         (raw.to_block         as number) ?? 0,
+      events_processed: (raw.events_processed as number) ?? 0,
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "Network error" };
   }
 }
 
@@ -2128,16 +2166,18 @@ export interface AdminUser {
 
 export async function apiAdminGetUsers(
   token: string,
-  params?: { limit?: number; offset?: number; status?: string },
+  params?: { limit?: number; offset?: number; status?: string; search?: string; flagged?: boolean },
 ): Promise<
   { ok: true; users: AdminUser[]; total: number } |
   { ok: false; status: number; detail: string | null }
 > {
   try {
     const qs = new URLSearchParams();
-    if (params?.limit)  qs.set("limit",  String(params.limit));
-    if (params?.offset) qs.set("offset", String(params.offset));
-    if (params?.status) qs.set("status", params.status);
+    if (params?.limit)   qs.set("limit",   String(params.limit));
+    if (params?.offset)  qs.set("offset",  String(params.offset));
+    if (params?.status)  qs.set("status",  params.status);
+    if (params?.search)  qs.set("search",  params.search);
+    if (params?.flagged) qs.set("flagged", "true");
     const url = `${ENGINE_BASE}/admin/users${qs.size ? "?" + qs.toString() : ""}`;
     const res = await arenaUserFetch(url, token, {});
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -2155,12 +2195,14 @@ export interface AdminDispute {
   raised_by:           string;
   raised_by_username:  string;
   reason:              string;
-  status:              string;
+  status:              string;   // "open" | "reviewing" | "resolved" | "escalated"
   resolution:          string;
+  admin_notes:         string | null;
   game:                string;
-  bet_amount:          number;
+  bet_amount:          number | null;
   stake_currency:      string;
-  created_at?:         string;
+  created_at:          string;
+  resolved_at:         string | null;
 }
 
 export async function apiAdminGetDisputes(
@@ -2186,7 +2228,13 @@ export async function apiAdminGetDisputes(
 }
 
 // ── POST /admin/users/{id}/penalty ───────────────────────────────────────────
-export async function apiAdminPenalty(token: string, userId: string): Promise<
+// offense_type: "rage_quit" | "kick_abuse" | "fraud" | "cheating" | "manual_ban" | "manual_suspend"
+export async function apiAdminIssuePenalty(
+  token: string,
+  userId: string,
+  offenseType: string,
+  notes = "",
+): Promise<
   {
     ok: true;
     penalized: boolean;
@@ -2201,17 +2249,19 @@ export async function apiAdminPenalty(token: string, userId: string): Promise<
   try {
     const res = await arenaUserFetch(`${ENGINE_BASE}/admin/users/${userId}/penalty`, token, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ offense_type: offenseType, notes }),
     });
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
     return {
-      ok:             true,
-      penalized:      raw.penalized === true,
-      user_id:        String(raw.user_id ?? ""),
-      offense_count:  (raw.offense_count as number) ?? 0,
-      action:         String(raw.action ?? ""),
+      ok:              true,
+      penalized:       raw.penalized === true,
+      user_id:         String(raw.user_id ?? ""),
+      offense_count:   (raw.offense_count as number) ?? 0,
+      action:          String(raw.action ?? ""),
       suspended_until: raw.suspended_until as string | null,
-      banned_at:      raw.banned_at as string | null,
+      banned_at:       raw.banned_at as string | null,
     };
   } catch {
     return { ok: false, status: 0, detail: "Network error" };
@@ -2219,7 +2269,7 @@ export async function apiAdminPenalty(token: string, userId: string): Promise<
 }
 
 // ── GET /platform/config ─────────────────────────────────────────────────────
-export interface PlatformConfigRaw {
+export interface PlatformConfig {
   fee_pct:                string;
   daily_bet_max_at:       string;
   maintenance_mode:       string;
@@ -2228,7 +2278,7 @@ export interface PlatformConfigRaw {
 }
 
 export async function apiGetPlatformConfig(token: string): Promise<
-  ({ ok: true } & PlatformConfigRaw) |
+  ({ ok: true } & PlatformConfig) |
   { ok: false; status: number; detail: string | null }
 > {
   try {
@@ -2251,7 +2301,7 @@ export async function apiGetPlatformConfig(token: string): Promise<
 // ── PUT /platform/config ─────────────────────────────────────────────────────
 export async function apiUpdatePlatformConfig(
   token: string,
-  body: Partial<PlatformConfigRaw>,
+  body: Partial<PlatformConfig>,
 ): Promise<
   { ok: true; updated: boolean; fields: string[] } |
   { ok: false; status: number; detail: string | null }
@@ -2271,7 +2321,7 @@ export async function apiUpdatePlatformConfig(
 }
 
 // ── GET /admin/audit-log ─────────────────────────────────────────────────────
-export interface AdminAuditEntry {
+export interface AuditEntry {
   id:             string;
   admin_id:       string;
   admin_username: string;
@@ -2285,7 +2335,7 @@ export async function apiAdminGetAuditLog(
   token: string,
   params?: { limit?: number; offset?: number },
 ): Promise<
-  { ok: true; entries: AdminAuditEntry[]; total: number } |
+  { ok: true; entries: AuditEntry[]; total: number } |
   { ok: false; status: number; detail: string | null }
 > {
   try {
@@ -2296,17 +2346,52 @@ export async function apiAdminGetAuditLog(
     const res = await arenaUserFetch(url, token, {});
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
-    return { ok: true, entries: (raw.entries as AdminAuditEntry[]) ?? [], total: (raw.total as number) ?? 0 };
+    return { ok: true, entries: (raw.entries as AuditEntry[]) ?? [], total: (raw.total as number) ?? 0 };
   } catch {
     return { ok: false, status: 0, detail: "Network error" };
   }
 }
 
 // ── GET /admin/fraud/report ──────────────────────────────────────────────────
-export interface FraudFlaggedPlayer  { user_id: string; username: string; reason: string }
-export interface FraudSuspiciousPair { player_a: string; player_b: string; match_count: number }
-export interface FraudRepeatOffender { user_id: string; username: string; offense_count: number }
-export interface FraudRecentlyBanned { user_id: string; username: string; banned_at: string }
+export interface FraudFlaggedPlayer {
+  user_id:  string;
+  username: string;
+  win_rate: number;
+  matches:  number;
+  wins:     number;
+  reason:   string;
+}
+export interface FraudSuspiciousPair {
+  player_a:    string;
+  username_a:  string;
+  player_b:    string;
+  username_b:  string;
+  match_count: number;
+  reason:      string;
+}
+export interface FraudRepeatOffender {
+  user_id:       string;
+  username:      string;
+  penalty_count: number;
+  last_offense:  string;
+  is_banned:     boolean;
+  reason:        string;
+}
+export interface FraudRecentlyBanned {
+  user_id:      string;
+  username:     string;
+  banned_at:    string;
+  offense_type: string;
+  notes:        string | null;
+  reason:       string;
+}
+export interface FraudSummary {
+  total_flagged:    number;
+  high_winrate:     number;
+  pair_farming:     number;
+  repeat_offenders: number;
+  recently_banned?: number;
+}
 
 export interface FraudReport {
   generated_at:     string;
@@ -2314,7 +2399,7 @@ export interface FraudReport {
   suspicious_pairs: FraudSuspiciousPair[];
   repeat_offenders: FraudRepeatOffender[];
   recently_banned:  FraudRecentlyBanned[];
-  summary:          string;
+  summary:          FraudSummary;
 }
 
 export async function apiAdminGetFraudReport(token: string): Promise<
@@ -2325,6 +2410,7 @@ export async function apiAdminGetFraudReport(token: string): Promise<
     const res = await arenaUserFetch(`${ENGINE_BASE}/admin/fraud/report`, token, {});
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    const summary = (raw.summary as FraudSummary | undefined) ?? { total_flagged: 0, high_winrate: 0, pair_farming: 0, repeat_offenders: 0 };
     return {
       ok:               true,
       generated_at:     String(raw.generated_at     ?? ""),
@@ -2332,7 +2418,7 @@ export async function apiAdminGetFraudReport(token: string): Promise<
       suspicious_pairs: (raw.suspicious_pairs as FraudSuspiciousPair[]) ?? [],
       repeat_offenders: (raw.repeat_offenders as FraudRepeatOffender[]) ?? [],
       recently_banned:  (raw.recently_banned  as FraudRecentlyBanned[]) ?? [],
-      summary:          String(raw.summary ?? ""),
+      summary,
     };
   } catch {
     return { ok: false, status: 0, detail: "Network error" };
@@ -2344,6 +2430,7 @@ export async function apiAdminDeclareWinner(
   token: string,
   matchId: string,
   winnerId: string,
+  reason = "",
 ): Promise<
   { ok: true; declared: boolean; match_id: string; winner_id: string; stake_currency: string } |
   { ok: false; status: number; detail: string | null }
@@ -2352,7 +2439,7 @@ export async function apiAdminDeclareWinner(
     const res = await arenaUserFetch(`${ENGINE_BASE}/admin/match/${matchId}/declare-winner`, token, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ winner_id: winnerId }),
+      body: JSON.stringify({ winner_id: winnerId, reason }),
     });
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
