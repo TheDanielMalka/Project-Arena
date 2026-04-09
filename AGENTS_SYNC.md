@@ -94,8 +94,6 @@ This file is the **single source of truth** for all active agents (Cursor + Clau
 | ArenaEscrow.sol — CRYPTO match escrow | ✅ Written, not deployed |
 | AT match settlement (off-chain, in main.py) | ✅ Complete |
 | AT burn on fee (5% fee, 95% winner) | ✅ Implemented in _settle_at_match |
-| PlayerDeposited event — stakePerPlayer added | ✅ feat/contracts-crypto-escrow-lock |
-| tx_type renamed: escrow_lock → crypto_escrow_lock | ✅ feat/contracts-crypto-escrow-lock |
 | Testnet deploy | ⏳ Phase 6 |
 | env vars (ESCROW_ADDRESS, CHAIN_ID) | ⏳ After deploy |
 
@@ -182,11 +180,9 @@ HTTP Status codes to handle:
 - [CLAUDE]  2026-04-09 17:00 UTC  feat/admin-engine-sync             Migration 017 (platform_config key-value + admin_audit_log). All admin endpoints on correct tables. UPPERCASE action names. 844 tests pass.
 - [CLAUDE]  2026-04-09 17:30 UTC  feat/admin-engine-sync             Migration 018 — 5 indexes for admin queries (users.status, users.created_at, disputes.status, disputes.created_at, disputes.player_a).
 - [CURSOR]  2026-04-09 15:41 UTC  audit/db-ui-sync-check             DB→API→UI audit: 5 fields checked. Migration 019 (idx_matches_host IF NOT EXISTS) created.
-- [DB]      2026-04-09 16:30 UTC  fix/db-daily-bet-limit-50000       Migration 020 — daily_bet_max_at raised 500→50000 in platform_config + init.sql.
 - [CURSOR]  2026-04-09 18:48 UTC  test/frontend-p0-p1-coverage       Added apiMatchHeartbeat, apiKickPlayer, apiRespondToNotification + team in join to engine-api.ts; 8 fetch-stub vitest tests. 501/501 vitest pass.
 - [CURSOR]  2026-04-09 19:05 UTC  test/oracle-coverage               Verified test_state_machine.py (18 tests) + test_consensus.py (23 tests) cover required state transitions and consensus logic. 41/41 pass.
 - [CURSOR]  2026-04-09 19:30 UTC  test/risk-fraud-coverage           Created engine/tests/test_risk_fraud.py (14 tests: KillSwitch/DailyStakeLimit/PenaltySystem/FraudReport). Added 3 tests to test_api_routes.py (process-time header, validate fields, match result). Added x-process-time-ms middleware to main.py. 17 new tests pass.
 - [CURSOR]  2026-04-09 20:30 UTC  feat/frontend-p1-kick-ux           P1 kick UX: apiJoinMatch+team, apiMatchHeartbeat, apiKickPlayer, apiRespondToNotification in engine-api.ts; useActiveRoomServerSync heartbeat polling (4s); MatchLobby kick button (host only); NotificationCenter accept-invite flow; Auth/MatchLobby 429 toast+disable-3s. 493/493 vitest pass.
 - [CURSOR]  2026-04-09 21:00 UTC  feat/frontend-db-sync-fixes        DB-audit fix 1/3: added your_user_id + your_team to ActiveMatchResponse type in engine-api.ts (fixes 2 missing fields returned by GET /match/active). Fix 2+3 already live from feat/frontend-p1-kick-ux (heartbeat in_match=false + kick button). 0 tsc errors.
-- [CONTRACTS] 2026-04-09 22:00 UTC  feat/contracts-crypto-escrow-lock  PlayerDeposited event: added stakePerPlayer field. tx_type renamed escrow_lock→crypto_escrow_lock in NatSpec+DB-alignment comments. ⚠️ Claude must update _check_daily_stake_limit + event listener. ⚠️ DB-Sync must allow crypto_escrow_lock in transactions.tx_type.
 - [CLIENT]  2026-04-09 22:00 UTC  feat/client-lobby-heartbeat        P0 fix: get_active_match → GET /match/active with Bearer token. Added match_heartbeat()+get_match_status() to EngineClient. Match Lobby Card (5s poll, in_match=false clears, completed→result). XP bar with real ratio (xp/xp_to_next_level). Capture count + screenshot thumbnail in Monitoring card. notify_fn wired to tray. TODO(Claude): confirm xp_to_next_level field in /auth/me + GET /match/{id}/status response shape (result+score fields).

@@ -6839,7 +6839,7 @@ async def update_platform_config(
         # Reload daily limit cache immediately if it was changed
         if "daily_bet_max_at" in updates:
             _reload_at_daily_limit()
-            logger.info("Daily stake limit reloaded: %d AT", _at_daily_limit)
+            logger.info("Daily stake limit reloaded: %d AT ($%d)", _at_daily_limit, _at_daily_limit // 100)
 
         logger.info("update_platform_config: admin=%s keys=%s", admin_id, list(updates.keys()))
         _log_audit(
