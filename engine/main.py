@@ -407,6 +407,7 @@ class UserProfile(BaseModel):
     steam_id: str | None = None
     riot_id: str | None = None
     xp: int = 0
+    xp_to_next_level: int = 1000
     wins: int = 0
     losses: int = 0
     # Arena Tokens — platform currency for Forge store (NOT on-chain)
@@ -1419,6 +1420,8 @@ async def match_status(
                 {"mid": match_id},
             ).fetchone()
             if row:
+                match_status_val = row[0]
+                winner_id_val    = str(row[1]) if row[1] else None
                 your_team: int | None = None
                 if user_id:
                     team_row = session.execute(
@@ -1431,13 +1434,34 @@ async def match_status(
                     if team_row:
                         # DB stores 'A' / 'B'; contract uses 0 / 1
                         your_team = 0 if team_row[0] == "A" else 1
+
+                # result: "victory" | "defeat" | null — only meaningful when completed
+                result_val: str | None = None
+                if match_status_val == "completed" and winner_id_val and user_id:
+                    result_val = "victory" if winner_id_val == user_id else "defeat"
+
+                # score: first non-null score agreed in match_consensus
+                score_val: str | None = None
+                score_row = session.execute(
+                    text(
+                        "SELECT score FROM match_consensus "
+                        "WHERE match_id = :mid AND score IS NOT NULL "
+                        "LIMIT 1"
+                    ),
+                    {"mid": match_id},
+                ).fetchone()
+                if score_row:
+                    score_val = score_row[0]
+
                 return {
                     "match_id":          match_id,
-                    "status":            row[0],
-                    "winner_id":         row[1],
-                    "on_chain_match_id": row[2],        # null until MatchCreated event
+                    "status":            match_status_val,
+                    "winner_id":         winner_id_val,
+                    "on_chain_match_id": row[2],
                     "stake_per_player":  float(row[3]) if row[3] is not None else None,
-                    "your_team":         your_team,     # 0=A / 1=B / null
+                    "your_team":         your_team,
+                    "result":            result_val,
+                    "score":             score_val,
                 }
     except Exception:
         pass
@@ -1748,6 +1772,7 @@ async def me(payload: dict = Depends(verify_token)):
     if not row:
         raise HTTPException(404, "User not found")
 
+    xp_val = int(row[8])
     return UserProfile(
         user_id=str(row[0]),
         username=row[1],
@@ -1757,7 +1782,8 @@ async def me(payload: dict = Depends(verify_token)):
         wallet_address=row[5],
         steam_id=row[6],
         riot_id=row[7],
-        xp=int(row[8]),
+        xp=xp_val,
+        xp_to_next_level=((xp_val // 1000) + 1) * 1000,
         wins=int(row[9]),
         losses=int(row[10]),
         avatar=row[11],
