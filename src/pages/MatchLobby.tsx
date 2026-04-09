@@ -1739,11 +1739,14 @@ const MatchLobby = () => {
                     </button>
                   </div>
                   {createStakeCurrency === "AT" && dailyAtStaked !== null && dailyAtLimit !== null && (
-                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-arena-purple/10 border border-arena-purple/25 text-xs mb-3">
+                    <div
+                      className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 px-3 py-1.5 rounded-lg bg-arena-purple/10 border border-arena-purple/25 text-xs mb-3"
+                      title="Only completed matches count toward your daily limit"
+                    >
                       <TrendingUp className="h-3 w-3 text-arena-purple shrink-0" />
                       <span className="text-muted-foreground">Daily remaining:</span>
                       <span className="font-semibold text-arena-purple">
-                        {(dailyAtLimit - dailyAtStaked).toLocaleString()} AT
+                        {(dailyAtLimit - dailyAtStaked).toLocaleString()} AT (completed matches only)
                       </span>
                       <span className="text-muted-foreground">
                         (${((dailyAtLimit - dailyAtStaked) / 100).toFixed(2)})
