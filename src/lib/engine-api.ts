@@ -2055,3 +2055,316 @@ export async function apiClaimForgeChallenge(
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin API
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── GET /health ──────────────────────────────────────────────────────────────
+export async function apiEngineHealth(): Promise<
+  { ok: true; status: string; [k: string]: unknown } |
+  { ok: false }
+> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/health`);
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    return { ok: true, status: res.ok ? "online" : "degraded", ...raw };
+  } catch {
+    return { ok: false };
+  }
+}
+
+// ── GET /admin/freeze/status ─────────────────────────────────────────────────
+export async function apiAdminFreezeStatus(token: string): Promise<
+  { ok: true; frozen: boolean } |
+  { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/admin/freeze/status`, token, {});
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    return { ok: true, frozen: raw.frozen === true };
+  } catch {
+    return { ok: false, status: 0, detail: "Network error" };
+  }
+}
+
+// ── POST /admin/freeze ───────────────────────────────────────────────────────
+export async function apiAdminFreeze(token: string, freeze: boolean): Promise<
+  { ok: true; frozen: boolean; message: string } |
+  { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/admin/freeze`, token, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ freeze }),
+    });
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    return { ok: true, frozen: raw.frozen === true, message: String(raw.message ?? "") };
+  } catch {
+    return { ok: false, status: 0, detail: "Network error" };
+  }
+}
+
+// ── GET /admin/users ─────────────────────────────────────────────────────────
+export interface AdminUser {
+  user_id:        string;
+  username:       string;
+  email:          string;
+  status:         string;
+  rank:           string;
+  at_balance:     number;
+  wallet_address: string;
+  matches:        number;
+  wins:           number;
+  win_rate:       number;
+  penalty_count:  number;
+  is_suspended:   boolean;
+  is_banned:      boolean;
+  suspended_until: string | null;
+  banned_at:      string | null;
+}
+
+export async function apiAdminGetUsers(
+  token: string,
+  params?: { limit?: number; offset?: number; status?: string },
+): Promise<
+  { ok: true; users: AdminUser[]; total: number } |
+  { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const qs = new URLSearchParams();
+    if (params?.limit)  qs.set("limit",  String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    if (params?.status) qs.set("status", params.status);
+    const url = `${ENGINE_BASE}/admin/users${qs.size ? "?" + qs.toString() : ""}`;
+    const res = await arenaUserFetch(url, token, {});
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    return { ok: true, users: (raw.users as AdminUser[]) ?? [], total: (raw.total as number) ?? 0 };
+  } catch {
+    return { ok: false, status: 0, detail: "Network error" };
+  }
+}
+
+// ── GET /admin/disputes ──────────────────────────────────────────────────────
+export interface AdminDispute {
+  id:                  string;
+  match_id:            string;
+  raised_by:           string;
+  raised_by_username:  string;
+  reason:              string;
+  status:              string;
+  resolution:          string;
+  game:                string;
+  bet_amount:          number;
+  stake_currency:      string;
+  created_at?:         string;
+}
+
+export async function apiAdminGetDisputes(
+  token: string,
+  params?: { limit?: number; offset?: number; status?: string },
+): Promise<
+  { ok: true; disputes: AdminDispute[]; total: number } |
+  { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const qs = new URLSearchParams();
+    if (params?.limit)  qs.set("limit",  String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    if (params?.status) qs.set("status", params.status);
+    const url = `${ENGINE_BASE}/admin/disputes${qs.size ? "?" + qs.toString() : ""}`;
+    const res = await arenaUserFetch(url, token, {});
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    return { ok: true, disputes: (raw.disputes as AdminDispute[]) ?? [], total: (raw.total as number) ?? 0 };
+  } catch {
+    return { ok: false, status: 0, detail: "Network error" };
+  }
+}
+
+// ── POST /admin/users/{id}/penalty ───────────────────────────────────────────
+export async function apiAdminPenalty(token: string, userId: string): Promise<
+  {
+    ok: true;
+    penalized: boolean;
+    user_id: string;
+    offense_count: number;
+    action: string;
+    suspended_until: string | null;
+    banned_at: string | null;
+  } |
+  { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/admin/users/${userId}/penalty`, token, {
+      method: "POST",
+    });
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    return {
+      ok:             true,
+      penalized:      raw.penalized === true,
+      user_id:        String(raw.user_id ?? ""),
+      offense_count:  (raw.offense_count as number) ?? 0,
+      action:         String(raw.action ?? ""),
+      suspended_until: raw.suspended_until as string | null,
+      banned_at:      raw.banned_at as string | null,
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "Network error" };
+  }
+}
+
+// ── GET /platform/config ─────────────────────────────────────────────────────
+export interface PlatformConfigRaw {
+  fee_pct:                string;
+  daily_bet_max_at:       string;
+  maintenance_mode:       string;
+  new_registrations:      string;
+  auto_escalate_disputes: string;
+}
+
+export async function apiGetPlatformConfig(token: string): Promise<
+  ({ ok: true } & PlatformConfigRaw) |
+  { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/platform/config`, token, {});
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    return {
+      ok:                     true,
+      fee_pct:                String(raw.fee_pct                ?? "5"),
+      daily_bet_max_at:       String(raw.daily_bet_max_at       ?? "500"),
+      maintenance_mode:       String(raw.maintenance_mode       ?? "false"),
+      new_registrations:      String(raw.new_registrations      ?? "true"),
+      auto_escalate_disputes: String(raw.auto_escalate_disputes ?? "false"),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "Network error" };
+  }
+}
+
+// ── PUT /platform/config ─────────────────────────────────────────────────────
+export async function apiUpdatePlatformConfig(
+  token: string,
+  body: Partial<PlatformConfigRaw>,
+): Promise<
+  { ok: true; updated: boolean; fields: string[] } |
+  { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/platform/config`, token, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    return { ok: true, updated: raw.updated === true, fields: (raw.fields as string[]) ?? [] };
+  } catch {
+    return { ok: false, status: 0, detail: "Network error" };
+  }
+}
+
+// ── GET /admin/audit-log ─────────────────────────────────────────────────────
+export interface AdminAuditEntry {
+  id:             string;
+  admin_id:       string;
+  admin_username: string;
+  action:         string;
+  target_id:      string | null;
+  notes:          string | null;
+  created_at:     string;
+}
+
+export async function apiAdminGetAuditLog(
+  token: string,
+  params?: { limit?: number; offset?: number },
+): Promise<
+  { ok: true; entries: AdminAuditEntry[]; total: number } |
+  { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const qs = new URLSearchParams();
+    if (params?.limit)  qs.set("limit",  String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    const url = `${ENGINE_BASE}/admin/audit-log${qs.size ? "?" + qs.toString() : ""}`;
+    const res = await arenaUserFetch(url, token, {});
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    return { ok: true, entries: (raw.entries as AdminAuditEntry[]) ?? [], total: (raw.total as number) ?? 0 };
+  } catch {
+    return { ok: false, status: 0, detail: "Network error" };
+  }
+}
+
+// ── GET /admin/fraud/report ──────────────────────────────────────────────────
+export interface FraudFlaggedPlayer  { user_id: string; username: string; reason: string }
+export interface FraudSuspiciousPair { player_a: string; player_b: string; match_count: number }
+export interface FraudRepeatOffender { user_id: string; username: string; offense_count: number }
+export interface FraudRecentlyBanned { user_id: string; username: string; banned_at: string }
+
+export interface FraudReport {
+  generated_at:     string;
+  flagged_players:  FraudFlaggedPlayer[];
+  suspicious_pairs: FraudSuspiciousPair[];
+  repeat_offenders: FraudRepeatOffender[];
+  recently_banned:  FraudRecentlyBanned[];
+  summary:          string;
+}
+
+export async function apiAdminGetFraudReport(token: string): Promise<
+  ({ ok: true } & FraudReport) |
+  { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/admin/fraud/report`, token, {});
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    return {
+      ok:               true,
+      generated_at:     String(raw.generated_at     ?? ""),
+      flagged_players:  (raw.flagged_players  as FraudFlaggedPlayer[])  ?? [],
+      suspicious_pairs: (raw.suspicious_pairs as FraudSuspiciousPair[]) ?? [],
+      repeat_offenders: (raw.repeat_offenders as FraudRepeatOffender[]) ?? [],
+      recently_banned:  (raw.recently_banned  as FraudRecentlyBanned[]) ?? [],
+      summary:          String(raw.summary ?? ""),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "Network error" };
+  }
+}
+
+// ── POST /admin/match/{id}/declare-winner ────────────────────────────────────
+export async function apiAdminDeclareWinner(
+  token: string,
+  matchId: string,
+  winnerId: string,
+): Promise<
+  { ok: true; declared: boolean; match_id: string; winner_id: string; stake_currency: string } |
+  { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/admin/match/${matchId}/declare-winner`, token, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ winner_id: winnerId }),
+    });
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    return {
+      ok:             true,
+      declared:       raw.declared === true,
+      match_id:       String(raw.match_id       ?? ""),
+      winner_id:      String(raw.winner_id      ?? ""),
+      stake_currency: String(raw.stake_currency ?? "AT"),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "Network error" };
+  }
+}
+

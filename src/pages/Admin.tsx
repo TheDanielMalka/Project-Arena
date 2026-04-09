@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -18,11 +18,13 @@ import {
 import {
   ShieldAlert, Gavel, Users, Ban, CheckCircle2, XCircle, AlertTriangle,
   Activity, DollarSign, Eye, Clock, Search, ArrowUpDown, ArrowUp, ArrowDown,
-  Download, Power, Settings, Radio, ChevronRight, Zap, Flag,
+  Download, Power, Settings, Radio, ChevronRight, Zap, Flag, RefreshCw,
+  TrendingUp, Shield,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { PLATFORM_BETTING_MAX } from "@/stores/walletStore";
+import { useUserStore } from "@/stores/userStore";
 import type {
   Dispute, DisputeStatus, DisputeResolution,
   FlaggedUser, AuditLog, AdminActivityEvent, PlatformSettings,
@@ -35,45 +37,19 @@ import type {
   SupportTopic,
   TicketStatus,
 } from "@/types";
-
-// ─── Seed Data ────────────────────────────────────────────────
-// When DB is connected: replace with API calls to /admin/disputes, /admin/users/flagged, /admin/audit-logs
-
-const SEED_DISPUTES: Dispute[] = [
-  { id: "D-1051", matchId: "M-2048", playerA: "DUNELZ",  playerB: "ShadowKing", game: "CS2",     stake: 120, reason: "Player B claims disconnect wasn't counted", status: "open",      resolution: "pending",       createdAt: "2026-03-08 14:22", evidence: "Screenshot of disconnect error" },
-  { id: "D-1050", matchId: "M-2045", playerA: "DUNELZ",  playerB: "CyberWolf",  game: "Valorant", stake: 75,  reason: "Suspected aim-bot usage by Player A",       status: "reviewing",  resolution: "pending",       createdAt: "2026-03-08 11:05" },
-  { id: "D-1048", matchId: "M-2039", playerA: "DUNELZ",  playerB: "IronClad",   game: "CS2",      stake: 200, reason: "Vision engine failed to capture final round", status: "escalated", resolution: "pending",       createdAt: "2026-03-07 22:30", evidence: "Game API logs attached" },
-  { id: "D-1045", matchId: "M-2031", playerA: "DUNELZ",  playerB: "DarkViper",  game: "Valorant", stake: 50,  reason: "Player A rage-quit mid-match",              status: "resolved",  resolution: "player_b_wins", createdAt: "2026-03-07 09:15" },
-  { id: "D-1042", matchId: "M-2025", playerA: "DUNELZ",  playerB: "NightHawk",  game: "CS2",      stake: 90,  reason: "Both players claim victory",                status: "resolved",  resolution: "refund",        createdAt: "2026-03-06 17:40" },
-];
-
-const SEED_FLAGGED: FlaggedUser[] = [
-  { id: "U-301", username: "xDragon99",  walletAddress: "0x7a3F9c2E1b8D4a5C6f7e8d9B0c1A2b3C4d5E6f7A", reason: "92% win rate over 50 matches",             winRate: 92, matchesPlayed: 54,  flaggedAt: "2026-03-08", status: "flagged" },
-  { id: "U-288", username: "BlazeFury",  walletAddress: "0x1b8E44a1C9d2F3e4A5b6C7d8E9f0A1B2C3D4E5F6", reason: "Multiple accounts detected (smurf)",        winRate: 78, matchesPlayed: 31,  flaggedAt: "2026-03-07", status: "banned"  },
-  { id: "U-275", username: "StormRider", walletAddress: "0x9e2D3f4A5b6C7d8E9f0A1B2C3D4E5F6A7b8C9d0E", reason: "Suspicious betting pattern",                winRate: 65, matchesPlayed: 120, flaggedAt: "2026-03-06", status: "cleared" },
-  { id: "U-260", username: "PhantomAce", walletAddress: "0x3c4D5e6F7a8B9c0D1e2F3a4B5c6D7e8F9a0B1c2D", reason: "Hardware fingerprint mismatch",              winRate: 71, matchesPlayed: 43,  flaggedAt: "2026-03-05", status: "flagged" },
-];
-
-const SEED_AUDIT: AuditLog[] = [
-  { id: "A-1", adminId: "admin-001", adminName: "admin_root", action: "RESOLVE_DISPUTE", target: "D-1045", detail: "Awarded win to Player B (rage-quit confirmed)",     createdAt: "2026-03-07 09:20" },
-  { id: "A-2", adminId: "admin-001", adminName: "admin_root", action: "BAN_USER",         target: "U-288",  detail: "Permanent ban — multiple smurf accounts",           createdAt: "2026-03-07 08:00" },
-  { id: "A-3", adminId: "admin-001", adminName: "admin_root", action: "REFUND_MATCH",     target: "D-1042", detail: "Full refund issued — inconclusive evidence",         createdAt: "2026-03-06 18:00" },
-  { id: "A-4", adminId: "admin-001", adminName: "admin_root", action: "CLEAR_FLAG",       target: "U-275",  detail: "Betting pattern reviewed — within normal range",     createdAt: "2026-03-06 14:30" },
-  { id: "A-5", adminId: "admin-001", adminName: "admin_root", action: "FREEZE_PAYOUT",    target: "M-2048", detail: "Payout frozen pending dispute D-1051",               createdAt: "2026-03-08 14:25" },
-];
-
-const ACTIVITY_TEMPLATES: Omit<AdminActivityEvent, "id" | "timestamp">[] = [
-  { type: "match_start", message: "🎮 M-2055 started: xDragon99 vs CyberWolf (CS2 · $80)" },
-  { type: "payout",      message: "💰 Payout $45 → NovaBlade (0x1b8...44a1)" },
-  { type: "login",       message: "🔑 StormRider connected wallet 0x9e2...bb07" },
-  { type: "match_end",   message: "🏁 M-2054 ended: PhantomAce won vs IronClad (Valorant)" },
-  { type: "deposit",     message: "📥 Deposit $200 from DarkViper" },
-  { type: "dispute",     message: "🚩 Dispute D-1052 opened for M-2053", highlight: true },
-  { type: "match_start", message: "🎮 M-2056 started: BlazeFury vs NightHawk (CS2 · $150)" },
-  { type: "payout",      message: "💰 Payout $120 → ShadowKing (0x3c4...d5e8)" },
-  { type: "ban",         message: "🛑 Auto-flag: QuickScope (win streak anomaly)", highlight: true },
-  { type: "login",       message: "🔑 GhostSniper login attempt — BANNED", highlight: true },
-];
+import {
+  apiAdminFreezeStatus,
+  apiAdminFreeze,
+  apiAdminGetUsers,
+  apiAdminGetDisputes,
+  apiAdminPenalty,
+  apiGetPlatformConfig,
+  apiUpdatePlatformConfig,
+  apiAdminGetAuditLog,
+  apiAdminGetFraudReport,
+  apiEngineHealth,
+} from "@/lib/engine-api";
+import type { FraudReport } from "@/lib/engine-api";
 
 // ─── Style helpers ────────────────────────────────────────────
 
@@ -101,14 +77,30 @@ function exportCSV(filename: string, headers: string[], rows: string[][]) {
 
 const ROWS_PER_PAGE = 8;
 
+// ─── Activity templates (local live feed) ────────────────────
+const ACTIVITY_TEMPLATES: Omit<AdminActivityEvent, "id" | "timestamp">[] = [
+  { type: "match_start", message: "🎮 M-2055 started: xDragon99 vs CyberWolf (CS2 · $80)" },
+  { type: "payout",      message: "💰 Payout $45 → NovaBlade (0x1b8...44a1)" },
+  { type: "login",       message: "🔑 StormRider connected wallet 0x9e2...bb07" },
+  { type: "match_end",   message: "🏁 M-2054 ended: PhantomAce won vs IronClad (Valorant)" },
+  { type: "deposit",     message: "📥 Deposit $200 from DarkViper" },
+  { type: "dispute",     message: "🚩 Dispute opened for match", highlight: true },
+  { type: "match_start", message: "🎮 Match started: BlazeFury vs NightHawk (CS2 · $150)" },
+  { type: "payout",      message: "💰 Payout $120 → ShadowKing (0x3c4...d5e8)" },
+  { type: "ban",         message: "🛑 Auto-flag: win streak anomaly detected", highlight: true },
+  { type: "login",       message: "🔑 Login attempt — account suspended", highlight: true },
+];
+
 // ─── Nav sections ──────────────────────────────────────────────
 const NAV = [
-  { id: "disputes", icon: Gavel,       label: "Disputes"   },
-  { id: "users",    icon: Users,        label: "Users"      },
-  { id: "reports",  icon: Flag,         label: "Reports"    },
-  { id: "audit",    icon: Eye,          label: "Audit Log"  },
-  { id: "live",     icon: Radio,        label: "Live Feed"  },
-  { id: "platform", icon: Settings,     label: "Platform"   },
+  { id: "disputes", icon: Gavel,         label: "Disputes"   },
+  { id: "users",    icon: Users,          label: "Users"      },
+  { id: "reports",  icon: Flag,           label: "Reports"    },
+  { id: "audit",    icon: Eye,            label: "Audit Log"  },
+  { id: "live",     icon: Radio,          label: "Live Feed"  },
+  { id: "platform", icon: Settings,       label: "Platform"   },
+  { id: "fraud",    icon: AlertTriangle,  label: "Fraud"      },
+  { id: "oracle",   icon: Activity,       label: "Oracle"     },
 ] as const;
 type NavId = typeof NAV[number]["id"];
 
@@ -117,28 +109,38 @@ type NavId = typeof NAV[number]["id"];
 const Admin = () => {
   const { toast } = useToast();
   const addNotification = useNotificationStore((s) => s.addNotification);
+  const token = useUserStore((s) => s.token);
 
   const [section, setSection] = useState<NavId>("disputes");
 
-  // Data
-  const [disputes,     setDisputes]     = useState<Dispute[]>(SEED_DISPUTES);
-  const [flaggedUsers, setFlaggedUsers] = useState<FlaggedUser[]>(SEED_FLAGGED);
-  const [auditLog,     setAuditLog]     = useState<AuditLog[]>(SEED_AUDIT);
+  // ── Live data ──
+  const [disputes,     setDisputes]     = useState<Dispute[]>([]);
+  const [flaggedUsers, setFlaggedUsers] = useState<FlaggedUser[]>([]);
+  const [auditLog,     setAuditLog]     = useState<AuditLog[]>([]);
   const [activity,     setActivity]     = useState<AdminActivityEvent[]>([]);
   const activityCounter = useRef(0);
   const feedRef         = useRef<HTMLDivElement>(null);
 
-  // Platform settings — DB: platform_settings (single row)
-  const [platform, setPlatform] = useState<PlatformSettings>({
-    feePercent: 5,
-    platformBettingMax: PLATFORM_BETTING_MAX,
-    maintenanceMode: false,
-    registrationOpen: true,
-    autoDisputeEscalation: true,
-    killSwitchActive: false,
-  });
+  // ── Fraud report ──
+  const [fraudReport,   setFraudReport]  = useState<FraudReport | null>(null);
+  const [fraudLoading,  setFraudLoading] = useState(false);
 
-  // Dispute state
+  // ── Oracle / Engine health ──
+  const [engineHealth, setEngineHealth] = useState<{ ok: boolean; status?: string; [k: string]: unknown } | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
+
+  // ── Platform settings ──
+  const [platform, setPlatform] = useState<PlatformSettings>({
+    feePercent:            5,
+    platformBettingMax:    PLATFORM_BETTING_MAX,
+    maintenanceMode:       false,
+    registrationOpen:      true,
+    autoDisputeEscalation: true,
+    killSwitchActive:      false,
+  });
+  const [platformSaving, setPlatformSaving] = useState(false);
+
+  // ── Dispute state ──
   const [selectedDispute,  setSelectedDispute]  = useState<Dispute | null>(null);
   const [resolutionNote,   setResolutionNote]   = useState("");
   const [resolutionChoice, setResolutionChoice] = useState<DisputeResolution>("pending");
@@ -148,22 +150,110 @@ const Admin = () => {
   const [sortDir,          setSortDir]          = useState<"asc" | "desc">("asc");
   const [disputePage,      setDisputePage]      = useState(1);
 
-  // User state
+  // ── User state ──
   const [userStatusFilter, setUserStatusFilter] = useState<"all" | FlaggedUser["status"]>("all");
   const [banTarget,        setBanTarget]        = useState<FlaggedUser | null>(null);
 
-  // Audit state
+  // ── Audit state ──
   const [auditPage, setAuditPage] = useState(1);
 
-  // Reports
+  // ── Reports (local store) ──
   const tickets             = useReportStore((s) => s.tickets);
   const updateTicketStatus  = useReportStore((s) => s.updateTicketStatus);
   const [reportStatusFilter, setReportStatusFilter] = useState<TicketStatus | "all">("all");
 
-  // Kill switch
+  // ── Kill switch ──
   const [killConfirm, setKillConfirm] = useState(false);
 
-  // ── Activity feed ──
+  // ─────────────────────────────────────────────────────────────
+  // Data loaders
+  // ─────────────────────────────────────────────────────────────
+
+  const loadAuditLog = useCallback(async () => {
+    if (!token) return;
+    const r = await apiAdminGetAuditLog(token, { limit: 50 });
+    if (r.ok) {
+      setAuditLog(r.entries.map((e) => ({
+        id:        e.id,
+        adminId:   e.admin_id,
+        adminName: e.admin_username || "admin",
+        action:    e.action,
+        target:    e.target_id  || "—",
+        detail:    e.notes      || "",
+        createdAt: e.created_at?.slice(0, 16).replace("T", " ") || "",
+      })));
+    }
+  }, [token]);
+
+  const loadUsers = useCallback(async () => {
+    if (!token) return;
+    const r = await apiAdminGetUsers(token, { limit: 200 });
+    if (r.ok) {
+      setFlaggedUsers(r.users.map((u) => ({
+        id:            u.user_id,
+        username:      u.username,
+        walletAddress: u.wallet_address || "",
+        reason: u.penalty_count > 0
+          ? `${u.penalty_count} offense${u.penalty_count !== 1 ? "s" : ""} recorded`
+          : "Risk monitoring",
+        winRate:       Math.round(u.win_rate),
+        matchesPlayed: u.matches,
+        flaggedAt:     (u.banned_at || u.suspended_until || "")?.slice(0, 10),
+        status:        u.is_banned ? "banned" : u.is_suspended ? "flagged" : "cleared",
+      })));
+    }
+  }, [token]);
+
+  const loadDisputes = useCallback(async () => {
+    if (!token) return;
+    const r = await apiAdminGetDisputes(token, { limit: 100 });
+    if (r.ok) {
+      setDisputes(r.disputes.map((d) => ({
+        id:         d.id,
+        matchId:    d.match_id,
+        playerA:    d.raised_by_username || d.raised_by || "—",
+        playerB:    "—",
+        game:       (d.game as Dispute["game"]) || "CS2",
+        stake:      d.bet_amount,
+        reason:     d.reason,
+        status:     (d.status     as DisputeStatus)    || "open",
+        resolution: (d.resolution as DisputeResolution) || "pending",
+        createdAt:  d.created_at?.slice(0, 16).replace("T", " ") || "",
+      })));
+    }
+  }, [token]);
+
+  // ── Initial load + audit polling ──
+  useEffect(() => {
+    if (!token) return;
+
+    // Platform: freeze status + config
+    void apiAdminFreezeStatus(token).then((r) => {
+      if (r.ok) setPlatform((p) => ({ ...p, killSwitchActive: r.frozen }));
+    });
+    void apiGetPlatformConfig(token).then((r) => {
+      if (r.ok) {
+        setPlatform((p) => ({
+          ...p,
+          feePercent:            parseFloat(r.fee_pct)   || 5,
+          platformBettingMax:    parseInt(r.daily_bet_max_at) || 500,
+          maintenanceMode:       r.maintenance_mode       === "true",
+          registrationOpen:      r.new_registrations      === "true",
+          autoDisputeEscalation: r.auto_escalate_disputes === "true",
+        }));
+      }
+    });
+
+    void loadUsers();
+    void loadDisputes();
+    void loadAuditLog();
+
+    // Poll audit log every 30s
+    const iv = setInterval(() => void loadAuditLog(), 30_000);
+    return () => clearInterval(iv);
+  }, [token, loadUsers, loadDisputes, loadAuditLog]);
+
+  // ── Activity feed (local simulation) ──
   useEffect(() => {
     const seed = ACTIVITY_TEMPLATES.slice(0, 5).map((t, i) => ({
       ...t, id: `evt-${i}`, timestamp: new Date(Date.now() - (5 - i) * 8000).toLocaleTimeString(),
@@ -183,54 +273,125 @@ const Admin = () => {
     if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
   }, [activity]);
 
-  // ── Audit helper ──
-  const pushAudit = (action: string, target: string, detail: string) =>
-    setAuditLog((p) => [{
-      id: `A-${p.length + 1}`, adminId: "admin-001", adminName: "admin_root",
-      action, target, detail, createdAt: new Date().toISOString().slice(0, 16).replace("T", " "),
-    }, ...p]);
+  // ─────────────────────────────────────────────────────────────
+  // Handlers
+  // ─────────────────────────────────────────────────────────────
 
   // ── Dispute actions ──
   const handleResolve = () => {
     if (!selectedDispute || resolutionChoice === "pending") return;
+    // Optimistic local update
     setDisputes((p) => p.map((d) => d.id === selectedDispute.id
-      ? { ...d, status: "resolved" as DisputeStatus, resolution: resolutionChoice, resolvedBy: "admin_root", resolvedAt: new Date().toISOString().slice(0, 16).replace("T", " ") }
-      : d
+      ? { ...d, status: "resolved" as DisputeStatus, resolution: resolutionChoice,
+          resolvedBy: "admin", resolvedAt: new Date().toISOString().slice(0, 16).replace("T", " ") }
+      : d,
     ));
-    const act = resolutionChoice === "refund" ? "REFUND_MATCH" : resolutionChoice === "void" ? "VOID_MATCH" : "RESOLVE_DISPUTE";
-    pushAudit(act, selectedDispute.id, resolutionNote || `Resolved as ${resolutionChoice.replace("_", " ")}`);
-    toast({ title: "Dispute Resolved", description: `${selectedDispute.id} — ${resolutionChoice.replace("_", " ")}` });
-    addNotification({ type: "dispute", title: "⚖️ Dispute Resolved", message: `${selectedDispute.id}: ${selectedDispute.playerA} vs ${selectedDispute.playerB} — ${resolutionChoice.replace("_", " ")}` });
+    toast({ title: "Dispute Resolved", description: `${selectedDispute.id} — ${resolutionChoice.replace(/_/g, " ")}` });
+    addNotification({ type: "dispute", title: "⚖️ Dispute Resolved",
+      message: `${selectedDispute.id}: ${selectedDispute.playerA} — ${resolutionChoice.replace(/_/g, " ")}` });
     setSelectedDispute(null); setResolutionNote(""); setResolutionChoice("pending");
+    // Refresh audit log to pick up any server-side log
+    void loadAuditLog();
   };
 
-  // ── User actions ──
-  const handleBan = (u: FlaggedUser) => {
-    setFlaggedUsers((p) => p.map((x) => x.id === u.id ? { ...x, status: "banned" as const } : x));
-    pushAudit("BAN_USER", u.id, `Banned user ${u.username}`);
-    toast({ title: "User Banned", description: `${u.username} permanently banned.`, variant: "destructive" });
-    addNotification({ type: "system", title: "🛑 User Banned", message: `${u.username} (${u.walletAddress.slice(0, 8)}...) permanently banned.` });
+  // ── Ban / Penalty ──
+  const handleBan = async (u: FlaggedUser) => {
+    if (!token) return;
+    const r = await apiAdminPenalty(token, u.id);
+    if (!r.ok) {
+      toast({ title: "Error", description: r.detail || "Failed to apply penalty", variant: "destructive" });
+      setBanTarget(null);
+      return;
+    }
+    const action = r.action === "ban" ? "banned" : "suspended";
+    toast({
+      title: action === "banned" ? "User Banned" : "User Suspended",
+      description: `${u.username} ${action}.`,
+      variant: "destructive",
+    });
+    addNotification({ type: "system",
+      title: action === "banned" ? "🛑 User Banned" : "⚠️ User Suspended",
+      message: `${u.username} ${action} (offense #${r.offense_count}).` });
     setBanTarget(null);
+    void loadUsers();
+    void loadAuditLog();
   };
 
   const handleClear = (u: FlaggedUser) => {
+    // Local-only (no clear endpoint); update optimistically
     setFlaggedUsers((p) => p.map((x) => x.id === u.id ? { ...x, status: "cleared" as const } : x));
-    pushAudit("CLEAR_FLAG", u.id, `Flag cleared for ${u.username} after admin review`);
     toast({ title: "Flag Cleared", description: `${u.username} is no longer flagged.` });
     addNotification({ type: "system", title: "✅ Flag Cleared", message: `${u.username} cleared after admin review.` });
   };
 
   // ── Kill switch ──
-  const handleKillSwitch = () => {
+  const handleKillSwitch = async () => {
+    if (!token) return;
     const next = !platform.killSwitchActive;
-    setPlatform((p) => ({ ...p, killSwitchActive: next }));
+    const r = await apiAdminFreeze(token, next);
+    if (!r.ok) {
+      toast({ title: "Error", description: r.detail || "Failed to toggle freeze", variant: "destructive" });
+      setKillConfirm(false);
+      return;
+    }
+    setPlatform((p) => ({ ...p, killSwitchActive: r.frozen }));
     setKillConfirm(false);
-    pushAudit(next ? "KILL_SWITCH_ON" : "KILL_SWITCH_OFF", "PLATFORM", next ? "Emergency payout freeze activated" : "Payout freeze lifted");
-    toast({ title: next ? "🚨 Payouts Frozen" : "✅ Payouts Resumed", description: next ? "Kill switch active." : "Kill switch deactivated.", variant: next ? "destructive" : "default" });
-    addNotification({ type: "system", title: next ? "🚨 KILL SWITCH" : "✅ Payouts Resumed", message: next ? "All payouts frozen by admin." : "Kill switch deactivated. Payouts processing." });
+    void loadAuditLog();
+    toast({
+      title: r.frozen ? "🚨 Payouts Frozen" : "✅ Payouts Resumed",
+      description: r.message,
+      variant: r.frozen ? "destructive" : "default",
+    });
+    addNotification({ type: "system",
+      title: r.frozen ? "🚨 KILL SWITCH" : "✅ Payouts Resumed",
+      message: r.frozen ? "All payouts frozen by admin." : "Kill switch deactivated. Payouts processing." });
   };
 
-  // ── Derived data ──
+  // ── Platform settings save ──
+  const handleSavePlatform = async () => {
+    if (!token) return;
+    setPlatformSaving(true);
+    const r = await apiUpdatePlatformConfig(token, {
+      fee_pct:                String(platform.feePercent),
+      daily_bet_max_at:       String(platform.platformBettingMax),
+      maintenance_mode:       String(platform.maintenanceMode),
+      new_registrations:      String(platform.registrationOpen),
+      auto_escalate_disputes: String(platform.autoDisputeEscalation),
+    });
+    setPlatformSaving(false);
+    if (!r.ok) {
+      toast({ title: "Error", description: r.detail || "Failed to save settings", variant: "destructive" });
+      return;
+    }
+    void loadAuditLog();
+    toast({ title: "Settings Saved", description: `Updated: ${r.fields.join(", ")}` });
+  };
+
+  // ── Fraud report ──
+  const handleLoadFraud = async () => {
+    if (!token) return;
+    setFraudLoading(true);
+    const r = await apiAdminGetFraudReport(token);
+    setFraudLoading(false);
+    if (!r.ok) {
+      toast({ title: "Error", description: r.detail || "Failed to load fraud report", variant: "destructive" });
+      return;
+    }
+    setFraudReport(r);
+  };
+
+  // ── Oracle / Engine health ──
+  const handleCheckHealth = async () => {
+    setHealthLoading(true);
+    const r = await apiEngineHealth();
+    setHealthLoading(false);
+    setEngineHealth(r);
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // Derived data
+  // ─────────────────────────────────────────────────────────────
+
   const openDisputes  = disputes.filter((d) => d.status !== "resolved").length;
   const bannedCount   = flaggedUsers.filter((u) => u.status === "banned").length;
   const flaggedCount  = flaggedUsers.filter((u) => u.status === "flagged").length;
@@ -357,21 +518,32 @@ const Admin = () => {
                     <SelectItem value="resolved">Resolved</SelectItem>
                   </SelectContent>
                 </Select>
+                <Button size="sm" variant="outline" className="h-8 text-xs border-border"
+                  onClick={() => void loadDisputes()}>
+                  <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Refresh
+                </Button>
                 <Button size="sm" variant="outline" className="h-8 text-xs border-border ml-auto"
-                  onClick={() => exportCSV("disputes.csv", ["ID","Match","Player A","Player B","Game","Stake","Status","Resolution","Created"],
-                    disputes.map((d) => [d.id, d.matchId, d.playerA, d.playerB, d.game, `$${d.stake}`, d.status, d.resolution, d.createdAt]))}>
+                  onClick={() => exportCSV("disputes.csv", ["ID","Match","Raised By","Game","Stake","Status","Resolution","Created"],
+                    disputes.map((d) => [d.id, d.matchId, d.playerA, d.game, `$${d.stake}`, d.status, d.resolution, d.createdAt]))}>
                   <Download className="mr-1.5 h-3.5 w-3.5" /> Export
                 </Button>
               </div>
+
+              {pagedDisp.length === 0 && (
+                <div className="text-center py-12 text-muted-foreground">
+                  <Gavel className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                  <p className="text-sm">No disputes found</p>
+                </div>
+              )}
 
               {/* dispute cards */}
               <div className="space-y-2">
                 {pagedDisp.map((d) => {
                   const borderColor = {
-                    open: "border-l-arena-orange",
+                    open:      "border-l-arena-orange",
                     reviewing: "border-l-arena-cyan",
                     escalated: "border-l-destructive",
-                    resolved: "border-l-primary",
+                    resolved:  "border-l-primary",
                   }[d.status];
                   return (
                     <div key={d.id} className={cn(
@@ -400,21 +572,13 @@ const Admin = () => {
 
                       {/* players row */}
                       <div className="flex items-center gap-2 mt-2">
+                        <span className="text-[10px] text-muted-foreground">Raised by:</span>
                         <span className="font-display text-sm font-bold">{d.playerA}</span>
-                        <span className="text-[10px] text-muted-foreground font-display uppercase tracking-widest">vs</span>
-                        <span className="font-display text-sm font-bold">{d.playerB}</span>
                         <span className="text-[10px] text-muted-foreground ml-auto">{d.createdAt}</span>
                       </div>
 
                       {/* reason */}
                       <p className="text-[11px] text-muted-foreground mt-1.5 leading-relaxed">{d.reason}</p>
-
-                      {/* evidence */}
-                      {d.evidence && (
-                        <div className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-arena-cyan bg-arena-cyan/5 border border-arena-cyan/20 rounded px-2 py-0.5">
-                          📎 {d.evidence}
-                        </div>
-                      )}
 
                       {/* resolution badge */}
                       {d.status === "resolved" && d.resolution !== "pending" && (
@@ -444,7 +608,7 @@ const Admin = () => {
           {section === "users" && (
             <div className="space-y-3">
               {/* filter pills */}
-              <div className="flex gap-1.5">
+              <div className="flex gap-1.5 flex-wrap items-center">
                 {(["all","flagged","banned","cleared"] as const).map((s) => (
                   <button key={s} onClick={() => setUserStatusFilter(s)}
                     className={cn(
@@ -459,7 +623,18 @@ const Admin = () => {
                     {s}
                   </button>
                 ))}
+                <Button size="sm" variant="ghost" className="h-7 ml-auto text-xs text-muted-foreground"
+                  onClick={() => void loadUsers()}>
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </Button>
               </div>
+
+              {filteredUsers.length === 0 && (
+                <div className="text-center py-12 text-muted-foreground">
+                  <Users className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                  <p className="text-sm">No users found</p>
+                </div>
+              )}
 
               {/* user cards */}
               <div className="space-y-2">
@@ -505,8 +680,12 @@ const Admin = () => {
                             )}>{u.winRate}%</span>
                           </div>
                           <span className="text-[10px] text-muted-foreground">{u.matchesPlayed} matches</span>
-                          <span className="font-mono text-[10px] text-muted-foreground">{u.walletAddress.slice(0, 6)}…{u.walletAddress.slice(-4)}</span>
-                          <span className="text-[10px] text-muted-foreground ml-auto">{u.flaggedAt}</span>
+                          {u.walletAddress && (
+                            <span className="font-mono text-[10px] text-muted-foreground">{u.walletAddress.slice(0, 6)}…{u.walletAddress.slice(-4)}</span>
+                          )}
+                          {u.flaggedAt && (
+                            <span className="text-[10px] text-muted-foreground ml-auto">{u.flaggedAt}</span>
+                          )}
                         </div>
                       </div>
 
@@ -515,7 +694,7 @@ const Admin = () => {
                         {u.status !== "banned" && (
                           <Button size="sm" variant="ghost" className="h-7 px-2.5 text-[10px] text-destructive hover:bg-destructive/10 font-display border border-destructive/20"
                             onClick={() => setBanTarget(u)}>
-                            <Ban className="mr-1 h-3 w-3" /> Ban
+                            <Ban className="mr-1 h-3 w-3" /> Penalty
                           </Button>
                         )}
                         {u.status === "flagged" && (
@@ -654,22 +833,13 @@ const Admin = () => {
                           {t.attachmentDataUrl && (
                             <div className="mb-3">
                               <p className="text-[10px] text-muted-foreground mb-1">Attachment</p>
-                              <a
-                                href={t.attachmentDataUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-block"
-                              >
-                                <img
-                                  src={t.attachmentDataUrl}
-                                  alt="Ticket attachment"
-                                  className="max-h-32 rounded border border-border object-contain"
-                                />
+                              <a href={t.attachmentDataUrl} target="_blank" rel="noreferrer" className="inline-block">
+                                <img src={t.attachmentDataUrl} alt="Ticket attachment"
+                                  className="max-h-32 rounded border border-border object-contain" />
                               </a>
                             </div>
                           )}
 
-                          {/* Admin note */}
                           {t.adminNote && (
                             <p className="text-[10px] text-arena-cyan bg-arena-cyan/10 border border-arena-cyan/20 rounded-md px-2 py-1 mb-3">
                               Admin: {t.adminNote}
@@ -680,41 +850,29 @@ const Admin = () => {
                           {t.status !== "dismissed" && t.status !== "resolved" && (
                             <div className="flex gap-2 flex-wrap">
                               {t.status === "open" && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
+                                <Button size="sm" variant="outline"
                                   className="h-7 text-xs border-arena-cyan/40 text-arena-cyan hover:bg-arena-cyan/10"
                                   onClick={() => {
                                     updateTicketStatus(t.id, "investigating");
-                                    pushAudit("INVESTIGATE_REPORT", t.id, `Started investigation on ${t.reportedUsername}`);
                                     toast({ title: "Under Investigation", description: `Report ${t.id} is now being reviewed.` });
-                                  }}
-                                >
+                                  }}>
                                   Investigate
                                 </Button>
                               )}
-                              <Button
-                                size="sm"
-                                variant="outline"
+                              <Button size="sm" variant="outline"
                                 className="h-7 text-xs border-primary/40 text-primary hover:bg-primary/10"
                                 onClick={() => {
                                   updateTicketStatus(t.id, "resolved", "Reviewed and resolved by admin");
-                                  pushAudit("RESOLVE_REPORT", t.id, `Report on ${t.reportedUsername} resolved`);
                                   toast({ title: "Report Resolved", description: `${t.id} marked as resolved.` });
-                                }}
-                              >
+                                }}>
                                 Resolve
                               </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
+                              <Button size="sm" variant="outline"
                                 className="h-7 text-xs border-border/50 text-muted-foreground hover:text-foreground"
                                 onClick={() => {
                                   updateTicketStatus(t.id, "dismissed", "No violation found");
-                                  pushAudit("DISMISS_REPORT", t.id, `Report on ${t.reportedUsername} dismissed`);
                                   toast({ title: "Report Dismissed", description: `${t.id} dismissed.` });
-                                }}
-                              >
+                                }}>
                                 Dismiss
                               </Button>
                             </div>
@@ -731,45 +889,49 @@ const Admin = () => {
           {/* ══ AUDIT ══ */}
           {section === "audit" && (() => {
             const auditActionStyle: Record<string, string> = {
-              BAN_USER:               "bg-destructive/15 text-destructive border-destructive/30",
-              RESOLVE_DISPUTE:        "bg-arena-cyan/15 text-arena-cyan border-arena-cyan/30",
-              REFUND_MATCH:           "bg-arena-cyan/15 text-arena-cyan border-arena-cyan/30",
-              VOID_MATCH:             "bg-muted/40 text-muted-foreground border-border",
-              CLEAR_FLAG:             "bg-primary/15 text-primary border-primary/30",
-              FREEZE_PAYOUT:          "bg-arena-orange/15 text-arena-orange border-arena-orange/30",
-              UPDATE_PLATFORM_SETTINGS: "bg-arena-purple/15 text-arena-purple border-arena-purple/30",
-              KILL_SWITCH_ON:         "bg-destructive/20 text-destructive border-destructive/40",
-              KILL_SWITCH_OFF:        "bg-primary/15 text-primary border-primary/30",
+              BAN_USER:          "bg-destructive/15 text-destructive border-destructive/30",
+              SUSPEND_USER:      "bg-arena-orange/15 text-arena-orange border-arena-orange/30",
+              DECLARE_WINNER:    "bg-arena-cyan/15 text-arena-cyan border-arena-cyan/30",
+              FREEZE_PAYOUT:     "bg-arena-orange/15 text-arena-orange border-arena-orange/30",
+              UNFREEZE_PAYOUT:   "bg-primary/15 text-primary border-primary/30",
+              CONFIG_UPDATE:     "bg-arena-purple/15 text-arena-purple border-arena-purple/30",
             };
             return (
               <div className="space-y-3">
-                <div className="flex justify-end">
+                <div className="flex items-center gap-2 justify-end">
+                  <Button size="sm" variant="ghost" className="h-7 text-xs text-muted-foreground"
+                    onClick={() => void loadAuditLog()}>
+                    <RefreshCw className="h-3.5 w-3.5 mr-1" /> Refresh
+                  </Button>
                   <Button size="sm" variant="outline" className="h-8 text-xs border-border"
-                    onClick={() => exportCSV("audit_log.csv", ["Timestamp","Action","Target","Detail","Admin"],
+                    onClick={() => exportCSV("audit_log.csv", ["Timestamp","Action","Target","Notes","Admin"],
                       auditLog.map((l) => [l.createdAt, l.action, l.target, l.detail, l.adminName]))}>
                     <Download className="mr-1.5 h-3.5 w-3.5" /> Export
                   </Button>
                 </div>
 
+                {auditLog.length === 0 && (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <Eye className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">No audit entries yet</p>
+                  </div>
+                )}
+
                 {/* timeline */}
                 <ScrollArea className="h-[400px] pr-2">
                   <div className="relative pl-5">
-                    {/* vertical line */}
                     <div className="absolute left-1.5 top-2 bottom-2 w-px bg-border/60" />
-
                     <div className="space-y-3">
                       {pagedAudit.map((l) => {
                         const style = auditActionStyle[l.action] ?? "bg-secondary text-muted-foreground border-border";
                         return (
                           <div key={l.id} className="relative flex gap-3 group">
-                            {/* dot */}
                             <div className={cn("absolute -left-[13px] top-2 w-2 h-2 rounded-full border-2 border-background shrink-0",
-                              l.action.includes("BAN") || l.action.includes("KILL_SWITCH_ON") ? "bg-destructive"
-                              : l.action.includes("CLEAR") || l.action.includes("RESOLVE") || l.action.includes("KILL_SWITCH_OFF") ? "bg-primary"
-                              : l.action.includes("FREEZE") ? "bg-arena-orange"
+                              l.action.includes("BAN") ? "bg-destructive"
+                              : l.action.includes("UNFREEZE") || l.action.includes("DECLARE") ? "bg-primary"
+                              : l.action.includes("FREEZE") || l.action.includes("SUSPEND") ? "bg-arena-orange"
                               : "bg-muted-foreground"
                             )} />
-
                             <div className="flex-1 rounded-lg border border-border/40 bg-secondary/20 px-3 py-2.5 hover:bg-secondary/40 transition-colors group-hover:border-border/60">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <Badge variant="outline" className={cn("text-[9px] border px-1.5 py-0 font-mono", style)}>
@@ -841,13 +1003,13 @@ const Admin = () => {
                   ),
                 },
                 {
-                  label: "Daily Betting Max",
-                  desc: `Platform-wide hard cap — currently $${platform.platformBettingMax}`,
+                  label: "Daily Betting Max (AT)",
+                  desc: `Platform-wide hard cap — currently ${platform.platformBettingMax} AT/day`,
                   control: (
                     <div className="flex items-center gap-3 w-48">
                       <Slider min={50} max={2000} step={50} value={[platform.platformBettingMax]}
                         onValueChange={([v]) => setPlatform((p) => ({ ...p, platformBettingMax: v }))} className="flex-1" />
-                      <span className="text-xs font-mono text-arena-gold w-14 text-right">${platform.platformBettingMax}</span>
+                      <span className="text-xs font-mono text-arena-gold w-14 text-right">{platform.platformBettingMax} AT</span>
                     </div>
                   ),
                 },
@@ -877,11 +1039,221 @@ const Admin = () => {
               ))}
 
               <div className="flex justify-end pt-3">
-                <Button size="sm" className="font-display text-xs glow-green"
-                  onClick={() => { pushAudit("UPDATE_PLATFORM_SETTINGS", "PLATFORM", `Fee=${platform.feePercent}% | BettingMax=$${platform.platformBettingMax} | Maintenance=${platform.maintenanceMode}`); toast({ title: "Settings Saved", description: "Platform configuration updated." }); }}>
-                  Save Platform Settings
+                <Button size="sm" className="font-display text-xs glow-green" disabled={platformSaving}
+                  onClick={handleSavePlatform}>
+                  {platformSaving ? "Saving…" : "Save Platform Settings"}
                 </Button>
               </div>
+            </div>
+          )}
+
+          {/* ══ FRAUD REPORT ══ */}
+          {section === "fraud" && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <p className="text-xs text-muted-foreground flex-1">
+                  Automated anomaly detection — win-rate outliers, match-fixing pairs, repeat offenders.
+                </p>
+                <Button size="sm" variant="outline" className="h-8 text-xs border-border"
+                  onClick={handleLoadFraud} disabled={fraudLoading}>
+                  {fraudLoading
+                    ? <><RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Generating…</>
+                    : <><TrendingUp className="mr-1.5 h-3.5 w-3.5" /> Generate Report</>}
+                </Button>
+              </div>
+
+              {!fraudReport && !fraudLoading && (
+                <div className="text-center py-16 text-muted-foreground">
+                  <AlertTriangle className="h-10 w-10 mx-auto mb-3 opacity-20" />
+                  <p className="text-sm font-display">Click "Generate Report" to run fraud analysis</p>
+                </div>
+              )}
+
+              {fraudReport && (
+                <div className="space-y-4">
+                  <p className="text-[10px] text-muted-foreground font-mono">Generated: {fraudReport.generated_at}</p>
+
+                  {/* Summary */}
+                  {fraudReport.summary && (
+                    <div className="rounded-lg border border-arena-orange/30 bg-arena-orange/5 px-4 py-3">
+                      <p className="text-xs text-arena-orange font-display font-semibold mb-1">Summary</p>
+                      <p className="text-[11px] text-muted-foreground">{fraudReport.summary}</p>
+                    </div>
+                  )}
+
+                  {/* Flagged Players */}
+                  {fraudReport.flagged_players.length > 0 && (
+                    <div>
+                      <p className="text-xs font-display font-semibold mb-2 text-arena-orange">
+                        ⚠ Flagged Players ({fraudReport.flagged_players.length})
+                      </p>
+                      <div className="space-y-1.5">
+                        {fraudReport.flagged_players.map((p) => (
+                          <div key={p.user_id} className="rounded-lg border border-border/60 bg-secondary/20 px-3 py-2 flex items-center gap-3">
+                            <div className="w-7 h-7 rounded-full bg-arena-orange/20 text-arena-orange flex items-center justify-center text-xs font-bold shrink-0">
+                              {p.username.slice(0, 2).toUpperCase()}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <span className="font-display text-xs font-bold">{p.username}</span>
+                              <p className="text-[10px] text-muted-foreground">{p.reason}</p>
+                            </div>
+                            <span className="font-mono text-[9px] text-muted-foreground">{p.user_id.slice(0, 8)}…</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Suspicious Pairs */}
+                  {fraudReport.suspicious_pairs.length > 0 && (
+                    <div>
+                      <p className="text-xs font-display font-semibold mb-2 text-destructive">
+                        🔗 Suspicious Match Pairs ({fraudReport.suspicious_pairs.length})
+                      </p>
+                      <div className="space-y-1.5">
+                        {fraudReport.suspicious_pairs.map((pair, i) => (
+                          <div key={i} className="rounded-lg border border-border/60 bg-secondary/20 px-3 py-2 flex items-center gap-3">
+                            <span className="font-display text-xs font-bold">{pair.player_a}</span>
+                            <span className="text-[10px] text-muted-foreground">vs</span>
+                            <span className="font-display text-xs font-bold">{pair.player_b}</span>
+                            <Badge variant="outline" className="ml-auto text-[9px] border-destructive/30 text-destructive">
+                              {pair.match_count} matches
+                            </Badge>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Repeat Offenders */}
+                  {fraudReport.repeat_offenders.length > 0 && (
+                    <div>
+                      <p className="text-xs font-display font-semibold mb-2 text-arena-gold">
+                        🔁 Repeat Offenders ({fraudReport.repeat_offenders.length})
+                      </p>
+                      <div className="space-y-1.5">
+                        {fraudReport.repeat_offenders.map((u) => (
+                          <div key={u.user_id} className="rounded-lg border border-border/60 bg-secondary/20 px-3 py-2 flex items-center gap-3">
+                            <span className="font-display text-xs font-bold flex-1">{u.username}</span>
+                            <Badge variant="outline" className="text-[9px] border-arena-gold/30 text-arena-gold">
+                              {u.offense_count} offenses
+                            </Badge>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Recently Banned */}
+                  {fraudReport.recently_banned.length > 0 && (
+                    <div>
+                      <p className="text-xs font-display font-semibold mb-2 text-destructive">
+                        🚫 Recently Banned ({fraudReport.recently_banned.length})
+                      </p>
+                      <div className="space-y-1.5">
+                        {fraudReport.recently_banned.map((u) => (
+                          <div key={u.user_id} className="rounded-lg border border-border/60 bg-secondary/20 px-3 py-2 flex items-center gap-3">
+                            <span className="font-display text-xs font-bold flex-1">{u.username}</span>
+                            <span className="text-[10px] text-muted-foreground">{u.banned_at?.slice(0, 10)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {fraudReport.flagged_players.length === 0 &&
+                   fraudReport.suspicious_pairs.length === 0 &&
+                   fraudReport.repeat_offenders.length === 0 &&
+                   fraudReport.recently_banned.length === 0 && (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Shield className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                      <p className="text-sm">No anomalies detected — platform looks healthy</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ══ ORACLE ══ */}
+          {section === "oracle" && (
+            <div className="space-y-4">
+              {/* Header */}
+              <div className="flex items-center gap-3">
+                <div>
+                  <p className="text-sm font-display font-bold">Vision Engine Status</p>
+                  <p className="text-[11px] text-muted-foreground">OCR · screenshot validation · match result detection</p>
+                </div>
+                <Button size="sm" variant="outline" className="h-8 text-xs border-border ml-auto"
+                  onClick={handleCheckHealth} disabled={healthLoading}>
+                  {healthLoading
+                    ? <><RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Checking…</>
+                    : <><Activity className="mr-1.5 h-3.5 w-3.5" /> Check Health</>}
+                </Button>
+              </div>
+
+              {!engineHealth && !healthLoading && (
+                <div className="text-center py-16 text-muted-foreground">
+                  <Activity className="h-10 w-10 mx-auto mb-3 opacity-20" />
+                  <p className="text-sm font-display">Click "Check Health" to ping the vision engine</p>
+                </div>
+              )}
+
+              {engineHealth && (
+                <div className="space-y-3">
+                  {/* Status card */}
+                  <div className={cn(
+                    "rounded-xl border px-5 py-4 flex items-center gap-4",
+                    engineHealth.ok
+                      ? "border-primary/30 bg-primary/5"
+                      : "border-destructive/30 bg-destructive/5"
+                  )}>
+                    <div className={cn(
+                      "w-10 h-10 rounded-full flex items-center justify-center shrink-0",
+                      engineHealth.ok ? "bg-primary/20" : "bg-destructive/20"
+                    )}>
+                      {engineHealth.ok
+                        ? <CheckCircle2 className="h-5 w-5 text-primary" />
+                        : <XCircle className="h-5 w-5 text-destructive" />}
+                    </div>
+                    <div>
+                      <p className={cn("font-display text-sm font-bold uppercase tracking-wider",
+                        engineHealth.ok ? "text-primary" : "text-destructive")}>
+                        {engineHealth.status ?? (engineHealth.ok ? "online" : "offline")}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">Vision Engine</p>
+                    </div>
+                  </div>
+
+                  {/* Raw response */}
+                  <div className="rounded-lg border border-border/40 bg-secondary/20 p-3">
+                    <p className="text-[10px] text-muted-foreground font-mono mb-2 uppercase tracking-wider">Health Response</p>
+                    <pre className="text-[10px] text-foreground font-mono whitespace-pre-wrap break-all">
+                      {JSON.stringify(engineHealth, null, 2)}
+                    </pre>
+                  </div>
+
+                  {/* Engine capabilities */}
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { label: "CS2 Detection",      icon: "🎯", desc: "Green HSV H 35-85" },
+                      { label: "Valorant Detection",  icon: "🎯", desc: "Teal H 75-100, Blue H 110-145" },
+                      { label: "OCR Player Names",    icon: "🔤", desc: "pytesseract extraction" },
+                      { label: "Score Extraction",    icon: "🔢", desc: "Regex 00-00 pattern" },
+                      { label: "Agent Detection",     icon: "🦸", desc: "Valorant agents only" },
+                      { label: "Multi-player Consensus", icon: "🤝", desc: "Flagging on mismatch" },
+                    ].map(({ label, icon, desc }) => (
+                      <div key={label} className="rounded-lg border border-border/40 bg-secondary/20 px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-base">{icon}</span>
+                          <p className="text-xs font-display font-semibold">{label}</p>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">{desc}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -894,21 +1266,16 @@ const Admin = () => {
           <DialogHeader>
             <DialogTitle className="font-display text-sm">Resolve {selectedDispute?.id}</DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
-              {selectedDispute?.playerA} vs {selectedDispute?.playerB} · ${selectedDispute?.stake} · {selectedDispute?.game}
+              Raised by {selectedDispute?.playerA} · Match {selectedDispute?.matchId} · ${selectedDispute?.stake}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-1">
             <p className="text-xs text-muted-foreground italic">"{selectedDispute?.reason}"</p>
-            {selectedDispute?.evidence && (
-              <div className="text-xs bg-secondary/50 rounded px-2.5 py-1.5 text-muted-foreground">
-                📎 Evidence: {selectedDispute.evidence}
-              </div>
-            )}
             <Select value={resolutionChoice} onValueChange={(v) => setResolutionChoice(v as DisputeResolution)}>
               <SelectTrigger className="h-8 bg-secondary/60 border-border text-xs"><SelectValue placeholder="Select resolution…" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="player_a_wins">Player A Wins ({selectedDispute?.playerA})</SelectItem>
-                <SelectItem value="player_b_wins">Player B Wins ({selectedDispute?.playerB})</SelectItem>
+                <SelectItem value="player_a_wins">Confirm Raiser Wins</SelectItem>
+                <SelectItem value="player_b_wins">Deny — Opponent Wins</SelectItem>
                 <SelectItem value="refund">Full Refund (Both Players)</SelectItem>
                 <SelectItem value="void">Void Match (No Payout)</SelectItem>
               </SelectContent>
@@ -925,21 +1292,22 @@ const Admin = () => {
         </DialogContent>
       </Dialog>
 
-      {/* ── Ban Confirm Dialog ── */}
+      {/* ── Penalty Confirm Dialog ── */}
       <AlertDialog open={!!banTarget} onOpenChange={(o) => !o && setBanTarget(null)}>
         <AlertDialogContent className="bg-card border-border">
           <AlertDialogHeader>
-            <AlertDialogTitle className="font-display text-sm">Ban {banTarget?.username}?</AlertDialogTitle>
+            <AlertDialogTitle className="font-display text-sm">Apply Penalty to {banTarget?.username}?</AlertDialogTitle>
             <AlertDialogDescription className="text-xs">
-              This will permanently ban <span className="font-mono font-bold">{banTarget?.walletAddress.slice(0, 12)}...</span>
-              {" "}from the platform. Action is logged.
+              This will escalate the penalty for <span className="font-mono font-bold">{banTarget?.username}</span>:
+              first offense → 24h suspension, second → 7-day suspension, third+ → permanent ban.
+              Action is logged to the audit trail.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="text-xs h-8">Cancel</AlertDialogCancel>
             <AlertDialogAction className="text-xs h-8 bg-destructive hover:bg-destructive/90 font-display"
-              onClick={() => banTarget && handleBan(banTarget)}>
-              <Ban className="mr-1.5 h-3.5 w-3.5" /> Confirm Ban
+              onClick={() => banTarget && void handleBan(banTarget)}>
+              <Ban className="mr-1.5 h-3.5 w-3.5" /> Apply Penalty
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -963,7 +1331,7 @@ const Admin = () => {
             <AlertDialogCancel className="text-xs h-8">Cancel</AlertDialogCancel>
             <AlertDialogAction
               className={cn("text-xs h-8 font-display", platform.killSwitchActive ? "bg-primary hover:bg-primary/90" : "bg-destructive hover:bg-destructive/90")}
-              onClick={handleKillSwitch}>
+              onClick={() => void handleKillSwitch()}>
               {platform.killSwitchActive ? "Deactivate" : "Activate Kill Switch"}
             </AlertDialogAction>
           </AlertDialogFooter>

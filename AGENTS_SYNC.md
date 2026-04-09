@@ -45,6 +45,18 @@ This file is the **single source of truth** for all active agents (Cursor + Clau
 
 | Area | Status | Needs |
 |------|--------|-------|
+| Admin panel — all data live (no seeds) | ✅ Complete | 2026-04-09 |
+| apiAdminGetUsers / apiAdminGetDisputes | ✅ Complete | engine-api.ts |
+| apiAdminFreeze / apiAdminFreezeStatus | ✅ Complete | engine-api.ts |
+| apiGetPlatformConfig / apiUpdatePlatformConfig | ✅ Complete | engine-api.ts |
+| apiAdminGetAuditLog (30s poll) | ✅ Complete | engine-api.ts |
+| apiAdminGetFraudReport | ✅ Complete | engine-api.ts |
+| apiAdminPenalty (escalation) | ✅ Complete | engine-api.ts |
+| apiAdminDeclareWinner | ✅ Complete | engine-api.ts |
+| apiEngineHealth | ✅ Complete | engine-api.ts |
+| Fraud Report tab | ✅ Complete | Admin.tsx |
+| Oracle tab (engine health) | ✅ Complete | Admin.tsx |
+| Migration 018 (admin indexes) | ✅ Complete | feat/frontend-admin-ui |
 | apiJoinMatch sends team field | ❌ Missing | Add `team?: "A"\|"B"` to opts + body |
 | apiMatchHeartbeat function | ❌ Missing | New function + HeartbeatResponse type |
 | apiKickPlayer function | ❌ Missing | New function |
@@ -178,3 +190,4 @@ HTTP Status codes to handle:
 - [CLAUDE]  2026-04-09 14:30 UTC  feat/admin-live-backend            Admin live backend Step 1: GET /admin/users, GET /admin/disputes, GET+PUT /platform/config, GET /admin/audit-log, _log_audit() wired. 842 tests pass.
 - [CLAUDE]  2026-04-09 15:00 UTC  fix/deploy-migrations              arena.yml deploy: added idempotent migration runner (all 0XX-*.sql files). AGENTS_SYNC timestamp+branch format added.
 - [CLAUDE]  2026-04-09 17:00 UTC  feat/admin-engine-sync             Migration 017 (platform_config key-value + admin_audit_log). All admin endpoints on correct tables. UPPERCASE action names. 844 tests pass.
+- [CLAUDE]  2026-04-09 19:00 UTC  feat/frontend-admin-ui             Migration 018 (5 admin query indexes). 11 admin API functions in engine-api.ts. Admin.tsx fully wired to live APIs — zero seed data. Fraud + Oracle tabs added. 0 TS errors.
