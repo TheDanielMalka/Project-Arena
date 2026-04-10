@@ -88,6 +88,7 @@ This file is the **single source of truth** for all active agents (Cursor + Clau
 | 015 (tx_hash unique index) | ✅ Applied |
 | 016 (player_penalties) | ✅ Applied |
 | audit_logs + platform_settings | ✅ Already in init.sql (no new migration needed) |
+| 027 (tx_type escrow_refund_leave/kicked/disconnect/cancel) | ✅ Added — fix/db-tx-enum |
 
 ---
 
@@ -166,6 +167,31 @@ HTTP Status codes to handle:
 
 ---
 
+## ⚠️ Known Bugs — Match Room (2026-04-10, requires immediate fix)
+
+### BUG-1 CRITICAL: tx_type ENUM missing values (DB Agent → migration 027)
+The `tx_type` DB ENUM is missing: `escrow_refund_leave`, `escrow_refund_kicked`, `escrow_refund_disconnect`, `escrow_refund_cancel`.
+Code uses all four in leave_match / kick_player / stale_cleanup / heartbeat-stale path.
+**Result:** Every AT match leave/kick → PostgreSQL DataError → 500. Stale AT players never removed.
+**Fix:** `ALTER TYPE tx_type ADD VALUE IF NOT EXISTS '...'` × 4 in migration 027.
+
+### BUG-2 CRITICAL: Stale cleanup aborts all DELETEs on first AT ENUM error (Engine Agent)
+`_stale_player_cleanup_loop` processes all stale players in a single session.
+When AT credit fails (BUG-1), the session becomes aborted → all prior DELETEs in that batch roll back.
+**Fix:** Isolate each stale player in its own `with SessionLocal() as session:` block.
+
+### BUG-3 UNKNOWN: create_match returns 500 (needs EC2 log)
+All known error paths in create_match use correct ENUM values and correct column names.
+Cannot determine root cause without server logs.
+**Debug:** `docker logs arena-engine --tail 200 | grep "create_match error"` on EC2.
+Until confirmed: add `traceback.format_exc()` to the create_match 500 catch in main.py.
+
+### Migration 026 idempotency (resolved fix/db-tx-enum)
+Step 1 drops `match_players_pkey` only when it is still the **composite** PK (`array_length(conkey,1) > 1`).
+Step 2 adds surrogate PK only when the table has no primary key. Migration 027 adds missing `tx_type` enum values.
+
+---
+
 ## Coordination Log
 
 > Every agent appends here after completing a task.
@@ -195,3 +221,6 @@ HTTP Status codes to handle:
 - [DB Agent] 2026-04-10 01:20 UTC  feat/db-phase2-schema            Added migrations 025-026: wallet_blacklist, match_players nullable user_id + surrogate PK.
 - [CLIENT]  2026-04-10 12:00 UTC  feat/client-phase5-sync          2FA modal (temp_token → POST /auth/2fa/confirm); httpx 401 hook → logout + rebuild login UI; tray poll GET /messages/unread/count every 30s + badge on icon; Messages menu opens /messages + clears badge until next poll; region from /auth/me in profile; TODO[GOOGLE]/TODO[VERIF] placeholders. Depends on merged engine /auth/me region + messages unread route.
 - [TESTS]   2026-04-10 14:30 UTC  test/phase4-coverage             Added 6 pytest modules (delete account, 2FA, region, unread count, attachments, verify stubs) + 3 Vitest files (settings.delete, settings.2fa, hub.badge). TODO[GOOGLE]/TODO[VERIF] in test module docstrings. Region invalid: 400 value / 422 type. test_delete_preserves_match_history xfail until engine uses SET user_id=NULL. 895 pytest collected; Vitest 506 pass.
+- [CLAUDE]  2026-04-10 xx:xx UTC  test/phase3-risk-test-fixes      Fixed 8 failing tests in feat/engine-phase3-risk: mock fetchone sequences for blacklist checks in register, 3rd-offense ban path, and delete account. 894 passed, 1 xfailed.
+- [CLAUDE]  2026-04-10 xx:xx UTC  investigation                    ROOT CAUSE AUDIT — match room 500. Found: (1) tx_type ENUM missing escrow_refund_leave/kicked/disconnect — breaks AT leave/kick/stale. (2) stale cleanup uses shared session so ENUM failure aborts all DELETEs. (3) create_match 500 unconfirmed — need EC2 logs. Fix plan: migration 027 (DB) + stale cleanup session isolation (Engine). See KNOWN BUGS below.
+- [DB Agent] 2026-04-10 12:20 UTC  fix/db-tx-enum                   Migration 027: tx_type escrow_refund_* enum values; migration 026: idempotent composite-PK drop + guarded PRIMARY KEY(id). init.sql synced.
