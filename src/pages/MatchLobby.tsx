@@ -717,13 +717,15 @@ const MatchLobby = () => {
     if (!myActiveRoom || !user) return;
     const matchId    = myActiveRoom.id;
     const stakeLabel = formatMatchStakeShort(myActiveRoom);
-    // Optimistic: clear local state immediately.
-    // Must pass user.username — joinMatch (lines ~509/537) adds username to players,
+    // Clear active room FIRST so useActiveRoomServerSync tears down (cancelled=true)
+    // before any in-flight heartbeat returns in_match=false — avoids spurious
+    // "removed by the host" toast after voluntary leave.
+    setMyRoomMatchId(null);
+    setCountdown(null);
+    // Must pass user.username — joinMatch adds username to players,
     // so leaveMatch must use the same key to find and remove the player.
     leaveMatch(matchId, user.username);
     cancelEscrow(matchId);
-    setMyRoomMatchId(null);
-    setCountdown(null);
     useNotificationStore.getState().addNotification({
       type: "system",
       title: "↩️ Left Room",
@@ -742,12 +744,12 @@ const MatchLobby = () => {
     if (!myActiveRoom || !user) return;
     const matchId    = myActiveRoom.id;
     const stakeLabel = formatMatchStakeShort(myActiveRoom);
-    // Optimistic: clear local state immediately so UI feels instant
-    cancelEscrow(matchId);
-    deleteMatch(matchId);
+    // Same as leave: drop activeRoomId first so heartbeat polling stops immediately.
     setMyRoomMatchId(null);
     setDeleteRoomConfirmOpen(false);
     setCountdown(null);
+    cancelEscrow(matchId);
+    deleteMatch(matchId);
     useNotificationStore.getState().addNotification({
       type: "system",
       title: "🗑️ Room Deleted",

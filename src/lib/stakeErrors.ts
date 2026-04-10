@@ -42,7 +42,21 @@ export function createFailureMessage(sc: StakeCurrency, fail: ApiFail): string {
   if (fail.status === 409) {
     return detail || "You already have an active match room.";
   }
-  return detail || "Could not create match. Please try again.";
+  if (fail.status === 400 || fail.status === 422) {
+    return detail || "Could not create this match.";
+  }
+  if (fail.status === 403) {
+    return detail || "You are not allowed to create this match.";
+  }
+  if (fail.status === 404) {
+    return detail || "Create request could not be completed.";
+  }
+  // Prefer server `detail` whenever present; otherwise surface HTTP status (e.g. 500) for support.
+  if (detail) return detail;
+  if (fail.status >= 400) {
+    return `Match creation failed (HTTP ${fail.status}). Please try again.`;
+  }
+  return "Match creation failed. Please try again.";
 }
 
 export function inviteFailureMessage(sc: StakeCurrency, fail: ApiFail): string {
