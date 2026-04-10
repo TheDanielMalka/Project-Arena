@@ -91,6 +91,7 @@ This file is the **single source of truth** for all active agents (Cursor + Clau
 | 016 (player_penalties) | ✅ Applied |
 | audit_logs + platform_settings | ✅ Already in init.sql (no new migration needed) |
 | 027 (tx_type escrow_refund_leave/kicked/disconnect/cancel) | ✅ Added — fix/db-tx-enum |
+| 028 (match_players: wallet_address + has_deposited + deposited_at + deposit_amount) | ✅ Added — fix/db-match-players-columns |
 
 ---
 
@@ -227,4 +228,5 @@ Step 2 adds surrogate PK only when the table has no primary key. Migration 027 a
 - [CLAUDE]  2026-04-10 xx:xx UTC  investigation                    ROOT CAUSE AUDIT — match room 500. Found: (1) tx_type ENUM missing escrow_refund_leave/kicked/disconnect — breaks AT leave/kick/stale. (2) stale cleanup uses shared session so ENUM failure aborts all DELETEs. (3) create_match 500 unconfirmed — need EC2 logs. Fix plan: migration 027 (DB) + stale cleanup session isolation (Engine). See KNOWN BUGS below.
 - [DB Agent] 2026-04-10 12:20 UTC  fix/db-tx-enum                   Migration 027: tx_type escrow_refund_* enum values; migration 026: idempotent composite-PK drop + guarded PRIMARY KEY(id). init.sql synced.
 - [CLIENT]  2026-04-10 16:00 UTC  fix/client-match-room-sync       Match room audit: get_match_active_payload (network err keeps UI); match null/cancelled clears + tray; heartbeat cancelled/in_match=false clears; UI strings waiting/in_progress/completed; 5s auto-clear after completed; auto-start monitor on in_progress. 43 client pytest pass.
+- [CLAUDE]  2026-04-10 xx:xx UTC  fix/db-match-players-columns     ROOT CAUSE of create_match 500 found: wallet_address / has_deposited / deposited_at / deposit_amount never added to match_players via migration (only in init.sql). Migration 028 fixes this idempotently.
 - [CURSOR]  2026-04-10 12:48 UTC  fix/frontend-match-room-sync      MatchLobby: setActiveRoomId(null) before leave/cancel local cleanup so heartbeat stops immediately; useActiveRoomServerSync skips kick toast if store activeRoomId already cleared. createFailureMessage: 400/403/404/422 + HTTP status fallback. Vitest 506 pass.
