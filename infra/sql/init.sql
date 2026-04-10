@@ -889,3 +889,40 @@ CREATE TABLE IF NOT EXISTS report_attachments (
     uploaded_by  UUID REFERENCES users(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_report_attachments_ticket ON report_attachments(ticket_id);
+
+-- ── Migration 025 — wallet_blacklist (banned wallet/steam/riot) ─────────────
+-- Migration 025: wallet/steam blacklist for banned accounts
+CREATE TABLE IF NOT EXISTS wallet_blacklist (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    wallet_address VARCHAR(255),
+    steam_id       VARCHAR(30),
+    riot_id        VARCHAR(30),
+    user_id        UUID,           -- original user (may be deleted)
+    reason         TEXT NOT NULL DEFAULT 'ban',
+    banned_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    banned_by      UUID REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_wallet_blacklist_wallet ON wallet_blacklist(wallet_address);
+CREATE INDEX IF NOT EXISTS idx_wallet_blacklist_steam  ON wallet_blacklist(steam_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_blacklist_riot   ON wallet_blacklist(riot_id);
+
+-- ── Migration 026 — match_players.user_id nullable (history on delete) ──────
+-- Migration 026: allow user_id NULL in match_players to preserve match history on account deletion
+-- Step 1: drop the old composite PK
+ALTER TABLE match_players DROP CONSTRAINT match_players_pkey;
+
+-- Step 2: add a surrogate PK
+ALTER TABLE match_players ADD COLUMN IF NOT EXISTS id SERIAL;
+ALTER TABLE match_players ADD PRIMARY KEY (id);
+
+-- Step 3: make user_id nullable + change FK to SET NULL
+ALTER TABLE match_players
+    ALTER COLUMN user_id DROP NOT NULL,
+    DROP CONSTRAINT IF EXISTS match_players_user_id_fkey,
+    ADD CONSTRAINT match_players_user_id_fkey
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL;
+
+-- Step 4: unique constraint to prevent duplicate active entries
+CREATE UNIQUE INDEX IF NOT EXISTS idx_match_players_match_user
+    ON match_players(match_id, user_id)
+    WHERE user_id IS NOT NULL;
