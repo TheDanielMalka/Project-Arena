@@ -6160,6 +6160,58 @@ async def get_support_tickets(
     }
 
 
+@app.get("/admin/support/tickets")
+async def admin_list_support_tickets(
+    limit: int = Query(default=200, ge=1, le=500),
+    _admin: dict = Depends(require_admin),
+):
+    """Admin: list all support tickets (newest first)."""
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(
+                text("""
+                    SELECT
+                        st.id, st.reason, st.description, st.status,
+                        st.category, st.match_id, st.topic,
+                        st.admin_note, st.created_at, st.updated_at,
+                        st.reporter_id, st.reported_id,
+                        rep.username AS reporter_username,
+                        u.username AS reported_username
+                    FROM support_tickets st
+                    JOIN users rep ON rep.id = st.reporter_id
+                    LEFT JOIN users u ON u.id = st.reported_id
+                    ORDER BY st.created_at DESC
+                    LIMIT :lim
+                """),
+                {"lim": limit},
+            ).fetchall()
+    except Exception as exc:
+        logger.error("admin_list_support_tickets error: %s", exc)
+        raise HTTPException(500, "Failed to load tickets")
+
+    return {
+        "tickets": [
+            {
+                "id":                 str(r[0]),
+                "reason":             r[1],
+                "description":        r[2],
+                "status":             r[3],
+                "category":           r[4],
+                "match_id":           str(r[5]) if r[5] else None,
+                "topic":              r[6],
+                "admin_note":         r[7],
+                "created_at":         r[8].isoformat() if r[8] else None,
+                "updated_at":         r[9].isoformat() if r[9] else None,
+                "reporter_id":        str(r[10]),
+                "reported_id":        str(r[11]) if r[11] else None,
+                "reporter_username":  r[12],
+                "reported_username":  r[13],
+            }
+            for r in rows
+        ]
+    }
+
+
 _REPORT_UPLOAD_MIME = {
     "image/png": ".png",
     "image/jpeg": ".jpg",

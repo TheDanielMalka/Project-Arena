@@ -204,6 +204,8 @@ vi.mock("@/lib/engine-api", async () => {
       reward_xp: 50,
       at_balance: 210,
     })),
+    apiAdminListSupportTickets: vi.fn(async () => ({ ok: true as const, tickets: [] })),
+    apiAdminPatchSupportTicket: vi.fn(async () => ({ ok: true as const })),
   };
 });
 

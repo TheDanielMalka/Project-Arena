@@ -171,6 +171,9 @@ vi.mock("@/lib/engine-api", async (importOriginal) => {
     apiAdminOracleSync: vi.fn().mockResolvedValue({
       ok: true, synced: true, from_block: 0, to_block: 100, events_processed: 0,
     }),
+
+    apiAdminListSupportTickets: vi.fn().mockResolvedValue({ ok: true, tickets: [] }),
+    apiAdminPatchSupportTicket: vi.fn().mockResolvedValue({ ok: true }),
   };
 });
 
@@ -318,6 +321,15 @@ describe("Admin Panel — platform settings tab", () => {
     renderAdmin();
     fireEvent.click(screen.getByRole("button", { name: /platform/i }));
     expect(screen.getByRole("button", { name: /save platform settings/i })).toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+describe("Admin Panel — reports tab", () => {
+  it("loads reports from API and shows empty state when none", async () => {
+    renderAdmin();
+    fireEvent.click(screen.getByRole("button", { name: /^reports$/i }));
+    expect(await screen.findByText(/no reports in the database yet/i)).toBeInTheDocument();
   });
 });
 

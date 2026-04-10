@@ -2494,6 +2494,62 @@ export async function apiGetSupportTickets(
   }
 }
 
+/** GET /admin/support/tickets — full queue for admins */
+export type ApiAdminSupportTicketRow = ApiSupportTicketRow & {
+  reporter_id: string;
+  reporter_username: string | null;
+};
+
+export async function apiAdminListSupportTickets(
+  token: string,
+  opts?: { limit?: number },
+): Promise<
+  | { ok: true; tickets: ApiAdminSupportTicketRow[] }
+  | { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const q = new URLSearchParams();
+    if (opts?.limit != null) q.set("limit", String(opts.limit));
+    const res = await arenaUserFetch(`${ENGINE_BASE}/admin/support/tickets?${q}`, token, {});
+    const raw = (await res.json().catch(() => ({}))) as {
+      tickets?: ApiAdminSupportTicketRow[];
+      detail?: unknown;
+    };
+    if (!res.ok) {
+      return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    }
+    return { ok: true as const, tickets: Array.isArray(raw.tickets) ? raw.tickets : [] };
+  } catch {
+    return { ok: false as const, status: 0, detail: "Network error" };
+  }
+}
+
+/** PATCH /admin/support/tickets/{id} */
+export async function apiAdminPatchSupportTicket(
+  token: string,
+  ticketId: string,
+  body: { status?: string; admin_note?: string | null },
+): Promise<{ ok: true } | { ok: false; status: number; detail: string | null }> {
+  try {
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/admin/support/tickets/${encodeURIComponent(ticketId)}`,
+      token,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
+    const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
+    if (!res.ok) {
+      return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    }
+    return { ok: true as const };
+  } catch {
+    return { ok: false as const, status: 0, detail: "Network error" };
+  }
+}
+
 // ── Forge Challenges ──────────────────────────────────────────────────────────
 // DB-ready: forge_challenges + forge_challenge_progress; shapes match GET /forge/challenges.
 
