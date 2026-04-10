@@ -99,14 +99,11 @@ describe("userStore", () => {
   });
 
   // ── loginWithGoogle ───────────────────────────────────────────────────────
-  it("loginWithGoogle authenticates user", () => {
+  it("loginWithGoogle is a no-op until Google OAuth is configured", () => {
+    useUserStore.getState().logout();
     useUserStore.getState().loginWithGoogle();
-    expect(useUserStore.getState().isAuthenticated).toBe(true);
-  });
-
-  it("loginWithGoogle sets greetingType to 'google'", () => {
-    useUserStore.getState().loginWithGoogle();
-    expect(useUserStore.getState().greetingType).toBe("google");
+    expect(useUserStore.getState().isAuthenticated).toBe(false);
+    expect(useUserStore.getState().greetingType).toBeNull();
   });
 
   // ── clearLoginGreeting ────────────────────────────────────────────────────

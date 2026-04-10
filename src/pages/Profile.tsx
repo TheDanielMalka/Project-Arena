@@ -53,6 +53,24 @@ type GameConnection = {
   accountId?: string;
 };
 
+const GAME_LINK_TEMPLATE: GameConnection[] = [
+  { name: "CS2", platform: "pc", status: "disconnected" },
+  { name: "Valorant", platform: "pc", status: "disconnected" },
+  { name: "COD", platform: "pc", status: "disconnected" },
+  { name: "League of Legends", platform: "pc", status: "disconnected" },
+  { name: "PUBG", platform: "pc", status: "disconnected" },
+  { name: "Overwatch 2", platform: "pc", status: "disconnected" },
+  { name: "Team Fortress 2", platform: "pc", status: "disconnected" },
+  { name: "Fortnite", platform: "pc", status: "disconnected" },
+  { name: "FIFA / EA FC", platform: "pc", status: "disconnected" },
+  { name: "PES / eFootball", platform: "pc", status: "disconnected" },
+  { name: "MLBB", platform: "mobile", status: "disconnected" },
+  { name: "Wild Rift", platform: "mobile", status: "disconnected" },
+  { name: "COD Mobile", platform: "mobile", status: "disconnected" },
+  { name: "PUBG Mobile", platform: "mobile", status: "disconnected" },
+  { name: "Fortnite Mobile", platform: "mobile", status: "disconnected" },
+];
+
 // ── XP level icon map ──────────────────────────────────────────────────────────
 const XP_ICON_MAP: Record<string, LucideIcon> = {
   Medal, Shield, Trophy, Gem, Sparkles, Crown,
@@ -65,7 +83,7 @@ const Profile = () => {
   const xpInfo = getXpInfo(user?.stats.xp ?? 0);
   const XpIcon = XP_ICON_MAP[xpInfo.iconName] ?? Medal;
   const [editMode, setEditMode] = useState(false);
-  const [username, setUsername] = useState(user?.username ?? "ArenaPlayer_01");
+  const [username, setUsername] = useState(user?.username ?? "");
 
   // Avatar picker state
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
@@ -80,6 +98,10 @@ const Profile = () => {
   const [draftAvatar, setDraftAvatar]           = useState<string>(user?.avatar ?? "initials");
   const [draftBg, setDraftBg]                   = useState<string>(user?.avatarBg ?? "default");
   const [draftEquippedBadge, setDraftEquippedBadge] = useState<string | undefined>(user?.equippedBadgeIcon);
+
+  useEffect(() => {
+    if (user?.username) setUsername(user.username);
+  }, [user?.username]);
 
   useEffect(() => {
     if (!user) return;
@@ -119,9 +141,6 @@ const Profile = () => {
     );
   };
 
-  // DB-ready: unlock flags should come from API/event progress
-  const sampleEventUnlockedId = "rift_runner";
-
   const renderAvatarContent = (avatar: string, size: "sm" | "lg" = "lg") => {
     const textSize  = size === "lg" ? "text-xl" : "text-sm";
     const emojiSize = size === "lg" ? "text-2xl" : "text-base";
@@ -153,32 +172,44 @@ const Profile = () => {
   const [linkDialog, setLinkDialog] = useState<{ name: string; type: "game" | "service"; platform?: "pc" | "mobile"; placeholder?: string } | null>(null);
   const [linkAccountId, setLinkAccountId] = useState("");
 
-  // Local state for game connections (togglable)
-  const [gameConnections, setGameConnections] = useState<GameConnection[]>([
-    { name: "COD", platform: "pc", status: "disconnected" },
-    { name: "League of Legends", platform: "pc", status: "disconnected" },
-    { name: "PUBG", platform: "pc", status: "disconnected" },
-    { name: "Overwatch 2", platform: "pc", status: "disconnected" },
-    { name: "Team Fortress 2", platform: "pc", status: "disconnected" },
-    { name: "Fortnite", platform: "pc", status: "connected", accountId: "EpicGamer99" },
-    { name: "FIFA / EA FC", platform: "pc", status: "disconnected" },
-    { name: "PES / eFootball", platform: "pc", status: "disconnected" },
-    { name: "MLBB", platform: "mobile", status: "disconnected" },
-    { name: "Wild Rift", platform: "mobile", status: "disconnected" },
-    { name: "COD Mobile", platform: "mobile", status: "disconnected" },
-    { name: "PUBG Mobile", platform: "mobile", status: "connected", accountId: "PUBGm_Player01" },
-    { name: "Fortnite Mobile", platform: "mobile", status: "disconnected" },
-  ]);
+  const [gameConnections, setGameConnections] = useState<GameConnection[]>(() =>
+    GAME_LINK_TEMPLATE.map((r) => ({ ...r })),
+  );
 
-  // Connection states for services
+  useEffect(() => {
+    setGameConnections((prev) =>
+      prev.map((g) => {
+        if (g.name === "CS2") {
+          return user?.steamId
+            ? { ...g, status: "connected" as const, accountId: user.steamId }
+            : { ...g, status: "disconnected" as const, accountId: undefined };
+        }
+        if (g.name === "Valorant") {
+          return user?.riotId
+            ? { ...g, status: "connected" as const, accountId: user.riotId }
+            : { ...g, status: "disconnected" as const, accountId: undefined };
+        }
+        return g;
+      }),
+    );
+  }, [user?.steamId, user?.riotId]);
+
   const [serviceConnections, setServiceConnections] = useState<Record<string, string | false>>({
     discord: false,
     faceit: false,
-    // DB-ready: riot Riot account id / Riot ID from OAuth or profile API
     riot: false,
   });
 
-  const walletAddress = user?.walletShort ?? "0x1a2B...9fE4";
+  useEffect(() => {
+    setServiceConnections((prev) => ({
+      ...prev,
+      riot: user?.riotId ?? false,
+    }));
+  }, [user?.riotId]);
+
+  const walletAddress =
+    user?.walletShort ||
+    (user?.walletAddress ? `${user.walletAddress.slice(0, 6)}…${user.walletAddress.slice(-4)}` : "—");
 
   const gameConfig: Record<string, { abbr: string; color: string; bg: string; img?: string }> = {
     "CS2":              { abbr: "CS2",  color: "#F97316", bg: "rgba(249,115,22,0.12)",  img: "https://cdn.cloudflare.steamstatic.com/steam/apps/730/capsule_sm_120.jpg" },
@@ -207,7 +238,12 @@ const Profile = () => {
   const addNotification = useNotificationStore((s) => s.addNotification);
 
   const handleCopyWallet = () => {
-    navigator.clipboard.writeText("0x1a2B3c4D5e6F7g8H9iJkLmNoPqRsT9fE4");
+    const w = user?.walletAddress?.trim();
+    if (!w) {
+      toast({ title: "No wallet", description: "Link a wallet first.", variant: "destructive" });
+      return;
+    }
+    void navigator.clipboard.writeText(w);
     setCopiedWallet(true);
     addNotification({ type: "system", title: "📋 Wallet Copied", message: "Your wallet address was copied to clipboard." });
     setTimeout(() => setCopiedWallet(false), 2000);
@@ -249,7 +285,11 @@ const Profile = () => {
       if (id == null) return false;
       if (FREE_AVATAR_IDS.has(id)) return true;
       const evt = EVENT_AVATAR_PRESETS.find((e) => e.id === id);
-      if (evt) return id === sampleEventUnlockedId;
+      if (evt) {
+        const item = SEED_ITEMS.find((i) => i.category === "avatar" && i.icon === `preset:${id}`);
+        if (item && ownsForgeItem(item.id)) return true;
+        return selectedAvatar === draftAvatar;
+      }
       // Premium presets: allow if already equipped, or purchased in Forge
       if (selectedAvatar === draftAvatar) return true;
       const item = SEED_ITEMS.find((i) => i.category === "avatar" && i.icon === draftAvatar);
@@ -1097,8 +1137,12 @@ const Profile = () => {
           {pickerMode === "avatar" && avatarTab === "event" && (
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
               {EVENT_AVATAR_PRESETS.map((p) => {
-                const unlocked = p.id === sampleEventUnlockedId;
                 const key = avatarPresetKey(p.id);
+                const forgeItem = SEED_ITEMS.find(
+                  (i) => i.category === "avatar" && i.icon === `preset:${p.id}`,
+                );
+                const unlocked =
+                  (!!forgeItem && ownsForgeItem(forgeItem.id)) || selectedAvatar === key;
                 const selected = draftAvatar === key;
                 return (
                   <button

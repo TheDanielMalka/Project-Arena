@@ -5,18 +5,7 @@ import {
   Swords, Shield, Wallet, Trophy, Zap, Download, Monitor,
   CheckCircle, ArrowRight, Lock, Eye, Cpu, ChevronRight, Flame,
 } from "lucide-react";
-
-// ── Game logos (same CDN as rest of app) ──────────────────────────────────────
-// DB-ready: comingSoon driven by games.enabled — flip to false when Client adds support
-const GAMES = [
-  { name: "CS2",              logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/730/capsule_sm_120.jpg" },
-  { name: "Valorant",         logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/2181130/capsule_sm_120.jpg" },
-  { name: "Fortnite",         logo: "https://play-lh.googleusercontent.com/FxJDPDIDJKlG9C8lOxaS041X27A0SrHAa46SGDIpPusAd4IEJihZTyGf-8rTZ_GpF34aeLvULilVuO0cpCJxTg=s120", comingSoon: true },
-  { name: "Apex Legends",     logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/1172470/capsule_sm_120.jpg",                                                                  comingSoon: true },
-  { name: "COD",              logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/1938090/capsule_sm_120.jpg",                                                                  comingSoon: true },
-  { name: "PUBG",             logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/578080/capsule_sm_120.jpg",                                                                   comingSoon: true },
-  { name: "League of Legends",logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/2801460/capsule_sm_120.jpg",                                                                  comingSoon: true },
-];
+import { LANDING_GAMES } from "@/lib/arenaGamesCatalog";
 
 /**
  * Hero video: `/landing/hero.mp4` first (bundled stock that evokes tactical FPS — not real CS/VAL),
@@ -286,7 +275,7 @@ const Index = () => {
             Supported Titles
           </p>
           <div className="flex flex-wrap justify-center gap-3">
-            {GAMES.map((g) => (
+            {LANDING_GAMES.map((g) => (
               <div
                 key={g.name}
                 className={`relative flex items-center gap-2.5 px-4 py-2 rounded-lg border transition-all ${

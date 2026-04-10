@@ -23,20 +23,11 @@ import type { DirectMessage, Game, Friendship, InboxMessage, PublicPlayerProfile
 const EMPTY_CHAT_MESSAGES: DirectMessage[] = [];
 import { cn } from "@/lib/utils";
 import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
+import { hubGameFilters } from "@/lib/arenaGamesCatalog";
 
 // ─── Constants ────────────────────────────────────────────────
 
-// DB-ready: comingSoon driven by games.enabled — flip to false when Client supports the game
-const GAME_FILTERS: Array<{ label: string; value: Game | ""; comingSoon?: boolean }> = [
-  { label: "All",              value: ""                  },
-  { label: "CS2",              value: "CS2"               },
-  { label: "Valorant",         value: "Valorant"          },
-  { label: "Fortnite",         value: "Fortnite",          comingSoon: true },
-  { label: "Apex Legends",     value: "Apex Legends",      comingSoon: true },
-  { label: "PUBG",             value: "PUBG",              comingSoon: true },
-  { label: "COD",              value: "COD",               comingSoon: true },
-  { label: "League of Legends",value: "League of Legends", comingSoon: true },
-];
+const GAME_FILTERS = hubGameFilters();
 
 const TIER_COLOR: Record<string, string> = {
   Bronze: "#CD7F32", Silver: "#A0A0A0", Gold: "#FFD700",

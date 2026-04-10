@@ -197,6 +197,13 @@ vi.mock("@/lib/engine-api", async () => {
       wallet_address: "0x7a3F9c2E1b8D4a5C6f7e8d9B0c1A2b3C4d5E6f7A",
     })),
     apiGetUnreadCount: vi.fn(async () => ({ count: 0 })),
+    apiGetForgeChallenges: vi.fn(async () => []),
+    apiClaimForgeChallenge: vi.fn(async () => ({
+      ok: true as const,
+      reward_at: 10,
+      reward_xp: 50,
+      at_balance: 210,
+    })),
   };
 });
 

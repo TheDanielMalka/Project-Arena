@@ -190,19 +190,32 @@ function AdminTicketAttachmentsBlock({ ticketId, token }: { ticketId: string; to
   );
 }
 
-// ─── Activity templates (local live feed) ────────────────────
-const ACTIVITY_TEMPLATES: Omit<AdminActivityEvent, "id" | "timestamp">[] = [
-  { type: "match_start", message: "🎮 M-2055 started: xDragon99 vs CyberWolf (CS2 · $80)" },
-  { type: "payout",      message: "💰 Payout $45 → NovaBlade (0x1b8...44a1)" },
-  { type: "login",       message: "🔑 StormRider connected wallet 0x9e2...bb07" },
-  { type: "match_end",   message: "🏁 M-2054 ended: PhantomAce won vs IronClad (Valorant)" },
-  { type: "deposit",     message: "📥 Deposit $200 from DarkViper" },
-  { type: "dispute",     message: "🚩 Dispute opened for match", highlight: true },
-  { type: "match_start", message: "🎮 Match started: BlazeFury vs NightHawk (CS2 · $150)" },
-  { type: "payout",      message: "💰 Payout $120 → ShadowKing (0x3c4...d5e8)" },
-  { type: "ban",         message: "🛑 Auto-flag: win streak anomaly detected", highlight: true },
-  { type: "login",       message: "🔑 Login attempt — account suspended", highlight: true },
-];
+// ─── Live feed: derived from same GET /admin/audit-log as Audit tab (no mock templates) ───
+function auditRowsToActivity(entries: AuditLog[]): AdminActivityEvent[] {
+  const rows = entries.map((l) => {
+    const action = l.action;
+    let type: AdminActivityEvent["type"] = "login";
+    if (/BAN_|SUSPEND_/i.test(action)) type = "ban";
+    else if (/DECLARE_WINNER|RESOLVE/i.test(action)) type = "match_end";
+    else if (/FREEZE_PAYOUT|DISPUTE/i.test(action)) type = "dispute";
+    const highlight = /BAN_|SUSPEND_|FREEZE_PAYOUT/i.test(action);
+    const msg = [
+      action.replace(/_/g, " "),
+      l.detail ? `— ${l.detail}` : "",
+      l.target && l.target !== "—" ? `· ${l.target}` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    return {
+      id: `live-${l.id}`,
+      type,
+      message: msg,
+      timestamp: l.createdAt,
+      highlight,
+    };
+  });
+  return rows.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+}
 
 // ─── Nav sections ──────────────────────────────────────────────
 const NAV = [
@@ -232,7 +245,6 @@ const Admin = () => {
   const [flaggedUsers, setFlaggedUsers] = useState<FlaggedUser[]>([]);
   const [auditLog,     setAuditLog]     = useState<AuditLog[]>([]);
   const [activity,     setActivity]     = useState<AdminActivityEvent[]>([]);
-  const activityCounter = useRef(0);
   const feedRef         = useRef<HTMLDivElement>(null);
 
   // ── Fraud report ──
@@ -289,7 +301,7 @@ const Admin = () => {
     if (!token) return;
     const r = await apiAdminGetAuditLog(token, { limit: 50 });
     if (r.ok) {
-      setAuditLog(r.entries.map((e) => ({
+      const mapped = r.entries.map((e) => ({
         id:        e.id,
         adminId:   e.admin_id,
         adminName: e.admin_username || "admin",
@@ -297,7 +309,9 @@ const Admin = () => {
         target:    e.target_id  || "—",
         detail:    e.notes      || "",
         createdAt: e.created_at?.slice(0, 16).replace("T", " ") || "",
-      })));
+      }));
+      setAuditLog(mapped);
+      setActivity(auditRowsToActivity(mapped));
     }
   }, [token]);
 
@@ -368,22 +382,6 @@ const Admin = () => {
     const iv = setInterval(() => void loadAuditLog(), 30_000);
     return () => clearInterval(iv);
   }, [token, loadUsers, loadDisputes, loadAuditLog]);
-
-  // ── Activity feed (local simulation) ──
-  useEffect(() => {
-    const seed = ACTIVITY_TEMPLATES.slice(0, 5).map((t, i) => ({
-      ...t, id: `evt-${i}`, timestamp: new Date(Date.now() - (5 - i) * 8000).toLocaleTimeString(),
-    }));
-    setActivity(seed);
-    activityCounter.current = 5;
-
-    const iv = setInterval(() => {
-      const tpl = ACTIVITY_TEMPLATES[activityCounter.current % ACTIVITY_TEMPLATES.length];
-      setActivity((p) => [...p.slice(-50), { ...tpl, id: `evt-${activityCounter.current}`, timestamp: new Date().toLocaleTimeString() }]);
-      activityCounter.current++;
-    }, 4000);
-    return () => clearInterval(iv);
-  }, []);
 
   useEffect(() => {
     if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
@@ -1126,7 +1124,7 @@ const Admin = () => {
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <Radio className="h-3.5 w-3.5 text-primary animate-pulse" />
-                <span className="text-xs text-muted-foreground font-display uppercase tracking-wider">Live — updates every 4s</span>
+                <span className="text-xs text-muted-foreground font-display uppercase tracking-wider">Live — same data as Audit log (refreshes every 30s)</span>
               </div>
               <ScrollArea className="h-[440px] rounded-lg border border-border/60 bg-secondary/10">
                 <div ref={feedRef} className="p-3 space-y-1.5">
