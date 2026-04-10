@@ -67,6 +67,7 @@ class TestDeleteAccount:
         session.execute.return_value.fetchone.side_effect = [
             None,  # no active match
             ("76561198000000001", None, "0xabc", email, username),
+            None,  # was_banned check (migration 025)
             None,  # rem check
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -109,6 +110,7 @@ def _session_delete_success():
     session.execute.return_value.fetchone.side_effect = [
         None,  # active match guard
         ("76561198000000001", None, "0xabc", "u@u.com", "uname"),
+        None,  # was_banned check (migration 025)
         None,  # rem: no remaining host rows
     ]
     ctx = MagicMock()
