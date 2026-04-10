@@ -72,6 +72,7 @@ This file is the **single source of truth** for all active agents (Cursor + Clau
 | 401 → clear session + login screen (httpx response hook) | ✅ feat/client-phase5-sync |
 | Tray unread badge (GET /messages/unread/count, 30s) | ✅ feat/client-phase5-sync |
 | Region badge in profile (from /auth/me) | ✅ feat/client-phase5-sync |
+| Match room lifecycle sync (GET /match/active + heartbeat) | ✅ fix/client-match-room-sync |
 
 ---
 
@@ -224,3 +225,4 @@ Step 2 adds surrogate PK only when the table has no primary key. Migration 027 a
 - [CLAUDE]  2026-04-10 xx:xx UTC  test/phase3-risk-test-fixes      Fixed 8 failing tests in feat/engine-phase3-risk: mock fetchone sequences for blacklist checks in register, 3rd-offense ban path, and delete account. 894 passed, 1 xfailed.
 - [CLAUDE]  2026-04-10 xx:xx UTC  investigation                    ROOT CAUSE AUDIT — match room 500. Found: (1) tx_type ENUM missing escrow_refund_leave/kicked/disconnect — breaks AT leave/kick/stale. (2) stale cleanup uses shared session so ENUM failure aborts all DELETEs. (3) create_match 500 unconfirmed — need EC2 logs. Fix plan: migration 027 (DB) + stale cleanup session isolation (Engine). See KNOWN BUGS below.
 - [DB Agent] 2026-04-10 12:20 UTC  fix/db-tx-enum                   Migration 027: tx_type escrow_refund_* enum values; migration 026: idempotent composite-PK drop + guarded PRIMARY KEY(id). init.sql synced.
+- [CLIENT]  2026-04-10 16:00 UTC  fix/client-match-room-sync       Match room audit: get_match_active_payload (network err keeps UI); match null/cancelled clears + tray; heartbeat cancelled/in_match=false clears; UI strings waiting/in_progress/completed; 5s auto-clear after completed; auto-start monitor on in_progress. 43 client pytest pass.
