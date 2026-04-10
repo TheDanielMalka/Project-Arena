@@ -498,8 +498,12 @@ class EngineClient:
         except Exception:
             return None
 
-    def get_active_match(self, token: str) -> str | None:
-        """GET /match/active — returns match_id of the user's current active match."""
+    def get_match_active_payload(self, token: str) -> dict | None:
+        """
+        GET /match/active — full JSON body on 200.
+        Returns None on network/HTTP error (caller must NOT clear lobby — transient).
+        On 200, body always includes key 'match' (possibly null).
+        """
         try:
             r = self.client.get(
                 f"{self.base_url}/match/active",
@@ -507,11 +511,26 @@ class EngineClient:
                 timeout=5,
             )
             if r.status_code == 200:
-                match_data = r.json().get("match") or {}
-                return match_data.get("match_id")
+                return r.json()
         except Exception as e:
             logger.debug(f"Active match poll: {e}")
         return None
+
+    def get_active_match(self, token: str) -> str | None:
+        """
+        GET /match/active — returns match_id only when server has a non-cancelled active room.
+        None if no match, cancelled, or missing id. None on network error (do not treat as leave).
+        """
+        body = self.get_match_active_payload(token)
+        if body is None:
+            return None
+        match = body.get("match")
+        if match is None:
+            return None
+        st = (match.get("status") or "").strip().lower()
+        if st == "cancelled":
+            return None
+        return match.get("match_id")
 
     def match_heartbeat(self, match_id: str, token: str) -> dict | None:
         """
@@ -1479,6 +1498,42 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     lobby_body_ref: list = []
     _lobby_result_cache: list[dict | None] = [None]
+    _completed_clear_after: list[str | None] = [None]   # tkinter after() job id
+    _completed_scheduled_for: list[str | None] = [None]  # match_id we already timed
+
+    def _cancel_completed_clear_timer() -> None:
+        job = _completed_clear_after[0]
+        if job:
+            try:
+                win.after_cancel(job)
+            except Exception:
+                pass
+            _completed_clear_after[0] = None
+        _completed_scheduled_for[0] = None
+
+    def _schedule_completed_lobby_clear(match_id_snapshot: str) -> None:
+        """After completed match, hide lobby card and clear local match_id (5s, once per match)."""
+        if _completed_scheduled_for[0] == match_id_snapshot:
+            return
+        job = _completed_clear_after[0]
+        if job:
+            try:
+                win.after_cancel(job)
+            except Exception:
+                pass
+            _completed_clear_after[0] = None
+        _completed_scheduled_for[0] = match_id_snapshot
+
+        def _fire():
+            _completed_clear_after[0] = None
+            _completed_scheduled_for[0] = None
+            if monitor.current_match_id != match_id_snapshot:
+                return
+            monitor.current_match_id = None
+            _lobby_result_cache[0] = None
+            _rebuild_lobby_body(None)
+
+        _completed_clear_after[0] = win.after(5000, _fire)
 
     def _rebuild_lobby_body(data: dict | None, result: dict | None = None):
         """Rebuild lobby card content. Always called on main thread via win.after."""
@@ -1488,6 +1543,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         lobby_body_ref.clear()
 
         if data is None:
+            _cancel_completed_clear_timer()
             lobby_outer.pack_forget()
             return
 
@@ -1528,6 +1584,22 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         status_lbl.pack(anchor="w", padx=14, pady=(0, 6))
         lobby_body_ref.append(status_lbl)
 
+        # Human-readable state (match lifecycle — keep in sync with GET /match/active + heartbeat)
+        ctx_map = {
+            "waiting":     "Waiting for opponent",
+            "starting":    "Waiting for opponent",
+            "in_progress": "Match in progress — Arena is watching",
+        }
+        ctx = ctx_map.get(status, "")
+        if ctx:
+            ctx_lbl = ctk.CTkLabel(
+                lobby_outer, text=ctx,
+                font=ctk.CTkFont(size=11),
+                text_color=BRAND["text"],
+            )
+            ctx_lbl.pack(anchor="w", padx=14, pady=(0, 6))
+            lobby_body_ref.append(ctx_lbl)
+
         # Players split by team
         players = data.get("players") or []
         teams: dict[str, list[str]] = {}
@@ -1560,14 +1632,15 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             res_val   = (result.get("result") or "").upper()
             score_val = result.get("score") or ""
             res_color = BRAND["warning"] if res_val == "VICTORY" else BRAND["accent"]
-            res_text  = res_val + (f"  ·  {score_val}" if score_val else "")
+            tail = f"{res_val}" + (f" ({score_val})" if score_val else "")
+            res_text = f"Match ended — result: {tail}"
             res_banner = ctk.CTkLabel(lobby_outer, text=res_text,
-                                      font=ctk.CTkFont(size=14, weight="bold"),
+                                      font=ctk.CTkFont(size=13, weight="bold"),
                                       text_color=res_color)
             res_banner.pack(anchor="w", padx=14, pady=(0, 10))
             lobby_body_ref.append(res_banner)
         elif status == "completed":
-            wait_lbl = ctk.CTkLabel(lobby_outer, text="Fetching result…",
+            wait_lbl = ctk.CTkLabel(lobby_outer, text="Match ended — fetching result…",
                                      font=ctk.CTkFont(size=11),
                                      text_color=BRAND["text_muted"])
             wait_lbl.pack(anchor="w", padx=14, pady=(0, 10))
@@ -1603,6 +1676,13 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         button_hover_color=BRAND["accent_dark"],
         progress_color=BRAND["accent_dark"],
     ).pack(side="left", padx=(8, 0))
+
+    def _ensure_monitor_for_live_match() -> None:
+        """Server status in_progress — ensure watcher runs so match_id + /validate/screenshot work."""
+        if not monitor.running:
+            monitor.start()
+            mon_var.set(True)
+            mon_lbl.configure(text="ON", text_color=BRAND["accent"])
 
     cap_lbl = ctk.CTkLabel(mon_row, text="0 captures",
                             font=ctk.CTkFont(size=10),
@@ -1827,26 +1907,51 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     def _do_lobby_poll():
         """
-        Background thread: polls GET /match/active every 5s independently.
-        Does NOT depend on monitor.current_match_id — shows lobby card
-        whenever the user is in a room, even before a game process launches.
+        Background thread: polls GET /match/active every 5s, then POST heartbeat on that id.
+        Stays aligned with server: null match, cancelled, or in_match=false clears local state.
+        Heartbeat runs at most every 5s while in a room (well under 30s keep-alive requirement).
         """
         token = auth.access_token or ""
         if not token:
             win.after(0, lambda: _rebuild_lobby_body(None))
             return
 
-        # Always ask server directly — independent of game process detection
-        mid = monitor.engine.get_active_match(token)
+        body = monitor.engine.get_match_active_payload(token)
+        if body is None:
+            # Network / HTTP error — do not clear (avoid flashing stale UI away on blip)
+            return
 
-        if not mid:
+        match = body.get("match")
+        if match is None:
             if monitor.current_match_id:
                 monitor.current_match_id = None
-                _lobby_result_cache[0]   = None
+                _lobby_result_cache[0] = None
             win.after(0, lambda: _rebuild_lobby_body(None))
             return
 
-        # Sync monitor so heartbeat + game status card stay consistent
+        st_active = (match.get("status") or "").strip().lower()
+        if st_active == "cancelled":
+            if monitor.current_match_id:
+                monitor.current_match_id = None
+                _lobby_result_cache[0] = None
+            win.after(0, lambda: _rebuild_lobby_body(None))
+            if notify_fn:
+                try:
+                    notify_fn("Match ended")
+                except Exception:
+                    pass
+            return
+
+        mid = match.get("match_id")
+        if not mid:
+            if monitor.current_match_id:
+                monitor.current_match_id = None
+                _lobby_result_cache[0] = None
+            win.after(0, lambda: _rebuild_lobby_body(None))
+            return
+
+        if monitor.current_match_id and monitor.current_match_id != mid:
+            _lobby_result_cache[0] = None
         if not monitor.current_match_id:
             monitor.set_match_id(mid)
 
@@ -1856,23 +1961,46 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             if data is None:
                 return  # network hiccup — keep previous state visible
 
-            if not data.get("in_match", True):
+            st_hb = (data.get("status") or "").strip().lower()
+            if st_hb == "cancelled":
+                _cancel_completed_clear_timer()
                 monitor.current_match_id = None
-                _lobby_result_cache[0]   = None
+                _lobby_result_cache[0] = None
                 _rebuild_lobby_body(None)
                 if notify_fn:
-                    try: notify_fn("Removed from match")
-                    except Exception: pass
+                    try:
+                        notify_fn("Room cancelled")
+                    except Exception:
+                        pass
                 return
 
+            if not data.get("in_match", True):
+                _cancel_completed_clear_timer()
+                monitor.current_match_id = None
+                _lobby_result_cache[0] = None
+                _rebuild_lobby_body(None)
+                if notify_fn:
+                    try:
+                        notify_fn("Removed from match")
+                    except Exception:
+                        pass
+                return
+
+            if st_hb == "in_progress":
+                win.after(0, _ensure_monitor_for_live_match)
+
             _rebuild_lobby_body(data, _lobby_result_cache[0])
+
+            clear_mid = data.get("match_id") or mid
+            if st_hb == "completed":
+                _schedule_completed_lobby_clear(clear_mid)
 
             if data.get("status") == "completed" and _lobby_result_cache[0] is None:
                 def _fetch_result():
                     res = monitor.engine.get_match_status(mid, token)
                     if res:
                         _lobby_result_cache[0] = res
-                        win.after(0, lambda: _rebuild_lobby_body(data, res))
+                        win.after(0, lambda d=data, r=res: _rebuild_lobby_body(d, r))
                 threading.Thread(target=_fetch_result, daemon=True).start()
 
         win.after(0, _apply)

@@ -229,6 +229,52 @@ class TestEngineClient:
 
         assert result == {"status": "ok", "db": "ok"}
 
+    def test_get_match_active_payload_returns_body_on_200(self):
+        """get_match_active_payload returns full JSON (match may be null)."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "match": {"match_id": "m1", "status": "waiting", "code": "ABC"},
+        }
+        with patch("main.httpx.Client") as MockClient:
+            instance = MockClient.return_value
+            instance.get.return_value = mock_response
+            ec = EngineClient("http://localhost:8000", "tok")
+            body = ec.get_match_active_payload("jwt")
+        assert body["match"]["match_id"] == "m1"
+
+    def test_get_match_active_payload_none_on_network_error(self):
+        """Transient failure returns None — lobby must not treat as leave."""
+        with patch("main.httpx.Client") as MockClient:
+            instance = MockClient.return_value
+            instance.get.side_effect = Exception("timeout")
+            ec = EngineClient("http://localhost:8000", "tok")
+            assert ec.get_match_active_payload("jwt") is None
+
+    def test_get_active_match_none_when_match_null(self):
+        """No active room → get_active_match returns None."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"match": None}
+        with patch("main.httpx.Client") as MockClient:
+            instance = MockClient.return_value
+            instance.get.return_value = mock_response
+            ec = EngineClient("http://localhost:8000", "tok")
+            assert ec.get_active_match("jwt") is None
+
+    def test_get_active_match_none_when_cancelled(self):
+        """Cancelled room must not keep a stale match_id client-side."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "match": {"match_id": "m1", "status": "cancelled"},
+        }
+        with patch("main.httpx.Client") as MockClient:
+            instance = MockClient.return_value
+            instance.get.return_value = mock_response
+            ec = EngineClient("http://localhost:8000", "tok")
+            assert ec.get_active_match("jwt") is None
+
 
 # ══════════════════════════════════════════════════════════════
 # 4. Failure Paths — nothing crashes
