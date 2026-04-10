@@ -139,11 +139,12 @@ class TestAuthUtils:
 class TestRegister:
     def test_register_success_returns_201_and_token(self):
         ctx, session = _make_session_mock()
-        # Flow: email check → username check → steam_id check → INSERT RETURNING
+        # Flow: email check → username check → steam_id dup check → steam blacklist check → INSERT RETURNING
         session.execute.return_value.fetchone.side_effect = [
             None,   # email duplicate check
             None,   # username duplicate check
             None,   # steam_id duplicate check
+            None,   # steam_id blacklist check (migration 025)
             (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),  # INSERT RETURNING
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -167,6 +168,7 @@ class TestRegister:
             None,   # email duplicate check
             None,   # username duplicate check
             None,   # steam_id duplicate check
+            None,   # steam_id blacklist check (migration 025)
             (FAKE_UUID, "user", "user@arena.gg", FAKE_ARENA_ID),
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -318,6 +320,7 @@ class TestRegister:
             None,   # email duplicate check
             None,   # username duplicate check
             None,   # riot_id duplicate check (steam_id check skipped)
+            None,   # riot_id blacklist check (migration 025)
             (FAKE_UUID, "user", "user@arena.gg", FAKE_ARENA_ID),
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -340,6 +343,7 @@ class TestRegister:
             None,   # email duplicate check
             None,   # username duplicate check
             None,   # steam_id duplicate check
+            None,   # steam_id blacklist check (migration 025)
             (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),
         ]
         with patch("main.SessionLocal", return_value=ctx):

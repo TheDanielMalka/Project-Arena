@@ -491,6 +491,8 @@ class TestAdminPenalty:
         else:
             responses.append(None)                  # user not found
         responses.append((prior_count,))            # COUNT(*) from player_penalties
+        if user_exists and prior_count >= 2:        # 3rd+ offense → SELECT steam_id/riot_id/wallet_address
+            responses.append((None, None, None))    # id_row for wallet_blacklist insert
         session.execute.return_value.fetchone.side_effect = responses
         ctx = MagicMock()
         ctx.__enter__ = MagicMock(return_value=session)
@@ -1076,8 +1078,9 @@ class TestAuditWiring:
         target_id = str(uuid.uuid4())
         session = MagicMock()
         session.execute.return_value.fetchone.side_effect = [
-            (target_id,),  # user exists
-            (2,),          # prior_count = 2 → 3rd offense → BAN_USER
+            (target_id,),      # user exists
+            (2,),              # prior_count = 2 → 3rd offense → BAN_USER
+            (None, None, None),  # SELECT steam_id, riot_id, wallet_address for blacklist
         ]
         ctx = MagicMock()
         ctx.__enter__ = MagicMock(return_value=session)

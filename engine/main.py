@@ -567,6 +567,114 @@ async def crop_capture(
     return {"filepath": filepath, "message": "ROI cropped"}
 
 
+def _auto_flag_consensus(wallet_addresses: list[str]) -> None:
+    """
+    Called after consensus is REACHED and flagged_wallets is non-empty.
+    Inserts a 'vision_flag' penalty for each flagged player with the standard
+    escalation tiers: 1st→24h suspension, 2nd→7d, 3rd+→permanent ban.
+    Non-fatal — errors are logged and swallowed so consensus payout is not blocked.
+    DB-ready: player_penalties (migration 016), wallet_blacklist (migration 025).
+    """
+    if not wallet_addresses:
+        return
+    try:
+        with SessionLocal() as session:
+            for wallet in wallet_addresses:
+                try:
+                    user_row = session.execute(
+                        text("SELECT id FROM users WHERE wallet_address = :w"),
+                        {"w": wallet},
+                    ).fetchone()
+                    if not user_row:
+                        logger.warning("_auto_flag_consensus: no user for wallet=%s — skipped", wallet)
+                        continue
+                    user_id = str(user_row[0])
+
+                    cnt_row = session.execute(
+                        text(
+                            "SELECT COALESCE(MAX(offense_count), 0) "
+                            "FROM player_penalties WHERE user_id = :uid"
+                        ),
+                        {"uid": user_id},
+                    ).scalar()
+                    new_count = int(cnt_row or 0) + 1
+
+                    now_utc = datetime.now(timezone.utc)
+                    suspended_until = None
+                    banned_at = None
+                    if new_count == 1:
+                        suspended_until = now_utc + timedelta(hours=24)
+                        action = "suspended_24h"
+                    elif new_count == 2:
+                        suspended_until = now_utc + timedelta(days=7)
+                        action = "suspended_7d"
+                    else:
+                        banned_at = now_utc
+                        action = "banned_permanent"
+
+                    session.execute(
+                        text(
+                            "INSERT INTO player_penalties "
+                            "  (user_id, offense_type, notes, offense_count, "
+                            "   suspended_until, banned_at) "
+                            "VALUES (:uid, 'vision_flag', "
+                            "  'Auto-flagged by consensus: result contradicted majority', "
+                            "  :cnt, :sus, :ban)"
+                        ),
+                        {
+                            "uid": user_id,
+                            "cnt": new_count,
+                            "sus": suspended_until,
+                            "ban": banned_at,
+                        },
+                    )
+
+                    # On permanent ban → insert to wallet_blacklist
+                    if banned_at is not None:
+                        id_row = session.execute(
+                            text(
+                                "SELECT steam_id, riot_id, wallet_address "
+                                "FROM users WHERE id = :uid"
+                            ),
+                            {"uid": user_id},
+                        ).fetchone()
+                        if id_row:
+                            session.execute(
+                                text(
+                                    "INSERT INTO wallet_blacklist "
+                                    "  (wallet_address, steam_id, riot_id, user_id, reason) "
+                                    "VALUES (:w, :s, :r, :uid, 'consensus_ban') "
+                                    "ON CONFLICT DO NOTHING"
+                                ),
+                                {
+                                    "w":   id_row[2],
+                                    "s":   id_row[0],
+                                    "r":   id_row[1],
+                                    "uid": user_id,
+                                },
+                            )
+
+                    session.commit()
+                    logger.warning(
+                        "_auto_flag_consensus: user=%s wallet=%s offense=%d action=%s",
+                        user_id, wallet, new_count, action,
+                    )
+                    _log_audit(
+                        "system",
+                        "AUTO_FLAG",
+                        target_id=user_id,
+                        notes=f"vision_flag offense={new_count} action={action}",
+                    )
+                except Exception as inner_exc:
+                    session.rollback()
+                    logger.error(
+                        "_auto_flag_consensus inner error: wallet=%s error=%s",
+                        wallet, inner_exc,
+                    )
+    except Exception as exc:
+        logger.error("_auto_flag_consensus outer error: %s", exc)
+
+
 def _auto_payout_on_consensus(match_id: str, agreed_result: str) -> None:
     """
     Triggered automatically when MatchConsensus reaches REACHED status.
@@ -861,6 +969,9 @@ async def validate_screenshot(
                 # Non-fatal — admin can use declare-winner as fallback.
                 if _verdict.agreed_result:
                     _auto_payout_on_consensus(match_id, _verdict.agreed_result)
+                # Auto-flag players whose result contradicted majority (Issue #155).
+                if _verdict.flagged_wallets:
+                    _auto_flag_consensus(_verdict.flagged_wallets)
         except Exception as exc:
             logger.error("validate_screenshot consensus step error (non-fatal): %s", exc)
 
@@ -1670,6 +1781,26 @@ async def register(req: RegisterRequest, request: Request):
                 text("SELECT 1 FROM users WHERE riot_id = :r"), {"r": riot_id}
             ).fetchone():
                 raise HTTPException(409, "Riot ID already linked to another account")
+
+            # ── Blacklist checks (migration 025) ──────────────────────────────
+            wallet_addr = getattr(req, "wallet_address", None)
+            if wallet_addr and session.execute(
+                text("SELECT 1 FROM wallet_blacklist WHERE wallet_address = :w"),
+                {"w": wallet_addr},
+            ).fetchone():
+                raise HTTPException(409, "This wallet address is banned from the platform")
+
+            if steam_id and session.execute(
+                text("SELECT 1 FROM wallet_blacklist WHERE steam_id = :s"),
+                {"s": steam_id},
+            ).fetchone():
+                raise HTTPException(409, "This Steam ID is banned from the platform")
+
+            if riot_id and session.execute(
+                text("SELECT 1 FROM wallet_blacklist WHERE riot_id = :r"),
+                {"r": riot_id},
+            ).fetchone():
+                raise HTTPException(409, "This Riot ID is banned from the platform")
 
             # ── Create user ───────────────────────────────────────────────────
             pw_hash  = auth.hash_password(req.password)
@@ -2553,7 +2684,10 @@ def _cleanup_report_attachments_for_ticket(session, ticket_id: str) -> None:
 def _delete_user_account(session, user_id: str) -> None:
     """
     FK-safe account deletion: backup row in deleted_accounts, purge dependent rows, DELETE user.
-    DB-ready: migrations 022–024 (totp, deleted_accounts, report_attachments).
+    DB-ready: migrations 022–026 (totp, deleted_accounts, report_attachments,
+              wallet_blacklist, match_players nullable user_id).
+    match_players rows are anonymized (user_id = NULL) to preserve match history.
+    If the user was previously banned, their identifiers are added to wallet_blacklist.
     """
     active = session.execute(
         text(
@@ -2590,6 +2724,26 @@ def _delete_user_account(session, user_id: str) -> None:
         ),
         {"s": steam_id, "r": riot_id, "w": wallet, "eh": eh, "uh": uh},
     )
+
+    # If user was ever permanently banned → ensure wallet_blacklist has an entry
+    # so they cannot re-register with the same wallet/steam/riot (migration 025)
+    was_banned = session.execute(
+        text(
+            "SELECT 1 FROM player_penalties "
+            "WHERE user_id = :uid AND banned_at IS NOT NULL LIMIT 1"
+        ),
+        {"uid": user_id},
+    ).fetchone()
+    if was_banned:
+        session.execute(
+            text(
+                "INSERT INTO wallet_blacklist "
+                "  (wallet_address, steam_id, riot_id, user_id, reason) "
+                "VALUES (:w, :s, :r, :uid, 'account_deleted_while_banned') "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"w": wallet, "s": steam_id, "r": riot_id, "uid": user_id},
+        )
 
     tix = session.execute(
         text("SELECT id FROM support_tickets WHERE reporter_id = :uid"),
@@ -2637,16 +2791,26 @@ def _delete_user_account(session, user_id: str) -> None:
         {"uid": user_id},
     )
 
-    session.execute(text("DELETE FROM match_players WHERE user_id = :uid"), {"uid": user_id})
+    # Anonymize match history: set user_id = NULL instead of deleting rows
+    # (migration 026 made user_id nullable with ON DELETE SET NULL).
+    session.execute(
+        text("UPDATE match_players SET user_id = NULL WHERE user_id = :uid"),
+        {"uid": user_id},
+    )
     session.execute(text("UPDATE matches SET winner_id = NULL WHERE winner_id = :uid"), {"uid": user_id})
+    # Reassign host to another player with non-null user_id (migration 026: user_id nullable)
     session.execute(
         text(
             "UPDATE matches m SET host_id = ("
-            "  SELECT mp.user_id FROM match_players mp WHERE mp.match_id = m.id "
+            "  SELECT mp.user_id FROM match_players mp "
+            "  WHERE mp.match_id = m.id AND mp.user_id IS NOT NULL "
             "  ORDER BY mp.joined_at NULLS LAST LIMIT 1"
             ") "
             "WHERE m.host_id = :uid "
-            "AND EXISTS (SELECT 1 FROM match_players mp2 WHERE mp2.match_id = m.id)"
+            "AND EXISTS ("
+            "  SELECT 1 FROM match_players mp2 "
+            "  WHERE mp2.match_id = m.id AND mp2.user_id IS NOT NULL"
+            ")"
         ),
         {"uid": user_id},
     )
@@ -2654,7 +2818,9 @@ def _delete_user_account(session, user_id: str) -> None:
         text(
             "DELETE FROM matches m "
             "WHERE m.host_id = :uid "
-            "AND NOT EXISTS (SELECT 1 FROM match_players mp WHERE mp.match_id = m.id)"
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM match_players mp WHERE mp.match_id = m.id AND mp.user_id IS NOT NULL"
+            ")"
         ),
         {"uid": user_id},
     )
@@ -7066,6 +7232,32 @@ async def admin_issue_penalty(
                     "admin": admin_id,
                 },
             )
+
+            # ── On permanent ban: blacklist wallet + steam + riot (migration 025) ──
+            if banned_at is not None:
+                id_row = session.execute(
+                    text(
+                        "SELECT steam_id, riot_id, wallet_address FROM users WHERE id = :uid"
+                    ),
+                    {"uid": user_id},
+                ).fetchone()
+                if id_row:
+                    session.execute(
+                        text(
+                            "INSERT INTO wallet_blacklist "
+                            "  (wallet_address, steam_id, riot_id, user_id, reason, banned_by) "
+                            "VALUES (:w, :s, :r, :uid, 'admin_ban', :admin) "
+                            "ON CONFLICT DO NOTHING"
+                        ),
+                        {
+                            "w":     id_row[2],
+                            "s":     id_row[0],
+                            "r":     id_row[1],
+                            "uid":   user_id,
+                            "admin": admin_id,
+                        },
+                    )
+
             session.commit()
 
         logger.warning(
@@ -7220,25 +7412,71 @@ async def admin_fraud_report(payload: dict = Depends(require_admin)):
                 for r in banned_rows
             ]
 
+            # ── 5. Intentional losing / AML (Issue #57) ───────────────────────
+            # Detects player A consistently losing to player B (5+ directional
+            # losses in 7 days) — possible money transfer via matches.
+            # match_players.user_id may be NULL (migration 026) — filter those out.
+            intl_rows = session.execute(
+                text(
+                    "SELECT mp_loser.user_id, u_loser.username, "
+                    "       mp_winner.user_id, u_winner.username, "
+                    "       COUNT(*) AS loss_count, "
+                    "       MIN(m.created_at) AS first_match, "
+                    "       MAX(m.created_at) AS last_match "
+                    "FROM matches m "
+                    "JOIN match_players mp_loser  ON mp_loser.match_id  = m.id "
+                    "     AND mp_loser.user_id  != m.winner_id "
+                    "     AND mp_loser.user_id  IS NOT NULL "
+                    "JOIN match_players mp_winner ON mp_winner.match_id = m.id "
+                    "     AND mp_winner.user_id  = m.winner_id "
+                    "     AND mp_winner.user_id  IS NOT NULL "
+                    "JOIN users u_loser   ON u_loser.id  = mp_loser.user_id "
+                    "JOIN users u_winner  ON u_winner.id = mp_winner.user_id "
+                    "WHERE m.status = 'completed' "
+                    "  AND m.created_at > NOW() - INTERVAL '7 days' "
+                    "GROUP BY mp_loser.user_id, u_loser.username, "
+                    "         mp_winner.user_id, u_winner.username "
+                    "HAVING COUNT(*) >= 5 "
+                    "ORDER BY loss_count DESC "
+                    "LIMIT 50"
+                )
+            ).fetchall()
+            intentional_losing = [
+                {
+                    "loser_id":       str(r[0]),
+                    "loser_username":  r[1],
+                    "winner_id":       str(r[2]),
+                    "winner_username": r[3],
+                    "loss_count":      int(r[4]),
+                    "first_match":     r[5].isoformat() if r[5] else None,
+                    "last_match":      r[6].isoformat() if r[6] else None,
+                    "reason":          "intentional_losing",
+                }
+                for r in intl_rows
+            ]
+
         total_flagged = (
             len(flagged_players)
             + len(suspicious_pairs)
             + len(repeat_offenders)
             + len(recently_banned)
+            + len(intentional_losing)
         )
 
         return {
-            "generated_at":    datetime.now(timezone.utc).isoformat(),
-            "flagged_players":  flagged_players,
-            "suspicious_pairs": suspicious_pairs,
-            "repeat_offenders": repeat_offenders,
-            "recently_banned":  recently_banned,
+            "generated_at":     datetime.now(timezone.utc).isoformat(),
+            "flagged_players":   flagged_players,
+            "suspicious_pairs":  suspicious_pairs,
+            "repeat_offenders":  repeat_offenders,
+            "recently_banned":   recently_banned,
+            "intentional_losing": intentional_losing,
             "summary": {
                 "total_flagged":       total_flagged,
                 "high_winrate":        len(flagged_players),
                 "pair_farming":        len(suspicious_pairs),
                 "repeat_offenders":    len(repeat_offenders),
                 "recently_banned":     len(recently_banned),
+                "intentional_losing":  len(intentional_losing),
             },
         }
 
@@ -7247,6 +7485,182 @@ async def admin_fraud_report(payload: dict = Depends(require_admin)):
     except Exception as exc:
         logger.error("admin_fraud_report error: %s", exc)
         raise HTTPException(500, "Fraud report generation failed")
+
+
+@app.get("/admin/fraud/summary", status_code=200)
+async def admin_fraud_summary(payload: dict = Depends(require_admin)):
+    """
+    Lightweight fraud summary — returns counts only (no full row data).
+    Called by Admin panel on page load to populate badge counts.
+    Admin-only.
+    DB-ready: user_stats, match_players, player_penalties (migrations 016, 026).
+    """
+    try:
+        with SessionLocal() as session:
+            high_wr = session.execute(
+                text(
+                    "SELECT COUNT(*) FROM user_stats us "
+                    "WHERE us.win_rate > 80 AND us.matches >= 10"
+                )
+            ).scalar() or 0
+
+            pair_farming = session.execute(
+                text(
+                    "SELECT COUNT(*) FROM ("
+                    "  SELECT 1 FROM match_players mp1 "
+                    "  JOIN match_players mp2 ON mp1.match_id = mp2.match_id "
+                    "    AND mp1.user_id < mp2.user_id "
+                    "    AND mp1.user_id IS NOT NULL AND mp2.user_id IS NOT NULL "
+                    "  JOIN matches m ON m.id = mp1.match_id "
+                    "  WHERE m.created_at > NOW() - INTERVAL '24 hours' "
+                    "  GROUP BY mp1.user_id, mp2.user_id HAVING COUNT(*) > 3"
+                    ") sub"
+                )
+            ).scalar() or 0
+
+            repeat_off = session.execute(
+                text(
+                    "SELECT COUNT(*) FROM ("
+                    "  SELECT user_id FROM player_penalties "
+                    "  GROUP BY user_id HAVING COUNT(*) >= 2"
+                    ") sub"
+                )
+            ).scalar() or 0
+
+            intl_losing = session.execute(
+                text(
+                    "SELECT COUNT(*) FROM ("
+                    "  SELECT 1 FROM matches m "
+                    "  JOIN match_players mp_loser  ON mp_loser.match_id  = m.id "
+                    "       AND mp_loser.user_id != m.winner_id AND mp_loser.user_id IS NOT NULL "
+                    "  JOIN match_players mp_winner ON mp_winner.match_id = m.id "
+                    "       AND mp_winner.user_id = m.winner_id AND mp_winner.user_id IS NOT NULL "
+                    "  WHERE m.status = 'completed' "
+                    "    AND m.created_at > NOW() - INTERVAL '7 days' "
+                    "  GROUP BY mp_loser.user_id, mp_winner.user_id HAVING COUNT(*) >= 5"
+                    ") sub"
+                )
+            ).scalar() or 0
+
+        total = int(high_wr) + int(pair_farming) + int(repeat_off) + int(intl_losing)
+        return {
+            "generated_at":      datetime.now(timezone.utc).isoformat(),
+            "total_flagged":      total,
+            "high_winrate":       int(high_wr),
+            "pair_farming":       int(pair_farming),
+            "repeat_offenders":   int(repeat_off),
+            "intentional_losing": int(intl_losing),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("admin_fraud_summary error: %s", exc)
+        raise HTTPException(500, "Fraud summary failed")
+
+
+import json as _json
+from fastapi.responses import Response as _FraudResponse
+
+
+@app.post("/admin/fraud/report/export", status_code=200)
+async def admin_fraud_report_export(payload: dict = Depends(require_admin)):
+    """
+    Run the full fraud report and return it as a downloadable JSON file.
+    Filename: fraud_report_YYYY-MM-DD.json
+    Admin-only.
+    """
+    try:
+        with SessionLocal() as session:
+            wr_rows = session.execute(
+                text(
+                    "SELECT us.user_id, u.username, us.win_rate, us.matches, us.wins "
+                    "FROM user_stats us JOIN users u ON u.id = us.user_id "
+                    "WHERE us.win_rate > 80 AND us.matches >= 10 "
+                    "ORDER BY us.win_rate DESC LIMIT 50"
+                )
+            ).fetchall()
+            pair_rows = session.execute(
+                text(
+                    "SELECT mp1.user_id, u1.username, mp2.user_id, u2.username, COUNT(*) "
+                    "FROM match_players mp1 "
+                    "JOIN match_players mp2 ON mp1.match_id = mp2.match_id "
+                    "  AND mp1.user_id < mp2.user_id "
+                    "  AND mp1.user_id IS NOT NULL AND mp2.user_id IS NOT NULL "
+                    "JOIN users u1 ON u1.id = mp1.user_id "
+                    "JOIN users u2 ON u2.id = mp2.user_id "
+                    "JOIN matches m ON m.id = mp1.match_id "
+                    "WHERE m.created_at > NOW() - INTERVAL '24 hours' "
+                    "GROUP BY mp1.user_id, u1.username, mp2.user_id, u2.username "
+                    "HAVING COUNT(*) > 3 ORDER BY 5 DESC LIMIT 50"
+                )
+            ).fetchall()
+            repeat_rows = session.execute(
+                text(
+                    "SELECT pp.user_id, u.username, COUNT(*), MAX(pp.offense_type), "
+                    "BOOL_OR(pp.banned_at IS NOT NULL) "
+                    "FROM player_penalties pp JOIN users u ON u.id = pp.user_id "
+                    "GROUP BY pp.user_id, u.username HAVING COUNT(*) >= 2 "
+                    "ORDER BY 3 DESC LIMIT 50"
+                )
+            ).fetchall()
+            intl_rows = session.execute(
+                text(
+                    "SELECT mp_loser.user_id, u_loser.username, "
+                    "       mp_winner.user_id, u_winner.username, COUNT(*), "
+                    "       MIN(m.created_at), MAX(m.created_at) "
+                    "FROM matches m "
+                    "JOIN match_players mp_loser  ON mp_loser.match_id  = m.id "
+                    "     AND mp_loser.user_id != m.winner_id AND mp_loser.user_id IS NOT NULL "
+                    "JOIN match_players mp_winner ON mp_winner.match_id = m.id "
+                    "     AND mp_winner.user_id = m.winner_id AND mp_winner.user_id IS NOT NULL "
+                    "JOIN users u_loser   ON u_loser.id  = mp_loser.user_id "
+                    "JOIN users u_winner  ON u_winner.id = mp_winner.user_id "
+                    "WHERE m.status = 'completed' AND m.created_at > NOW() - INTERVAL '7 days' "
+                    "GROUP BY mp_loser.user_id, u_loser.username, mp_winner.user_id, u_winner.username "
+                    "HAVING COUNT(*) >= 5 ORDER BY 5 DESC LIMIT 50"
+                )
+            ).fetchall()
+
+        now = datetime.now(timezone.utc)
+        report = {
+            "generated_at": now.isoformat(),
+            "flagged_players": [
+                {"user_id": str(r[0]), "username": r[1], "win_rate": float(r[2]),
+                 "matches": int(r[3]), "wins": int(r[4]), "reason": "win_rate_anomaly"}
+                for r in wr_rows
+            ],
+            "suspicious_pairs": [
+                {"player_a": str(r[0]), "username_a": r[1],
+                 "player_b": str(r[2]), "username_b": r[3],
+                 "match_count": int(r[4]), "reason": "pair_farming"}
+                for r in pair_rows
+            ],
+            "repeat_offenders": [
+                {"user_id": str(r[0]), "username": r[1], "penalty_count": int(r[2]),
+                 "last_offense": r[3], "is_banned": bool(r[4]), "reason": "repeat_offender"}
+                for r in repeat_rows
+            ],
+            "intentional_losing": [
+                {"loser_id": str(r[0]), "loser_username": r[1],
+                 "winner_id": str(r[2]), "winner_username": r[3],
+                 "loss_count": int(r[4]),
+                 "first_match": r[5].isoformat() if r[5] else None,
+                 "last_match":  r[6].isoformat() if r[6] else None,
+                 "reason": "intentional_losing"}
+                for r in intl_rows
+            ],
+        }
+        filename = f"fraud_report_{now.strftime('%Y-%m-%d')}.json"
+        return _FraudResponse(
+            content=_json.dumps(report, indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("admin_fraud_report_export error: %s", exc)
+        raise HTTPException(500, "Fraud report export failed")
 
 
 # ── Admin — Audit Logging helper ──────────────────────────────────────────────
