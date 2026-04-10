@@ -1,10 +1,34 @@
 -- Migration 026: allow user_id NULL in match_players to preserve match history on account deletion
--- Step 1: drop the old composite PK
-ALTER TABLE match_players DROP CONSTRAINT match_players_pkey;
+-- Step 1: drop the old composite PK only (idempotent — skip if PK is already on surrogate `id`)
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    WHERE t.relname = 'match_players'
+      AND c.conname = 'match_players_pkey'
+      AND c.contype = 'p'
+      AND array_length(c.conkey, 1) > 1
+  ) THEN
+    ALTER TABLE match_players DROP CONSTRAINT match_players_pkey;
+  END IF;
+END $$;
 
 -- Step 2: add a surrogate PK
 ALTER TABLE match_players ADD COLUMN IF NOT EXISTS id SERIAL;
-ALTER TABLE match_players ADD PRIMARY KEY (id);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    WHERE t.relname = 'match_players'
+      AND c.contype = 'p'
+  ) THEN
+    ALTER TABLE match_players ADD PRIMARY KEY (id);
+  END IF;
+END $$;
 
 -- Step 3: make user_id nullable + change FK to SET NULL
 ALTER TABLE match_players
