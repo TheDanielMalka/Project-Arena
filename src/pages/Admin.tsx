@@ -29,15 +29,12 @@ import { useUserStore } from "@/stores/userStore";
 import type {
   Dispute, DisputeStatus, DisputeResolution,
   FlaggedUser, AuditLog, AdminActivityEvent, PlatformSettings,
-} from "@/types";
-import { cn } from "@/lib/utils";
-import { useReportStore } from "@/stores/reportStore";
-import type {
   SupportTicket,
   SupportTicketCategory,
   SupportTopic,
   TicketStatus,
 } from "@/types";
+import { cn } from "@/lib/utils";
 import {
   apiAdminFreezeStatus,
   apiAdminFreeze,
@@ -55,9 +52,35 @@ import {
   apiGetAttachmentBlob,
   apiDeleteAttachment,
   apiPostSupportTicketAttachment,
+  apiAdminListSupportTickets,
+  apiAdminPatchSupportTicket,
   type AdminTicketAttachmentMeta,
+  type ApiAdminSupportTicketRow,
 } from "@/lib/engine-api";
 import type { FraudReport, OracleStatus, PlatformConfig } from "@/lib/engine-api";
+
+function mapAdminSupportRowToUiTicket(r: ApiAdminSupportTicketRow): SupportTicket {
+  const cat = (r.category || "player_report") as SupportTicketCategory;
+  const reason = (r.reason || "other") as SupportTicket["reason"];
+  const status = (r.status || "open") as TicketStatus;
+  const topic = r.topic && r.topic.length > 0 ? (r.topic as SupportTopic) : undefined;
+  return {
+    id: r.id,
+    reporterId: r.reporter_id,
+    reporterName: r.reporter_username?.trim() || "—",
+    reportedId: r.reported_id ?? "platform",
+    reportedUsername: r.reported_username?.trim() || "—",
+    reason,
+    description: r.description || "",
+    status,
+    adminNote: r.admin_note ?? undefined,
+    createdAt: r.created_at ?? new Date().toISOString(),
+    updatedAt: r.updated_at ?? undefined,
+    ticketCategory: cat,
+    matchId: r.match_id ?? undefined,
+    supportTopic: topic,
+  };
+}
 
 // ─── Style helpers ────────────────────────────────────────────
 
@@ -285,9 +308,9 @@ const Admin = () => {
   // ── Audit state ──
   const [auditPage, setAuditPage] = useState(1);
 
-  // ── Reports (local store) ──
-  const tickets             = useReportStore((s) => s.tickets);
-  const updateTicketStatus  = useReportStore((s) => s.updateTicketStatus);
+  // ── Reports (GET /admin/support/tickets) ──
+  const [reportTickets, setReportTickets] = useState<SupportTicket[]>([]);
+  const [reportsLoading, setReportsLoading] = useState(false);
   const [reportStatusFilter, setReportStatusFilter] = useState<TicketStatus | "all">("all");
 
   // ── Kill switch ──
@@ -352,6 +375,28 @@ const Admin = () => {
       })));
     }
   }, [token]);
+
+  const loadReportTickets = useCallback(async () => {
+    if (!token) return;
+    setReportsLoading(true);
+    const r = await apiAdminListSupportTickets(token, { limit: 200 });
+    setReportsLoading(false);
+    if (r.ok === false) {
+      toast({
+        title: "Could not load reports",
+        description: r.detail ?? "Check admin session.",
+        variant: "destructive",
+      });
+      setReportTickets([]);
+      return;
+    }
+    setReportTickets(r.tickets.map(mapAdminSupportRowToUiTicket));
+  }, [token, toast]);
+
+  useEffect(() => {
+    if (!token || section !== "reports") return;
+    void loadReportTickets();
+  }, [token, section, loadReportTickets]);
 
   // ── Initial load + audit polling ──
   useEffect(() => {
@@ -870,8 +915,12 @@ const Admin = () => {
               {/* Toolbar */}
               <div className="flex items-center gap-2 flex-wrap">
                 <p className="text-xs text-muted-foreground flex-1">
-                  Player reports submitted by users — review and take action
+                  Support tickets from the database — same queue as POST /support/tickets
                 </p>
+                <Button size="sm" variant="outline" className="h-8 text-xs border-border"
+                  onClick={() => void loadReportTickets()} disabled={reportsLoading}>
+                  <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", reportsLoading && "animate-spin")} /> Refresh
+                </Button>
                 <select
                   value={reportStatusFilter}
                   onChange={(e) => setReportStatusFilter(e.target.value as TicketStatus | "all")}
@@ -887,14 +936,22 @@ const Admin = () => {
 
               {/* Ticket list */}
               {(() => {
-                const filtered = tickets.filter(
+                if (reportsLoading && reportTickets.length === 0) {
+                  return (
+                    <div className="text-center py-12 text-muted-foreground">
+                      <RefreshCw className="h-8 w-8 mx-auto mb-2 opacity-30 animate-spin" />
+                      <p className="text-sm">Loading reports…</p>
+                    </div>
+                  );
+                }
+                const filtered = reportTickets.filter(
                   (t) => reportStatusFilter === "all" || t.status === reportStatusFilter
                 );
                 if (filtered.length === 0) {
                   return (
                     <div className="text-center py-12 text-muted-foreground">
                       <Flag className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                      <p className="text-sm">No reports found</p>
+                      <p className="text-sm">No reports in the database yet</p>
                     </div>
                   );
                 }
@@ -1007,27 +1064,51 @@ const Admin = () => {
                               {t.status === "open" && (
                                 <Button size="sm" variant="outline"
                                   className="h-7 text-xs border-arena-cyan/40 text-arena-cyan hover:bg-arena-cyan/10"
-                                  onClick={() => {
-                                    updateTicketStatus(t.id, "investigating");
+                                  onClick={() => void (async () => {
+                                    if (!token) return;
+                                    const r = await apiAdminPatchSupportTicket(token, t.id, { status: "investigating" });
+                                    if (r.ok === false) {
+                                      toast({ title: "Update failed", description: r.detail ?? "", variant: "destructive" });
+                                      return;
+                                    }
                                     toast({ title: "Under Investigation", description: `Report ${t.id} is now being reviewed.` });
-                                  }}>
+                                    void loadReportTickets();
+                                  })()}>
                                   Investigate
                                 </Button>
                               )}
                               <Button size="sm" variant="outline"
                                 className="h-7 text-xs border-primary/40 text-primary hover:bg-primary/10"
-                                onClick={() => {
-                                  updateTicketStatus(t.id, "resolved", "Reviewed and resolved by admin");
+                                onClick={() => void (async () => {
+                                  if (!token) return;
+                                  const r = await apiAdminPatchSupportTicket(token, t.id, {
+                                    status: "resolved",
+                                    admin_note: "Reviewed and resolved by admin",
+                                  });
+                                  if (r.ok === false) {
+                                    toast({ title: "Update failed", description: r.detail ?? "", variant: "destructive" });
+                                    return;
+                                  }
                                   toast({ title: "Report Resolved", description: `${t.id} marked as resolved.` });
-                                }}>
+                                  void loadReportTickets();
+                                })()}>
                                 Resolve
                               </Button>
                               <Button size="sm" variant="outline"
                                 className="h-7 text-xs border-border/50 text-muted-foreground hover:text-foreground"
-                                onClick={() => {
-                                  updateTicketStatus(t.id, "dismissed", "No violation found");
+                                onClick={() => void (async () => {
+                                  if (!token) return;
+                                  const r = await apiAdminPatchSupportTicket(token, t.id, {
+                                    status: "dismissed",
+                                    admin_note: "No violation found",
+                                  });
+                                  if (r.ok === false) {
+                                    toast({ title: "Update failed", description: r.detail ?? "", variant: "destructive" });
+                                    return;
+                                  }
                                   toast({ title: "Report Dismissed", description: `${t.id} dismissed.` });
-                                }}>
+                                  void loadReportTickets();
+                                })()}>
                                 Dismiss
                               </Button>
                             </div>
