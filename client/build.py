@@ -10,6 +10,7 @@ Usage:
 import importlib.util
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -82,19 +83,54 @@ def stop_running_client_processes():
         print(f"Stopped {stopped} running {APP_NAME}.exe process(es).")
 
 
+def _rmtree_retry(path: str) -> None:
+    """Remove a tree; clear read-only bits on Windows so EXE delete works."""
+    if not os.path.isdir(path):
+        return
+    if sys.platform == "win32":
+        stop_running_client_processes()
+        time.sleep(0.5)
+    for root, dirs, files in os.walk(path, topdown=False):
+        for name in files:
+            fp = os.path.join(root, name)
+            try:
+                os.chmod(fp, stat.S_IWRITE)
+                os.unlink(fp)
+            except OSError:
+                pass
+        for name in dirs:
+            dp = os.path.join(root, name)
+            try:
+                os.chmod(dp, stat.S_IWRITE)
+                os.rmdir(dp)
+            except OSError:
+                pass
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        os.rmdir(path)
+    except OSError:
+        pass
+
+
 def clean():
-    """Remove previous build artifacts."""
+    """Remove previous build artifacts (stops running ArenaClient.exe on Windows first)."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     for d in ["build", "dist", f"{APP_NAME}.spec"]:
-        path = os.path.join(os.path.dirname(__file__), d)
+        path = os.path.join(script_dir, d)
         try:
             if os.path.isdir(path):
-                shutil.rmtree(path)
+                _rmtree_retry(path)
                 print(f"Removed {d}/")
             elif os.path.isfile(path):
+                try:
+                    os.chmod(path, stat.S_IWRITE)
+                except Exception:
+                    pass
                 os.remove(path)
                 print(f"Removed {d}")
-        except PermissionError:
-            print(f"Warning: Could not remove {d} (file in use?)")
+        except OSError as e:
+            print(f"Warning: Could not remove {d}: {e}")
+            print("  Close Arena Client (tray), then delete client/dist manually if needed.")
 
 
 def _copy_distribution_extras() -> None:
@@ -152,6 +188,19 @@ def _sign_exe(abs_exe: str) -> None:
         print(f"  Code signing failed: {status} {result.stderr.strip()}\n")
 
 
+def _unblock_exe(abs_exe: str) -> None:
+    """Remove Zone.Identifier (Mark of the Web) when present."""
+    if sys.platform != "win32":
+        return
+    subprocess.run(
+        [
+            "powershell", "-NoProfile", "-Command",
+            f"Unblock-File -LiteralPath '{abs_exe}' -ErrorAction SilentlyContinue",
+        ],
+        capture_output=True,
+    )
+
+
 def build():
     """Build .exe using PyInstaller."""
     ensure_pyinstaller_installed()
@@ -195,8 +244,10 @@ def build():
             print(f"  Size: {size_mb:.1f} MB\n")
             # Sign the EXE with self-signed cert so SAC (Smart App Control)
             # does not block it. arena_sign.pfx must exist next to build.py.
+            abs_exe = os.path.abspath(exe_path)
             if sys.platform == "win32":
-                _sign_exe(os.path.abspath(exe_path))
+                _sign_exe(abs_exe)
+                _unblock_exe(abs_exe)
             _copy_distribution_extras()
     else:
         print("Build failed!")
