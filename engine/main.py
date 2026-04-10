@@ -95,23 +95,24 @@ async def _stale_player_cleanup_loop(interval: int = 15) -> None:
     while True:
         try:
             await _asyncio.sleep(interval)
-            with SessionLocal() as session:
-                # Fetch stale non-host players in waiting rooms
-                stale = session.execute(
+            with SessionLocal() as read_session:
+                stale = read_session.execute(
                     text(
                         "SELECT mp.match_id, mp.user_id, m.stake_currency, m.bet_amount "
                         "FROM match_players mp "
                         "JOIN matches m ON m.id = mp.match_id "
                         "WHERE m.status = 'waiting' "
                         "  AND mp.user_id != m.host_id "
+                        "  AND mp.user_id IS NOT NULL "
                         "  AND mp.last_seen < NOW() - INTERVAL '45 seconds'"
                     )
                 ).fetchall()
 
-                if stale:
-                    for row in stale:
-                        mid, uid, currency, bet = row
-                        session.execute(
+            removed = 0
+            for (mid, uid, currency, bet) in stale:
+                try:
+                    with SessionLocal() as s:
+                        s.execute(
                             text(
                                 "DELETE FROM match_players "
                                 "WHERE match_id = :mid AND user_id = :uid"
@@ -121,13 +122,24 @@ async def _stale_player_cleanup_loop(interval: int = 15) -> None:
                         if currency == "AT":
                             at_amt = int(float(bet or 0))
                             if at_amt > 0:
-                                try:
-                                    _credit_at(session, str(uid), at_amt, str(mid),
-                                               "escrow_refund_disconnect")
-                                except Exception as _e:
-                                    logger.error("stale_cleanup: AT refund failed uid=%s: %s", uid, _e)
-                    session.commit()
-                    logger.info("Stale player cleanup: removed %d disconnected players", len(stale))
+                                _credit_at(
+                                    s,
+                                    str(uid),
+                                    at_amt,
+                                    str(mid),
+                                    "escrow_refund_disconnect",
+                                )
+                        s.commit()
+                        removed += 1
+                except Exception as _player_err:
+                    logger.error(
+                        "stale_cleanup: failed uid=%s match=%s: %s",
+                        uid,
+                        mid,
+                        _player_err,
+                    )
+            if removed:
+                logger.info("Stale cleanup: removed %d disconnected players", removed)
         except Exception as exc:
             logger.error("_stale_player_cleanup_loop error: %s", exc)
 
@@ -3090,7 +3102,9 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("create_match error: %s", exc)
+        import traceback as _tb
+
+        logger.error("create_match error: %s\n%s", exc, _tb.format_exc())
         raise HTTPException(500, "Match creation failed")
 
     return {
@@ -3558,7 +3572,7 @@ async def match_heartbeat(match_id: str, payload: dict = Depends(verify_token)):
                 session.rollback()
                 return {"in_match": False, "match_id": match_id, "players": []}
 
-            # ── Remove stale non-host players (waiting match only) ────────────
+            # ── Stale roster snapshot (removals use isolated sessions below) ──
             stale = session.execute(
                 text(
                     "SELECT mp.user_id, m.stake_currency, m.bet_amount "
@@ -3567,29 +3581,47 @@ async def match_heartbeat(match_id: str, payload: dict = Depends(verify_token)):
                     "WHERE mp.match_id = :mid "
                     "  AND m.status = 'waiting' "
                     "  AND mp.user_id != m.host_id "
+                    "  AND mp.user_id IS NOT NULL "
                     "  AND mp.last_seen < NOW() - INTERVAL '30 seconds'"
                 ),
                 {"mid": match_id},
             ).fetchall()
 
-            for (stale_uid, currency, bet) in stale:
-                session.execute(
-                    text(
-                        "DELETE FROM match_players "
-                        "WHERE match_id = :mid AND user_id = :uid"
-                    ),
-                    {"mid": match_id, "uid": str(stale_uid)},
-                )
-                if currency == "AT":
-                    at_amt = int(float(bet or 0))
-                    if at_amt > 0:
-                        try:
-                            _credit_at(session, str(stale_uid), at_amt, match_id,
-                                       "escrow_refund_disconnect")
-                        except Exception as _e:
-                            logger.error("heartbeat: AT refund failed uid=%s: %s", stale_uid, _e)
+            session.commit()
 
-            # ── Fresh roster (after stale cleanup, in same transaction) ────────
+        stale_removed = 0
+        for (stale_uid, currency, bet) in stale:
+            try:
+                with SessionLocal() as refund_session:
+                    refund_session.execute(
+                        text(
+                            "DELETE FROM match_players "
+                            "WHERE match_id = :mid AND user_id = :uid"
+                        ),
+                        {"mid": match_id, "uid": str(stale_uid)},
+                    )
+                    if currency == "AT":
+                        at_amt = int(float(bet or 0))
+                        if at_amt > 0:
+                            _credit_at(
+                                refund_session,
+                                str(stale_uid),
+                                at_amt,
+                                match_id,
+                                "escrow_refund_disconnect",
+                            )
+                    refund_session.commit()
+                stale_removed += 1
+            except Exception as _e:
+                logger.error(
+                    "heartbeat stale remove: uid=%s match=%s err=%s",
+                    stale_uid,
+                    match_id,
+                    _e,
+                )
+
+        with SessionLocal() as session:
+            # ── Fresh roster (after stale cleanup) ────────────────────────────
             players = session.execute(
                 text(
                     "SELECT u.id, u.username, u.avatar, u.arena_id, "
@@ -3611,8 +3643,6 @@ async def match_heartbeat(match_id: str, payload: dict = Depends(verify_token)):
                 {"mid": match_id},
             ).fetchone()
 
-            session.commit()
-
         your_team = next((p[4] for p in players if str(p[0]) == user_id), None)
 
         # Indices: 0=status 1=game 2=mode 3=code 4=max_players 5=max_per_team
@@ -3633,7 +3663,7 @@ async def match_heartbeat(match_id: str, payload: dict = Depends(verify_token)):
             "created_at":     match_info[10].isoformat() if match_info and match_info[10] else None,
             "your_user_id":   user_id,
             "your_team":      your_team,
-            "stale_removed":  len(stale),
+            "stale_removed":  stale_removed,
             "players": [
                 {"user_id": str(p[0]), "username": p[1], "avatar": p[2],
                  "arena_id": p[3], "team": p[4]}
