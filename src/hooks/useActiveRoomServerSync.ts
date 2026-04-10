@@ -53,10 +53,11 @@ export function useActiveRoomServerSync(
         if (cancelled) return;
 
         if (!hb || hb.in_match === false) {
-          if (looksLikeServerMatchId(activeRoomId)) {
-            toast.error("You were removed from the room by the host");
-            useMatchStore.getState().setActiveRoomId(null);
-          }
+          if (!looksLikeServerMatchId(activeRoomId)) return;
+          // User already cleared the room locally (leave/cancel) — do not show kick toast.
+          if (useMatchStore.getState().activeRoomId !== activeRoomId) return;
+          toast.error("You were removed from the room by the host");
+          useMatchStore.getState().setActiveRoomId(null);
           return;
         }
 
