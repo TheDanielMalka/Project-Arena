@@ -3031,7 +3031,7 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
             # ── Block duplicate rooms: 1 active room per user ─────────────────
             active_room = session.execute(
                 text(
-                    "SELECT id FROM matches m "
+                    "SELECT m.id FROM matches m "
                     "JOIN match_players mp ON mp.match_id = m.id "
                     "WHERE mp.user_id = :uid AND m.status IN ('waiting','in_progress') "
                     "LIMIT 1"
