@@ -114,8 +114,10 @@ This file is the **single source of truth** for all active agents (Cursor + Clau
 |-------|---------|
 | test_doc_b_match_routes.py | 48 / 48 ✅ |
 | test_auth.py | 26 / 26 ✅ |
-| Phase 4 tests (delete, 2fa, region, unread, attachments, verify stubs) | 30 pass + 1 xfail ✅ |
-| All suites | 895 collected (`pytest engine/tests/`); 1 xfail: test_delete_preserves_match_history until engine NULLs match_players |
+| Phase 4 tests (delete, 2fa, region, unread, attachments, verify stubs) | 30 pass + 0 xfail ✅ (xfail removed — engine uses SET user_id=NULL) |
+| test_at_match_lifecycle.py | 5 / 5 ✅ AT leave/kick/create/stale/heartbeat |
+| test_phase5_risk_coverage.py | 18 / 18 ✅ auto-penalty, blacklist, null-uid guard, AML, delete-preserves-history |
+| All suites | 918 collected (`pytest engine/tests/`); 0 xfail — null-uid fix merged PR #408 |
 | Frontend (Vitest) | 506 / 506 ✅ (includes settings.delete, settings.2fa, hub.badge) |
 
 ---
@@ -187,11 +189,10 @@ Code uses all four in leave_match / kick_player / stale_cleanup / heartbeat-stal
 When AT credit fails (BUG-1), the session becomes aborted → all prior DELETEs in that batch roll back.
 **Fix:** Isolate each stale player in its own `with SessionLocal() as session:` block.
 
-### BUG-3 UNKNOWN: create_match returns 500 (needs EC2 log)
-All known error paths in create_match use correct ENUM values and correct column names.
-Cannot determine root cause without server logs.
-**Debug:** `docker logs arena-engine --tail 200 | grep "create_match error"` on EC2.
-Until confirmed: add `traceback.format_exc()` to the create_match 500 catch in main.py.
+### BUG-3 RESOLVED: create_match 500 — AmbiguousColumn (fix/engine-ambiguous-id ✅)
+Migration 026 added `id SERIAL` PK to `match_players`. Both tables had `id`.
+`SELECT id FROM matches m JOIN match_players` → `psycopg2.errors.AmbiguousColumn`.
+Fixed: `SELECT m.id`. Merged to main via fix/engine-ambiguous-id PR #407.
 
 ### Migration 026 idempotency (resolved fix/db-tx-enum)
 Step 1 drops `match_players_pkey` only when it is still the **composite** PK (`array_length(conkey,1) > 1`).
@@ -236,4 +237,6 @@ Step 2 adds surrogate PK only when the table has no primary key. Migration 027 a
 - [CURSOR]  2026-04-10 12:48 UTC  fix/frontend-match-room-sync      MatchLobby: setActiveRoomId(null) before leave/cancel local cleanup so heartbeat stops immediately; useActiveRoomServerSync skips kick toast if store activeRoomId already cleared. createFailureMessage: 400/403/404/422 + HTTP status fallback. Vitest 506 pass.
 - [CLAUDE]  2026-04-11 xx:xx UTC  fix/engine-ambiguous-id          TRUE ROOT CAUSE found via EC2 traceback: migration 026 added id SERIAL to match_players → SELECT id FROM matches m JOIN match_players became AmbiguousColumn → 500 on every create_match. Fix: SELECT m.id (one line). Scanned all 15 JOIN match_players queries — only one was broken. 237 tests pass. Vitest 506/506 pass.
 - [CLAUDE]  2026-04-11 xx:xx UTC  fix/engine-null-uid-guard        NULL user_id guard in _refund_at_match + match result user_stats loop. Migration 026 made user_id nullable — deleted accounts left NULL rows that caused str(None)="None" UUID writes. 257 targeted tests pass.
+- [TESTS]   2026-04-10 xx:xx UTC  test/at-match-lifecycle          AT match lifecycle: leave/kick refunds, AT create, stale cleanup isolation (per-player session), heartbeat last_seen update. 5 tests, all pass. test_at_match_lifecycle.py.
+- [CLAUDE]  2026-04-11 xx:xx UTC  test/phase5-risk-coverage        Phase 5 risk coverage complete: TestAutoPenalty (6), TestBlacklist (4), TestMatchPlayersNull (3 — all pass after PR #408 merge), TestAmlFraudReport (4), TestDeletePreservesHistory (1). xfail removed from test_delete_preserves_match_history. 918 collected, 0 xfail.
 - [CURSOR]  2026-04-11 17:55 UTC  feat/frontend-phase4-fraud-ui    Fraud UI: load-on-mount summary (GET /admin/fraud/summary), View Full Report + tabs (incl. intentional_losing), POST export → JSON download (apiAdminFraudExport) + CSV via exportCSV(apiAdminPostFraudExportReport), AUTO_FLAG live-feed orange badge, Users tab BANNED/SUSPENDED badges. engine-api: FraudIntentionalLosingRow, apiAdminGetFraudSummary, apiAdminPostFraudExportReport. Vitest 506 pass.
