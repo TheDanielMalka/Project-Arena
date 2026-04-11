@@ -7173,6 +7173,23 @@ async def admin_freeze_payouts(
     )
     audit_action = "FREEZE_PAYOUT" if req.freeze else "UNFREEZE_PAYOUT"
     _log_audit(admin_id, audit_action, target_id="global")
+
+    # ── Sync on-chain pause/unpause via owner wallet ──────────────────────────
+    # Oracle key (PRIVATE_KEY) cannot pause — only deployer (OWNER_PRIVATE_KEY).
+    # Non-fatal: in-memory _PAYOUTS_FROZEN still blocks AT + CRYPTO payouts even
+    # if the on-chain call fails or OWNER_PRIVATE_KEY is not yet configured.
+    if _escrow_client:
+        try:
+            if req.freeze:
+                _escrow_client.pause_contract()
+            else:
+                _escrow_client.unpause_contract()
+        except Exception as exc:
+            logger.error(
+                "admin_freeze: on-chain %s failed (non-fatal, in-memory freeze active): %s",
+                "pause" if req.freeze else "unpause", exc,
+            )
+
     return {
         "frozen":  _PAYOUTS_FROZEN,
         "message": f"Payouts {action}. All fund releases are {'suspended' if req.freeze else 'active'}.",

@@ -38,7 +38,7 @@ def _sf(fns=None, fas=None):
     return factory, sess
 
 
-def _client(fns=None, fas=None):
+def _client(fns=None, fas=None, with_owner=False):
     from src.contract.escrow_client import EscrowClient
     w3 = MagicMock(); w3.is_connected.return_value = True
     w3.eth.chain_id = 97; w3.eth.block_number = 100
@@ -49,6 +49,9 @@ def _client(fns=None, fas=None):
     f, s = _sf(fns, fas)
     c = object.__new__(EscrowClient)
     c._w3 = w3; c._contract = ct; c._account = acc; c._session_factory = f
+    # _owner_account: None by default (OWNER_PRIVATE_KEY not set); pass with_owner=True
+    # to simulate having an owner key configured.
+    c._owner_account = MagicMock(address="0xOwner") if with_owner else None
     return c, w3, ct, s
 
 
@@ -476,3 +479,221 @@ class TestAdminOracleRoutes:
         resp = client.post("/admin/oracle/sync",
                            headers={"Authorization": f"Bearer {token}"})
         assert resp.status_code == 403
+
+
+class TestHandlePlayerDeposited:
+    """_handle_player_deposited: uses stakePerPlayer from event args (ABI sync 2026-04-11)."""
+
+    def _ev(self, stake_wei=10**17):
+        """Minimal PlayerDeposited event with the corrected ABI field set."""
+        return {
+            "args": {
+                "matchId":        42,
+                "player":         "0xPlayer",
+                "team":           1,              # team B
+                "stakePerPlayer": stake_wei,      # ← the field that was missing before
+                "depositsTeamA":  1,
+                "depositsTeamB":  1,
+            }
+        }
+
+    def test_skip_unknown_wallet(self):
+        """Unknown wallet → no commit."""
+        c, _, _, s = _client(fns=[None])
+        c._handle_player_deposited(self._ev())
+        s.commit.assert_not_called()
+
+    def test_skip_no_db_match(self):
+        """User found but no DB match for on_chain_id → no commit."""
+        uid = str(uuid.uuid4())
+        c, _, _, s = _client(fns=[(uid,), None])
+        c._handle_player_deposited(self._ev())
+        s.commit.assert_not_called()
+
+    def test_commits_on_success(self):
+        """Happy path: user found, DB match found → commit called."""
+        uid = str(uuid.uuid4()); mid = str(uuid.uuid4())
+        # DB queries: user lookup, match lookup  (stake no longer read from DB)
+        c, _, _, s = _client(fns=[(uid,), (mid,)])
+        c._handle_player_deposited(self._ev())
+        s.commit.assert_called_once()
+
+    def test_uses_event_stake_not_db(self):
+        """
+        Stake must come from event args (stakePerPlayer), NOT from DB column.
+        The handler should NOT execute a query that reads stake_per_player from DB.
+        """
+        uid = str(uuid.uuid4()); mid = str(uuid.uuid4())
+        c, _, _, s = _client(fns=[(uid,), (mid,)])
+        c._handle_player_deposited(self._ev(stake_wei=5 * 10**17))
+
+        executed_sqls = [str(call.args[0]) for call in s.execute.call_args_list]
+        # The old query selected stake_per_player from matches — it must be gone
+        assert not any("stake_per_player" in sql for sql in executed_sqls), (
+            "Handler must use event stakePerPlayer, not DB stake_per_player column"
+        )
+
+    def test_team_b_mapped_correctly(self):
+        """team=1 in event → team='B' in DB update."""
+        uid = str(uuid.uuid4()); mid = str(uuid.uuid4())
+        c, _, _, s = _client(fns=[(uid,), (mid,)])
+        c._handle_player_deposited(self._ev())
+
+        update_calls = [
+            call for call in s.execute.call_args_list
+            if "UPDATE match_players" in str(call.args[0])
+        ]
+        assert len(update_calls) == 1
+        params = update_calls[0].args[1]
+        assert params["team"] == "B"
+
+    def test_team_a_mapped_correctly(self):
+        """team=0 in event → team='A' in DB update."""
+        uid = str(uuid.uuid4()); mid = str(uuid.uuid4())
+        c, _, _, s = _client(fns=[(uid,), (mid,)])
+        c._handle_player_deposited({
+            "args": {
+                "matchId": 1, "player": "0xP", "team": 0,
+                "stakePerPlayer": 10**17, "depositsTeamA": 1, "depositsTeamB": 0,
+            }
+        })
+        update_calls = [
+            call for call in s.execute.call_args_list
+            if "UPDATE match_players" in str(call.args[0])
+        ]
+        assert update_calls[0].args[1]["team"] == "A"
+
+
+class TestPauseUnpauseContract:
+    """pause_contract() / unpause_contract() — owner-key kill switch wiring."""
+
+    def test_pause_no_owner_key_returns_none(self):
+        """OWNER_PRIVATE_KEY not configured → returns None, no tx sent."""
+        c, _, ct, _ = _client(with_owner=False)
+        result = c.pause_contract()
+        assert result is None
+        ct.functions.pause.assert_not_called()
+
+    def test_unpause_no_owner_key_returns_none(self):
+        """OWNER_PRIVATE_KEY not configured → returns None, no tx sent."""
+        c, _, ct, _ = _client(with_owner=False)
+        result = c.unpause_contract()
+        assert result is None
+        ct.functions.unpause.assert_not_called()
+
+    def test_pause_with_owner_key_calls_contract(self):
+        """Owner key configured → pause() called on contract via _send_tx."""
+        c, _, ct, _ = _client(with_owner=True)
+        c._send_tx = MagicMock(return_value="0xPAUSETX")
+        result = c.pause_contract()
+        assert result == "0xPAUSETX"
+        ct.functions.pause.assert_called_once_with()
+
+    def test_pause_passes_owner_account_to_send_tx(self):
+        """pause_contract() must pass owner account, NOT oracle account, to _send_tx."""
+        c, _, ct, _ = _client(with_owner=True)
+        sent_accounts = []
+
+        def capture_tx(fn, gas, account=None):
+            sent_accounts.append(account)
+            return "0xTX"
+
+        c._send_tx = capture_tx
+        c.pause_contract()
+        assert len(sent_accounts) == 1
+        assert sent_accounts[0] is c._owner_account, (
+            "pause_contract must use _owner_account, not _account (oracle)"
+        )
+
+    def test_unpause_with_owner_key_calls_contract(self):
+        """Owner key configured → unpause() called on contract."""
+        c, _, ct, _ = _client(with_owner=True)
+        c._send_tx = MagicMock(return_value="0xUNPAUSETX")
+        result = c.unpause_contract()
+        assert result == "0xUNPAUSETX"
+        ct.functions.unpause.assert_called_once_with()
+
+    def test_unpause_passes_owner_account_to_send_tx(self):
+        """unpause_contract() must use owner account, not oracle."""
+        c, _, ct, _ = _client(with_owner=True)
+        sent_accounts = []
+
+        def capture_tx(fn, gas, account=None):
+            sent_accounts.append(account)
+            return "0xTX"
+
+        c._send_tx = capture_tx
+        c.unpause_contract()
+        assert sent_accounts[0] is c._owner_account
+
+
+class TestAdminFreezeKillSwitch:
+    """POST /admin/freeze wires on-chain pause/unpause via EscrowClient."""
+
+    def _setup(self, mock_escrow):
+        import main
+        from fastapi.testclient import TestClient
+        import src.auth as auth
+        admin_id = str(uuid.uuid4())
+        token = auth.issue_token(admin_id, "admin@arena.gg", "AdminUser")
+        headers = {"Authorization": f"Bearer {token}"}
+        main.app.dependency_overrides[main.require_admin] = lambda: {
+            "sub": admin_id, "email": "admin@arena.gg"
+        }
+        original_escrow = main._escrow_client
+        main._escrow_client = mock_escrow
+        client = TestClient(main.app)
+        return client, headers, main, original_escrow
+
+    def _teardown(self, main, original_escrow):
+        main.app.dependency_overrides.pop(main.require_admin, None)
+        main._escrow_client = original_escrow
+        main._PAYOUTS_FROZEN = False
+
+    def test_freeze_calls_pause_contract(self):
+        """POST /admin/freeze {"freeze": true} → escrow_client.pause_contract() called."""
+        mock_escrow = MagicMock()
+        mock_escrow.pause_contract.return_value = "0xPAUSE"
+        client, headers, main, orig = self._setup(mock_escrow)
+        try:
+            resp = client.post("/admin/freeze", json={"freeze": True}, headers=headers)
+            assert resp.status_code == 200
+            assert resp.json()["frozen"] is True
+            mock_escrow.pause_contract.assert_called_once()
+        finally:
+            self._teardown(main, orig)
+
+    def test_unfreeze_calls_unpause_contract(self):
+        """POST /admin/freeze {"freeze": false} → escrow_client.unpause_contract() called."""
+        mock_escrow = MagicMock()
+        mock_escrow.unpause_contract.return_value = "0xUNPAUSE"
+        client, headers, main, orig = self._setup(mock_escrow)
+        try:
+            resp = client.post("/admin/freeze", json={"freeze": False}, headers=headers)
+            assert resp.status_code == 200
+            assert resp.json()["frozen"] is False
+            mock_escrow.unpause_contract.assert_called_once()
+        finally:
+            self._teardown(main, orig)
+
+    def test_freeze_non_fatal_on_contract_error(self):
+        """On-chain pause fails → 200 still returned (in-memory freeze active)."""
+        mock_escrow = MagicMock()
+        mock_escrow.pause_contract.side_effect = RuntimeError("RPC down")
+        client, headers, main, orig = self._setup(mock_escrow)
+        try:
+            resp = client.post("/admin/freeze", json={"freeze": True}, headers=headers)
+            assert resp.status_code == 200
+            assert resp.json()["frozen"] is True
+        finally:
+            self._teardown(main, orig)
+
+    def test_freeze_no_escrow_still_returns_200(self):
+        """No EscrowClient configured → freeze still works (AT-only platform)."""
+        client, headers, main, orig = self._setup(None)
+        try:
+            resp = client.post("/admin/freeze", json={"freeze": True}, headers=headers)
+            assert resp.status_code == 200
+            assert resp.json()["frozen"] is True
+        finally:
+            self._teardown(main, orig)
