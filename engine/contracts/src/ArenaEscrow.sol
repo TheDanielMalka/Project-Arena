@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+
 /**
  * @title  ArenaEscrow
  * @notice Trustless multi-player match escrow for the ARENA platform.
@@ -22,8 +26,11 @@ pragma solidity 0.8.28;
  *   - Players can always recover funds via refund or cancel
  *   - All logic is public and verifiable on-chain
  *
- * Security notes (audit 2026-04-04):
- *   - Reentrancy: custom nonReentrant guard on all state-changing functions
+ * Security notes (audit 2026-04-11):
+ *   - Reentrancy: OpenZeppelin ReentrancyGuard (nonReentrant) on all state-changing externals
+ *   - Emergency pause (M8): OpenZeppelin Pausable — createMatch, joinMatch, declareWinner use whenNotPaused.
+ *     Mirrors backend kill switch (POST /admin/freeze / _PAYOUTS_FROZEN): platform should call pause() in tandem.
+ *   - Access: OpenZeppelin Ownable — deployer is owner (receives fee); oracle wallet is separate (onlyOracle on declareWinner).
  *   - CEI: state updated before all external calls; events emitted before transfers
  *   - Transfer: .call() used instead of .transfer() — removes hard 2300-gas limit
  *     that could DoS payouts if any player/owner is a contract with an expensive fallback
@@ -61,9 +68,10 @@ pragma solidity 0.8.28;
  *
  * ── Platform settings alignment ────────────────────────────────────────────────
  *   FEE_PERCENT     ↔  platform_settings.fee_percent        (5)
- *   paused = true   ↔  platform_settings.kill_switch_active (TRUE)
+ *                     Payout math: (100 - FEE_PERCENT)% to winners split equally; FEE_PERCENT% to owner (not 90/10 unless fee_pct=10).
+ *   Pausable.paused ↔  platform_settings.kill_switch_active (TRUE) — sync via owner calling pause()/unpause()
  */
-contract ArenaEscrow {
+contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
 
     // ── Constants ────────────────────────────────────────────────────────────
 
@@ -99,9 +107,8 @@ contract ArenaEscrow {
 
     // ── Storage ───────────────────────────────────────────────────────────────
 
-    address public immutable owner;  // ARENA platform wallet (receives fees) — set once in constructor
-    address public oracle;           // Vision Engine wallet (declares winners)
-    bool    public paused;           // DB: platform_settings.kill_switch_active
+    // Ownable: deployer is owner() — platform wallet (receives fee on declareWinner)
+    address public oracle;           // Vision Engine wallet (declares winners) — onlyOracle
 
     uint256 public matchCount;
     mapping(uint256 => Match) public matches;
@@ -110,12 +117,6 @@ contract ArenaEscrow {
     // Prevents a single address from depositing twice in the same match
     // DB-ready: enforced on-chain, double-checked by match_players UNIQUE (match_id, user_id)
     mapping(uint256 => mapping(address => bool)) public hasDeposited;
-
-    // ── Reentrancy guard ─────────────────────────────────────────────────────
-
-    uint256 private _status;
-    uint256 private constant _NOT_ENTERED = 1;
-    uint256 private constant _ENTERED     = 2;
 
     // ── Events ───────────────────────────────────────────────────────────────
     // Vision Engine listens to these to sync Postgres + user balances
@@ -128,9 +129,8 @@ contract ArenaEscrow {
     event WinnerDeclared (uint256 indexed matchId, uint8 winningTeam, uint256 payoutPerWinner, uint256 fee);
     event MatchRefunded  (uint256 indexed matchId);
     event MatchCancelled (uint256 indexed matchId, address indexed cancelledBy);
-    event Paused         (address indexed by);
-    event Unpaused       (address indexed by);
     event OracleUpdated  (address indexed oldOracle, address indexed newOracle);
+    // Paused / Unpaused: emitted by OpenZeppelin Pausable — do not redeclare here.
 
     // ── Modifiers ────────────────────────────────────────────────────────────
 
@@ -139,35 +139,16 @@ contract ArenaEscrow {
         _;
     }
 
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Only owner");
-        _;
-    }
-
     modifier matchExists(uint256 matchId) {
         require(matchId < matchCount, "Match does not exist");
         _;
     }
 
-    modifier whenNotPaused() {
-        require(!paused, "Contract is paused");
-        _;
-    }
-
-    modifier nonReentrant() {
-        require(_status != _ENTERED, "Reentrant call");
-        _status = _ENTERED;
-        _;
-        _status = _NOT_ENTERED;
-    }
-
     // ── Constructor ──────────────────────────────────────────────────────────
 
-    constructor(address _oracle) {
+    constructor(address _oracle) Ownable(msg.sender) {
         require(_oracle != address(0), "Oracle cannot be zero address");
-        owner   = msg.sender;
-        oracle  = _oracle;
-        _status = _NOT_ENTERED;
+        oracle = _oracle;
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────
@@ -389,6 +370,7 @@ contract ArenaEscrow {
         external
         onlyOracle
         nonReentrant
+        whenNotPaused
         matchExists(matchId)
     {
         Match storage m = matches[matchId];
@@ -413,7 +395,7 @@ contract ArenaEscrow {
             uint256 amount = (i == 0) ? payoutPerWinner + dust : payoutPerWinner;
             _sendEth(winners[i], amount);
         }
-        _sendEth(owner, fee);
+        _sendEth(owner(), fee);
     }
 
     // ── Timeout refund ───────────────────────────────────────────────────────
@@ -454,16 +436,13 @@ contract ArenaEscrow {
     // ── Admin ────────────────────────────────────────────────────────────────
 
     /**
-     * @notice Pause new match creation and joining.
+     * @notice Emergency pause — blocks createMatch, joinMatch, and declareWinner (OpenZeppelin Pausable).
      *         Maps to: UPDATE platform_settings SET kill_switch_active = TRUE
      *
-     * Note: does NOT freeze in-progress matches.
-     *       Players can still call claimRefund() and cancelMatch() while paused.
+     * Note: cancelMatch, cancelWaiting, claimRefund remain callable while paused (user fund recovery).
      */
     function pause() external onlyOwner {
-        require(!paused, "Already paused");
-        paused = true;
-        emit Paused(msg.sender);
+        _pause();
     }
 
     /**
@@ -471,9 +450,7 @@ contract ArenaEscrow {
      *         Maps to: UPDATE platform_settings SET kill_switch_active = FALSE
      */
     function unpause() external onlyOwner {
-        require(paused, "Not paused");
-        paused = false;
-        emit Unpaused(msg.sender);
+        _unpause();
     }
 
     /**
@@ -539,6 +516,6 @@ contract ArenaEscrow {
      *         Mirrors platform_settings.kill_switch_active.
      */
     function isPaused() external view returns (bool) {
-        return paused;
+        return paused();
     }
 }
