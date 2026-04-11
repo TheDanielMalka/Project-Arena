@@ -52,11 +52,14 @@ ARENA_ESCROW_ABI = [
     {
         "type": "event", "name": "PlayerDeposited",
         "inputs": [
-            {"name": "matchId",       "type": "uint256", "indexed": True},
-            {"name": "player",        "type": "address", "indexed": True},
-            {"name": "team",          "type": "uint8",   "indexed": False},
-            {"name": "depositsTeamA", "type": "uint8",   "indexed": False},
-            {"name": "depositsTeamB", "type": "uint8",   "indexed": False},
+            {"name": "matchId",        "type": "uint256", "indexed": True},
+            {"name": "player",         "type": "address", "indexed": True},
+            {"name": "team",           "type": "uint8",   "indexed": False},
+            # stakePerPlayer added — ArenaEscrow.sol line 127 (feat/contracts-m8-oz-pausable)
+            # enables _handle_player_deposited to use the event directly (no extra DB read)
+            {"name": "stakePerPlayer", "type": "uint256", "indexed": False},
+            {"name": "depositsTeamA",  "type": "uint8",   "indexed": False},
+            {"name": "depositsTeamB",  "type": "uint8",   "indexed": False},
         ],
     },
     {
@@ -121,6 +124,18 @@ ARENA_ESCROW_ABI = [
         "inputs": [], "outputs": [{"name": "", "type": "bool"}],
         "stateMutability": "view",
     },
+    # ── Owner-only pause / unpause (M8 kill switch) ──────────────────────────
+    # Called from EscrowClient.pause_contract() / unpause_contract()
+    # using OWNER_PRIVATE_KEY (deployer wallet), NOT the oracle key.
+    # Oracle cannot pause — see ArenaEscrow.sol onlyOwner modifier.
+    {
+        "type": "function", "name": "pause",
+        "inputs": [], "outputs": [], "stateMutability": "nonpayable",
+    },
+    {
+        "type": "function", "name": "unpause",
+        "inputs": [], "outputs": [], "stateMutability": "nonpayable",
+    },
 ]
 
 # ── Team mapping ─────────────────────────────────────────────────────────────
@@ -135,6 +150,7 @@ _TEAM_SIZE_TO_MODE = {1: "1v1", 2: "2v2", 4: "4v4", 5: "5v5"}
 # ── Gas budget ───────────────────────────────────────────────────────────────
 _GAS_DECLARE_WINNER = 300_000   # 5v5 worst case
 _GAS_CANCEL_MATCH   = 200_000
+_GAS_ADMIN          =  80_000   # pause() / unpause() — simple state flip
 
 
 class EscrowClient:
@@ -148,10 +164,11 @@ class EscrowClient:
 
     def __init__(
         self,
-        rpc_url:          str,
-        contract_address: str,
-        private_key:      str,
-        session_factory,              # SQLAlchemy SessionLocal (callable → Session)
+        rpc_url:           str,
+        contract_address:  str,
+        private_key:       str,
+        session_factory,               # SQLAlchemy SessionLocal (callable → Session)
+        owner_private_key: str | None = None,  # deployer / owner wallet — for pause/unpause
     ) -> None:
         self._w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={"timeout": 30}))
         self._contract = self._w3.eth.contract(
@@ -159,10 +176,19 @@ class EscrowClient:
             abi=ARENA_ESCROW_ABI,
         )
         self._account = self._w3.eth.account.from_key(private_key)
+        # Owner account (deployer) — required for pause() / unpause() (onlyOwner).
+        # Separate from oracle because the oracle cannot pause the contract.
+        # CONTRACT-ready: OWNER_PRIVATE_KEY env var — distinct from PRIVATE_KEY (oracle).
+        self._owner_account = (
+            self._w3.eth.account.from_key(owner_private_key)
+            if owner_private_key else None
+        )
         self._session_factory = session_factory
         logger.info(
-            "EscrowClient ready | contract=%s oracle=%s chain=%s",
-            contract_address, self._account.address, self._w3.eth.chain_id,
+            "EscrowClient ready | contract=%s oracle=%s owner_configured=%s chain=%s",
+            contract_address, self._account.address,
+            self._owner_account is not None,
+            self._w3.eth.chain_id,
         )
 
     # ── Public property for health/logging ───────────────────────────────────
@@ -250,6 +276,51 @@ class EscrowClient:
         return self._send_tx(
             self._contract.functions.cancelMatch(int(on_chain_id)),
             gas=_GAS_CANCEL_MATCH,
+        )
+
+    def pause_contract(self) -> Optional[str]:
+        """
+        Call ArenaEscrow.pause() from the owner wallet (onlyOwner).
+        Mirrors POST /admin/freeze {"freeze": true} at the contract layer.
+
+        The oracle private key (PRIVATE_KEY) CANNOT pause — only the deployer
+        wallet (OWNER_PRIVATE_KEY) can.  Returns None and logs a warning when
+        OWNER_PRIVATE_KEY is not configured (non-fatal — in-memory freeze still
+        applies via _PAYOUTS_FROZEN).
+
+        CONTRACT-ready: OWNER_PRIVATE_KEY env var must be set before testnet deploy.
+        """
+        if not self._owner_account:
+            logger.warning(
+                "pause_contract: OWNER_PRIVATE_KEY not configured — "
+                "on-chain pause skipped (in-memory _PAYOUTS_FROZEN still active)"
+            )
+            return None
+        return self._send_tx(
+            self._contract.functions.pause(),
+            gas=_GAS_ADMIN,
+            account=self._owner_account,
+        )
+
+    def unpause_contract(self) -> Optional[str]:
+        """
+        Call ArenaEscrow.unpause() from the owner wallet (onlyOwner).
+        Mirrors POST /admin/freeze {"freeze": false} at the contract layer.
+
+        Returns None and logs a warning when OWNER_PRIVATE_KEY is not configured.
+
+        CONTRACT-ready: OWNER_PRIVATE_KEY env var must be set before testnet deploy.
+        """
+        if not self._owner_account:
+            logger.warning(
+                "unpause_contract: OWNER_PRIVATE_KEY not configured — "
+                "on-chain unpause skipped"
+            )
+            return None
+        return self._send_tx(
+            self._contract.functions.unpause(),
+            gas=_GAS_ADMIN,
+            account=self._owner_account,
         )
 
     # ── Event processing ─────────────────────────────────────────────────────
@@ -506,7 +577,11 @@ class EscrowClient:
 
     def _handle_player_deposited(self, event) -> None:
         """
-        PlayerDeposited(matchId, player, team, depositsTeamA, depositsTeamB)
+        PlayerDeposited(matchId, player, team, stakePerPlayer, depositsTeamA, depositsTeamB)
+
+        stakePerPlayer is now taken directly from the event (source of truth — on-chain wei)
+        rather than from the DB matches.stake_per_player, which may not yet be populated
+        when the event fires.  The ABI was updated to include this field (sync: 2026-04-11).
 
         DB-ready:
           UPDATE match_players SET has_deposited=TRUE, deposited_at=NOW(), deposit_amount=stake
@@ -519,6 +594,9 @@ class EscrowClient:
         player_wallet = args["player"].lower()
         team_int      = args["team"]           # 0=A, 1=B
         team_letter   = _INT_TO_TEAM[team_int]
+        # Use stakePerPlayer from event args — on-chain source of truth (wei → ether)
+        stake_wei   = args["stakePerPlayer"]
+        stake_eth   = float(Web3.from_wei(stake_wei, "ether"))
 
         with self._session_factory() as session:
             user = session.execute(
@@ -531,9 +609,7 @@ class EscrowClient:
             user_id = str(user[0])
 
             match_row = session.execute(
-                text(
-                    "SELECT id, stake_per_player FROM matches WHERE on_chain_match_id = :oid"
-                ),
+                text("SELECT id FROM matches WHERE on_chain_match_id = :oid"),
                 {"oid": on_chain_id},
             ).fetchone()
             if not match_row:
@@ -542,7 +618,7 @@ class EscrowClient:
                 )
                 return
             db_match_id = str(match_row[0])
-            stake       = float(match_row[1]) if match_row[1] else 0.0
+            stake       = stake_eth  # from event — no longer reads from DB column
 
             session.execute(
                 text("""
@@ -821,21 +897,26 @@ class EscrowClient:
 
     # ── Internal tx helper ────────────────────────────────────────────────────
 
-    def _send_tx(self, fn, gas: int) -> str:
+    def _send_tx(self, fn, gas: int, account=None) -> str:
         """
         Build, sign, send a transaction and wait for receipt.
         Returns the tx_hash hex string.
 
-        CONTRACT-ready: used by declare_winner() + cancel_match_on_chain()
+        account: defaults to self._account (oracle wallet).
+                 Pass self._owner_account for onlyOwner calls (pause/unpause).
+
+        CONTRACT-ready: used by declare_winner(), cancel_match_on_chain(),
+                        pause_contract(), unpause_contract()
         """
-        nonce = self._w3.eth.get_transaction_count(self._account.address)
-        tx    = fn.build_transaction({
-            "from":     self._account.address,
+        signer = account if account is not None else self._account
+        nonce  = self._w3.eth.get_transaction_count(signer.address)
+        tx     = fn.build_transaction({
+            "from":     signer.address,
             "nonce":    nonce,
             "gas":      gas,
             "gasPrice": self._w3.eth.gas_price,
         })
-        signed  = self._w3.eth.account.sign_transaction(tx, self._account.key)
+        signed  = self._w3.eth.account.sign_transaction(tx, signer.key)
         tx_hash = self._w3.eth.send_raw_transaction(signed.raw_transaction)
         receipt = self._w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
         if receipt["status"] != 1:
@@ -858,9 +939,13 @@ def build_escrow_client(session_factory) -> Optional[EscrowClient]:
     DB-ready: session_factory = SQLAlchemy SessionLocal
     CONTRACT-ready: called at engine startup in main.py lifespan
     """
-    rpc_url          = os.getenv("BLOCKCHAIN_RPC_URL", "").strip()
-    contract_address = os.getenv("CONTRACT_ADDRESS",   "").strip()
-    private_key      = os.getenv("PRIVATE_KEY",        "").strip()
+    rpc_url           = os.getenv("BLOCKCHAIN_RPC_URL", "").strip()
+    contract_address  = os.getenv("CONTRACT_ADDRESS",   "").strip()
+    private_key       = os.getenv("PRIVATE_KEY",        "").strip()
+    # OWNER_PRIVATE_KEY is optional — required only for pause()/unpause().
+    # If absent, EscrowClient still works; pause_contract() / unpause_contract()
+    # log a warning and return None (in-memory _PAYOUTS_FROZEN still takes effect).
+    owner_private_key = os.getenv("OWNER_PRIVATE_KEY",  "").strip() or None
 
     if not rpc_url or not contract_address or not private_key:
         logger.info(
@@ -875,4 +960,5 @@ def build_escrow_client(session_factory) -> Optional[EscrowClient]:
         contract_address=contract_address,
         private_key=private_key,
         session_factory=session_factory,
+        owner_private_key=owner_private_key,
     )

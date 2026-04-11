@@ -119,12 +119,17 @@ This file is the **single source of truth** for all active agents (Cursor + Clau
 | `declareWinner` access | ✅ `onlyOracle` (not `onlyOwner`); fee recipient is `owner()` (deployer / platform) |
 | Kill switch parity | ✅ `whenNotPaused` on `declareWinner` — align `POST /admin/freeze` with `EscrowClient` **owner** key calling `pause()` (oracle key cannot pause) |
 
-**`engine/src/contract/escrow_client.py` (⚠️ Engine — not Contracts domain):**
+**`engine/src/contract/escrow_client.py` (✅ Engine sync complete — fix/engine-escrow-abi-kill-switch):**
 
 | Check | Result |
 |-------|--------|
 | `declare_winner(match_id, winner_id)` | ✅ Exists; builds `declareWinner(on_chain_id, winning_team)` — matches contract |
-| `ARENA_ESCROW_ABI` `PlayerDeposited` | ⚠️ **Out of sync** — contract emits `(matchId, player, team, stakePerPlayer, depositsTeamA, depositsTeamB)`; minimal ABI still has 5 non-indexed fields (missing `stakePerPlayer`). **Claude** must update ABI + `_handle_player_deposited` before relying on event args alone. |
+| `ARENA_ESCROW_ABI` `PlayerDeposited` | ✅ **Fixed** — `stakePerPlayer` (uint256) added between `team` and `depositsTeamA`; `_handle_player_deposited` now uses event arg directly (no extra DB read) |
+| `pause()` / `unpause()` in ABI | ✅ **Added** — owner-only functions in ABI |
+| `EscrowClient.pause_contract()` | ✅ **Added** — uses `OWNER_PRIVATE_KEY` (`_owner_account`), NOT oracle key |
+| `EscrowClient.unpause_contract()` | ✅ **Added** — same; non-fatal if key not configured |
+| `POST /admin/freeze` kill switch wiring | ✅ **Added** — calls `pause_contract()` / `unpause_contract()` non-fatally after setting `_PAYOUTS_FROZEN` |
+| `OWNER_PRIVATE_KEY` env var | ⏳ Must be set to deployer wallet at testnet deploy |
 
 **Env / ops before testnet deploy:**
 
@@ -133,8 +138,8 @@ This file is the **single source of truth** for all active agents (Cursor + Clau
 | `BLOCKCHAIN_RPC_URL` | BSC testnet RPC (e.g. `https://data-seed-prebsc-1-s1.binance.org:8545`) |
 | `CHAIN_ID` | `97` (BSC testnet) — align frontend + engine |
 | `CONTRACT_ADDRESS` | Deployed `ArenaEscrow` — after `hardhat run scripts/deploy.js --network bscTestnet` |
-| Oracle wallet | Constructor arg at deploy — Vision Engine; signs `declareWinner` (`PRIVATE_KEY` in `escrow_client` today = oracle signer) |
-| Platform / owner wallet | Deployer = `Ownable` owner — receives fee ETH; **must** sign `pause`/`unpause` when admin kill switch toggles (separate from oracle) |
+| Oracle wallet | Constructor arg at deploy — Vision Engine; signs `declareWinner` (`PRIVATE_KEY` env var = oracle signer) |
+| Platform / owner wallet | Deployer = `Ownable` owner — receives fee ETH; **must** sign `pause`/`unpause` when admin kill switch toggles (`OWNER_PRIVATE_KEY` env var — separate from `PRIVATE_KEY`) |
 
 **Global placeholder rule (all agents):** For Google / Steam / Riot integrations, use `# TODO[GOOGLE]: …` and `# TODO[VERIF]: …` (or `//` in TS) — do not delete working code; add and wire only.
 
@@ -271,5 +276,7 @@ Step 2 adds surrogate PK only when the table has no primary key. Migration 027 a
 - [CLAUDE]  2026-04-11 xx:xx UTC  fix/engine-null-uid-guard        NULL user_id guard in _refund_at_match + match result user_stats loop. Migration 026 made user_id nullable — deleted accounts left NULL rows that caused str(None)="None" UUID writes. 257 targeted tests pass.
 - [TESTS]   2026-04-10 xx:xx UTC  test/at-match-lifecycle          AT match lifecycle: leave/kick refunds, AT create, stale cleanup isolation (per-player session), heartbeat last_seen update. 5 tests, all pass. test_at_match_lifecycle.py.
 - [CLAUDE]  2026-04-11 xx:xx UTC  test/phase5-risk-coverage        Phase 5 risk coverage complete: TestAutoPenalty (6), TestBlacklist (4), TestMatchPlayersNull (3 — all pass after PR #408 merge), TestAmlFraudReport (4), TestDeletePreservesHistory (1). xfail removed from test_delete_preserves_match_history. 918 collected, 0 xfail.
+- [CONTRACTS] 2026-04-11 18:30 UTC  feat/contracts-m8-oz-pausable    M6 audit + Phase 6 checklist. M8: ArenaEscrow uses OZ Pausable+Ownable+ReentrancyGuard; declareWinner gets whenNotPaused; fee→owner(); isPaused() wraps paused(). @openzeppelin/contracts ^5.0.0. 78 Hardhat tests pass.
+- [CLAUDE]  2026-04-11 xx:xx UTC  fix/engine-escrow-abi-kill-switch  (1) ABI fix: PlayerDeposited stakePerPlayer field added; _handle_player_deposited uses event args directly. (2) ABI+: pause()/unpause() added. (3) EscrowClient.pause_contract()/unpause_contract() via OWNER_PRIVATE_KEY. (4) POST /admin/freeze wires on-chain pause (non-fatal). (5) 17 new tests. 935 total collected.
 - [CURSOR]  2026-04-11 17:55 UTC  feat/frontend-phase4-fraud-ui    Fraud UI: load-on-mount summary (GET /admin/fraud/summary), View Full Report + tabs (incl. intentional_losing), POST export → JSON download (apiAdminFraudExport) + CSV via exportCSV(apiAdminPostFraudExportReport), AUTO_FLAG live-feed orange badge, Users tab BANNED/SUSPENDED badges. engine-api: FraudIntentionalLosingRow, apiAdminGetFraudSummary, apiAdminPostFraudExportReport. Vitest 506 pass.
 - [CONTRACTS] 2026-04-11 18:30 UTC  feat/contracts-m8-oz-pausable    M6 audit + Phase 6 checklist appended under Contracts Agent. M8: ArenaEscrow uses OZ Pausable+Ownable+ReentrancyGuard; declareWinner gets whenNotPaused; fee→owner(); isPaused() wraps paused(). @openzeppelin/contracts ^5.0.0. Hardhat 78 tests pass. ⚠️ Claude: sync escrow_client ARENA_ESCROW_ABI PlayerDeposited + wire owner pause on admin/freeze.
