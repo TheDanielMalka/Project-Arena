@@ -1,5 +1,7 @@
 import hashlib
 import os
+import re
+import secrets
 import logging
 import threading
 import uuid
@@ -410,6 +412,11 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class GoogleAuthRequest(BaseModel):
+    """POST /auth/google — ID token from Google Identity Services (front-end @react-oauth/google)."""
+    id_token: str
+
+
 class AuthResponse(BaseModel):
     # DB-ready: user_id maps to users.id (UUID)
     # When requires_2fa=True (login only), access_token is omitted — use temp_token + POST /auth/2fa/confirm
@@ -452,6 +459,8 @@ class UserProfile(BaseModel):
     forge_unlocked_item_ids: list[str] = []
     vip_expires_at: str | None = None
     region: str = "EU"  # user_settings.region — EU | NA | ASIA | SA | OCE | ME
+    # DB-ready: users.auth_provider — 'email' | 'google'
+    auth_provider: str = "email"
 
 
 # ── Request / Response models ─────────────────────────────────────────────────
@@ -1892,7 +1901,11 @@ async def login(req: LoginRequest, request: Request):
 
     totp_enabled = bool(row[6]) if row and len(row) >= 8 else False
 
-    if not row or not auth.verify_password(req.password, row[3]):
+    if not row:
+        raise HTTPException(401, "Invalid credentials")
+    if row[3] is None:
+        raise HTTPException(401, "This account uses Google sign-in")
+    if not auth.verify_password(req.password, row[3]):
         raise HTTPException(401, "Invalid credentials")
 
     user_id = str(row[0])
@@ -1910,6 +1923,189 @@ async def login(req: LoginRequest, request: Request):
         wallet_address=row[5],
         requires_2fa=False,
     )
+
+
+def _allocate_unique_username_from_google(session, email: str, display_name: str | None) -> str:
+    """Derive a valid unique username from Google profile (users.username unique, max 50)."""
+    raw_name = (display_name or "").strip()
+    if raw_name:
+        base = re.sub(r"[^a-zA-Z0-9_]+", "_", raw_name).strip("_")[:40]
+    else:
+        local = email.split("@", 1)[0] if "@" in email else email
+        base = re.sub(r"[^a-zA-Z0-9_]+", "_", local).strip("_")[:40]
+    if len(base) < 3:
+        base = "player"
+    for attempt in range(12):
+        suffix = "" if attempt == 0 else f"_{secrets.token_hex(2)}"
+        max_base = max(3, 50 - len(suffix))
+        cand = (base[:max_base] + suffix)[:50]
+        if not session.execute(
+            text("SELECT 1 FROM users WHERE lower(username) = lower(:u)"),
+            {"u": cand},
+        ).fetchone():
+            return cand
+    return f"g_{secrets.token_hex(8)}"[:50]
+
+
+def _auth_response_from_google_row(
+    row: tuple,
+) -> AuthResponse:
+    """
+    Build AuthResponse from SELECT id, username, email, arena_id, wallet_address, totp_enabled.
+    """
+    user_id = str(row[0])
+    username, email, arena_id, wallet = row[1], row[2], row[3], row[4]
+    totp_enabled = bool(row[5])
+    if totp_enabled:
+        temp = auth.issue_2fa_pending_token(user_id)
+        return AuthResponse(requires_2fa=True, temp_token=temp)
+    tok = auth.issue_token(user_id, email, username)
+    return AuthResponse(
+        access_token=tok,
+        user_id=user_id,
+        username=username,
+        email=email,
+        arena_id=arena_id,
+        wallet_address=wallet,
+        requires_2fa=False,
+    )
+
+
+@app.post("/auth/google", response_model=AuthResponse)
+async def auth_google(req: GoogleAuthRequest, request: Request):
+    """
+    Sign in or register with a Google ID token (verified server-side).
+
+    DB-ready: users.google_id, users.auth_provider, nullable password_hash (migration 029).
+    """
+    _check_rate_limit(f"google_auth:{request.client.host}", max_calls=20, window_secs=60)
+    client_id = (os.getenv("GOOGLE_OAUTH_CLIENT_ID") or "").strip()
+    if not client_id:
+        raise HTTPException(503, "Google sign-in is not configured on this server")
+
+    raw_tok = (req.id_token or "").strip()
+    if not raw_tok:
+        raise HTTPException(400, "id_token is required")
+
+    try:
+        from google.oauth2 import id_token as google_id_token
+        from google.auth.transport import requests as ga_requests
+
+        idinfo = google_id_token.verify_oauth2_token(raw_tok, ga_requests.Request(), client_id)
+    except ValueError as ve:
+        logger.warning("google id_token verify failed: %s", ve)
+        raise HTTPException(401, "Invalid or expired Google token")
+    except Exception as exc:
+        logger.error("google id_token verify error: %s", exc)
+        raise HTTPException(500, "Google sign-in verification failed")
+
+    sub = idinfo.get("sub")
+    email_raw = idinfo.get("email")
+    if not sub or not email_raw or not isinstance(email_raw, str):
+        raise HTTPException(400, "Google token missing required identity claims")
+    if not idinfo.get("email_verified", False):
+        raise HTTPException(400, "Google email must be verified")
+
+    email = email_raw.strip().lower()
+    display_name = idinfo.get("name")
+    display_name = display_name.strip() if isinstance(display_name, str) else None
+
+    sel = (
+        "SELECT id, username, email, arena_id, wallet_address, "
+        "       COALESCE(totp_enabled, FALSE) "
+        "FROM users "
+    )
+
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(sel + "WHERE google_id = :g"),
+                {"g": str(sub)},
+            ).fetchone()
+            if row:
+                return _auth_response_from_google_row(row)
+
+            row_em = session.execute(
+                text(sel + "WHERE lower(email) = :e"),
+                {"e": email},
+            ).fetchone()
+            if row_em:
+                existing_gid = session.execute(
+                    text("SELECT google_id FROM users WHERE id = :id"),
+                    {"id": str(row_em[0])},
+                ).scalar()
+                if existing_gid and str(existing_gid) != str(sub):
+                    raise HTTPException(
+                        409,
+                        "This email is linked to a different Google account",
+                    )
+                session.execute(
+                    text("UPDATE users SET google_id = :g WHERE id = :id"),
+                    {"g": str(sub), "id": str(row_em[0])},
+                )
+                session.commit()
+                row2 = session.execute(
+                    text(sel + "WHERE id = :id"),
+                    {"id": str(row_em[0])},
+                ).fetchone()
+                if row2:
+                    return _auth_response_from_google_row(row2)
+                raise HTTPException(500, "Google link failed")
+
+            username = _allocate_unique_username_from_google(session, email, display_name)
+            arena_id = auth.generate_arena_id()
+            ins = session.execute(
+                text(
+                    "INSERT INTO users (username, email, password_hash, arena_id, "
+                    "                   google_id, auth_provider, at_balance) "
+                    "VALUES (:u, :e, NULL, :a, :g, 'google', 200) "
+                    "RETURNING id, username, email, arena_id, wallet_address"
+                ),
+                {
+                    "u": username,
+                    "e": email,
+                    "a": arena_id,
+                    "g": str(sub),
+                },
+            ).fetchone()
+            if not ins:
+                raise HTTPException(500, "Registration failed")
+            user_id = str(ins[0])
+
+            session.execute(text("INSERT INTO user_stats (user_id) VALUES (:uid)"), {"uid": user_id})
+            session.execute(text("INSERT INTO user_balances (user_id) VALUES (:uid)"), {"uid": user_id})
+            session.execute(
+                text("INSERT INTO user_roles (user_id, role) VALUES (:uid, 'user')"),
+                {"uid": user_id},
+            )
+            session.execute(
+                text(
+                    "INSERT INTO user_settings (user_id) VALUES (:uid) "
+                    "ON CONFLICT (user_id) DO NOTHING"
+                ),
+                {"uid": user_id},
+            )
+            session.commit()
+
+            tok = auth.issue_token(user_id, str(ins[2]), str(ins[1]))
+            return AuthResponse(
+                access_token=tok,
+                user_id=user_id,
+                username=str(ins[1]),
+                email=str(ins[2]),
+                arena_id=str(ins[3]) if ins[3] is not None else None,
+                wallet_address=str(ins[4]) if ins[4] is not None else None,
+                requires_2fa=False,
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        err = str(exc).lower()
+        if "unique" in err or "duplicate" in err:
+            logger.warning("auth_google unique violation: %s", exc)
+            raise HTTPException(409, "An account with these details already exists")
+        logger.error("auth_google error: %s", exc)
+        raise HTTPException(500, "Google sign-in failed")
 
 
 @app.get("/auth/me", response_model=UserProfile)
@@ -1940,7 +2136,8 @@ async def me(payload: dict = Depends(verify_token)):
                     "           THEN 'moderator' "
                     "         ELSE 'user' "
                     "       END, "
-                    "       COALESCE(us.region, 'EU') "
+                    "       COALESCE(us.region, 'EU'), "
+                    "       COALESCE(u.auth_provider, 'email') "
                     "FROM users u "
                     "LEFT JOIN user_stats s ON s.user_id = u.id "
                     "LEFT JOIN user_settings us ON us.user_id = u.id "
@@ -1985,6 +2182,7 @@ async def me(payload: dict = Depends(verify_token)):
         at_balance=int(row[16]),
         role=str(row[17]) if row[17] is not None else "user",
         region=str(row[18]) if len(row) > 18 and row[18] else "EU",
+        auth_provider=str(row[19]) if len(row) > 19 and row[19] else "email",
     )
 
 
@@ -4381,6 +4579,12 @@ async def change_password(req: ChangePasswordRequest, payload: dict = Depends(ve
 
             if not row:
                 raise HTTPException(404, "User not found")
+
+            if row[0] is None:
+                raise HTTPException(
+                    400,
+                    "This account signs in with Google — use Google to access your account",
+                )
 
             if not auth.verify_password(req.current_password, row[0]):
                 raise HTTPException(400, "Current password is incorrect")

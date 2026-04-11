@@ -86,7 +86,7 @@ const SettingsPage = () => {
   const clientVersion = useClientStore((s) => s.version);
   const [searchParams, setSearchParams] = useSearchParams();
   // Google users cannot change email — managed by Google OAuth
-  const isGoogleAccount = greetingType === "google";
+  const isGoogleAccount = user?.authProvider === "google" || greetingType === "google";
   const { platformBettingMax, dailyBettingLimit, dailyBettingUsed, setDailyBettingLimit } = useWalletStore();
 
   const [active, setActive] = useState<SectionId>("account");

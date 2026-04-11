@@ -33,8 +33,10 @@ def hash_password(plain: str) -> str:
     return bcrypt.hashpw(plain.encode("utf-8"), salt).decode("utf-8")
 
 
-def verify_password(plain: str, hashed: str) -> bool:
+def verify_password(plain: str, hashed: str | None) -> bool:
     """Return True if *plain* matches the stored *hashed* bcrypt password."""
+    if not hashed:
+        return False
     return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
 
 

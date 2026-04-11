@@ -424,6 +424,30 @@ export type ApiLoginResult =
   | { _rate_limited: true }
   | null;
 
+// POST /auth/google — Google Identity Services id_token (same response shape as login)
+export async function apiAuthGoogle(idToken: string): Promise<ApiLoginResult> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/auth/google`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id_token: idToken }),
+    });
+    if (res.status === 429) return { _rate_limited: true };
+    const raw = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!res.ok) return null;
+    if (!raw) return null;
+    if (raw.requires_2fa === true && typeof raw.temp_token === "string") {
+      return { requires_2fa: true, temp_token: raw.temp_token };
+    }
+    if (typeof raw.access_token === "string") {
+      return raw as ApiLoginSuccess;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // POST /auth/login
 export async function apiLogin(identifier: string, password: string): Promise<ApiLoginResult> {
   try {
@@ -559,6 +583,8 @@ export async function apiGetMe(token: string): Promise<{
   daily_limit_at?: number;
   region?: string | null;
   two_factor_enabled?: boolean;
+  /** users.auth_provider — 'email' | 'google' */
+  auth_provider?: string | null;
 } | null> {
   try {
     const res = await arenaUserFetch(`${ENGINE_BASE}/auth/me`, token, {});
@@ -586,6 +612,7 @@ export async function apiGetMe(token: string): Promise<{
       daily_limit_at?: number;
       region?: string | null;
       two_factor_enabled?: boolean;
+      auth_provider?: string | null;
     };
   } catch {
     return null;

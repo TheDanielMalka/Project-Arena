@@ -78,6 +78,8 @@ export interface UserProfile {
   region?: UserSettingsRegion;
   /** From GET /auth/me `two_factor_enabled` */
   twoFactorEnabled?: boolean;
+  /** From GET /auth/me `auth_provider` — email password vs Google OAuth */
+  authProvider?: "email" | "google";
 }
 
 export interface UserStats {
