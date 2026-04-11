@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from "react";
+import { GoogleOAuthProvider } from "@react-oauth/google";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -63,15 +64,16 @@ function SessionGate({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-const App = () => {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <NotificationToastListener />
-        <BrowserRouter>
-          <SessionGate>
+const googleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID ?? "").trim();
+
+const AppShell = () => (
+  <QueryClientProvider client={queryClient}>
+    <TooltipProvider>
+      <Toaster />
+      <Sonner />
+      <NotificationToastListener />
+      <BrowserRouter>
+        <SessionGate>
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/auth" element={<Auth />} />
@@ -97,11 +99,21 @@ const App = () => {
             <Route path="/admin" element={<AdminRoute />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
-          </SessionGate>
-        </BrowserRouter>
-      </TooltipProvider>
-    </QueryClientProvider>
-  );
+        </SessionGate>
+      </BrowserRouter>
+    </TooltipProvider>
+  </QueryClientProvider>
+);
+
+const App = () => {
+  if (googleClientId) {
+    return (
+      <GoogleOAuthProvider clientId={googleClientId}>
+        <AppShell />
+      </GoogleOAuthProvider>
+    );
+  }
+  return <AppShell />;
 };
 
 export default App;

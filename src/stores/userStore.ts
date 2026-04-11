@@ -10,6 +10,7 @@ import type {
 import { setPendingClientSetupAfterSignup } from "@/lib/localArenaPrefs";
 import {
   apiAuth2faConfirm,
+  apiAuthGoogle,
   apiGetMe,
   apiLogin,
   apiPatchMe,
@@ -54,8 +55,10 @@ interface UserState {
     password: string,
     gameAccounts?: { steamId?: string; riotId?: string },
   ) => Promise<SignupResult>;
-  // DB-ready: replace with POST /api/auth/google (OAuth)
-  loginWithGoogle: () => void;
+  /** POST /auth/google with Google Identity id_token — same hydration as login */
+  loginWithGoogleIdToken: (
+    idToken: string,
+  ) => Promise<boolean | "rate_limited" | { needs_2fa: true; temp_token: string }>;
   // DB-ready: replace with POST /api/auth/logout
   logout: () => void;
   /** Restore session from localStorage token (Phase 3). */
@@ -177,6 +180,7 @@ function userProfileFromMe(profile: MeProfile): UserProfile {
     atBalance: profile.at_balance,
     region: regionFromMe(profile.region ?? undefined),
     twoFactorEnabled: !!profile.two_factor_enabled,
+    authProvider: profile.auth_provider === "google" ? "google" : "email",
   };
 }
 
@@ -293,8 +297,33 @@ export const useUserStore = create<UserState>((set, get) => ({
     return { ok: true as const };
   },
 
-  loginWithGoogle: () => {
-    // TODO[GOOGLE]: wire handleGoogle() to POST /auth/google when Client ID is set
+  loginWithGoogleIdToken: async (idToken: string) => {
+    const data = await apiAuthGoogle(idToken);
+    if (!data) return false;
+    if ("_rate_limited" in data) return "rate_limited";
+    if ("requires_2fa" in data && data.requires_2fa) {
+      return { needs_2fa: true as const, temp_token: data.temp_token };
+    }
+    const creds = data as ApiLoginSuccess;
+    const profile = await apiGetMe(creds.access_token);
+    if (!profile) return false;
+
+    const user = userProfileFromMe(profile);
+
+    writeStoredAccessToken(creds.access_token);
+    set({
+      user,
+      token: creds.access_token,
+      isAuthenticated: true,
+      authHydrated: true,
+      walletConnected: !!user.walletAddress,
+      showLoginGreeting: true,
+      greetingType: "google",
+    });
+    hydrateWalletForgeAfterAuth(user);
+    scheduleSyncForgePurchasesToProfile();
+    scheduleSocialSyncAfterAuth();
+    return true;
   },
 
   logout: () => {
@@ -347,6 +376,7 @@ export const useUserStore = create<UserState>((set, get) => ({
       atBalance: profile.at_balance,
       region: regionFromMe(profile.region ?? undefined) ?? user.region,
       twoFactorEnabled: profile.two_factor_enabled ?? user.twoFactorEnabled,
+      authProvider: profile.auth_provider === "google" ? "google" : "email",
     };
     set({ user: next, walletConnected: !!w });
     hydrateWalletForgeAfterAuth(next);

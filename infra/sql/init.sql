@@ -956,3 +956,11 @@ ALTER TYPE tx_type ADD VALUE IF NOT EXISTS 'escrow_refund_leave';
 ALTER TYPE tx_type ADD VALUE IF NOT EXISTS 'escrow_refund_kicked';
 ALTER TYPE tx_type ADD VALUE IF NOT EXISTS 'escrow_refund_disconnect';
 ALTER TYPE tx_type ADD VALUE IF NOT EXISTS 'escrow_refund_cancel';
+
+-- ── Migration 029 — Google OAuth (google_id, auth_provider, nullable password) ─
+ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR(100);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(20) NOT NULL DEFAULT 'email';
+ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id_unique
+    ON users (google_id)
+    WHERE google_id IS NOT NULL;

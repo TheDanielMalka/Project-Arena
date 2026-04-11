@@ -1,6 +1,6 @@
-// TODO[GOOGLE]: POST /auth/google — implement after Client ID received
 import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import { GoogleLogin } from "@react-oauth/google";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,7 +25,7 @@ import {
 
 const Auth = () => {
   const navigate = useNavigate();
-  const { login, signup, loginWithGoogle, isAuthenticated, completeTwoFactorLogin } = useUserStore();
+  const { login, signup, loginWithGoogleIdToken, isAuthenticated, completeTwoFactorLogin } = useUserStore();
   const { toast } = useToast();
   const [showPassword, setShowPassword] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
@@ -47,6 +47,9 @@ const Auth = () => {
   const [loginAuthPhase, setLoginAuthPhase] = useState<"credentials" | "2fa">("credentials");
   const [loginTempToken, setLoginTempToken] = useState("");
   const [loginTwoFaCode, setLoginTwoFaCode] = useState("");
+  const [authTab, setAuthTab] = useState<"login" | "signup">("login");
+
+  const hasGoogleClient = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim());
 
   // Redirect if already logged in (do NOT navigate during render)
   useEffect(() => {
@@ -160,12 +163,40 @@ const Auth = () => {
     navigate("/dashboard");
   };
 
-  const handleGoogle = () => {
-    loginWithGoogle();
-    toast({
-      title: "Google sign-in not available",
-      description: "OAuth will be enabled when the Google Client ID is configured. Use email and password for now.",
-    });
+  const handleGoogleCredential = async (credential: string | undefined) => {
+    if (!credential) {
+      toast({
+        title: "Google sign-in failed",
+        description: "No credential returned from Google.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const result = await loginWithGoogleIdToken(credential);
+    if (result === "rate_limited") {
+      toast({
+        title: "Too many requests",
+        description: "Too many requests — please wait a moment and try again",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (typeof result === "object" && result !== null && "needs_2fa" in result) {
+      setAuthTab("login");
+      setLoginTempToken(result.temp_token);
+      setLoginTwoFaCode("");
+      setLoginAuthPhase("2fa");
+      return;
+    }
+    if (!result) {
+      toast({
+        title: "Google sign-in failed",
+        description: "Could not verify your Google account. Try again or use email and password.",
+        variant: "destructive",
+      });
+      return;
+    }
+    navigate("/dashboard");
   };
 
   if (forgotMode) {
@@ -216,15 +247,22 @@ const Auth = () => {
         </CardHeader>
         <CardContent>
           <Tabs
-            defaultValue="login"
-            className="w-full"
+            value={authTab}
             onValueChange={(v) => {
-              if (v === "login") {
+              const t = v as "login" | "signup";
+              setAuthTab(t);
+              if (t === "login") {
+                setLoginAuthPhase("credentials");
+                setLoginTempToken("");
+                setLoginTwoFaCode("");
+              }
+              if (t === "signup") {
                 setLoginAuthPhase("credentials");
                 setLoginTempToken("");
                 setLoginTwoFaCode("");
               }
             }}
+            className="w-full"
           >
             <TabsList className="w-full bg-secondary border border-border mb-4">
               <TabsTrigger value="login" className="flex-1 font-display data-[state=active]:bg-primary/20 data-[state=active]:text-primary">
@@ -321,25 +359,42 @@ const Auth = () => {
                   <div className="h-px flex-1 bg-border" />
                 </div>
 
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="w-full block">
-                      {/* TODO[GOOGLE]: remove disabled, wire handleGoogle() to POST /auth/google when Client ID is set */}
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="w-full border-border hover:bg-secondary font-display"
-                        disabled
-                        onClick={handleGoogle}
-                      >
-                        <Chrome className="mr-2 h-4 w-4" /> Continue with Google
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    <p>Coming soon</p>
-                  </TooltipContent>
-                </Tooltip>
+                {hasGoogleClient ? (
+                  <div className="flex w-full justify-center [&>div]:w-full [&>div>div]:w-full">
+                    <GoogleLogin
+                      theme="filled_black"
+                      size="large"
+                      text="continue_with"
+                      shape="rectangular"
+                      onSuccess={(c) => void handleGoogleCredential(c.credential ?? undefined)}
+                      onError={() =>
+                        toast({
+                          title: "Google sign-in failed",
+                          description: "Try again or use email and password.",
+                          variant: "destructive",
+                        })
+                      }
+                    />
+                  </div>
+                ) : (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="w-full block">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full border-border hover:bg-secondary font-display"
+                          disabled
+                        >
+                          <Chrome className="mr-2 h-4 w-4" /> Continue with Google
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <p>Set VITE_GOOGLE_CLIENT_ID to enable Google sign-in.</p>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
               </form>
               )}
             </TabsContent>
@@ -550,25 +605,46 @@ const Auth = () => {
                   <div className="h-px flex-1 bg-border" />
                 </div>
 
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="w-full block">
-                      {/* TODO[GOOGLE]: remove disabled, wire handleGoogle() to POST /auth/google when Client ID is set */}
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="w-full border-border hover:bg-secondary font-display"
-                        disabled
-                        onClick={handleGoogle}
-                      >
-                        <Chrome className="mr-2 h-4 w-4" /> Sign up with Google
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    <p>Coming soon</p>
-                  </TooltipContent>
-                </Tooltip>
+                {hasGoogleClient && confirmedAge && agreedToTerms ? (
+                  <div className="flex w-full justify-center [&>div]:w-full [&>div>div]:w-full">
+                    <GoogleLogin
+                      theme="filled_black"
+                      size="large"
+                      text="signup_with"
+                      shape="rectangular"
+                      onSuccess={(c) => void handleGoogleCredential(c.credential ?? undefined)}
+                      onError={() =>
+                        toast({
+                          title: "Google sign-up failed",
+                          description: "Try again or create an account with email.",
+                          variant: "destructive",
+                        })
+                      }
+                    />
+                  </div>
+                ) : hasGoogleClient ? (
+                  <p className="text-xs text-center text-muted-foreground">
+                    Confirm age and accept the Terms above to enable Google sign-up.
+                  </p>
+                ) : (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="w-full block">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full border-border hover:bg-secondary font-display"
+                          disabled
+                        >
+                          <Chrome className="mr-2 h-4 w-4" /> Sign up with Google
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <p>Set VITE_GOOGLE_CLIENT_ID to enable Google sign-in.</p>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
               </form>
             </TabsContent>
           </Tabs>

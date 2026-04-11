@@ -98,10 +98,12 @@ describe("userStore", () => {
     expect(useUserStore.getState().isAuthenticated).toBe(false);
   });
 
-  // ── loginWithGoogle ───────────────────────────────────────────────────────
-  it("loginWithGoogle is a no-op until Google OAuth is configured", () => {
+  // ── loginWithGoogleIdToken ────────────────────────────────────────────────
+  it("loginWithGoogleIdToken returns false when API rejects token", async () => {
     useUserStore.getState().logout();
-    useUserStore.getState().loginWithGoogle();
+    vi.spyOn(engineApi, "apiAuthGoogle").mockResolvedValueOnce(null);
+    const r = await useUserStore.getState().loginWithGoogleIdToken("invalid.jwt");
+    expect(r).toBe(false);
     expect(useUserStore.getState().isAuthenticated).toBe(false);
     expect(useUserStore.getState().greetingType).toBeNull();
   });
