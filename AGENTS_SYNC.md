@@ -57,6 +57,7 @@ This file is the **single source of truth** for all active agents (Cursor + Clau
 | payload.username display | ✅ N/A | JWT username field already used — no direct JWT decoding in display |
 | your_team from server | ✅ Complete | yourTeam in Match type + store; heartbeat updates it — feat/frontend-p1-kick-ux |
 | Match room leave/cancel + heartbeat kick toast | ✅ Complete | fix/frontend-match-room-sync — activeRoomId cleared first; store guard on hb.in_match=false |
+| Admin fraud UI (Phase 4) | ✅ Complete | feat/frontend-phase4-fraud-ui — GET /admin/fraud/summary on mount, full report tabs + intentional_losing, POST export JSON/CSV, AUTO_FLAG feed, BANNED/SUSPENDED badges |
 
 ---
 
@@ -145,7 +146,10 @@ POST /admin/match/{id}/declare-winner → { declared, match_id, winner_id, stake
 POST /admin/freeze                    → { frozen: bool, message: str }
 GET  /admin/freeze/status             → { frozen: bool }
 POST /admin/users/{id}/penalty        → { penalized, user_id, offense_count, action, suspended_until, banned_at }
-GET  /admin/fraud/report              → { generated_at, flagged_players[], suspicious_pairs[], repeat_offenders[], recently_banned[], summary }
+GET  /admin/fraud/summary             → { total_flagged, high_winrate, pair_farming, repeat_offenders, recently_banned, intentional_losing } (counts only)
+GET  /admin/fraud/report              → { generated_at, flagged_players[], suspicious_pairs[], repeat_offenders[], recently_banned[], intentional_losing[], summary }
+                                         summary includes intentional_losing count; intentional_losing[]: loser_username, winner_username, loss_count, first_match, last_match, reason?
+POST /admin/fraud/report/export       → JSON file (download) or same JSON body as report (client may flatten to CSV)
 GET  /admin/users                     → { users[], total, limit, offset }
                                          each user: user_id, username, email, status, rank, at_balance, wallet_address,
                                                     matches, wins, win_rate, penalty_count, is_suspended, is_banned,
@@ -158,7 +162,7 @@ PUT  /platform/config                 body: { fee_pct?, daily_bet_max_at?, maint
                                          → { updated: bool, fields: str[] }
 GET  /admin/audit-log                 → { entries[], total, limit, offset }
                                          each: id, admin_id, admin_username, action, target_id, notes, created_at
-                                         action values: FREEZE_PAYOUT | UNFREEZE_PAYOUT | BAN_USER | SUSPEND_USER | DECLARE_WINNER | CONFIG_UPDATE
+                                         action values: FREEZE_PAYOUT | UNFREEZE_PAYOUT | BAN_USER | SUSPEND_USER | DECLARE_WINNER | CONFIG_UPDATE | AUTO_FLAG
 JWT payload                   → { sub: uuid, email, username, iat, exp }
 
 HTTP Status codes to handle:
@@ -232,3 +236,4 @@ Step 2 adds surrogate PK only when the table has no primary key. Migration 027 a
 - [CURSOR]  2026-04-10 12:48 UTC  fix/frontend-match-room-sync      MatchLobby: setActiveRoomId(null) before leave/cancel local cleanup so heartbeat stops immediately; useActiveRoomServerSync skips kick toast if store activeRoomId already cleared. createFailureMessage: 400/403/404/422 + HTTP status fallback. Vitest 506 pass.
 - [CLAUDE]  2026-04-11 xx:xx UTC  fix/engine-ambiguous-id          TRUE ROOT CAUSE found via EC2 traceback: migration 026 added id SERIAL to match_players → SELECT id FROM matches m JOIN match_players became AmbiguousColumn → 500 on every create_match. Fix: SELECT m.id (one line). Scanned all 15 JOIN match_players queries — only one was broken. 237 tests pass. Vitest 506/506 pass.
 - [CLAUDE]  2026-04-11 xx:xx UTC  fix/engine-null-uid-guard        NULL user_id guard in _refund_at_match + match result user_stats loop. Migration 026 made user_id nullable — deleted accounts left NULL rows that caused str(None)="None" UUID writes. 257 targeted tests pass.
+- [CURSOR]  2026-04-11 17:55 UTC  feat/frontend-phase4-fraud-ui    Fraud UI: load-on-mount summary (GET /admin/fraud/summary), View Full Report + tabs (incl. intentional_losing), POST export → JSON download (apiAdminFraudExport) + CSV via exportCSV(apiAdminPostFraudExportReport), AUTO_FLAG live-feed orange badge, Users tab BANNED/SUSPENDED badges. engine-api: FraudIntentionalLosingRow, apiAdminGetFraudSummary, apiAdminPostFraudExportReport. Vitest 506 pass.

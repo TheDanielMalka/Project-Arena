@@ -153,6 +153,16 @@ vi.mock("@/lib/engine-api", async (importOriginal) => {
       winner_id: "uuid-a", stake_currency: "AT",
     }),
 
+    apiAdminGetFraudSummary: vi.fn().mockResolvedValue({
+      ok: true,
+      total_flagged: 0,
+      high_winrate: 0,
+      pair_farming: 0,
+      repeat_offenders: 0,
+      recently_banned: 0,
+      intentional_losing: 0,
+    }),
+
     apiAdminGetFraudReport: vi.fn().mockResolvedValue({
       ok: true,
       generated_at: new Date().toISOString(),
@@ -160,8 +170,36 @@ vi.mock("@/lib/engine-api", async (importOriginal) => {
       suspicious_pairs: [],
       repeat_offenders: [],
       recently_banned: [],
-      summary: { total_flagged: 0, high_winrate: 0, pair_farming: 0, repeat_offenders: 0 },
+      intentional_losing: [],
+      summary: {
+        total_flagged: 0,
+        high_winrate: 0,
+        pair_farming: 0,
+        repeat_offenders: 0,
+        recently_banned: 0,
+        intentional_losing: 0,
+      },
     }),
+
+    apiAdminPostFraudExportReport: vi.fn().mockResolvedValue({
+      ok: true,
+      generated_at: new Date().toISOString(),
+      flagged_players: [],
+      suspicious_pairs: [],
+      repeat_offenders: [],
+      recently_banned: [],
+      intentional_losing: [],
+      summary: {
+        total_flagged: 0,
+        high_winrate: 0,
+        pair_farming: 0,
+        repeat_offenders: 0,
+        recently_banned: 0,
+        intentional_losing: 0,
+      },
+    }),
+
+    apiAdminFraudExport: vi.fn().mockResolvedValue({ ok: true }),
 
     apiAdminOracleStatus: vi.fn().mockResolvedValue({
       ok: true, escrow_enabled: false,

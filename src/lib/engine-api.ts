@@ -2952,21 +2952,82 @@ export interface FraudRecentlyBanned {
   notes:        string | null;
   reason:       string;
 }
+
+/** Directional loss farming — loser repeatedly loses to same winner (GET /admin/fraud/report). */
+export interface FraudIntentionalLosingRow {
+  loser_username:   string;
+  winner_username:  string;
+  loss_count:       number;
+  first_match:      string;
+  last_match:       string;
+  reason?:          string;
+}
+
 export interface FraudSummary {
-  total_flagged:    number;
-  high_winrate:     number;
-  pair_farming:     number;
-  repeat_offenders: number;
-  recently_banned?: number;
+  total_flagged:      number;
+  high_winrate:       number;
+  pair_farming:       number;
+  repeat_offenders:   number;
+  recently_banned?:   number;
+  intentional_losing?: number;
 }
 
 export interface FraudReport {
-  generated_at:     string;
-  flagged_players:  FraudFlaggedPlayer[];
-  suspicious_pairs: FraudSuspiciousPair[];
-  repeat_offenders: FraudRepeatOffender[];
-  recently_banned:  FraudRecentlyBanned[];
-  summary:          FraudSummary;
+  generated_at:       string;
+  flagged_players:    FraudFlaggedPlayer[];
+  suspicious_pairs:   FraudSuspiciousPair[];
+  repeat_offenders:   FraudRepeatOffender[];
+  recently_banned:    FraudRecentlyBanned[];
+  intentional_losing: FraudIntentionalLosingRow[];
+  summary:            FraudSummary;
+}
+
+function parseFraudReportPayload(raw: Record<string, unknown>): FraudReport {
+  const summaryRaw = raw.summary as FraudSummary | undefined;
+  const summary: FraudSummary = summaryRaw ?? {
+    total_flagged: 0,
+    high_winrate: 0,
+    pair_farming: 0,
+    repeat_offenders: 0,
+    recently_banned: 0,
+    intentional_losing: 0,
+  };
+  return {
+    generated_at:       String(raw.generated_at ?? ""),
+    flagged_players:    (raw.flagged_players  as FraudFlaggedPlayer[])  ?? [],
+    suspicious_pairs:   (raw.suspicious_pairs as FraudSuspiciousPair[]) ?? [],
+    repeat_offenders:   (raw.repeat_offenders as FraudRepeatOffender[]) ?? [],
+    recently_banned:    (raw.recently_banned  as FraudRecentlyBanned[])  ?? [],
+    intentional_losing: (raw.intentional_losing as FraudIntentionalLosingRow[]) ?? [],
+    summary: {
+      ...summary,
+      intentional_losing: summary.intentional_losing ?? 0,
+      recently_banned:    summary.recently_banned    ?? 0,
+    },
+  };
+}
+
+/** GET /admin/fraud/summary — count badges only (same shape as report summary). */
+export async function apiAdminGetFraudSummary(token: string): Promise<
+  ({ ok: true } & FraudSummary) | { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/admin/fraud/summary`, token, {});
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    const s = raw as unknown as FraudSummary;
+    return {
+      ok: true,
+      total_flagged:      Number(s.total_flagged)      || 0,
+      high_winrate:       Number(s.high_winrate)       || 0,
+      pair_farming:       Number(s.pair_farming)       || 0,
+      repeat_offenders:   Number(s.repeat_offenders)   || 0,
+      recently_banned:    Number(s.recently_banned)    || 0,
+      intentional_losing: Number(s.intentional_losing) || 0,
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "Network error" };
+  }
 }
 
 export async function apiAdminGetFraudReport(token: string): Promise<
@@ -2977,16 +3038,51 @@ export async function apiAdminGetFraudReport(token: string): Promise<
     const res = await arenaUserFetch(`${ENGINE_BASE}/admin/fraud/report`, token, {});
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
-    const summary = (raw.summary as FraudSummary | undefined) ?? { total_flagged: 0, high_winrate: 0, pair_farming: 0, repeat_offenders: 0 };
-    return {
-      ok:               true,
-      generated_at:     String(raw.generated_at     ?? ""),
-      flagged_players:  (raw.flagged_players  as FraudFlaggedPlayer[])  ?? [],
-      suspicious_pairs: (raw.suspicious_pairs as FraudSuspiciousPair[]) ?? [],
-      repeat_offenders: (raw.repeat_offenders as FraudRepeatOffender[]) ?? [],
-      recently_banned:  (raw.recently_banned  as FraudRecentlyBanned[]) ?? [],
-      summary,
-    };
+    const parsed = parseFraudReportPayload(raw);
+    return { ok: true, ...parsed };
+  } catch {
+    return { ok: false, status: 0, detail: "Network error" };
+  }
+}
+
+/** POST /admin/fraud/report/export — same JSON payload as GET report; used to build CSV in the admin UI. */
+export async function apiAdminPostFraudExportReport(token: string): Promise<
+  ({ ok: true } & FraudReport) | { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/admin/fraud/report/export`, token, {
+      method: "POST",
+    });
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    return { ok: true, ...parseFraudReportPayload(raw) };
+  } catch {
+    return { ok: false, status: 0, detail: "Network error" };
+  }
+}
+
+/** POST /admin/fraud/report/export — triggers browser download of the JSON file from the server. */
+export async function apiAdminFraudExport(token: string): Promise<
+  { ok: true } | { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/admin/fraud/report/export`, token, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    }
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition");
+    let filename = "fraud_report_export.json";
+    const m = cd?.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)/i);
+    if (m?.[1]) filename = decodeURIComponent(m[1].trim());
+    const url = URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement("a"), { href: url, download: filename });
+    a.click();
+    URL.revokeObjectURL(url);
+    return { ok: true };
   } catch {
     return { ok: false, status: 0, detail: "Network error" };
   }

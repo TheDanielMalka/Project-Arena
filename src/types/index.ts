@@ -250,7 +250,9 @@ export interface AdminActivityEvent {
   type: "match_start" | "match_end" | "payout" | "deposit" | "login" | "dispute" | "ban";
   message: string;
   timestamp: string;     // ISO 8601 / locale time
-  highlight?: boolean;   // high-severity events (disputes, bans)
+  highlight?: boolean;   // high-severity events (disputes, bans) — red tint in live feed
+  /** When set, live feed shows an orange badge (e.g. AUTO_FLAG). */
+  orangeBadge?: string;
 }
 
 // DB: platform_settings table (single-row config)

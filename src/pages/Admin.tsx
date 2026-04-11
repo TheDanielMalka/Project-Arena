@@ -45,6 +45,9 @@ import {
   apiUpdatePlatformConfig,
   apiAdminGetAuditLog,
   apiAdminGetFraudReport,
+  apiAdminGetFraudSummary,
+  apiAdminPostFraudExportReport,
+  apiAdminFraudExport,
   apiAdminOracleStatus,
   apiAdminOracleSync,
   apiAdminDeclareWinner,
@@ -57,7 +60,7 @@ import {
   type AdminTicketAttachmentMeta,
   type ApiAdminSupportTicketRow,
 } from "@/lib/engine-api";
-import type { FraudReport, OracleStatus, PlatformConfig } from "@/lib/engine-api";
+import type { FraudReport, FraudSummary, OracleStatus, PlatformConfig } from "@/lib/engine-api";
 
 function mapAdminSupportRowToUiTicket(r: ApiAdminSupportTicketRow): SupportTicket {
   const cat = (r.category || "player_report") as SupportTicketCategory;
@@ -104,6 +107,45 @@ function exportCSV(filename: string, headers: string[], rows: string[][]) {
     download: filename,
   });
   a.click();
+}
+
+/** Flatten POST /admin/fraud/report/export JSON into a single CSV (uses exportCSV). */
+function exportFraudReportToCsv(report: FraudReport) {
+  const rows: string[][] = [];
+  for (const p of report.flagged_players) {
+    rows.push(["high_winrate", p.user_id, p.username, String(p.win_rate), String(p.wins), String(p.matches), p.reason, ""]);
+  }
+  for (const sp of report.suspicious_pairs) {
+    rows.push(["pair_farming", sp.player_a, sp.username_a, sp.player_b, sp.username_b, String(sp.match_count), sp.reason, ""]);
+  }
+  for (const u of report.repeat_offenders) {
+    rows.push(["repeat_offender", u.user_id, u.username, String(u.penalty_count), u.last_offense, String(u.is_banned), u.reason, ""]);
+  }
+  for (const b of report.recently_banned) {
+    rows.push(["recently_banned", b.user_id, b.username, b.banned_at, b.offense_type, b.notes ?? "", b.reason, ""]);
+  }
+  for (const il of report.intentional_losing) {
+    rows.push([
+      "intentional_losing",
+      il.loser_username,
+      il.winner_username,
+      String(il.loss_count),
+      il.first_match,
+      il.last_match,
+      il.reason ?? "Intentional Losing",
+      "",
+    ]);
+  }
+  exportCSV(`fraud_report_${new Date().toISOString().slice(0, 10)}.csv`, [
+    "section",
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+    "f",
+    "g",
+  ], rows);
 }
 
 const ROWS_PER_PAGE = 8;
@@ -217,24 +259,36 @@ function AdminTicketAttachmentsBlock({ ticketId, token }: { ticketId: string; to
 function auditRowsToActivity(entries: AuditLog[]): AdminActivityEvent[] {
   const rows = entries.map((l) => {
     const action = l.action;
+    const actionUp = action.toUpperCase();
     let type: AdminActivityEvent["type"] = "login";
     if (/BAN_|SUSPEND_/i.test(action)) type = "ban";
     else if (/DECLARE_WINNER|RESOLVE/i.test(action)) type = "match_end";
     else if (/FREEZE_PAYOUT|DISPUTE/i.test(action)) type = "dispute";
     const highlight = /BAN_|SUSPEND_|FREEZE_PAYOUT/i.test(action);
-    const msg = [
-      action.replace(/_/g, " "),
-      l.detail ? `— ${l.detail}` : "",
-      l.target && l.target !== "—" ? `· ${l.target}` : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
+    let orangeBadge: string | undefined;
+    let message: string;
+    if (actionUp === "AUTO_FLAG") {
+      orangeBadge = "Auto-flagged";
+      const who = (l.detail ?? "").trim() || (l.target && l.target !== "—" ? l.target : "");
+      message = who
+        ? `Auto-flagged by vision consensus: ${who}`
+        : "Auto-flagged by vision consensus";
+    } else {
+      message = [
+        action.replace(/_/g, " "),
+        l.detail ? `— ${l.detail}` : "",
+        l.target && l.target !== "—" ? `· ${l.target}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+    }
     return {
       id: `live-${l.id}`,
       type,
-      message: msg,
+      message,
       timestamp: l.createdAt,
       highlight,
+      orangeBadge,
     };
   });
   return rows.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -271,8 +325,11 @@ const Admin = () => {
   const feedRef         = useRef<HTMLDivElement>(null);
 
   // ── Fraud report ──
+  const [fraudSummary,  setFraudSummary]  = useState<FraudSummary | null>(null);
   const [fraudReport,   setFraudReport]  = useState<FraudReport | null>(null);
   const [fraudLoading,  setFraudLoading] = useState(false);
+  const [fraudExporting, setFraudExporting] = useState(false);
+  const [fraudSubTab, setFraudSubTab] = useState<"win" | "pair" | "intentional" | "repeat" | "banned">("win");
 
   // ── Oracle ──
   const [oracleStatus,  setOracleStatus]  = useState<OracleStatus | null>(null);
@@ -422,6 +479,10 @@ const Admin = () => {
     void loadUsers();
     void loadDisputes();
     void loadAuditLog();
+    void (async () => {
+      const fr = await apiAdminGetFraudSummary(token);
+      if (fr.ok) setFraudSummary(fr);
+    })();
 
     // Poll audit log every 30s
     const iv = setInterval(() => void loadAuditLog(), 30_000);
@@ -547,7 +608,13 @@ const Admin = () => {
   };
 
   // ── Fraud report ──
-  const handleLoadFraud = async () => {
+  const refreshFraudSummary = useCallback(async () => {
+    if (!token) return;
+    const fr = await apiAdminGetFraudSummary(token);
+    if (fr.ok) setFraudSummary(fr);
+  }, [token]);
+
+  const handleViewFullFraudReport = async () => {
     if (!token) return;
     setFraudLoading(true);
     const r = await apiAdminGetFraudReport(token);
@@ -557,6 +624,32 @@ const Admin = () => {
       return;
     }
     setFraudReport(r);
+    void refreshFraudSummary();
+  };
+
+  const handleExportFraudJson = async () => {
+    if (!token) return;
+    setFraudExporting(true);
+    const r = await apiAdminFraudExport(token);
+    setFraudExporting(false);
+    if (r.ok === false) {
+      toast({ title: "Export failed", description: r.detail ?? "Could not download report", variant: "destructive" });
+      return;
+    }
+    toast({ title: "Download started", description: "Fraud report JSON export." });
+  };
+
+  const handleExportFraudCsv = async () => {
+    if (!token) return;
+    setFraudExporting(true);
+    const r = await apiAdminPostFraudExportReport(token);
+    setFraudExporting(false);
+    if (!r.ok) {
+      toast({ title: "Export failed", description: ('detail' in r ? r.detail : null) ?? "Could not load export payload", variant: "destructive" });
+      return;
+    }
+    exportFraudReportToCsv(r);
+    toast({ title: "CSV exported", description: "Fraud report saved as CSV." });
   };
 
   // ── Oracle ──
@@ -855,12 +948,24 @@ const Admin = () => {
 
                       {/* info */}
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <button className="font-display text-sm font-bold hover:text-primary transition-colors"
                             onClick={() => void navigate(`/players/${u.username}`)}>
                             {u.username}
                           </button>
-                          <Badge className={cn("text-[9px] border px-1.5 py-0", userStatusBadge[u.status])}>{u.status}</Badge>
+                          {u.status === "banned" && (
+                            <Badge className="text-[9px] border px-1.5 py-0 bg-destructive/15 text-destructive border-destructive/40 font-display uppercase tracking-wide">
+                              BANNED
+                            </Badge>
+                          )}
+                          {u.status === "flagged" && (
+                            <Badge className="text-[9px] border px-1.5 py-0 bg-arena-orange/15 text-arena-orange border-arena-orange/40 font-display uppercase tracking-wide">
+                              SUSPENDED
+                            </Badge>
+                          )}
+                          {u.status === "cleared" && (
+                            <Badge className={cn("text-[9px] border px-1.5 py-0", userStatusBadge.cleared)}>cleared</Badge>
+                          )}
                           <Badge variant="outline" className={cn("text-[9px] border px-1.5 py-0 ml-auto", risk.color)}>{risk.label}</Badge>
                         </div>
                         <p className="text-[11px] text-muted-foreground mt-0.5 truncate" title={u.reason}>{u.reason}</p>
@@ -1212,10 +1317,21 @@ const Admin = () => {
                   {activity.map((e) => (
                     <div key={e.id} className={cn(
                       "flex items-start gap-2.5 rounded-lg px-2.5 py-1.5 text-xs transition-all",
-                      e.highlight ? "bg-destructive/10 border border-destructive/20" : "hover:bg-secondary/40"
+                      e.highlight ? "bg-destructive/10 border border-destructive/20"
+                        : e.orangeBadge ? "bg-arena-orange/10 border border-arena-orange/25"
+                        : "hover:bg-secondary/40",
                     )}>
                       <span className="text-[10px] font-mono text-muted-foreground whitespace-nowrap pt-0.5">{e.timestamp}</span>
-                      <span className={e.highlight ? "text-destructive" : "text-foreground"}>{e.message}</span>
+                      <div className="flex-1 min-w-0 flex items-start gap-2 flex-wrap">
+                        {e.orangeBadge && (
+                          <Badge variant="outline" className="text-[8px] px-1.5 py-0 border-arena-orange/40 text-arena-orange shrink-0">
+                            {e.orangeBadge}
+                          </Badge>
+                        )}
+                        <span className={cn(
+                          e.highlight ? "text-destructive" : e.orangeBadge ? "text-arena-orange" : "text-foreground",
+                        )}>{e.message}</span>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1284,58 +1400,100 @@ const Admin = () => {
           )}
 
           {/* ══ FRAUD REPORT ══ */}
-          {section === "fraud" && (
+          {section === "fraud" && (() => {
+            const summaryBadges = fraudSummary ?? fraudReport?.summary ?? null;
+            const badgeVal = (n: number | undefined) =>
+              summaryBadges !== null ? (n ?? 0) : "—";
+            return (
             <div className="space-y-4">
-              <div className="flex items-center gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
                 <p className="text-xs text-muted-foreground flex-1">
-                  Automated anomaly detection — win-rate outliers, match-fixing pairs, repeat offenders.
+                  Automated anomaly detection — counts refresh from GET /admin/fraud/summary; full rows from GET /admin/fraud/report.
                 </p>
-                <Button size="sm" variant="outline" className="h-8 text-xs border-border"
-                  onClick={handleLoadFraud} disabled={fraudLoading}>
-                  {fraudLoading
-                    ? <><RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Generating…</>
-                    : <><TrendingUp className="mr-1.5 h-3.5 w-3.5" /> Generate Report</>}
-                </Button>
+                <div className="flex flex-wrap gap-2 shrink-0">
+                  <Button size="sm" variant="outline" className="h-8 text-xs border-border"
+                    onClick={() => void refreshFraudSummary()} disabled={fraudExporting}>
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Refresh counts
+                  </Button>
+                  <Button size="sm" variant="default" className="h-8 text-xs"
+                    onClick={handleViewFullFraudReport} disabled={fraudLoading}>
+                    {fraudLoading
+                      ? <><RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Loading…</>
+                      : <><TrendingUp className="mr-1.5 h-3.5 w-3.5" /> View Full Report</>}
+                  </Button>
+                  <Button size="sm" variant="outline" className="h-8 text-xs border-border"
+                    onClick={() => void handleExportFraudJson()} disabled={fraudExporting || !token}>
+                    {fraudExporting ? <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
+                    Export JSON
+                  </Button>
+                  <Button size="sm" variant="outline" className="h-8 text-xs border-border"
+                    onClick={() => void handleExportFraudCsv()} disabled={fraudExporting || !token}>
+                    <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV
+                  </Button>
+                </div>
+              </div>
+
+              {/* Summary badges (mount + summary endpoint) */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {[
+                  { label: "High Win-Rate",    val: badgeVal(summaryBadges?.high_winrate),       color: "text-arena-orange" },
+                  { label: "Pair Farming",     val: badgeVal(summaryBadges?.pair_farming),       color: "text-destructive"  },
+                  { label: "Repeat",           val: badgeVal(summaryBadges?.repeat_offenders),   color: "text-arena-gold"   },
+                  { label: "Intentional Lose", val: badgeVal(summaryBadges?.intentional_losing), color: "text-arena-purple" },
+                  { label: "Recently Banned",  val: badgeVal(summaryBadges?.recently_banned),    color: "text-muted-foreground" },
+                ].map(({ label, val, color }) => (
+                  <div key={label} className="rounded-lg border border-border/40 bg-secondary/20 px-3 py-1.5 text-center min-w-[5.5rem]">
+                    <p className={cn("font-display text-sm font-bold tabular-nums", color)}>{val}</p>
+                    <p className="text-[9px] text-muted-foreground uppercase tracking-wider leading-tight">{label}</p>
+                  </div>
+                ))}
+                {fraudReport?.generated_at && (
+                  <span className="ml-auto text-[10px] text-muted-foreground font-mono">
+                    Report {new Date(fraudReport.generated_at).toLocaleString()}
+                  </span>
+                )}
               </div>
 
               {!fraudReport && !fraudLoading && (
-                <div className="text-center py-16 text-muted-foreground">
-                  <AlertTriangle className="h-10 w-10 mx-auto mb-3 opacity-20" />
-                  <p className="text-sm font-display">Click "Generate Report" to run fraud analysis</p>
+                <div className="text-center py-10 text-muted-foreground border border-dashed border-border/60 rounded-xl">
+                  <AlertTriangle className="h-8 w-8 mx-auto mb-2 opacity-20" />
+                  <p className="text-sm font-display">Click &quot;View Full Report&quot; to load detailed fraud rows</p>
                 </div>
               )}
 
               {fraudReport && (
-                <div className="space-y-4">
-                  {/* Summary bar */}
-                  <div className="flex items-center gap-3 flex-wrap">
-                    {[
-                      { label: "High Win-Rate", val: fraudReport.summary.high_winrate,     color: "text-arena-orange" },
-                      { label: "Pair Farming",  val: fraudReport.summary.pair_farming,     color: "text-destructive"  },
-                      { label: "Repeat",        val: fraudReport.summary.repeat_offenders, color: "text-arena-gold"   },
-                      { label: "Banned",        val: fraudReport.summary.recently_banned ?? fraudReport.recently_banned.length, color: "text-muted-foreground" },
-                    ].map(({ label, val, color }) => (
-                      <div key={label} className="rounded-lg border border-border/40 bg-secondary/20 px-3 py-1.5 text-center">
-                        <p className={cn("font-display text-sm font-bold tabular-nums", color)}>{val}</p>
-                        <p className="text-[9px] text-muted-foreground uppercase tracking-wider">{label}</p>
-                      </div>
+                <div className="space-y-3">
+                  <div className="flex flex-wrap gap-1.5 border-b border-border/50 pb-2">
+                    {([
+                      ["win",       "Win anomalies"],
+                      ["pair",      "Pair farming"],
+                      ["intentional", "Intentional losing"],
+                      ["repeat",    "Repeat offenders"],
+                      ["banned",    "Recently banned"],
+                    ] as const).map(([id, lab]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setFraudSubTab(id)}
+                        className={cn(
+                          "px-2.5 py-1 rounded-md text-[10px] font-display uppercase tracking-wide border transition-colors",
+                          fraudSubTab === id
+                            ? "bg-primary/15 border-primary/40 text-primary"
+                            : "border-transparent text-muted-foreground hover:bg-secondary/60",
+                        )}
+                      >
+                        {lab}
+                      </button>
                     ))}
-                    <span className="ml-auto text-[10px] text-muted-foreground font-mono">
-                      {new Date(fraudReport.generated_at).toLocaleString()}
-                    </span>
                   </div>
 
-                  {/* High Win-Rate / Flagged Players */}
-                  {fraudReport.flagged_players.length > 0 && (
-                    <div>
-                      <p className="text-xs font-display font-semibold mb-2 text-arena-orange">
-                        ⚠ High Win-Rate ({fraudReport.flagged_players.length})
-                      </p>
+                  {fraudSubTab === "win" && (
+                    fraudReport.flagged_players.length > 0 ? (
                       <div className="space-y-1.5">
                         {fraudReport.flagged_players.map((p) => (
                           <div key={p.user_id} className="rounded-lg border border-border/60 bg-secondary/20 px-3 py-2 flex items-center gap-3">
                             <div className="w-7 h-7 rounded-full bg-arena-orange/20 text-arena-orange flex items-center justify-center text-xs font-bold shrink-0">
-                              {p.username.slice(0, 2).toUpperCase()}
+                              {(p.username ?? "?").slice(0, 2).toUpperCase()}
                             </div>
                             <div className="flex-1 min-w-0">
                               <button className="font-display text-xs font-bold hover:text-primary transition-colors"
@@ -1349,22 +1507,24 @@ const Admin = () => {
                             </div>
                             <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px] text-destructive hover:bg-destructive/10 border border-destructive/20"
                               onClick={() => void (token && apiAdminIssuePenalty(token, p.user_id, "fraud", "High win-rate anomaly").then((r) => {
-                                if (r.ok) { toast({ title: "Penalty Applied", description: `${p.username} penalized.`, variant: "destructive" }); void loadAuditLog(); }
+                                if (r.ok) {
+                                  toast({ title: "Penalty Applied", description: `${p.username} penalized.`, variant: "destructive" });
+                                  void loadAuditLog();
+                                  void refreshFraudSummary();
+                                }
                               }))}>
                               <Ban className="h-2.5 w-2.5 mr-1" /> Penalize
                             </Button>
                           </div>
                         ))}
                       </div>
-                    </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground py-6 text-center">No high win-rate anomalies in this report.</p>
+                    )
                   )}
 
-                  {/* Suspicious Pairs */}
-                  {fraudReport.suspicious_pairs.length > 0 && (
-                    <div>
-                      <p className="text-xs font-display font-semibold mb-2 text-destructive">
-                        🔗 Suspicious Pairs ({fraudReport.suspicious_pairs.length})
-                      </p>
+                  {fraudSubTab === "pair" && (
+                    fraudReport.suspicious_pairs.length > 0 ? (
                       <div className="space-y-1.5">
                         {fraudReport.suspicious_pairs.map((pair, i) => (
                           <div key={i} className="rounded-lg border border-border/60 bg-secondary/20 px-3 py-2 flex items-center gap-3">
@@ -1380,21 +1540,50 @@ const Admin = () => {
                               onClick={() => void (token && Promise.all([
                                 apiAdminIssuePenalty(token, pair.player_a, "fraud", "Pair farming"),
                                 apiAdminIssuePenalty(token, pair.player_b, "fraud", "Pair farming"),
-                              ]).then(() => { toast({ title: "Both Penalized", description: `${pair.username_a} & ${pair.username_b}`, variant: "destructive" }); void loadAuditLog(); }))}>
+                              ]).then(() => {
+                                toast({ title: "Both Penalized", description: `${pair.username_a} & ${pair.username_b}`, variant: "destructive" });
+                                void loadAuditLog();
+                                void refreshFraudSummary();
+                              }))}>
                               Penalize Both
                             </Button>
                           </div>
                         ))}
                       </div>
-                    </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground py-6 text-center">No suspicious pairs in this report.</p>
+                    )
                   )}
 
-                  {/* Repeat Offenders */}
-                  {fraudReport.repeat_offenders.length > 0 && (
-                    <div>
-                      <p className="text-xs font-display font-semibold mb-2 text-arena-gold">
-                        🔁 Repeat Offenders ({fraudReport.repeat_offenders.length})
-                      </p>
+                  {fraudSubTab === "intentional" && (
+                    fraudReport.intentional_losing.length > 0 ? (
+                      <div className="space-y-1.5">
+                        {fraudReport.intentional_losing.map((row, i) => (
+                          <div key={`${row.loser_username}-${row.winner_username}-${i}`} className="rounded-lg border border-border/60 bg-secondary/20 px-3 py-2 flex flex-col sm:flex-row sm:items-center gap-2">
+                            <div className="flex-1 flex items-center gap-2 flex-wrap">
+                              <span className="font-display text-xs font-bold">@{row.loser_username}</span>
+                              <span className="text-[10px] text-muted-foreground">→ loses to →</span>
+                              <span className="font-display text-xs font-bold">@{row.winner_username}</span>
+                              <Badge variant="outline" className="text-[9px] border-arena-purple/40 text-arena-purple">
+                                {row.reason?.trim() || "Intentional Losing"}
+                              </Badge>
+                            </div>
+                            <div className="flex items-center gap-2 text-[10px] text-muted-foreground shrink-0">
+                              <span className="font-mono text-foreground">
+                                lost {row.loss_count} time{row.loss_count === 1 ? "" : "s"} (7d window)
+                              </span>
+                              <span>{new Date(row.first_match).toLocaleDateString()} → {new Date(row.last_match).toLocaleDateString()}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground py-6 text-center">No intentional losing patterns in this report.</p>
+                    )
+                  )}
+
+                  {fraudSubTab === "repeat" && (
+                    fraudReport.repeat_offenders.length > 0 ? (
                       <div className="space-y-1.5">
                         {fraudReport.repeat_offenders.map((u) => (
                           <div key={u.user_id} className="rounded-lg border border-border/60 bg-secondary/20 px-3 py-2 flex items-center gap-3">
@@ -1408,15 +1597,13 @@ const Admin = () => {
                           </div>
                         ))}
                       </div>
-                    </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground py-6 text-center">No repeat offenders in this report.</p>
+                    )
                   )}
 
-                  {/* Recently Banned */}
-                  {fraudReport.recently_banned.length > 0 && (
-                    <div>
-                      <p className="text-xs font-display font-semibold mb-2 text-destructive">
-                        🚫 Recently Banned ({fraudReport.recently_banned.length})
-                      </p>
+                  {fraudSubTab === "banned" && (
+                    fraudReport.recently_banned.length > 0 ? (
                       <div className="space-y-1.5">
                         {fraudReport.recently_banned.map((u) => (
                           <div key={u.user_id} className="rounded-lg border border-border/60 bg-secondary/20 px-3 py-2 flex items-center gap-3">
@@ -1426,19 +1613,22 @@ const Admin = () => {
                           </div>
                         ))}
                       </div>
-                    </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground py-6 text-center">No recently banned users in this report.</p>
+                    )
                   )}
 
                   {fraudReport.summary.total_flagged === 0 && (
-                    <div className="text-center py-8 text-muted-foreground">
+                    <div className="text-center py-6 text-muted-foreground border-t border-border/40">
                       <Shield className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                      <p className="text-sm">No anomalies detected — platform looks healthy</p>
+                      <p className="text-sm">No anomalies in this report — platform looks healthy</p>
                     </div>
                   )}
                 </div>
               )}
             </div>
-          )}
+            );
+          })()}
 
           {/* ══ ORACLE ══ */}
           {section === "oracle" && (
