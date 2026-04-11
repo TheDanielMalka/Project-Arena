@@ -93,14 +93,45 @@ class TestDeleteAccount:
         assert params["eh"] == want_eh
         assert params["uh"] == want_uh
 
-    @pytest.mark.xfail(
-        reason="Engine currently DELETEs match_players rows; spec expects SET user_id=NULL to preserve history",
-        strict=False,
-    )
     def test_delete_preserves_match_history(self):
-        """Roadmap: match_players.user_id = NULL, match row remains."""
-        # Placeholder — enable when _delete_user_account anonymizes instead of deleting MP rows.
-        assert False
+        """
+        _delete_user_account must anonymise match_players rows (SET user_id=NULL)
+        rather than deleting them, so match history is preserved.
+        Migration 026 made user_id nullable; _delete_user_account was updated
+        accordingly at line ~2809 of main.py (UPDATE match_players SET user_id=NULL).
+        Full coverage also in test_phase5_risk_coverage.TestDeletePreservesHistory.
+        """
+        from main import _delete_user_account
+
+        session = MagicMock()
+
+        def ex_side(*args, **kw):
+            m = MagicMock()
+            sql = str(args[0])
+            if "m.status IN ('waiting','in_progress','disputed')" in sql:
+                m.fetchone.return_value = None
+            elif "SELECT steam_id, riot_id, wallet_address, email, username" in sql:
+                m.fetchone.return_value = (
+                    "76561198000000001", None, "0xABC",
+                    "del@arena.gg", "DelUser",
+                )
+            elif "player_penalties" in sql and "banned_at IS NOT NULL" in sql:
+                m.fetchone.return_value = None
+            elif "SELECT id FROM support_tickets" in sql:
+                m.fetchall.return_value = []
+            else:
+                m.fetchone.return_value = None
+                m.fetchall.return_value = []
+            return m
+
+        session.execute.side_effect = ex_side
+
+        with patch("main._cleanup_report_attachments_for_ticket"):
+            _delete_user_account(session, str(uuid.uuid4()))
+
+        executed_sqls = [str(c.args[0]) for c in session.execute.call_args_list]
+        assert any("UPDATE match_players SET user_id = NULL" in s for s in executed_sqls), \
+            "match_players must be anonymised (SET user_id=NULL), not hard-deleted"
 
 
 def _session_delete_success():
