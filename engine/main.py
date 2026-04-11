@@ -1047,6 +1047,8 @@ async def submit_result(result: MatchResult, token: dict = Depends(verify_token)
                 ).fetchall()
 
                 for (uid,) in player_rows:
+                    if uid is None:
+                        continue  # migration 026: user_id nullable (deleted account)
                     uid_str = str(uid)
                     is_winner = uid_str == str(result.winner_id)
                     xp_gain   = 100 if is_winner else 25
@@ -2959,13 +2961,17 @@ def _refund_at_match(match_id: str) -> None:
                 {"mid": match_id},
             ).fetchall()
 
+            refunded = 0
             for (uid,) in player_rows:
+                if uid is None:
+                    continue  # migration 026: user_id nullable (deleted account)
                 _credit_at(session, str(uid), stake_per_player, match_id, "refund")
+                refunded += 1
 
             session.commit()
             logger.info(
-                "_refund_at_match: match=%s refunded %d players %d AT each",
-                match_id, len(player_rows), stake_per_player,
+                "_refund_at_match: match=%s refunded %d/%d players %d AT each",
+                match_id, refunded, len(player_rows), stake_per_player,
             )
     except Exception as exc:
         logger.error("_refund_at_match error (non-fatal): match=%s error=%s", match_id, exc)
