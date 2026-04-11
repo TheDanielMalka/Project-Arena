@@ -33,11 +33,15 @@ This file is the **single source of truth** for all active agents (Cursor + Clau
 | Migration 017 — platform_config (key-value) + admin_audit_log | ✅ Complete | 2026-04-09 |
 | All admin endpoints migrated to correct tables (017 schema) | ✅ Complete | 2026-04-09 |
 | Action names UPPERCASE: FREEZE_PAYOUT, BAN_USER, SUSPEND_USER, DECLARE_WINNER, CONFIG_UPDATE | ✅ Complete | 2026-04-09 |
+| POST /auth/google — Google Sign-In (id_token verify, link/create user) | ✅ Complete | PR #413 |
+| Migration 029 — google_id, auth_provider, nullable password_hash | ✅ Complete | PR #413 |
+| Login hardening — blocks password auth for Google-only accounts | ✅ Complete | PR #413 |
+| /auth/me returns auth_provider field | ✅ Complete | PR #413 |
 | ArenaEscrow deploy to testnet | ⏳ Phase 6 | — |
 | AT→BNB on-chain transfer | ⏳ Phase 6 | — |
 | SSE / WebSocket | ⏳ Phase 7 | — |
 
-**Tests:** 844 / 844 passing ✅
+**Tests:** 939 collected, 0 xfail ✅ (935 + 4 google auth — PR #413)
 
 ---
 
@@ -58,6 +62,7 @@ This file is the **single source of truth** for all active agents (Cursor + Clau
 | your_team from server | ✅ Complete | yourTeam in Match type + store; heartbeat updates it — feat/frontend-p1-kick-ux |
 | Match room leave/cancel + heartbeat kick toast | ✅ Complete | fix/frontend-match-room-sync — activeRoomId cleared first; store guard on hb.in_match=false |
 | Admin fraud UI (Phase 4) | ✅ Complete | feat/frontend-phase4-fraud-ui — GET /admin/fraud/summary on mount, full report tabs + intentional_losing, POST export JSON/CSV, AUTO_FLAG feed, BANNED/SUSPENDED badges |
+| Google Sign-In UI (GIS) | ✅ Complete — PR #413 — Auth.tsx redesigned, apiGoogleSignIn in engine-api.ts, userStore googleSignIn + auth_provider field, GoogleOAuthProvider wrapper in App.tsx, @react-oauth/google |
 
 ---
 
@@ -93,6 +98,7 @@ This file is the **single source of truth** for all active agents (Cursor + Clau
 | audit_logs + platform_settings | ✅ Already in init.sql (no new migration needed) |
 | 027 (tx_type escrow_refund_leave/kicked/disconnect/cancel) | ✅ Added — fix/db-tx-enum |
 | 028 (match_players: wallet_address + has_deposited + deposited_at + deposit_amount) | ✅ Added — fix/db-match-players-columns |
+| 029 (google_id + auth_provider + nullable password_hash) | ✅ Merged — PR #413 |
 
 ---
 
@@ -202,6 +208,14 @@ PUT  /platform/config                 body: { fee_pct?, daily_bet_max_at?, maint
 GET  /admin/audit-log                 → { entries[], total, limit, offset }
                                          each: id, admin_id, admin_username, action, target_id, notes, created_at
                                          action values: FREEZE_PAYOUT | UNFREEZE_PAYOUT | BAN_USER | SUSPEND_USER | DECLARE_WINNER | CONFIG_UPDATE | AUTO_FLAG
+POST /auth/google             body: { id_token: str }
+                                → AuthResponse (same shape as login — access_token, user_id,
+                                                username, email, arena_id, wallet_address,
+                                                requires_2fa)
+                                → 503 if GOOGLE_OAUTH_CLIENT_ID not set
+                                → 401 if token invalid/expired
+                                → 409 if unique conflict
+GET  /auth/me                 → (existing) now includes auth_provider: 'email' | 'google'
 JWT payload                   → { sub: uuid, email, username, iat, exp }
 
 HTTP Status codes to handle:
@@ -280,3 +294,4 @@ Step 2 adds surrogate PK only when the table has no primary key. Migration 027 a
 - [CLAUDE]  2026-04-11 xx:xx UTC  fix/engine-escrow-abi-kill-switch  (1) ABI fix: PlayerDeposited stakePerPlayer field added; _handle_player_deposited uses event args directly. (2) ABI+: pause()/unpause() added. (3) EscrowClient.pause_contract()/unpause_contract() via OWNER_PRIVATE_KEY. (4) POST /admin/freeze wires on-chain pause (non-fatal). (5) 17 new tests. 935 total collected.
 - [CURSOR]  2026-04-11 17:55 UTC  feat/frontend-phase4-fraud-ui    Fraud UI: load-on-mount summary (GET /admin/fraud/summary), View Full Report + tabs (incl. intentional_losing), POST export → JSON download (apiAdminFraudExport) + CSV via exportCSV(apiAdminPostFraudExportReport), AUTO_FLAG live-feed orange badge, Users tab BANNED/SUSPENDED badges. engine-api: FraudIntentionalLosingRow, apiAdminGetFraudSummary, apiAdminPostFraudExportReport. Vitest 506 pass.
 - [CONTRACTS] 2026-04-11 18:30 UTC  feat/contracts-m8-oz-pausable    M6 audit + Phase 6 checklist appended under Contracts Agent. M8: ArenaEscrow uses OZ Pausable+Ownable+ReentrancyGuard; declareWinner gets whenNotPaused; fee→owner(); isPaused() wraps paused(). @openzeppelin/contracts ^5.0.0. Hardhat 78 tests pass. ⚠️ Claude: sync escrow_client ARENA_ESCROW_ABI PlayerDeposited + wire owner pause on admin/freeze.
+- [CURSOR]   2026-04-12 xx:xx UTC  feat/google-oauth-signin         Google Sign-In full stack: POST /auth/google backend (id_token verify, link-or-create, rate-limited), Migration 029 (google_id, auth_provider, nullable password_hash), test_auth_google.py (4 tests), Auth.tsx GIS button, apiGoogleSignIn, userStore googleSignIn + auth_provider, GoogleOAuthProvider in App.tsx. Merged PR #413.
