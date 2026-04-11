@@ -21,6 +21,7 @@
  *   winningTeam 0/1     ↔ match_players.team ('A' / 'B')
  *   on_chain_match_id   ↔ matches.on_chain_match_id BIGINT
  *   All events          ↔ escrow_client.py listeners (Step 3 / Issue #28)
+ *   Pause / Ownable     ↔ OpenZeppelin Pausable + Ownable (tests use revertedWithCustomError)
  */
 
 const { loadFixture, time } = require("@nomicfoundation/hardhat-network-helpers");
@@ -172,7 +173,7 @@ describe("ArenaEscrow", function () {
       await escrow.connect(owner).pause();
       await expect(
         escrow.connect(players[0]).createMatch(1, { value: STAKE })
-      ).to.be.revertedWith("Contract is paused");
+      ).to.be.revertedWithCustomError(escrow, "EnforcedPause");
     });
 
   });
@@ -265,7 +266,7 @@ describe("ArenaEscrow", function () {
       await escrow.connect(owner).pause();
       await expect(
         escrow.connect(players[1]).joinMatch(0, 1, { value: STAKE })
-      ).to.be.revertedWith("Contract is paused");
+      ).to.be.revertedWithCustomError(escrow, "EnforcedPause");
     });
 
     it("reverts for non-existent matchId", async function () {
@@ -441,6 +442,14 @@ describe("ArenaEscrow", function () {
       ).to.be.revertedWith("Match does not exist");
     });
 
+    it("reverts when contract is paused (M8 kill switch — oracle blocked)", async function () {
+      const { escrow, owner, oracle } = await loadFixture(active1v1Fixture);
+      await escrow.connect(owner).pause();
+      await expect(
+        escrow.connect(oracle).declareWinner(0, 0)
+      ).to.be.revertedWithCustomError(escrow, "EnforcedPause");
+    });
+
   });
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -542,7 +551,7 @@ describe("ArenaEscrow", function () {
       await escrow.connect(owner).pause();
       await expect(
         escrow.connect(players[0]).createMatch(1, { value: STAKE })
-      ).to.be.revertedWith("Contract is paused");
+      ).to.be.revertedWithCustomError(escrow, "EnforcedPause");
     });
 
     it("joinMatch is blocked when paused", async function () {
@@ -550,7 +559,7 @@ describe("ArenaEscrow", function () {
       await escrow.connect(owner).pause();
       await expect(
         escrow.connect(players[1]).joinMatch(0, 1, { value: STAKE })
-      ).to.be.revertedWith("Contract is paused");
+      ).to.be.revertedWithCustomError(escrow, "EnforcedPause");
     });
 
     it("createMatch resumes after unpause", async function () {
@@ -583,7 +592,9 @@ describe("ArenaEscrow", function () {
       const { escrow, players } = await loadFixture(deployFixture);
       await expect(
         escrow.connect(players[0]).pause()
-      ).to.be.revertedWith("Only owner");
+      )
+        .to.be.revertedWithCustomError(escrow, "OwnableUnauthorizedAccount")
+        .withArgs(players[0].address);
     });
 
     it("reverts if non-owner tries to unpause", async function () {
@@ -591,7 +602,9 @@ describe("ArenaEscrow", function () {
       await escrow.connect(owner).pause();
       await expect(
         escrow.connect(players[0]).unpause()
-      ).to.be.revertedWith("Only owner");
+      )
+        .to.be.revertedWithCustomError(escrow, "OwnableUnauthorizedAccount")
+        .withArgs(players[0].address);
     });
 
     it("reverts pause() if already paused", async function () {
@@ -599,14 +612,14 @@ describe("ArenaEscrow", function () {
       await escrow.connect(owner).pause();
       await expect(
         escrow.connect(owner).pause()
-      ).to.be.revertedWith("Already paused");
+      ).to.be.revertedWithCustomError(escrow, "EnforcedPause");
     });
 
     it("reverts unpause() if not paused", async function () {
       const { escrow, owner } = await loadFixture(deployFixture);
       await expect(
         escrow.connect(owner).unpause()
-      ).to.be.revertedWith("Not paused");
+      ).to.be.revertedWithCustomError(escrow, "ExpectedPause");
     });
 
   });
@@ -652,7 +665,9 @@ describe("ArenaEscrow", function () {
       const { escrow, players } = await loadFixture(deployFixture);
       await expect(
         escrow.connect(players[0]).setOracle(players[1].address)
-      ).to.be.revertedWith("Only owner");
+      )
+        .to.be.revertedWithCustomError(escrow, "OwnableUnauthorizedAccount")
+        .withArgs(players[0].address);
     });
 
     it("reverts if new oracle is zero address", async function () {
