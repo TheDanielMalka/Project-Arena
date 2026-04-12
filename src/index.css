@@ -294,4 +294,151 @@
       animation: none;
     }
   }
+
+  /* ── Landing — hero HUD (always-on motion, disabled below) ───────────── */
+  @keyframes landing-hud-conic {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes landing-hud-pulse-live {
+    0%,
+    100% {
+      opacity: 1;
+      filter: drop-shadow(0 0 12px hsl(var(--primary) / 0.55));
+    }
+    50% {
+      opacity: 0.88;
+      filter: drop-shadow(0 0 22px hsl(var(--arena-cyan) / 0.45));
+    }
+  }
+  @keyframes landing-eq-bar {
+    0%,
+    100% {
+      transform: scaleY(0.2);
+      opacity: 0.35;
+    }
+    50% {
+      transform: scaleY(1);
+      opacity: 1;
+    }
+  }
+  @keyframes landing-hud-scan-drift {
+    0% {
+      transform: translateY(-100%);
+      opacity: 0;
+    }
+    15% {
+      opacity: 0.35;
+    }
+    85% {
+      opacity: 0.35;
+    }
+    100% {
+      transform: translateY(100%);
+      opacity: 0;
+    }
+  }
+  @keyframes landing-hud-ticker {
+    0% {
+      transform: translateX(0);
+    }
+    100% {
+      transform: translateX(-50%);
+    }
+  }
+  @keyframes landing-bento-glow {
+    0%,
+    100% {
+      opacity: 0.35;
+    }
+    50% {
+      opacity: 0.65;
+    }
+  }
+  @keyframes landing-bento-shimmer {
+    0% {
+      transform: translateX(-120%) skewX(-12deg);
+    }
+    100% {
+      transform: translateX(220%) skewX(-12deg);
+    }
+  }
+  @keyframes landing-timeline-flow {
+    0% {
+      background-position: 0 0;
+    }
+    100% {
+      background-position: 0 32px;
+    }
+  }
+  @keyframes landing-client-pulse {
+    0%,
+    100% {
+      opacity: 0.45;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+
+  .landing-hud-conic {
+    animation: landing-hud-conic 14s linear infinite;
+  }
+  .landing-hud-live {
+    animation: landing-hud-pulse-live 2.8s ease-in-out infinite;
+  }
+  .landing-eq-bar {
+    transform-origin: bottom center;
+    animation: landing-eq-bar 0.85s ease-in-out infinite;
+  }
+  .landing-hud-scan-drift {
+    animation: landing-hud-scan-drift 5.5s ease-in-out infinite;
+  }
+  .landing-hud-ticker {
+    animation: landing-hud-ticker 18s linear infinite;
+  }
+  .landing-bento-glow-orb {
+    animation: landing-bento-glow 4.5s ease-in-out infinite;
+  }
+  .landing-bento-shimmer {
+    background: linear-gradient(
+      105deg,
+      transparent 42%,
+      hsl(0 0% 100% / 0.055) 50%,
+      transparent 58%
+    );
+    animation: landing-bento-shimmer 7s ease-in-out infinite;
+    animation-delay: calc(var(--landing-stagger, 0) * 1s + 0.85s);
+  }
+  .landing-timeline-flow {
+    background: repeating-linear-gradient(
+      to bottom,
+      hsl(var(--primary) / 0.85) 0 6px,
+      hsl(var(--arena-cyan) / 0.35) 6px 12px,
+      transparent 12px 20px
+    );
+    background-size: 2px 20px;
+    animation: landing-timeline-flow 1.2s linear infinite;
+  }
+  .landing-client-line-active {
+    animation: landing-client-pulse 1.4s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .landing-hud-conic,
+    .landing-hud-live,
+    .landing-eq-bar,
+    .landing-hud-scan-drift,
+    .landing-hud-ticker,
+    .landing-bento-glow-orb,
+    .landing-bento-shimmer,
+    .landing-timeline-flow,
+    .landing-client-line-active {
+      animation: none !important;
+    }
+    .landing-hud-live {
+      filter: drop-shadow(0 0 8px hsl(var(--primary) / 0.35));
+    }
+  }
 }

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
-  Swords, Shield, Wallet, Trophy, Zap, Download, Monitor,
+  Swords, Wallet, Trophy, Zap, Download, Monitor,
   CheckCircle, ArrowRight, Lock, Eye, Cpu, Flame,
 } from "lucide-react";
 import { LANDING_GAMES } from "@/lib/arenaGamesCatalog";
@@ -164,38 +164,120 @@ const CLIENT_FEATURES = [
 ] as const;
 
 function LandingHeroHud() {
+  const eqBars = [0.15, 0.45, 0.75, 0.35, 0.9, 0.55, 0.25, 0.65, 0.85, 0.4, 0.7, 0.5];
   return (
     <div
-      className="relative mx-auto aspect-square max-w-[min(100%,420px)] pointer-events-none select-none"
+      className="relative mx-auto w-full max-w-[min(100%,560px)] min-h-[min(72vw,480px)] sm:min-h-[440px] lg:min-h-[500px] pointer-events-none select-none"
       aria-hidden
     >
+      {/* Rotating chroma rim */}
       <div
-        className="absolute inset-0 rounded-sm opacity-90"
+        className="absolute -inset-[2px] opacity-80 motion-safe:landing-hud-conic"
         style={{
-          clipPath: "polygon(0 12%, 12% 0, 100% 0, 100% 88%, 88% 100%, 0 100%)",
-          boxShadow: "inset 0 0 0 1px hsl(var(--arena-cyan) / 0.35), 0 0 60px -20px hsl(var(--arena-hud-blue) / 0.45)",
-          background: "linear-gradient(165deg, hsl(220 25% 8% / 0.92) 0%, hsl(220 30% 4% / 0.85) 100%)",
+          clipPath: "polygon(0 10%, 10% 0, 100% 0, 100% 90%, 90% 100%, 0 100%)",
+          background:
+            "conic-gradient(from 180deg, hsl(var(--primary)), hsl(var(--arena-cyan)), hsl(280 70% 55%), hsl(var(--primary)))",
         }}
       />
-      <svg className="absolute inset-[8%] text-arena-cyan/25 motion-safe:animate-[spin_120s_linear_infinite]" viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r="46" fill="none" stroke="currentColor" strokeWidth="0.35" strokeDasharray="3 9" />
-        <circle cx="50" cy="50" r="36" fill="none" stroke="currentColor" strokeWidth="0.25" strokeDasharray="1 5" className="text-primary/20 motion-safe:animate-[spin_80s_linear_infinite_reverse]" />
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center pt-4">
-        <p className="font-mono text-[9px] uppercase tracking-[0.5em] text-arena-cyan/70">Tactical overlay</p>
-        <p className="font-display text-lg font-bold tracking-[0.35em] text-foreground/90 mt-2">LIVE</p>
-        <div className="mt-4 grid grid-cols-2 gap-x-8 gap-y-2 text-left font-mono text-[10px]">
-          <span className="text-muted-foreground/60">ESCROW</span>
-          <span className="text-primary tabular-nums">ARMED</span>
-          <span className="text-muted-foreground/60">CHAIN</span>
-          <span className="text-arena-cyan tabular-nums">MULTI</span>
-          <span className="text-muted-foreground/60">OCR</span>
-          <span className="text-purple-300/90 tabular-nums">READY</span>
-        </div>
+      <div
+        className="absolute inset-[2px]"
+        style={{
+          clipPath: "polygon(0 10%, 10% 0, 100% 0, 100% 90%, 90% 100%, 0 100%)",
+          boxShadow:
+            "inset 0 0 0 1px hsl(var(--arena-cyan) / 0.25), inset 0 0 80px hsl(var(--arena-hud-blue) / 0.12), 0 0 80px -20px hsl(var(--primary) / 0.35)",
+          background:
+            "linear-gradient(168deg, hsl(220 28% 9% / 0.97) 0%, hsl(220 32% 4% / 0.94) 45%, hsl(220 25% 6% / 0.92) 100%)",
+        }}
+      />
+      {/* Noise + scan */}
+      <div
+        className="absolute inset-[2px] opacity-[0.04] mix-blend-overlay motion-reduce:opacity-0"
+        style={{
+          clipPath: "polygon(0 10%, 10% 0, 100% 0, 100% 90%, 90% 100%, 0 100%)",
+          backgroundImage: "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
+        }}
+      />
+      <div
+        className="pointer-events-none absolute inset-[2px] z-[1] overflow-hidden motion-safe:opacity-100 opacity-0"
+        style={{ clipPath: "polygon(0 10%, 10% 0, 100% 0, 100% 90%, 90% 100%, 0 100%)" }}
+      >
+        <div className="absolute inset-x-0 top-0 h-[28%] bg-gradient-to-b from-primary/[0.07] to-transparent motion-safe:landing-hud-scan-drift" />
       </div>
-      <div className="absolute bottom-[10%] left-[10%] right-[10%] h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent" />
-      <div className="absolute top-4 left-4 h-6 w-6 border-l-2 border-t-2 border-arena-cyan/50" />
-      <div className="absolute bottom-4 right-4 h-6 w-6 border-r-2 border-b-2 border-primary/45" />
+
+      <svg className="absolute inset-[5%] z-[1] text-arena-cyan/20 motion-safe:animate-[spin_140s_linear_infinite]" viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r="47" fill="none" stroke="currentColor" strokeWidth="0.2" strokeDasharray="2 10" />
+        <circle cx="50" cy="50" r="38" fill="none" stroke="currentColor" strokeWidth="0.15" strokeDasharray="1 6" className="text-primary/15 motion-safe:animate-[spin_95s_linear_infinite_reverse]" />
+      </svg>
+      {/* Radar sweep wedge */}
+      <div className="absolute left-1/2 top-[18%] z-[1] h-[34%] w-[34%] -translate-x-1/2 motion-safe:animate-[spin_6s_linear_infinite] motion-reduce:animate-none">
+        <div
+          className="h-full w-full rounded-full opacity-50"
+          style={{
+            background: "conic-gradient(from 0deg, transparent 0deg, hsl(var(--arena-cyan) / 0.15) 52deg, transparent 56deg)",
+            maskImage: "radial-gradient(circle, black 55%, transparent 56%)",
+            WebkitMaskImage: "radial-gradient(circle, black 55%, transparent 56%)",
+          }}
+        />
+      </div>
+
+      <div className="relative z-[2] flex h-full min-h-[inherit] flex-col px-6 pb-8 pt-10 sm:px-8 sm:pt-12">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.55em] text-arena-cyan/75 sm:text-[11px]">Tactical overlay</p>
+            <p className="landing-hud-live font-display text-3xl font-black tracking-[0.42em] text-foreground sm:text-4xl md:text-[2.75rem]">LIVE</p>
+          </div>
+          <div className="hidden flex-col items-end gap-1 font-mono text-[9px] text-muted-foreground/50 sm:flex">
+            <span>SIGNAL · LOCKED</span>
+            <span className="text-arena-cyan/60">LAT 12ms</span>
+          </div>
+        </div>
+
+        {/* EQ / activity */}
+        <div className="mt-6 flex h-16 items-end justify-center gap-1 sm:h-[4.25rem] sm:gap-1.5">
+          {eqBars.map((d, i) => (
+            <div key={i} className="flex h-full w-1.5 justify-center sm:w-2">
+              <div
+                className="w-full max-w-[5px] rounded-sm bg-gradient-to-t from-primary/20 via-primary/75 to-arena-cyan motion-safe:landing-eq-bar"
+                style={{
+                  height: `${Math.max(18, Math.round(d * 100))}%`,
+                  animationDelay: `${i * 0.07}s`,
+                }}
+              />
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-6 space-y-3 font-mono text-[11px] sm:text-xs">
+          {[
+            { k: "ESCROW", v: "ARMED", vc: "text-primary" },
+            { k: "CHAIN", v: "MULTI", vc: "text-arena-cyan" },
+            { k: "OCR", v: "READY", vc: "text-purple-300" },
+          ].map((row) => (
+            <div
+              key={row.k}
+              className="flex items-center justify-between gap-4 border-b border-white/[0.06] pb-2.5 last:border-0"
+            >
+              <span className="tracking-[0.35em] text-muted-foreground/55">{row.k}</span>
+              <span className={cn("font-display text-sm font-bold tracking-[0.2em] sm:text-base", row.vc)}>{row.v}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-auto overflow-hidden border border-white/[0.08] bg-black/25 py-2">
+          <div className="landing-hud-ticker flex w-[200%] whitespace-nowrap font-mono text-[9px] uppercase tracking-[0.28em] text-muted-foreground/45 motion-reduce:w-full motion-reduce:whitespace-normal motion-reduce:text-center">
+            <span className="px-4">
+              MATCH INTEGRITY · ON-CHAIN ATTEST · VISION PIPE HOT · SESSION NOTARIZED · ESCROW ARMED ·
+            </span>
+            <span className="px-4" aria-hidden>
+              MATCH INTEGRITY · ON-CHAIN ATTEST · VISION PIPE HOT · SESSION NOTARIZED · ESCROW ARMED ·
+            </span>
+          </div>
+        </div>
+
+        <div className="pointer-events-none absolute left-5 top-5 h-8 w-8 border-l-2 border-t-2 border-arena-cyan/55 shadow-[0_0_12px_hsl(var(--arena-cyan)/0.25)] sm:left-7 sm:top-7" />
+        <div className="pointer-events-none absolute bottom-5 right-5 h-8 w-8 border-r-2 border-b-2 border-primary/50 shadow-[0_0_12px_hsl(var(--primary)/0.2)] sm:bottom-7 sm:right-7" />
+        <div className="pointer-events-none absolute bottom-[22%] left-[8%] right-[8%] h-px bg-gradient-to-r from-transparent via-primary/45 to-transparent" />
+      </div>
     </div>
   );
 }
@@ -204,38 +286,87 @@ function BentoFeatureCard({
   f,
   className,
   large,
+  stagger = 0,
 }: {
   f: (typeof FEATURES)[number];
   className?: string;
   large?: boolean;
+  stagger?: number;
 }) {
   const Icon = f.icon;
+  const clip = large ? "polygon(0 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%)" : "polygon(0 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px)";
   return (
     <div
-      className={cn(
-        "group relative overflow-hidden border border-white/[0.08] bg-gradient-to-br from-card/80 via-[hsl(220_22%_6%/0.7)] to-transparent p-4 md:p-5 transition-shadow duration-300",
-        "hover:border-arena-cyan/25 hover:shadow-[0_0_40px_-12px_hsl(var(--arena-cyan)/0.25)]",
-        large && "md:p-7",
-        className,
-      )}
-      style={{ clipPath: large ? "polygon(0 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%)" : undefined }}
+      className={cn("group relative overflow-hidden p-[1px] motion-safe:opacity-100", className)}
+      style={{
+        clipPath: clip,
+        ["--landing-stagger" as string]: String(stagger * 0.35),
+      }}
     >
       <div
-        className={cn(
-          "pointer-events-none absolute -right-6 -top-6 h-28 w-28 rounded-full blur-2xl opacity-40 transition-opacity group-hover:opacity-70",
-          f.title.includes("Vision") ? "bg-purple-500/30" : "bg-primary/20",
-        )}
+        className="absolute inset-0 opacity-50 motion-safe:landing-hud-conic motion-reduce:opacity-30"
+        style={{
+          background:
+            "conic-gradient(from 210deg, hsl(var(--primary) / 0.5), hsl(var(--arena-cyan) / 0.35), hsl(280 60% 50% / 0.4), hsl(var(--primary) / 0.5))",
+          animationDelay: `calc(var(--landing-stagger, 0) * 1s)`,
+        }}
       />
-      <div className={cn("mb-3 flex items-center gap-3", large && "md:mb-5")}>
-        <div className={cn("flex shrink-0 items-center justify-center border", large ? "h-14 w-14 rounded-lg md:h-16 md:w-16" : "h-11 w-11 rounded-md", f.bg)}>
-          <Icon className={cn(f.color, large ? "h-7 w-7 md:h-8 md:w-8" : "h-5 w-5")} />
-        </div>
-        {large && (
-          <span className="font-mono text-[9px] uppercase tracking-[0.4em] text-arena-cyan/50">Core system</span>
+      <div
+        className={cn(
+          "relative h-full overflow-hidden bg-gradient-to-br from-[hsl(220_24%_8%/0.96)] via-[hsl(220_26%_5%/0.94)] to-[hsl(220_22%_4%/0.98)] backdrop-blur-md",
+          "shadow-[inset_0_1px_0_hsl(0_0%_100%/0.06),0_24px_48px_-28px_rgb(0_0_0/0.75)]",
+          large ? "p-5 md:p-8" : "p-4 md:p-5",
         )}
+        style={{ clipPath: clip }}
+      >
+        <div
+          className={cn(
+            "landing-bento-glow-orb pointer-events-none absolute -right-8 -top-8 h-40 w-40 rounded-full blur-3xl",
+            f.title.includes("Vision") ? "bg-purple-500/25" : "bg-primary/18",
+          )}
+          style={{ animationDelay: `calc(var(--landing-stagger, 0) * 1s)` }}
+        />
+        <div className="landing-bento-shimmer pointer-events-none absolute inset-0 opacity-0 motion-safe:opacity-100" />
+        {large && (
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-arena-cyan/35 to-transparent" />
+        )}
+
+        <div className={cn("relative mb-4 flex items-center gap-3", large && "md:mb-6")}>
+          <div className="relative shrink-0">
+            <div
+              className={cn(
+                "absolute inset-0 rounded-full opacity-70 blur-md motion-safe:animate-pulse motion-reduce:animate-none",
+                f.title.includes("Vision") ? "bg-purple-400/35" : "bg-primary/30",
+              )}
+            />
+            <div
+              className={cn(
+                "relative flex items-center justify-center rounded-full bg-gradient-to-br from-white/[0.08] to-transparent ring-1 ring-white/10 shadow-[0_0_24px_-6px_hsl(var(--primary)/0.35)]",
+                large ? "h-14 w-14 md:h-16 md:w-16" : "h-11 w-11 md:h-12 md:w-12",
+              )}
+            >
+              <Icon
+                className={cn(
+                  f.color,
+                  "drop-shadow-[0_0_10px_hsl(var(--primary)/0.25)]",
+                  large ? "h-7 w-7 md:h-8 md:w-8" : "h-5 w-5 md:h-6 md:w-6",
+                )}
+                strokeWidth={1.75}
+              />
+            </div>
+          </div>
+          {large && (
+            <span className="font-mono text-[9px] uppercase tracking-[0.45em] text-arena-cyan/55">Core system</span>
+          )}
+        </div>
+        <h3 className={cn("relative font-display font-bold tracking-wide text-foreground", large ? "text-lg md:text-xl" : "text-sm md:text-base")}>
+          {f.title}
+        </h3>
+        <p className={cn("relative mt-2 text-muted-foreground leading-relaxed", large ? "text-sm md:max-w-md md:text-[0.95rem]" : "text-xs md:text-sm")}>
+          {f.desc}
+        </p>
+        <div className="pointer-events-none absolute bottom-3 right-3 h-5 w-5 border-r border-b border-white/[0.07]" />
       </div>
-      <h3 className={cn("font-display font-bold tracking-wide text-foreground", large ? "text-base md:text-lg" : "text-sm")}>{f.title}</h3>
-      <p className={cn("mt-2 text-muted-foreground leading-relaxed", large ? "text-sm md:max-w-md" : "text-xs")}>{f.desc}</p>
     </div>
   );
 }
@@ -334,12 +465,12 @@ const Index = () => {
           </div>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-12 md:gap-4">
-            <BentoFeatureCard f={v} large className="md:col-span-7 md:row-span-2" />
-            <BentoFeatureCard f={e} className="md:col-span-5 md:col-start-8 md:row-start-1" />
-            <BentoFeatureCard f={m} className="md:col-span-5 md:col-start-8 md:row-start-2" />
-            <BentoFeatureCard f={o} className="md:col-span-4 md:row-start-3" />
-            <BentoFeatureCard f={r} className="md:col-span-4 md:row-start-3" />
-            <BentoFeatureCard f={a} className="md:col-span-4 md:row-start-3" />
+            <BentoFeatureCard f={v} large stagger={0} className="md:col-span-7 md:row-span-2" />
+            <BentoFeatureCard f={e} stagger={1} className="md:col-span-5 md:col-start-8 md:row-start-1" />
+            <BentoFeatureCard f={m} stagger={2} className="md:col-span-5 md:col-start-8 md:row-start-2" />
+            <BentoFeatureCard f={o} stagger={3} className="md:col-span-4 md:row-start-3" />
+            <BentoFeatureCard f={r} stagger={4} className="md:col-span-4 md:row-start-3" />
+            <BentoFeatureCard f={a} stagger={5} className="md:col-span-4 md:row-start-3" />
           </div>
         </div>
       </section>
@@ -381,35 +512,52 @@ const Index = () => {
         </div>
       </section>
 
-      {/* HOW IT WORKS — vertical circuit */}
-      <section className="border-t border-white/[0.06] py-16 sm:py-20">
-        <div className="mx-auto max-w-3xl px-5 sm:px-8">
-          <h2 className="text-center font-display text-3xl font-bold tracking-wide md:text-4xl">
-            How it <span className="text-primary">works</span>
-          </h2>
-          <div className="relative mt-12 space-y-0 pl-2 sm:pl-4">
-            <div className="absolute left-[15px] top-3 bottom-3 w-px bg-gradient-to-b from-primary/50 via-arena-cyan/30 to-primary/50 sm:left-[19px]" />
-            {STEPS.map((s) => (
-              <div key={s.n} className="relative flex gap-6 pb-10 last:pb-0">
-                <div className="relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded border border-primary/40 bg-[hsl(220_22%_6%)] font-mono text-xs font-bold text-primary shadow-[0_0_20px_-4px_hsl(var(--primary)/0.4)]">
-                  {s.n}
+      {/* HOW IT WORKS — premium timeline */}
+      <section className="relative border-t border-white/[0.06] py-16 sm:py-24 overflow-hidden">
+        <div className="pointer-events-none absolute right-0 top-1/4 h-72 w-72 rounded-full bg-primary/[0.04] blur-[100px]" />
+        <div className="mx-auto max-w-4xl px-5 sm:px-8">
+          <div className="text-center">
+            <p className="font-mono text-[10px] uppercase tracking-[0.55em] text-arena-cyan/45">Pipeline</p>
+            <h2 className="mt-2 font-display text-3xl font-bold tracking-wide md:text-4xl lg:text-[2.75rem]">
+              How it <span className="text-primary" style={{ textShadow: "0 0 28px hsl(var(--primary)/0.25)" }}>works</span>
+            </h2>
+          </div>
+          <div className="relative mt-14 sm:mt-16">
+            <div className="absolute left-[19px] top-2 bottom-2 w-[3px] overflow-hidden rounded-full bg-white/[0.04] sm:left-[23px]">
+              <div className="landing-timeline-flow absolute inset-0 opacity-90" />
+            </div>
+            <div className="space-y-6 sm:space-y-8">
+              {STEPS.map((s, idx) => (
+                <div key={s.n} className="relative flex gap-5 sm:gap-8">
+                  <div className="relative z-10 flex shrink-0 flex-col items-center">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-lg border border-primary/35 bg-gradient-to-br from-[hsl(220_24%_10%)] to-[hsl(220_28%_5%)] font-mono text-xs font-bold text-primary shadow-[0_0_28px_-6px_hsl(var(--primary)/0.5),inset_0_1px_0_hsl(0_0%_100%/0.06)] sm:h-12 sm:w-12 sm:text-sm">
+                      {s.n}
+                    </div>
+                  </div>
+                  <div
+                    className="relative flex-1 overflow-hidden rounded-lg border border-white/[0.07] bg-gradient-to-br from-[hsl(220_22%_7%/0.85)] to-[hsl(220_24%_4%/0.92)] py-4 pl-5 pr-4 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.04),0_20px_40px_-28px_rgb(0_0_0/0.65)] backdrop-blur-sm sm:py-5 sm:pl-6"
+                  >
+                    <div
+                      className="landing-bento-shimmer pointer-events-none absolute inset-0 rounded-lg opacity-0 motion-safe:opacity-100"
+                      style={{ ["--landing-stagger" as string]: String(idx * 0.55) }}
+                    />
+                    <h3 className="relative font-display text-lg font-semibold tracking-wide text-foreground sm:text-xl">{s.title}</h3>
+                    <p className="relative mt-2 text-sm leading-relaxed text-muted-foreground sm:text-[0.95rem]">{s.desc}</p>
+                  </div>
                 </div>
-                <div className="pt-1">
-                  <h3 className="font-display text-base font-semibold tracking-wide">{s.title}</h3>
-                  <p className="mt-1 text-sm text-muted-foreground leading-relaxed">{s.desc}</p>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         </div>
       </section>
 
-      {/* DOWNLOAD — skewed panel */}
-      <section id="download" className="relative border-y border-white/[0.08] py-16 sm:py-20">
-        <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.04] via-transparent to-arena-cyan/[0.05]" />
-        <div className="relative mx-auto grid max-w-7xl grid-cols-1 items-center gap-12 px-5 sm:px-8 lg:grid-cols-2">
+      {/* DOWNLOAD — product-grade split */}
+      <section id="download" className="relative border-y border-white/[0.08] py-16 sm:py-24">
+        <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.05] via-transparent to-arena-cyan/[0.06]" />
+        <div className="pointer-events-none absolute left-1/2 top-0 h-px w-[min(90%,48rem)] -translate-x-1/2 bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+        <div className="relative mx-auto grid max-w-7xl grid-cols-1 items-center gap-14 px-5 sm:px-8 lg:grid-cols-2 lg:gap-16">
           <div
-            className="space-y-5 border border-white/[0.08] bg-[hsl(220_22%_5%/0.9)] p-6 sm:p-8 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.04)]"
+            className="relative space-y-5 border border-white/[0.1] bg-[hsl(220_22%_5%/0.92)] p-6 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.05),0_32px_64px_-32px_rgb(0_0_0/0.75)] backdrop-blur-sm sm:p-8"
             style={{ clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 20px), calc(100% - 20px) 100%, 0 100%)" }}
           >
             <div className="inline-flex items-center gap-2 rounded border border-primary/25 bg-primary/10 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.35em] text-primary">
@@ -439,24 +587,57 @@ const Index = () => {
             </div>
           </div>
 
-          <div className="relative flex min-h-[280px] items-center justify-center">
+          <div className="relative flex min-h-[320px] items-center justify-center lg:min-h-[400px]">
             <div
-              className="relative flex w-full max-w-sm flex-col items-center gap-4 border border-arena-cyan/20 bg-black/40 p-8 shadow-[0_0_60px_-20px_hsl(var(--arena-cyan)/0.35)]"
-              style={{ clipPath: "polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px)" }}
+              className="relative w-full max-w-lg overflow-hidden border border-arena-cyan/25 bg-gradient-to-b from-[hsl(220_24%_8%/0.95)] to-[hsl(220_28%_3%/0.98)] shadow-[0_0_80px_-24px_hsl(var(--arena-cyan)/0.45),inset_0_1px_0_hsl(0_0%_100%/0.05)]"
+              style={{ clipPath: "polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px)" }}
             >
-              <div className="landing-scanline pointer-events-none absolute inset-x-0 top-0 z-10 h-px bg-gradient-to-r from-transparent via-primary/60 to-transparent" />
-              <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-primary/25 bg-primary/10">
-                <Monitor className="h-8 w-8 text-primary" />
+              <div className="landing-scanline pointer-events-none absolute inset-x-0 top-9 z-20 h-px bg-gradient-to-r from-transparent via-primary/55 to-transparent" />
+              <div className="flex items-center gap-2 border-b border-white/[0.08] bg-black/35 px-4 py-3">
+                <div className="flex gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]/90" />
+                  <span className="h-2.5 w-2.5 rounded-full bg-[#febc2e]/90" />
+                  <span className="h-2.5 w-2.5 rounded-full bg-[#28c840]/90" />
+                </div>
+                <span className="ml-2 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground/55">arena-client.exe</span>
+                <span className="ml-auto font-mono text-[9px] text-arena-cyan/50">STABLE</span>
               </div>
-              <p className="font-display text-xl font-black tracking-[0.3em] text-primary">ARENA</p>
-              <p className="font-mono text-[11px] text-muted-foreground">Desktop Client v1.0.0</p>
-              <div className="w-full space-y-2 border-t border-white/10 pt-4">
-                {["Scanning games…", "Reading result…", "Reporting on-chain…"].map((t, i) => (
-                  <div key={t} className="flex items-center gap-2">
-                    <div className={cn("h-1.5 w-1.5 rounded-full", i === 0 ? "bg-primary motion-safe:animate-pulse" : "bg-border")} />
-                    <span className={cn("font-mono text-[10px]", i === 0 ? "text-primary" : "text-muted-foreground/35")}>{t}</span>
+              <div className="relative flex flex-col items-center gap-5 px-6 pb-8 pt-8 sm:px-10 sm:pb-10 sm:pt-10">
+                <div className="absolute inset-0 opacity-[0.035] motion-reduce:opacity-0" style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")" }} />
+                <div className="relative flex h-20 w-20 items-center justify-center rounded-2xl border border-primary/30 bg-primary/10 shadow-[0_0_40px_-8px_hsl(var(--primary)/0.45)] sm:h-24 sm:w-24">
+                  <Monitor className="h-10 w-10 text-primary sm:h-11 sm:w-11" strokeWidth={1.5} />
+                </div>
+                <div className="text-center">
+                  <p className="font-display text-2xl font-black tracking-[0.38em] text-primary sm:text-3xl">ARENA</p>
+                  <p className="mt-1 font-mono text-xs text-muted-foreground sm:text-sm">Desktop Client v1.0.0</p>
+                </div>
+                <div className="w-full space-y-1 rounded-md border border-white/[0.06] bg-black/30 px-4 py-3">
+                    <div className="mb-2 h-1.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
+                    <div className="h-full w-[62%] rounded-full bg-gradient-to-r from-primary/80 to-arena-cyan/70 motion-safe:animate-pulse" />
                   </div>
-                ))}
+                  {["Scanning games…", "Reading result…", "Reporting on-chain…"].map((t, i) => (
+                    <div key={t} className="flex items-center gap-2.5 py-1">
+                      <div
+                        className={cn(
+                          "h-2 w-2 rounded-full",
+                          i === 0 ? "bg-primary landing-client-line-active" : "bg-white/10",
+                        )}
+                      />
+                      <span
+                        className={cn(
+                          "font-mono text-[11px] tracking-wide sm:text-xs",
+                          i === 0 ? "text-primary" : "text-muted-foreground/40",
+                        )}
+                      >
+                        {t}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex w-full justify-between border-t border-white/[0.06] pt-4 font-mono text-[9px] uppercase tracking-[0.25em] text-muted-foreground/40 sm:text-[10px]">
+                  <span>Integrity OK</span>
+                  <span className="text-arena-cyan/45">Session live</span>
+                </div>
               </div>
             </div>
           </div>
