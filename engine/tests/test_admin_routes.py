@@ -6,6 +6,7 @@ Tests for Step 4 — Admin routes:
   POST /admin/freeze                          — M8 kill switch (suspend/resume payouts)
   GET  /admin/freeze/status                   — current kill switch state
   POST /admin/match/{id}/declare-winner       — manual winner declaration
+  POST /admin/alerts/test-slack               — Slack webhook smoke test (admin)
 
 All tests mock SessionLocal; no real DB / blockchain needed.
 FastAPI dependency overrides are used instead of unittest.mock.patch for
@@ -14,6 +15,7 @@ in Depends() and patching the module attribute has no effect at runtime.
 """
 from __future__ import annotations
 
+import os
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -189,6 +191,34 @@ class TestAdminOracleSync:
         """No token → 422."""
         resp = client.post("/admin/oracle/sync")
         assert resp.status_code == 422
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# POST /admin/alerts/test-slack
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestAdminAlertsTestSlack:
+    """POST /admin/alerts/test-slack — verify Slack webhook wiring."""
+
+    def test_requires_admin(self):
+        resp = client.post("/admin/alerts/test-slack", headers=_USER_HEADERS)
+        assert resp.status_code == 403
+
+    def test_no_webhook_returns_503(self, as_admin):
+        with patch.dict(os.environ, {"SLACK_ALERTS_WEBHOOK_URL": ""}):
+            resp = client.post("/admin/alerts/test-slack", headers=_ADMIN_HEADERS)
+        assert resp.status_code == 503
+
+    def test_ok_calls_slack_post(self, as_admin):
+        with patch.dict(
+            os.environ,
+            {"SLACK_ALERTS_WEBHOOK_URL": "https://hooks.slack.com/services/TEST/FAKE"},
+        ):
+            with patch("main.slack_post") as m:
+                resp = client.post("/admin/alerts/test-slack", headers=_ADMIN_HEADERS)
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True, "sent": True}
+        m.assert_called_once()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
