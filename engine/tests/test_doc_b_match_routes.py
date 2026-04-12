@@ -30,6 +30,14 @@ def no_suspension_check():
         yield
 
 
+@pytest.fixture(autouse=True)
+def no_high_stakes_and_loss_cap_checks():
+    """Issue #40: these routes call extra SQL; doc-B mocks don't model that chain."""
+    with patch("main._check_high_stakes_daily_cap", return_value=None), \
+         patch("main._check_daily_loss_cap", return_value=None):
+        yield
+
+
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 
 _USER_ID   = str(uuid.uuid4())
@@ -471,7 +479,8 @@ class TestInvitePreValidation:
             None,          # friend_in_match — not in room
             (1,),          # friendship
             (None,),       # friend wallet (AT doesn't need it)
-            (500,),        # friend at_balance ≥ 10 → OK
+            (500,),        # friend at_balance ≥ 10 → OK (_assert_at_balance)
+            (0,),          # _get_daily_staked (friend) for daily stake limit
             ("Inviter",),  # inviter username
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -510,7 +519,7 @@ class TestInvitePreValidation:
             None,    # friend_in_match — not in room
             (1,),    # friendship
             (None,), # friend wallet = None
-            (0.0,),  # _get_daily_staked_usdt for friend (before wallet gate)
+            (0.0,),  # _get_daily_staked_usdt for friend
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
