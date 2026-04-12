@@ -2705,6 +2705,27 @@ export async function apiAdminOracleSync(token: string, fromBlock?: number): Pro
   }
 }
 
+// ── POST /admin/alerts/test-slack ─────────────────────────────────────────────
+export async function apiAdminTestSlack(token: string): Promise<
+  { ok: true; sent: true } |
+  { ok: false; status: number; detail: string | null }
+> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/admin/alerts/test-slack`, token, {
+      method: "POST",
+    });
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
+    // Engine returns { ok: true, sent: true }; narrow for callers without widening to boolean.
+    if (raw.sent === true) {
+      return { ok: true, sent: true };
+    }
+    return { ok: false, status: res.status, detail: "Invalid response" };
+  } catch {
+    return { ok: false, status: 0, detail: "Network error" };
+  }
+}
+
 // ── GET /admin/freeze/status ─────────────────────────────────────────────────
 export async function apiAdminFreezeStatus(token: string): Promise<
   { ok: true; frozen: boolean } |

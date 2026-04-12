@@ -210,6 +210,8 @@ vi.mock("@/lib/engine-api", async (importOriginal) => {
       ok: true, synced: true, from_block: 0, to_block: 100, events_processed: 0,
     }),
 
+    apiAdminTestSlack: vi.fn().mockResolvedValue({ ok: true, sent: true }),
+
     apiAdminListSupportTickets: vi.fn().mockResolvedValue({ ok: true, tickets: [] }),
     apiAdminPatchSupportTicket: vi.fn().mockResolvedValue({ ok: true }),
   };
