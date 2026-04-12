@@ -84,12 +84,17 @@ export default {
           "0%, 100%": { boxShadow: "0 0 20px hsl(355 78% 52% / 0.25), 0 0 40px hsl(355 78% 52% / 0.1)" },
           "50%": { boxShadow: "0 0 28px hsl(355 78% 52% / 0.4), 0 0 60px hsl(355 78% 52% / 0.15)" },
         },
+        "arena-orbit": {
+          from: { transform: "rotate(0deg)" },
+          to: { transform: "rotate(360deg)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
         "pulse-glow": "pulse-glow 2s ease-in-out infinite",
         "glow-breath": "glow-breath 3s ease-in-out infinite",
+        "arena-orbit": "arena-orbit 48s linear infinite",
       },
     },
   },
