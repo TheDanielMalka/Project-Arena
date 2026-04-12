@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Rajdhani:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -45,7 +45,7 @@
     --input: 0 0% 14%;
     --ring: 355 78% 52%;
 
-    --radius: 0.5rem;
+    --radius: 0.65rem;
 
     /* Arena palette — red/black/white focus */
     --arena-neon: 355 78% 52%;
@@ -54,6 +54,9 @@
     --arena-gold: 45 93% 47%;
     /* Electric cyan — HUD / sync accent (was flat gray) */
     --arena-cyan: 188 94% 42%;
+    /* Reference HUD: electric blue rim + magenta secondary glow */
+    --arena-hud-blue: 210 100% 58%;
+    --arena-hud-magenta: 300 85% 55%;
 
     --sidebar-background: 0 0% 5% / 0.72;
     --sidebar-foreground: 0 0% 85%;
@@ -73,11 +76,14 @@
 
   body {
     @apply text-foreground font-body antialiased;
-    background-color: hsl(0 0% 3%);
+    background-color: hsl(220 22% 3%);
     background-image:
-      radial-gradient(ellipse 100% 80% at 50% -30%, hsl(var(--primary) / 0.14), transparent 50%),
-      linear-gradient(180deg, hsl(355 35% 6% / 0.35) 0%, transparent 18%),
-      linear-gradient(180deg, hsl(0 0% 4%) 0%, hsl(0 0% 2.5%) 45%, hsl(0 0% 2%) 100%);
+      radial-gradient(ellipse 85% 55% at 50% 42%, hsl(var(--arena-cyan) / 0.07), transparent 58%),
+      radial-gradient(ellipse 100% 70% at 50% -25%, hsl(var(--primary) / 0.12), transparent 52%),
+      radial-gradient(ellipse 55% 40% at 85% 15%, hsl(var(--arena-hud-blue) / 0.08), transparent 50%),
+      radial-gradient(ellipse 50% 35% at 10% 75%, hsl(var(--arena-hud-magenta) / 0.05), transparent 50%),
+      linear-gradient(180deg, hsl(220 30% 5% / 0.4) 0%, transparent 22%),
+      linear-gradient(180deg, hsl(220 18% 4%) 0%, hsl(220 25% 2.5%) 50%, hsl(220 30% 2%) 100%);
     background-attachment: fixed;
   }
 
@@ -87,26 +93,28 @@
 }
 
 @layer components {
-  /* Card depth — subtle layered shadow */
+  /* HUD panels — thin neon rim + depth (matches reference: glowing borders, not flat boxes) */
   .bg-card {
     box-shadow:
-      0 4px 6px -1px rgb(0 0 0 / 0.4),
-      0 2px 4px -2px rgb(0 0 0 / 0.25),
-      inset 0 1px 0 rgb(255 255 255 / 0.02);
+      0 0 0 1px hsl(var(--arena-cyan) / 0.1),
+      0 0 28px -12px hsl(var(--arena-hud-blue) / 0.25),
+      0 12px 40px -18px rgb(0 0 0 / 0.75),
+      inset 0 1px 0 hsl(0 0% 100% / 0.05),
+      inset 0 -1px 0 hsl(0 0% 0% / 0.35);
   }
 
-  /* Interactive cards — lift on hover */
   .bg-card:hover {
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
   }
 
   .bg-card.cursor-pointer:hover {
-    transform: translateY(-2px) scale(1.02);
+    transform: translateY(-2px) scale(1.01);
     box-shadow:
-      0 12px 24px -6px rgb(0 0 0 / 0.6),
-      0 6px 12px -4px rgb(0 0 0 / 0.35),
-      0 0 0 1px hsl(355 78% 52% / 0.12),
-      inset 0 1px 0 rgb(255 255 255 / 0.04);
+      0 0 0 1px hsl(var(--primary) / 0.22),
+      0 0 36px -10px hsl(var(--primary) / 0.35),
+      0 0 48px -16px hsl(var(--arena-cyan) / 0.12),
+      0 16px 40px -12px rgb(0 0 0 / 0.65),
+      inset 0 1px 0 hsl(0 0% 100% / 0.07);
   }
 
   /* Universal hover lift — use on any clickable row/card */
@@ -116,21 +124,40 @@
   .arena-hover:hover {
     transform: translateY(-1px) scale(1.01);
     box-shadow:
-      0 8px 20px -4px rgb(0 0 0 / 0.5),
-      0 0 0 1px hsl(355 78% 52% / 0.15);
-    border-color: hsl(355 78% 52% / 0.25) !important;
+      0 8px 24px -4px rgb(0 0 0 / 0.55),
+      0 0 0 1px hsl(var(--arena-cyan) / 0.2),
+      0 0 24px -8px hsl(var(--primary) / 0.2);
+    border-color: hsl(var(--arena-cyan) / 0.35) !important;
   }
 }
 
 @layer utilities {
+  /* Primary CTAs — dark shell + magenta/red outer bloom (reference: Find Match / Create Match) */
   .glow-green {
-    box-shadow: 0 0 20px hsl(355 78% 52% / 0.35), 0 0 60px hsl(355 78% 52% / 0.15);
+    box-shadow:
+      0 0 22px hsl(var(--primary) / 0.45),
+      0 0 48px hsl(var(--arena-hud-magenta) / 0.22),
+      inset 0 1px 0 hsl(0 0% 100% / 0.12);
   }
   .glow-purple {
-    box-shadow: 0 0 20px hsl(355 70% 48% / 0.35), 0 0 60px hsl(355 70% 48% / 0.15);
+    box-shadow:
+      0 0 20px hsl(var(--arena-hud-magenta) / 0.4),
+      0 0 44px hsl(var(--arena-hud-blue) / 0.15),
+      inset 0 1px 0 hsl(0 0% 100% / 0.08);
   }
   .text-glow-green {
-    text-shadow: 0 0 20px hsl(355 78% 52% / 0.6);
+    text-shadow:
+      0 0 12px hsl(var(--primary) / 0.55),
+      0 0 28px hsl(var(--arena-cyan) / 0.25);
+  }
+
+  /* Right rail / status column — soft blue outer glow */
+  .arena-hud-panel {
+    box-shadow:
+      0 0 0 1px hsl(var(--arena-hud-blue) / 0.18),
+      0 0 40px -14px hsl(var(--arena-hud-blue) / 0.35),
+      0 20px 50px -20px rgb(0 0 0 / 0.65),
+      inset 0 1px 0 hsl(0 0% 100% / 0.04);
   }
 
   /* Stat bar fill animations */
@@ -158,39 +185,55 @@
 
   /* Glass panels — use on cards / shells */
   .arena-glass {
-    background: hsl(var(--card) / 0.55);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid hsl(var(--border) / 0.65);
+    background: linear-gradient(
+      145deg,
+      hsl(var(--card) / 0.62) 0%,
+      hsl(220 25% 6% / 0.5) 100%
+    );
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border: 1px solid hsl(var(--arena-cyan) / 0.14);
     box-shadow:
-      0 0 0 1px hsl(var(--primary) / 0.06),
-      0 24px 48px -24px rgb(0 0 0 / 0.65);
+      0 0 0 1px hsl(var(--primary) / 0.05),
+      0 24px 56px -28px rgb(0 0 0 / 0.7),
+      inset 0 1px 0 hsl(0 0% 100% / 0.04);
   }
 
   .arena-glass-subtle {
-    background: hsl(var(--card) / 0.4);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid hsl(var(--border) / 0.5);
+    background: hsl(220 22% 7% / 0.45);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid hsl(var(--border) / 0.45);
+    box-shadow: inset 0 2px 12px hsl(0 0% 0% / 0.35);
   }
 
   /* shadcn sidebar inner shell — glass over ambient background */
   [data-sidebar="sidebar"] {
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(22px);
+    -webkit-backdrop-filter: blur(22px);
     background: linear-gradient(
       165deg,
-      hsl(0 0% 8% / 0.88) 0%,
-      hsl(0 0% 4% / 0.82) 100%
+      hsl(220 20% 9% / 0.9) 0%,
+      hsl(220 25% 4% / 0.85) 100%
     ) !important;
     box-shadow:
-      inset 0 1px 0 hsl(var(--foreground) / 0.04),
-      inset 0 0 60px -20px hsl(var(--arena-cyan) / 0.06),
-      4px 0 32px -12px rgb(0 0 0 / 0.55);
+      inset 0 1px 0 hsl(var(--foreground) / 0.05),
+      inset 0 0 80px -24px hsl(var(--arena-cyan) / 0.08),
+      inset -1px 0 0 hsl(var(--primary) / 0.12),
+      4px 0 40px -10px rgb(0 0 0 / 0.6);
   }
 
   @keyframes arena-float {
     0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.55; }
     50% { transform: translate(12px, -8px) scale(1.05); opacity: 0.85; }
+  }
+
+  @keyframes arena-radar-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  @keyframes arena-radar-spin-reverse {
+    from { transform: rotate(360deg); }
+    to { transform: rotate(0deg); }
   }
 }
