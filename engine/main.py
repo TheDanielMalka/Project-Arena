@@ -349,6 +349,8 @@ async def lifespan(app: FastAPI):
     # Load daily stake limit from platform_settings (non-fatal)
     _reload_at_daily_limit()
     logger.info("✅ Daily stake limit loaded: %d AT ($%d)", _at_daily_limit, _at_daily_limit // 100)
+    _reload_at_daily_usdt_limit()
+    logger.info("✅ Daily USDT stake limit loaded: %.2f USDT / 24h", _at_daily_usdt_limit)
 
     # Escrow client — optional, requires BLOCKCHAIN_RPC_URL + CONTRACT_ADDRESS + PRIVATE_KEY
     global _escrow_client
@@ -563,6 +565,8 @@ class UserProfile(BaseModel):
     xp_to_next_level: int = 1000
     daily_staked_at: int = 0       # AT from completed matches in last 24h (cancelled rooms excluded)
     daily_limit_at: int = 50000    # current admin-set daily cap (default $500)
+    daily_staked_usdt: float = 0.0  # USDT from completed CRYPTO matches in last 24h
+    daily_limit_usdt: float = 500.0  # admin-set daily_bet_max_usdt
     wins: int = 0
     losses: int = 0
     # Arena Tokens — platform currency for Forge store (NOT on-chain)
@@ -2271,6 +2275,11 @@ async def me(payload: dict = Depends(verify_token)):
             except Exception:
                 daily_staked = 0
             daily_limit = _get_daily_limit()
+            try:
+                daily_staked_usdt = _get_daily_staked_usdt(session, user_id)
+            except Exception:
+                daily_staked_usdt = 0.0
+            daily_limit_usdt = _get_daily_limit_usdt()
     except HTTPException:
         raise
     except Exception as exc:
@@ -2290,6 +2299,8 @@ async def me(payload: dict = Depends(verify_token)):
         xp_to_next_level=((xp_val // 1000) + 1) * 1000,
         daily_staked_at=daily_staked,
         daily_limit_at=daily_limit,
+        daily_staked_usdt=daily_staked_usdt,
+        daily_limit_usdt=daily_limit_usdt,
         wins=int(row[9]),
         losses=int(row[10]),
         avatar=row[11],
@@ -2875,6 +2886,10 @@ _PAYOUTS_FROZEN: bool = False
 AT_DAILY_STAKE_LIMIT = 50000  # $500/day default (1 AT = $0.01 → 50,000 AT = $500)
 _at_daily_limit: int = AT_DAILY_STAKE_LIMIT  # runtime cache — reloaded from platform_config at startup
 
+# CRYPTO / USDT escrow — separate daily cap (platform_config key daily_bet_max_usdt), not mixed with AT units.
+USDT_DAILY_STAKE_LIMIT_DEFAULT = 500.0
+_at_daily_usdt_limit: float = USDT_DAILY_STAKE_LIMIT_DEFAULT
+
 
 def _reload_at_daily_limit() -> None:
     """
@@ -2894,9 +2909,28 @@ def _reload_at_daily_limit() -> None:
         pass
 
 
+def _reload_at_daily_usdt_limit() -> None:
+    """Load daily_bet_max_usdt from platform_config (USDT per rolling 24h for CRYPTO matches)."""
+    global _at_daily_usdt_limit
+    try:
+        with SessionLocal() as s:
+            row = s.execute(
+                text("SELECT value FROM platform_config WHERE key = 'daily_bet_max_usdt'")
+            ).fetchone()
+            if row and row[0]:
+                _at_daily_usdt_limit = max(0.01, float(row[0]))
+    except Exception:
+        pass
+
+
 def _get_daily_limit(_session=None) -> int:
     """Return the current daily AT stake limit from the in-memory cache."""
     return _at_daily_limit
+
+
+def _get_daily_limit_usdt() -> float:
+    """Return the current daily USDT stake limit from the in-memory cache."""
+    return _at_daily_usdt_limit
 
 
 def _get_daily_staked(session, user_id: str) -> int:
@@ -2928,6 +2962,30 @@ def _get_daily_staked(session, user_id: str) -> int:
         return 0
 
 
+def _get_daily_staked_usdt(session, user_id: str) -> float:
+    """
+    Sum of USDT bet_amount in COMPLETED CRYPTO matches in the last 24 hours for this user.
+
+    Same rules as AT: only status='completed', stake_currency='CRYPTO'.
+    """
+    try:
+        row = session.execute(
+            text(
+                "SELECT COALESCE(SUM(m.bet_amount), 0) "
+                "FROM matches m "
+                "JOIN match_players mp ON mp.match_id = m.id "
+                "WHERE mp.user_id = :uid "
+                "  AND m.stake_currency = 'CRYPTO' "
+                "  AND m.status = 'completed' "
+                "  AND m.ended_at > NOW() - INTERVAL '24 hours'"
+            ),
+            {"uid": user_id},
+        ).fetchone()
+        return float(row[0]) if row else 0.0
+    except (TypeError, ValueError, Exception):
+        return 0.0
+
+
 def _check_daily_stake_limit(session, user_id: str, new_stake: int) -> None:
     """
     M8: Block match create/join if staking new_stake would exceed the daily cap.
@@ -2944,6 +3002,25 @@ def _check_daily_stake_limit(session, user_id: str, new_stake: int) -> None:
             f"Daily staking limit reached. "
             f"You can stake up to {remaining} more AT today "
             f"(limit: {limit} AT / 24h = ${limit // 100}).",
+        )
+
+
+def _check_daily_usdt_stake_limit(session, user_id: str, new_stake_usdt: float) -> None:
+    """
+    Block match create/join for CRYPTO when new USDT stake would exceed the daily cap.
+    Limit from _at_daily_usdt_limit (platform_config daily_bet_max_usdt).
+    """
+    if new_stake_usdt <= 0:
+        return
+    limit = _at_daily_usdt_limit
+    daily_staked = _get_daily_staked_usdt(session, user_id)
+    if daily_staked + new_stake_usdt > limit + 1e-9:
+        remaining = max(0.0, limit - daily_staked)
+        raise HTTPException(
+            429,
+            f"Daily USDT staking limit reached. "
+            f"You can stake up to {remaining:.2f} more USDT today "
+            f"(limit: {limit:.2f} USDT / 24h, completed CRYPTO matches only).",
         )
 
 
@@ -3374,6 +3451,8 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
             if stake_currency == "AT":
                 _assert_at_balance(session, user_id, at_stake)
                 _check_daily_stake_limit(session, user_id, at_stake)
+            elif stake_currency == "CRYPTO":
+                _check_daily_usdt_stake_limit(session, user_id, float(bet_amount))
 
             # ── Generate unique room code ─────────────────────────────────────
             import secrets as _secrets
@@ -3509,6 +3588,8 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
                 _assert_at_balance(session, user_id, at_stake)
                 _check_daily_stake_limit(session, user_id, at_stake)
             else:
+                # CRYPTO match: daily USDT cap before wallet checks
+                _check_daily_usdt_stake_limit(session, user_id, float(stake_amount or 0))
                 # CRYPTO match: wallet must be linked + on-chain balance check
                 if not wallet_address:
                     raise HTTPException(
@@ -4094,6 +4175,8 @@ async def invite_to_match(
                         )
                     raise
             else:
+                # CRYPTO: daily USDT cap for the invitee (same as join).
+                _check_daily_usdt_stake_limit(session, req.friend_id, float(invite_stake or 0))
                 # CRYPTO: wallet must be linked (hard requirement, no on-chain fallback).
                 friend_wallet = friend_row[0]
                 if not friend_wallet:
@@ -8318,12 +8401,13 @@ async def admin_list_disputes(
 
 # ── Platform Config ───────────────────────────────────────────────────────────
 # Uses platform_config (key-value table, migration 017).
-# Known keys: fee_pct, daily_bet_max_at, maintenance_mode,
+# Known keys: fee_pct, daily_bet_max_at, daily_bet_max_usdt, maintenance_mode,
 #             new_registrations, auto_escalate_disputes
 
 _PLATFORM_CONFIG_KEYS = {
     "fee_pct",
     "daily_bet_max_at",
+    "daily_bet_max_usdt",
     "maintenance_mode",
     "new_registrations",
     "auto_escalate_disputes",
@@ -8334,6 +8418,7 @@ class PlatformConfigUpdate(BaseModel):
     """Body for PUT /platform/config — partial update, all fields optional."""
     fee_pct:                 str | None = None   # e.g. "5" (percent, 0–50)
     daily_bet_max_at:        str | None = None   # e.g. "50000" (1 AT=$0.01 → $500/day)
+    daily_bet_max_usdt:      str | None = None   # e.g. "500" (USDT per 24h, CRYPTO matches)
     maintenance_mode:        str | None = None   # "true" | "false"
     new_registrations:       str | None = None   # "true" | "false"
     auto_escalate_disputes:  str | None = None   # "true" | "false"
@@ -8344,7 +8429,7 @@ async def get_platform_config(payload: dict = Depends(require_admin)):
     """
     Return all platform config keys from platform_config (key-value table).
 
-    Response: { fee_pct, daily_bet_max_at, maintenance_mode,
+    Response: { fee_pct, daily_bet_max_at, daily_bet_max_usdt, maintenance_mode,
                 new_registrations, auto_escalate_disputes }
 
     DB-ready: platform_config (migration 017).
@@ -8359,6 +8444,7 @@ async def get_platform_config(payload: dict = Depends(require_admin)):
         return {
             "fee_pct":                cfg.get("fee_pct", "5"),
             "daily_bet_max_at":       cfg.get("daily_bet_max_at", "50000"),
+            "daily_bet_max_usdt":     cfg.get("daily_bet_max_usdt", "500"),
             "maintenance_mode":       cfg.get("maintenance_mode", "false"),
             "new_registrations":      cfg.get("new_registrations", "true"),
             "auto_escalate_disputes": cfg.get("auto_escalate_disputes", "false"),
@@ -8381,6 +8467,7 @@ async def update_platform_config(
     Validates:
       fee_pct: numeric 0–50
       daily_bet_max_at: numeric > 0
+      daily_bet_max_usdt: numeric > 0
 
     DB-ready: platform_config UPSERT per key (migration 017).
     """
@@ -8410,6 +8497,13 @@ async def update_platform_config(
             raise HTTPException(400, "daily_bet_max_at must be numeric")
         if v <= 0:
             raise HTTPException(400, "daily_bet_max_at must be positive")
+    if "daily_bet_max_usdt" in updates:
+        try:
+            v = float(updates["daily_bet_max_usdt"])
+        except ValueError:
+            raise HTTPException(400, "daily_bet_max_usdt must be numeric")
+        if v <= 0:
+            raise HTTPException(400, "daily_bet_max_usdt must be positive")
 
     try:
         with SessionLocal() as session:
@@ -8431,6 +8525,9 @@ async def update_platform_config(
         if "daily_bet_max_at" in updates:
             _reload_at_daily_limit()
             logger.info("Daily stake limit reloaded: %d AT ($%d)", _at_daily_limit, _at_daily_limit // 100)
+        if "daily_bet_max_usdt" in updates:
+            _reload_at_daily_usdt_limit()
+            logger.info("Daily USDT stake limit reloaded: %.2f", _at_daily_usdt_limit)
 
         logger.info("update_platform_config: admin=%s keys=%s", admin_id, list(updates.keys()))
         _log_audit(

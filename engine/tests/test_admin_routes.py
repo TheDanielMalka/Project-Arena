@@ -863,6 +863,7 @@ class TestPlatformConfig:
         return [
             ("fee_pct",                "5"),
             ("daily_bet_max_at",       "500"),
+            ("daily_bet_max_usdt",     "500"),
             ("maintenance_mode",       "false"),
             ("new_registrations",      "true"),
             ("auto_escalate_disputes", "false"),
@@ -877,7 +878,7 @@ class TestPlatformConfig:
 
         assert resp.status_code == 200
         data = resp.json()
-        for field in ("fee_pct", "daily_bet_max_at", "maintenance_mode",
+        for field in ("fee_pct", "daily_bet_max_at", "daily_bet_max_usdt", "maintenance_mode",
                       "new_registrations", "auto_escalate_disputes"):
             assert field in data, f"Missing field: {field}"
 
@@ -924,6 +925,17 @@ class TestPlatformConfig:
             resp = client.put(
                 "/platform/config",
                 json={"daily_bet_max_at": "-10"},
+                headers=_ADMIN_HEADERS,
+            )
+        assert resp.status_code == 400
+
+    def test_put_negative_daily_usdt_max_returns_400(self, as_admin):
+        """daily_bet_max_usdt <= 0 → 400."""
+        ctx, session = _make_session()
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.put(
+                "/platform/config",
+                json={"daily_bet_max_usdt": "0"},
                 headers=_ADMIN_HEADERS,
             )
         assert resp.status_code == 400

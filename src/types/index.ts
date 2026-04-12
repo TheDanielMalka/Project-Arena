@@ -261,6 +261,8 @@ export interface AdminActivityEvent {
 export interface PlatformSettings {
   feePercent: number;               // DB: fee_percent        default 5
   platformBettingMax: number;       // DB: daily_betting_max  default 500
+  /** Daily USDT cap for CRYPTO (escrow) matches — platform_config daily_bet_max_usdt */
+  platformCryptoBettingMax: number;
   maintenanceMode: boolean;         // DB: maintenance_mode   default false
   registrationOpen: boolean;        // DB: registration_open  default true
   autoDisputeEscalation: boolean;   // DB: auto_dispute_escalation default true

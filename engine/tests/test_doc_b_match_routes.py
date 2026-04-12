@@ -80,6 +80,7 @@ class TestJoinMatchPassword:
         session.execute.return_value.fetchone.side_effect = [
             _mock_match_row(password=None, currency="CRYPTO"),  # match — no password
             _steam_user(),                                        # user row (has wallet)
+            (0.0,),                                               # _get_daily_staked_usdt
             None,                                                 # active-room guard
             None,                                                 # duplicate-join check
             (1, 0),                                               # (a_count=1, b_count=0) → Team B
@@ -102,6 +103,7 @@ class TestJoinMatchPassword:
         session.execute.return_value.fetchone.side_effect = [
             _mock_match_row(password="secret", currency="CRYPTO"),
             _steam_user(),
+            (0.0,),   # _get_daily_staked_usdt
             None,     # active-room guard
             None,     # duplicate-join check
             (1, 0),   # (a_count=1, b_count=0) → Team B
@@ -222,6 +224,8 @@ class TestTeamAssignment:
         if currency == "AT":
             side.append((500,))   # at_balance
             side.append((0,))     # _get_daily_staked → 0 staked today (limit from _at_daily_limit)
+        else:
+            side.append((0.0,))   # _get_daily_staked_usdt
         side += [
             None,                           # active-room guard
             None,                           # duplicate-join check
@@ -505,7 +509,8 @@ class TestInvitePreValidation:
             (1,),    # in_match
             None,    # friend_in_match — not in room
             (1,),    # friendship
-            (None,), # friend wallet = None → 400
+            (None,), # friend wallet = None
+            (0.0,),  # _get_daily_staked_usdt for friend (before wallet gate)
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
@@ -1152,3 +1157,52 @@ class TestDailyStakeLimit:
 
         assert exc.value.status_code == 429
         assert str(custom_limit) in exc.value.detail
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Daily USDT staking limit (CRYPTO matches)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestDailyUsdtStakeLimit:
+    """_check_daily_usdt_stake_limit mirrors AT logic for CRYPTO / USDT."""
+
+    def test_usdt_helper_blocks_over_limit(self):
+        import main
+        from fastapi import HTTPException
+
+        session = MagicMock()
+        session.execute.return_value.fetchone.return_value = (450.0,)
+
+        with patch("main._at_daily_usdt_limit", 500.0):
+            with pytest.raises(HTTPException) as exc:
+                main._check_daily_usdt_stake_limit(session, _USER_ID, 60.0)
+
+        assert exc.value.status_code == 429
+        assert "USDT" in exc.value.detail
+
+    def test_usdt_helper_allows_under_limit(self):
+        import main
+
+        session = MagicMock()
+        session.execute.return_value.fetchone.return_value = (400.0,)
+
+        with patch("main._at_daily_usdt_limit", 500.0):
+            main._check_daily_usdt_stake_limit(session, _USER_ID, 99.0)
+
+    def test_usdt_reload_reads_platform_config(self):
+        import main
+
+        with patch("main.SessionLocal") as MockSession:
+            session = MockSession.return_value.__enter__.return_value
+            session.execute.return_value.fetchone.return_value = ("750",)
+            main._reload_at_daily_usdt_limit()
+
+        assert main._at_daily_usdt_limit == 750.0
+
+    def test_usdt_skips_zero_new_stake(self):
+        import main
+
+        session = MagicMock()
+        main._check_daily_usdt_stake_limit(session, _USER_ID, 0.0)
+        session.execute.assert_not_called()

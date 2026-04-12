@@ -581,6 +581,9 @@ export async function apiGetMe(token: string): Promise<{
   /** Daily AT staking usage — from _check_daily_stake_limit in engine */
   daily_staked_at?: number;
   daily_limit_at?: number;
+  /** Daily USDT (CRYPTO) staking — completed matches last 24h */
+  daily_staked_usdt?: number;
+  daily_limit_usdt?: number;
   region?: string | null;
   two_factor_enabled?: boolean;
   /** users.auth_provider — 'email' | 'google' */
@@ -610,6 +613,8 @@ export async function apiGetMe(token: string): Promise<{
       role?: string;
       daily_staked_at?: number;
       daily_limit_at?: number;
+      daily_staked_usdt?: number;
+      daily_limit_usdt?: number;
       region?: string | null;
       two_factor_enabled?: boolean;
       auth_provider?: string | null;
@@ -1019,7 +1024,12 @@ export async function apiCreateMatch(
       match_type?:    string;
     };
     if (res.status === 429) {
-      return { ok: false as const, status: 429, detail: "Too many requests — please wait a moment and try again" };
+      const d = parseFastApiDetail(raw.detail);
+      return {
+        ok: false as const,
+        status: 429,
+        detail: d ?? "Too many requests — please wait a moment and try again",
+      };
     }
     if (!res.ok) {
       return {
@@ -1201,7 +1211,12 @@ export async function apiJoinMatch(
       started?: boolean;
     };
     if (res.status === 429) {
-      return { ok: false as const, status: 429, detail: "Too many requests — please wait a moment and try again" };
+      const d = parseFastApiDetail(raw.detail);
+      return {
+        ok: false as const,
+        status: 429,
+        detail: d ?? "Too many requests — please wait a moment and try again",
+      };
     }
     if (!res.ok) {
       return {
@@ -2887,6 +2902,7 @@ export async function apiAdminIssuePenalty(
 export interface PlatformConfig {
   fee_pct:                string;
   daily_bet_max_at:       string;
+  daily_bet_max_usdt:     string;
   maintenance_mode:       string;
   new_registrations:      string;
   auto_escalate_disputes: string;
@@ -2904,6 +2920,7 @@ export async function apiGetPlatformConfig(token: string): Promise<
       ok:                     true,
       fee_pct:                String(raw.fee_pct                ?? "5"),
       daily_bet_max_at:       String(raw.daily_bet_max_at       ?? "500"),
+      daily_bet_max_usdt:     String(raw.daily_bet_max_usdt     ?? "500"),
       maintenance_mode:       String(raw.maintenance_mode       ?? "false"),
       new_registrations:      String(raw.new_registrations      ?? "true"),
       auto_escalate_disputes: String(raw.auto_escalate_disputes ?? "false"),
