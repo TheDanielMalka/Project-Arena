@@ -68,8 +68,14 @@ services:
     container_name: arena-engine
     restart: unless-stopped
     environment:
-      # Set DATABASE_URL in `.env` to override (e.g. external Postgres). Otherwise compose default:
-      DATABASE_URL: ${DATABASE_URL:-postgresql://arena_admin:${DB_PASSWORD:-arena_secret_change_me}@arena-db:5432/arena}
+      # Engine builds DATABASE_URL in code (percent-encoded) when DATABASE_URL is unset — safe for special chars in DB_PASSWORD.
+      # Override DATABASE_URL in `.env` for external Postgres (password must be URL-encoded in the string if it has @ / : # etc.).
+      DATABASE_URL: ${DATABASE_URL:-}
+      POSTGRES_HOST: arena-db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: arena_admin
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-arena_secret_change_me}
+      POSTGRES_DB: arena
       API_SECRET: ${API_SECRET:-change_me_in_production}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       SCREENSHOT_INTERVAL: ${SCREENSHOT_INTERVAL:-5}
