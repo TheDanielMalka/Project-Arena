@@ -73,6 +73,8 @@ services:
       BLOCKCHAIN_RPC_URL: ${BLOCKCHAIN_RPC_URL:-}
       CONTRACT_ADDRESS: ${CONTRACT_ADDRESS:-}
       CHAIN_ID: ${CHAIN_ID:-97}
+      # Slack Incoming Webhook (optional — engine no-ops if unset)
+      SLACK_ALERTS_WEBHOOK_URL: ${SLACK_ALERTS_WEBHOOK_URL:-}
     ports:
       - "8001:8000"
     volumes:
