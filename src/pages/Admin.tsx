@@ -50,6 +50,7 @@ import {
   apiAdminFraudExport,
   apiAdminOracleStatus,
   apiAdminOracleSync,
+  apiAdminTestSlack,
   apiAdminDeclareWinner,
   apiAdminListSupportTicketAttachments,
   apiGetAttachmentBlob,
@@ -336,6 +337,7 @@ const Admin = () => {
   const [oracleLoading, setOracleLoading] = useState(false);
   const [syncFromBlock, setSyncFromBlock] = useState("");
   const [syncLoading,   setSyncLoading]   = useState(false);
+  const [slackTestLoading, setSlackTestLoading] = useState(false);
 
   // ── Platform settings ──
   const [platform, setPlatform] = useState<PlatformSettings>({
@@ -674,6 +676,22 @@ const Admin = () => {
     }
     toast({ title: "Oracle Synced", description: `${r.events_processed} events from block ${r.from_block} → ${r.to_block}` });
     void handleCheckOracleStatus(); // refresh status
+  };
+
+  const handleSlackTest = async () => {
+    if (!token) return;
+    setSlackTestLoading(true);
+    const r = await apiAdminTestSlack(token);
+    setSlackTestLoading(false);
+    if (!r.ok) {
+      toast({
+        title: "Slack test failed",
+        description: ('detail' in r ? r.detail : null) || "Could not send test message",
+        variant: "destructive",
+      });
+      return;
+    }
+    toast({ title: "Slack test sent", description: "Check your Slack channel for the message." });
   };
 
   // ─────────────────────────────────────────────────────────────
@@ -1644,6 +1662,19 @@ const Admin = () => {
                   {oracleLoading
                     ? <><RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Checking…</>
                     : <><Activity className="mr-1.5 h-3.5 w-3.5" /> Check Status</>}
+                </Button>
+              </div>
+
+              <div className="rounded-xl border border-border/60 bg-secondary/20 px-4 py-4 space-y-3">
+                <p className="text-xs font-display font-semibold">Slack alerts</p>
+                <p className="text-[11px] text-muted-foreground">
+                  Sends a one-off test message if <span className="font-mono">SLACK_ALERTS_WEBHOOK_URL</span> is set on the engine.
+                </p>
+                <Button size="sm" variant="outline" className="h-8 text-xs border-border"
+                  onClick={handleSlackTest} disabled={slackTestLoading}>
+                  {slackTestLoading
+                    ? <><RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Sending…</>
+                    : "Send Slack test"}
                 </Button>
               </div>
 
