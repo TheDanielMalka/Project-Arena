@@ -123,8 +123,8 @@ export function ArenaSidebar() {
   };
 
   return (
-    <Sidebar collapsible="icon">
-      <SidebarContent className="flex flex-col h-full bg-card/30">
+    <Sidebar collapsible="icon" variant="floating" className="border-0 shadow-none">
+      <SidebarContent className="flex flex-col h-full bg-transparent">
 
         {/* ── Logo ─────────────────────────────────────────────── */}
         <div className={cn(
@@ -164,7 +164,7 @@ export function ArenaSidebar() {
                         "text-muted-foreground/70 hover:text-foreground hover:bg-secondary/50",
                         collapsed && "justify-center px-2"
                       )}
-                      activeClassName="!text-primary bg-primary/10 hover:bg-primary/15 font-medium shadow-[inset_2px_0_0_0_hsl(var(--primary))]"
+                      activeClassName="!text-primary bg-primary/15 hover:bg-primary/20 font-medium shadow-[inset_3px_0_0_0_hsl(var(--primary)),0_0_24px_-8px_hsl(var(--primary)/0.35)]"
                     >
                       <item.icon className={cn("h-[15px] w-[15px] shrink-0 transition-colors", !collapsed && "mr-2.5")} />
                       {!collapsed && <span className="text-[13px] leading-none">{item.title}</span>}

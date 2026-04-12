@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { useUserStore } from "@/stores/userStore";
 import { useMatchStore } from "@/stores/matchStore";
@@ -300,6 +300,16 @@ const MatchLobby = () => {
   useMatchPolling({ interval: 5000 });
   useMatchListLivePoll(user && token ? token : null);
   useActiveRoomServerSync(user && token ? token : null, myRoomMatchId);
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const lobbyTab = searchParams.get("tab") === "custom" ? "custom" : "public";
+  const setLobbyTab = useCallback(
+    (v: string) => {
+      if (v === "custom") setSearchParams({ tab: "custom" }, { replace: true });
+      else setSearchParams({}, { replace: true });
+    },
+    [setSearchParams],
+  );
 
   // ── Lobby persistence: restore active room on mount / login ────────────────
   useEffect(() => {
@@ -828,26 +838,44 @@ const MatchLobby = () => {
 
   return (
     <div className="space-y-5">
-      {/* ── Header ── */}
-      <div className="flex items-end justify-between">
-        <div>
-          <p className="text-[10px] text-muted-foreground uppercase tracking-[0.2em] mb-0.5">Arena</p>
-          <h1 className="font-display text-3xl font-bold tracking-wide">Match Lobby</h1>
-        </div>
-        {/* Live stats strip */}
-        <div className="hidden sm:flex items-center gap-4 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-arena-cyan animate-pulse" />
-            <span className="text-arena-cyan font-semibold">{liveCount}</span> live
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-arena-gold" />
-            <span className="text-arena-gold font-semibold">{openCount}</span> open
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-primary" />
-            <span className="text-foreground font-semibold">${totalPool.toLocaleString()}</span> in pool
-          </span>
+      {/* ── Hero header (visual shell — same stats & copy) ── */}
+      <div className="relative overflow-hidden rounded-2xl arena-glass px-5 py-6 md:px-8 md:py-7">
+        <div
+          className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full opacity-50 blur-3xl md:h-72 md:w-72"
+          style={{
+            background:
+              "conic-gradient(from 120deg, hsl(var(--arena-cyan) / 0.35), hsl(var(--primary) / 0.25), transparent 60%)",
+          }}
+        />
+        <div className="pointer-events-none absolute right-[12%] bottom-[-40%] h-48 w-48 rounded-full border border-arena-cyan/20 opacity-40 animate-arena-orbit" />
+        <div className="pointer-events-none absolute right-[12%] bottom-[-40%] h-36 w-36 rounded-full border border-primary/15 opacity-30 animate-arena-orbit [animation-duration:36s] [animation-direction:reverse]" />
+        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-[10px] text-arena-cyan/90 uppercase tracking-[0.28em] mb-1 font-display">Arena</p>
+            <h1 className="font-display text-3xl md:text-4xl font-bold tracking-wide text-glow-green">
+              Match Lobby
+            </h1>
+            <p className="text-[11px] text-muted-foreground mt-1.5 max-w-md">
+              Staked queues sync live with the engine — same actions as before, refreshed HUD.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5 rounded-full border border-arena-cyan/25 bg-arena-cyan/5 px-2.5 py-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-arena-cyan shadow-[0_0_8px_hsl(var(--arena-cyan))] animate-pulse" />
+              <span className="text-arena-cyan font-display font-semibold tabular-nums">{liveCount}</span>
+              <span className="uppercase tracking-wider text-[10px]">live</span>
+            </span>
+            <span className="flex items-center gap-1.5 rounded-full border border-arena-gold/25 bg-arena-gold/5 px-2.5 py-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-arena-gold" />
+              <span className="text-arena-gold font-display font-semibold tabular-nums">{openCount}</span>
+              <span className="uppercase tracking-wider text-[10px]">open</span>
+            </span>
+            <span className="flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/5 px-2.5 py-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-primary shadow-[0_0_6px_hsl(var(--primary)/0.5)]" />
+              <span className="text-foreground font-display font-semibold tabular-nums">${totalPool.toLocaleString()}</span>
+              <span className="uppercase tracking-wider text-[10px]">pool</span>
+            </span>
+          </div>
         </div>
       </div>
 
@@ -1379,13 +1407,19 @@ const MatchLobby = () => {
         </div>
       )}
 
-      {/* ── Tabs ── */}
-      <Tabs defaultValue="public" className="w-full">
-        <TabsList className="bg-secondary border border-border w-full sm:w-auto">
-          <TabsTrigger value="public" className="font-display data-[state=active]:bg-primary/20 data-[state=active]:text-primary flex-1 sm:flex-none gap-2">
+      {/* ── Tabs (URL ?tab=custom syncs with header pills) ── */}
+      <Tabs value={lobbyTab} onValueChange={setLobbyTab} className="w-full">
+        <TabsList className="arena-glass-subtle w-full sm:w-auto p-1 gap-1 border border-border/60">
+          <TabsTrigger
+            value="public"
+            className="font-display data-[state=active]:bg-primary/25 data-[state=active]:text-primary data-[state=active]:shadow-[0_0_20px_-8px_hsl(var(--primary))] flex-1 sm:flex-none gap-2 rounded-md"
+          >
             <Swords className="h-4 w-4" /> Public Matches
           </TabsTrigger>
-          <TabsTrigger value="custom" className="font-display data-[state=active]:bg-arena-purple/20 data-[state=active]:text-arena-purple flex-1 sm:flex-none gap-2">
+          <TabsTrigger
+            value="custom"
+            className="font-display data-[state=active]:bg-arena-purple/25 data-[state=active]:text-arena-purple data-[state=active]:shadow-[0_0_20px_-8px_hsl(var(--arena-purple)/0.45)] flex-1 sm:flex-none gap-2 rounded-md"
+          >
             <Users className="h-4 w-4" /> Custom Matches
           </TabsTrigger>
         </TabsList>

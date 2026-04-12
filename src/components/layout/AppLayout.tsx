@@ -4,6 +4,7 @@ import { useUserStore } from "@/stores/userStore";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { ArenaSidebar } from "./ArenaSidebar";
 import { ArenaHeader } from "./ArenaHeader";
+import { ArenaAmbientBackground } from "./ArenaAmbientBackground";
 import { Footer } from "@/components/shared/Footer";
 import { Breadcrumbs } from "@/components/shared/Breadcrumbs";
 
@@ -36,9 +37,10 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   return (
     <SidebarProvider>
-      <div className="min-h-screen flex w-full">
+      <div className="relative min-h-screen flex w-full">
+        <ArenaAmbientBackground />
         <ArenaSidebar />
-        <div className="flex-1 flex flex-col">
+        <div className="relative z-10 flex-1 flex flex-col min-w-0">
           <ArenaHeader />
           <main className="flex-1 p-6 overflow-auto">
             <Breadcrumbs />

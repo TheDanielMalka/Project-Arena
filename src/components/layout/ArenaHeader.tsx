@@ -6,7 +6,7 @@ import { useUserStore } from "@/stores/userStore";
 import { useWalletStore } from "@/stores/walletStore";
 import { useEngineStatus } from "@/hooks/useEngineStatus";
 import { useClientStore } from "@/stores/clientStore";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import {
   DropdownMenu,
@@ -43,6 +43,9 @@ export function ArenaHeader() {
   const clientVersion = useClientStore((s) => s.version);
   const bindUserId    = useClientStore((s) => s.bindUserId);
   const navigate = useNavigate();
+  const location = useLocation();
+  const onLobby = location.pathname === "/lobby";
+  const lobbyCustom = onLobby && new URLSearchParams(location.search).get("tab") === "custom";
 
   // Keep the poller alive — syncs into clientStore automatically
   useEngineStatus();
@@ -64,14 +67,39 @@ export function ArenaHeader() {
   const isAnimated = effectiveStatus === "checking" || effectiveStatus === "connected";
 
   return (
-    <header className="h-14 flex items-center justify-between border-b border-border px-4">
-      <div className="flex items-center gap-2">
-        <SidebarTrigger />
+    <header className="relative z-20 h-14 flex items-center justify-between border-b border-primary/10 px-4 arena-glass-subtle bg-card/30">
+      <div className="flex items-center gap-3 min-w-0 flex-1">
+        <SidebarTrigger className="text-foreground/80 shrink-0" />
+        <div className="hidden sm:flex items-center rounded-lg border border-border/60 bg-background/40 p-0.5 gap-0.5">
+          <button
+            type="button"
+            onClick={() => navigate("/lobby")}
+            className={`font-display text-[11px] uppercase tracking-widest px-3 py-1.5 rounded-md transition-all ${
+              onLobby && !lobbyCustom
+                ? "bg-primary/20 text-primary shadow-[0_0_20px_-6px_hsl(var(--primary))]"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Play for Stakes
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate("/lobby?tab=custom")}
+            className={`font-display text-[11px] uppercase tracking-widest px-3 py-1.5 rounded-md transition-all ${
+              lobbyCustom
+                ? "bg-arena-purple/25 text-arena-purple shadow-[0_0_20px_-6px_hsl(var(--arena-purple)/0.5)]"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Custom Matches
+          </button>
+        </div>
         <button
+          type="button"
           onClick={() => navigate("/lobby")}
-          className="font-display text-sm text-muted-foreground tracking-wider uppercase hover:text-primary transition-colors"
+          className="sm:hidden font-display text-xs text-muted-foreground tracking-wider uppercase hover:text-primary transition-colors truncate"
         >
-          Play for Stakes
+          Lobby
         </button>
       </div>
 
