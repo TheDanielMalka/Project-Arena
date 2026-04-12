@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Rajdhani:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Orbitron:wght@400;500;600;700;800;900&family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&family=Tektur:wght@500;600;700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -396,7 +396,7 @@
     animation: landing-hud-scan-drift 5.5s ease-in-out infinite;
   }
   .landing-hud-ticker {
-    animation: landing-hud-ticker 18s linear infinite;
+    animation: landing-hud-ticker 32s linear infinite;
   }
   .landing-bento-glow-orb {
     animation: landing-bento-glow 4.5s ease-in-out infinite;
@@ -425,7 +425,28 @@
     animation: landing-client-pulse 1.4s ease-in-out infinite;
   }
 
+  @keyframes landing-cursor-blink {
+    0%,
+    45% {
+      opacity: 1;
+    }
+    50%,
+    95% {
+      opacity: 0;
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+  .landing-typewriter-cursor {
+    animation: landing-cursor-blink 1.05s steps(1, end) infinite;
+  }
+
   @media (prefers-reduced-motion: reduce) {
+    .landing-typewriter-cursor {
+      animation: none;
+      opacity: 0.85;
+    }
     .landing-hud-conic,
     .landing-hud-live,
     .landing-eq-bar,

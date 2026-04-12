@@ -15,6 +15,10 @@ export default {
       fontFamily: {
         /* HUD reference: wide geometric display; Rajdhani fallback for existing pages */
         display: ["Orbitron", "Rajdhani", "sans-serif"],
+        /* Landing hero — sharper wordmark */
+        hero: ["Tektur", "Orbitron", "sans-serif"],
+        /* Tactical readouts / typewriter */
+        hud: ["Share Tech Mono", "ui-monospace", "monospace"],
         body: ["Inter", "sans-serif"],
       },
       colors: {

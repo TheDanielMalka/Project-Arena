@@ -163,120 +163,203 @@ const CLIENT_FEATURES = [
   "Lightweight & open source — under 50 MB",
 ] as const;
 
+/** Hero line under ARENA — cycles with typewriter (display only). */
+const HERO_CYCLING_TAGLINES = [
+  "PLAY FOR STAKES",
+  "PROOF · NOT PROMISES",
+  "ESCROW LOCKED ON-CHAIN",
+  "VISION-VERIFIED RESULTS",
+  "RANKED WAGERING · FAIR PAYOUTS",
+  "HEAD-TO-HEAD · REAL STAKES",
+] as const;
+
+function HeroCyclingTagline() {
+  const [text, setText] = useState("");
+  const [reducedMotion, setReducedMotion] = useState(false);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const apply = () => setReducedMotion(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+
+  useEffect(() => {
+    const clearT = () => {
+      if (timeoutRef.current !== null) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+    };
+
+    if (reducedMotion) {
+      clearT();
+      setText(HERO_CYCLING_TAGLINES[0]);
+      return clearT;
+    }
+
+    let stopped = false;
+    const schedule = (fn: () => void, ms: number) => {
+      clearT();
+      timeoutRef.current = setTimeout(() => {
+        if (!stopped) fn();
+      }, ms);
+    };
+
+    const runPhrase = (phraseIndex: number) => {
+      if (stopped) return;
+      const phrase = HERO_CYCLING_TAGLINES[phraseIndex % HERO_CYCLING_TAGLINES.length];
+
+      const typeStep = (idx: number) => {
+        if (stopped) return;
+        if (idx <= phrase.length) {
+          setText(phrase.slice(0, idx));
+          schedule(() => typeStep(idx + 1), idx === 0 ? 320 : 48);
+        } else {
+          schedule(() => deleteStep(phrase.length), 2300);
+        }
+      };
+
+      const deleteStep = (len: number) => {
+        if (stopped) return;
+        if (len > 0) {
+          setText(phrase.slice(0, len - 1));
+          schedule(() => deleteStep(len - 1), 34);
+        } else {
+          schedule(() => runPhrase(phraseIndex + 1), 480);
+        }
+      };
+
+      typeStep(0);
+    };
+
+    runPhrase(0);
+    return () => {
+      stopped = true;
+      clearT();
+    };
+  }, [reducedMotion]);
+
+  return (
+    <span
+      className="mt-3 block min-h-[1.45em] text-center font-hud text-[clamp(0.68rem,1.85vw,0.92rem)] font-medium uppercase tracking-[0.28em] text-arena-cyan/90 lg:text-left"
+      aria-live="polite"
+    >
+      {text}
+      {!reducedMotion && (
+        <span className="landing-typewriter-cursor ml-1 inline-block h-[1em] w-[2px] align-[-0.12em] bg-arena-cyan/75" aria-hidden />
+      )}
+    </span>
+  );
+}
+
 function LandingHeroHud() {
-  const eqBars = [0.15, 0.45, 0.75, 0.35, 0.9, 0.55, 0.25, 0.65, 0.85, 0.4, 0.7, 0.5];
+  const eqHeights = [0.2, 0.36, 0.58, 0.28, 0.72, 0.44, 0.24, 0.52, 0.66, 0.38];
+  const clip = "polygon(0 10%, 10% 0, 100% 0, 100% 90%, 90% 100%, 0 100%)" as const;
+
   return (
     <div
-      className="relative mx-auto w-full max-w-[min(100%,560px)] min-h-[min(72vw,480px)] sm:min-h-[440px] lg:min-h-[500px] pointer-events-none select-none"
+      className="relative mx-auto w-full max-w-[min(100%,480px)] min-h-[min(64vw,400px)] sm:min-h-[380px] lg:max-w-[500px] lg:min-h-[420px] pointer-events-none select-none"
       aria-hidden
     >
-      {/* Rotating chroma rim */}
+      {/* Static frame — primary + cyan only, tied to brand (no rotating rainbow) */}
       <div
-        className="absolute -inset-[2px] opacity-80 motion-safe:landing-hud-conic"
+        className="absolute inset-0"
         style={{
-          clipPath: "polygon(0 10%, 10% 0, 100% 0, 100% 90%, 90% 100%, 0 100%)",
-          background:
-            "conic-gradient(from 180deg, hsl(var(--primary)), hsl(var(--arena-cyan)), hsl(280 70% 55%), hsl(var(--primary)))",
+          clipPath: clip,
+          boxShadow: `
+            0 0 0 1px hsl(var(--arena-cyan) / 0.28),
+            0 0 0 2px hsl(var(--primary) / 0.1),
+            0 28px 80px -36px hsl(0 0% 0% / 0.75),
+            inset 0 1px 0 hsl(0 0% 100% / 0.04),
+            inset 0 0 100px hsl(var(--arena-hud-blue) / 0.06)
+          `,
+          background: `
+            linear-gradient(155deg, hsl(var(--primary) / 0.07) 0%, transparent 42%),
+            linear-gradient(325deg, hsl(var(--arena-cyan) / 0.06) 0%, transparent 45%),
+            linear-gradient(168deg, hsl(220 26% 10% / 0.97) 0%, hsl(220 28% 5% / 0.95) 100%)
+          `,
         }}
       />
       <div
-        className="absolute inset-[2px]"
+        className="absolute inset-[1px] opacity-[0.035] mix-blend-overlay motion-reduce:opacity-0"
         style={{
-          clipPath: "polygon(0 10%, 10% 0, 100% 0, 100% 90%, 90% 100%, 0 100%)",
-          boxShadow:
-            "inset 0 0 0 1px hsl(var(--arena-cyan) / 0.25), inset 0 0 80px hsl(var(--arena-hud-blue) / 0.12), 0 0 80px -20px hsl(var(--primary) / 0.35)",
-          background:
-            "linear-gradient(168deg, hsl(220 28% 9% / 0.97) 0%, hsl(220 32% 4% / 0.94) 45%, hsl(220 25% 6% / 0.92) 100%)",
+          clipPath: clip,
+          backgroundImage:
+            "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
         }}
       />
-      {/* Noise + scan */}
-      <div
-        className="absolute inset-[2px] opacity-[0.04] mix-blend-overlay motion-reduce:opacity-0"
-        style={{
-          clipPath: "polygon(0 10%, 10% 0, 100% 0, 100% 90%, 90% 100%, 0 100%)",
-          backgroundImage: "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
-        }}
-      />
-      <div
-        className="pointer-events-none absolute inset-[2px] z-[1] overflow-hidden motion-safe:opacity-100 opacity-0"
-        style={{ clipPath: "polygon(0 10%, 10% 0, 100% 0, 100% 90%, 90% 100%, 0 100%)" }}
-      >
-        <div className="absolute inset-x-0 top-0 h-[28%] bg-gradient-to-b from-primary/[0.07] to-transparent motion-safe:landing-hud-scan-drift" />
-      </div>
 
-      <svg className="absolute inset-[5%] z-[1] text-arena-cyan/20 motion-safe:animate-[spin_140s_linear_infinite]" viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r="47" fill="none" stroke="currentColor" strokeWidth="0.2" strokeDasharray="2 10" />
-        <circle cx="50" cy="50" r="38" fill="none" stroke="currentColor" strokeWidth="0.15" strokeDasharray="1 6" className="text-primary/15 motion-safe:animate-[spin_95s_linear_infinite_reverse]" />
+      {/* Static range rings (no spin) */}
+      <svg className="pointer-events-none absolute inset-[7%] z-[1] text-white/[0.07]" viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r="44" fill="none" stroke="currentColor" strokeWidth="0.12" strokeDasharray="1 5" />
+        <circle cx="50" cy="50" r="32" fill="none" stroke="hsl(var(--arena-cyan) / 0.12)" strokeWidth="0.1" strokeDasharray="0.5 4" />
       </svg>
-      {/* Radar sweep wedge */}
-      <div className="absolute left-1/2 top-[18%] z-[1] h-[34%] w-[34%] -translate-x-1/2 motion-safe:animate-[spin_6s_linear_infinite] motion-reduce:animate-none">
-        <div
-          className="h-full w-full rounded-full opacity-50"
-          style={{
-            background: "conic-gradient(from 0deg, transparent 0deg, hsl(var(--arena-cyan) / 0.15) 52deg, transparent 56deg)",
-            maskImage: "radial-gradient(circle, black 55%, transparent 56%)",
-            WebkitMaskImage: "radial-gradient(circle, black 55%, transparent 56%)",
-          }}
-        />
-      </div>
 
-      <div className="relative z-[2] flex h-full min-h-[inherit] flex-col px-6 pb-8 pt-10 sm:px-8 sm:pt-12">
+      <div className="relative z-[2] flex h-full min-h-[inherit] flex-col px-6 pb-7 pt-9 sm:px-8 sm:pt-11">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.55em] text-arena-cyan/75 sm:text-[11px]">Tactical overlay</p>
-            <p className="landing-hud-live font-display text-3xl font-black tracking-[0.42em] text-foreground sm:text-4xl md:text-[2.75rem]">LIVE</p>
+            <p className="font-hud text-[9px] uppercase tracking-[0.48em] text-muted-foreground/55 sm:text-[10px]">SYS · READOUT</p>
+            <p className="mt-1 font-hud text-[clamp(1.35rem,4vw,1.85rem)] font-bold uppercase tracking-[0.52em] text-foreground/95">
+              LIVE
+            </p>
           </div>
-          <div className="hidden flex-col items-end gap-1 font-mono text-[9px] text-muted-foreground/50 sm:flex">
-            <span>SIGNAL · LOCKED</span>
-            <span className="text-arena-cyan/60">LAT 12ms</span>
+          <div className="hidden flex-col items-end gap-0.5 font-hud text-[8px] uppercase tracking-[0.2em] text-muted-foreground/40 sm:flex">
+            <span>SIG LOCK</span>
+            <span className="text-arena-cyan/55">RTT 11MS</span>
           </div>
         </div>
 
-        {/* EQ / activity */}
-        <div className="mt-6 flex h-16 items-end justify-center gap-1 sm:h-[4.25rem] sm:gap-1.5">
-          {eqBars.map((d, i) => (
-            <div key={i} className="flex h-full w-1.5 justify-center sm:w-2">
+        <div className="mt-5 flex h-14 items-end justify-center gap-[3px] sm:h-16 sm:gap-1">
+          {eqHeights.map((d, i) => (
+            <div key={i} className="flex h-full w-1 justify-center sm:w-1.5">
               <div
-                className="w-full max-w-[5px] rounded-sm bg-gradient-to-t from-primary/20 via-primary/75 to-arena-cyan motion-safe:landing-eq-bar"
+                className="w-full max-w-[4px] rounded-[1px] bg-gradient-to-t from-primary/15 via-primary/45 to-arena-cyan/70 motion-safe:landing-eq-bar"
                 style={{
-                  height: `${Math.max(18, Math.round(d * 100))}%`,
-                  animationDelay: `${i * 0.07}s`,
+                  height: `${Math.max(16, Math.round(d * 100))}%`,
+                  animationDelay: `${i * 0.09}s`,
+                  animationDuration: "1.25s",
                 }}
               />
             </div>
           ))}
         </div>
 
-        <div className="mt-6 space-y-3 font-mono text-[11px] sm:text-xs">
+        <div className="mt-5 space-y-2.5 font-hud">
           {[
             { k: "ESCROW", v: "ARMED", vc: "text-primary" },
             { k: "CHAIN", v: "MULTI", vc: "text-arena-cyan" },
-            { k: "OCR", v: "READY", vc: "text-purple-300" },
+            { k: "OCR", v: "READY", vc: "text-purple-300/90" },
           ].map((row) => (
             <div
               key={row.k}
-              className="flex items-center justify-between gap-4 border-b border-white/[0.06] pb-2.5 last:border-0"
+              className="flex items-baseline justify-between gap-3 border-b border-white/[0.05] pb-2 last:border-0"
             >
-              <span className="tracking-[0.35em] text-muted-foreground/55">{row.k}</span>
-              <span className={cn("font-display text-sm font-bold tracking-[0.2em] sm:text-base", row.vc)}>{row.v}</span>
+              <span className="text-[9px] uppercase tracking-[0.32em] text-muted-foreground/45 sm:text-[10px]">{row.k}</span>
+              <span className={cn("text-right text-[11px] font-semibold uppercase tracking-[0.22em] sm:text-xs", row.vc)}>
+                {row.v}
+              </span>
             </div>
           ))}
         </div>
 
-        <div className="mt-auto overflow-hidden border border-white/[0.08] bg-black/25 py-2">
-          <div className="landing-hud-ticker flex w-[200%] whitespace-nowrap font-mono text-[9px] uppercase tracking-[0.28em] text-muted-foreground/45 motion-reduce:w-full motion-reduce:whitespace-normal motion-reduce:text-center">
-            <span className="px-4">
+        <div className="mt-auto overflow-hidden border border-white/[0.06] bg-black/30 py-1.5">
+          <div
+            className="landing-hud-ticker flex w-[200%] whitespace-nowrap font-hud text-[8px] uppercase tracking-[0.26em] text-muted-foreground/35 motion-reduce:w-full motion-reduce:animate-none motion-reduce:whitespace-normal motion-reduce:text-center motion-reduce:text-[9px]"
+          >
+            <span className="px-3">
               MATCH INTEGRITY · ON-CHAIN ATTEST · VISION PIPE HOT · SESSION NOTARIZED · ESCROW ARMED ·
             </span>
-            <span className="px-4" aria-hidden>
+            <span className="px-3" aria-hidden>
               MATCH INTEGRITY · ON-CHAIN ATTEST · VISION PIPE HOT · SESSION NOTARIZED · ESCROW ARMED ·
             </span>
           </div>
         </div>
 
-        <div className="pointer-events-none absolute left-5 top-5 h-8 w-8 border-l-2 border-t-2 border-arena-cyan/55 shadow-[0_0_12px_hsl(var(--arena-cyan)/0.25)] sm:left-7 sm:top-7" />
-        <div className="pointer-events-none absolute bottom-5 right-5 h-8 w-8 border-r-2 border-b-2 border-primary/50 shadow-[0_0_12px_hsl(var(--primary)/0.2)] sm:bottom-7 sm:right-7" />
-        <div className="pointer-events-none absolute bottom-[22%] left-[8%] right-[8%] h-px bg-gradient-to-r from-transparent via-primary/45 to-transparent" />
+        <div className="pointer-events-none absolute left-4 top-4 h-7 w-7 border-l border-t border-arena-cyan/40 sm:left-6 sm:top-6" />
+        <div className="pointer-events-none absolute bottom-4 right-4 h-7 w-7 border-r border-b border-primary/35 sm:bottom-6 sm:right-6" />
       </div>
     </div>
   );
@@ -412,22 +495,23 @@ const Index = () => {
 
         <div className="relative z-10 mx-auto grid w-full max-w-7xl grid-cols-1 gap-12 px-5 sm:px-8 lg:grid-cols-12 lg:items-center lg:gap-6">
           <div className="space-y-6 text-center lg:col-span-6 lg:text-left">
-            <div className="inline-flex items-center gap-2 rounded border border-primary/30 bg-primary/5 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.35em] text-primary motion-safe:animate-pulse lg:mx-0 mx-auto">
-              <span className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_10px_hsl(var(--primary))]" />
-              Skill · P2P · On-chain
+            <div className="inline-flex items-center gap-2 rounded-sm border border-primary/35 bg-primary/[0.06] px-3 py-1.5 font-hud text-[9px] uppercase tracking-[0.42em] text-primary/95 lg:mx-0 mx-auto sm:text-[10px]">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-sm bg-primary shadow-[0_0_12px_hsl(var(--primary)/0.55)]" />
+              SKILL · P2P · ON-CHAIN
             </div>
-            <h1 className="font-display font-black leading-[0.92] tracking-tight">
+            <h1 className="font-hero font-extrabold leading-[0.88] tracking-[0.04em]">
               <span
-                className="block text-[clamp(3rem,11vw,6.5rem)] text-primary"
-                style={{ textShadow: "0 0 50px hsl(var(--primary)/0.35), 0 0 100px hsl(var(--arena-cyan)/0.12)" }}
+                className="block text-[clamp(3.1rem,11vw,6.6rem)] uppercase text-primary"
+                style={{
+                  textShadow:
+                    "0 0 40px hsl(var(--primary)/0.4), 0 0 88px hsl(var(--arena-cyan)/0.14), 0 2px 0 hsl(0 0% 0% / 0.45)",
+                }}
               >
                 ARENA
               </span>
-              <span className="mt-2 block text-[clamp(0.75rem,2.2vw,1.15rem)] font-normal tracking-[0.45em] text-muted-foreground">
-                PLAY FOR STAKES
-              </span>
+              <HeroCyclingTagline />
             </h1>
-            <p className="mx-auto max-w-md text-sm leading-relaxed text-muted-foreground lg:mx-0 md:text-base">
+            <p className="mx-auto max-w-md text-sm leading-relaxed text-muted-foreground lg:mx-0 md:text-base md:leading-relaxed">
               Competitive gaming meets real stakes. Head-to-head matches, smart contract escrow, instant payouts.
             </p>
             <div className="flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:flex-wrap lg:justify-start">
