@@ -13,7 +13,8 @@ export default {
     },
     extend: {
       fontFamily: {
-        display: ["Rajdhani", "sans-serif"],
+        /* HUD reference: wide geometric display; Rajdhani fallback for existing pages */
+        display: ["Orbitron", "Rajdhani", "sans-serif"],
         body: ["Inter", "sans-serif"],
       },
       colors: {
@@ -56,6 +57,8 @@ export default {
           orange: "hsl(var(--arena-orange))",
           gold: "hsl(var(--arena-gold))",
           cyan: "hsl(var(--arena-cyan))",
+          "hud-blue": "hsl(var(--arena-hud-blue))",
+          "hud-magenta": "hsl(var(--arena-hud-magenta))",
         },
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",
