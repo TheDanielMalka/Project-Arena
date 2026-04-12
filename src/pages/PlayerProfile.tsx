@@ -24,6 +24,7 @@ import type { PublicPlayerProfile, TicketReason } from "@/types";
 import { cn } from "@/lib/utils";
 import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
 import { renderForgeShopIcon } from "@/lib/forgeItemIcon";
+import { ArenaPageShell } from "@/components/visual";
 
 // ─── Constants ────────────────────────────────────────────────
 
@@ -389,7 +390,7 @@ export default function PlayerProfile() {
   ] as const;
 
   return (
-    <div className="p-6 max-w-3xl mx-auto space-y-6">
+    <ArenaPageShell variant="player-profile" contentClassName="max-w-3xl mx-auto space-y-6">
 
       {/* Back */}
       <button
@@ -678,6 +679,6 @@ export default function PlayerProfile() {
         onClose={() => setFrModalOpen(false)}
         onConfirm={handleFrConfirm}
       />
-    </div>
+    </ArenaPageShell>
   );
 }

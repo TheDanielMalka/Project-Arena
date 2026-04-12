@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import type { Game, Match, MatchStatus } from "@/types";
 import { SupportTicketDialog } from "@/components/support/SupportTicketDialog";
+import { ArenaPageShell } from "@/components/visual";
 
 const ITEMS_PER_PAGE = 8;
 
@@ -312,7 +313,7 @@ const History = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <ArenaPageShell variant="history" contentClassName="space-y-6">
       <PlayerPopoverLayer
         open={!!playerPopover && !!user}
         slotValue={playerPopover?.slotValue ?? null}
@@ -738,7 +739,7 @@ const History = () => {
         mode="match_dispute"
         match={appealMatch}
       />
-    </div>
+    </ArenaPageShell>
   );
 };
 

@@ -43,8 +43,8 @@ import {
   identityGridPortraitClassName,
 } from "@/lib/avatarPresets";
 import { SEED_ITEMS } from "@/stores/forgeStore";
+import { ArenaPageShell, TacticalFrame } from "@/components/visual";
 import { renderForgeShopIcon } from "@/lib/forgeItemIcon";
-import { apiVerifySteam, apiVerifyRiot, apiVerifyDiscord } from "@/lib/engine-api";
 
 type GameConnection = {
   name: string;
@@ -108,9 +108,7 @@ const Profile = () => {
     setSelectedBg(user.avatarBg ?? "default");
     setSelectedAvatar(user.avatar ?? "initials");
     setSelectedEquippedBadge(user.equippedBadgeIcon);
-    if (user.steamId) setSteamId(user.steamId);
-    if (user.riotId) setRiotVerifyId(user.riotId);
-  }, [user?.avatarBg, user?.avatar, user?.equippedBadgeIcon, user?.steamId, user?.riotId, user]);
+  }, [user?.avatarBg, user?.avatar, user?.equippedBadgeIcon, user]);
 
   useEffect(() => {
     if (!user || !token) return;
@@ -160,12 +158,6 @@ const Profile = () => {
       return <img src={presetUrl} className={cn("w-full h-full rounded-full", identityPortraitCropClassName)} alt="" decoding="async" />;
     return <span className={cn(emojiSize, "drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]")}>{avatar}</span>;
   };
-  const [steamId, setSteamId] = useState(user?.steamId ?? "");
-  const [riotVerifyId, setRiotVerifyId] = useState(user?.riotId ?? "");
-  const [discordId, setDiscordId] = useState("");
-  const [verifySteamHint, setVerifySteamHint] = useState<string | null>(null);
-  const [verifyRiotHint, setVerifyRiotHint] = useState<string | null>(null);
-  const [verifyDiscordHint, setVerifyDiscordHint] = useState<string | null>(null);
   const [copiedWallet, setCopiedWallet] = useState(false);
 
   // Link dialog state
@@ -390,7 +382,7 @@ const Profile = () => {
       img: "https://cdn.simpleicons.org/steam/ffffff",
       imgBg: "rgba(27,40,56,0.9)",
       status: "connected" as const,
-      detail: steamId,
+      detail: user?.steamId || "—",
       color: "text-arena-cyan",
       borderColor: "border-arena-cyan/30",
       bgColor: "bg-arena-cyan/5",
@@ -448,7 +440,7 @@ const Profile = () => {
   ];
 
   return (
-    <div className="space-y-6">
+    <ArenaPageShell variant="profile" contentClassName="space-y-6">
       <div className="flex items-center justify-between">
         <Button
           variant="outline"
@@ -464,6 +456,7 @@ const Profile = () => {
       </div>
 
       {/* Player Info — Gaming Card */}
+      <TacticalFrame>
       <Card className="bg-card border-border overflow-hidden">
         {/* Red accent bar */}
         <div className="h-1 w-full bg-gradient-to-r from-primary via-primary/60 to-transparent" />
@@ -556,7 +549,7 @@ const Profile = () => {
                 )}
               </div>
               <div className="flex items-center gap-4 mt-2">
-                <span className="text-xs text-muted-foreground font-mono">{steamId}</span>
+                <span className="text-xs text-muted-foreground font-mono">{user?.steamId || "—"}</span>
                 <span className="text-xs text-muted-foreground">Since March 2026</span>
               </div>
             </div>
@@ -582,6 +575,7 @@ const Profile = () => {
           </div>
         </CardContent>
       </Card>
+      </TacticalFrame>
 
 
       {/* Game Stats */}
@@ -746,90 +740,6 @@ const Profile = () => {
               </div>
             ))}
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Platform ID verification (engine format stubs) */}
-      <Card className="bg-card border-border">
-        <CardHeader className="pb-2">
-          <CardTitle className="font-display text-sm tracking-widest uppercase text-muted-foreground">
-            Platform IDs
-          </CardTitle>
-          <p className="text-[10px] text-muted-foreground leading-relaxed mt-1">
-            {/* TODO[VERIF]: Steam/Riot API call — implement after API keys in platform_config */}
-            Verify checks format and whether the ID is already registered.{" "}
-            {/* TODO[VERIF]: response.verified_by will be &apos;api&apos; when keys configured */}
-          </p>
-        </CardHeader>
-        <CardContent className="pt-0 space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-end gap-2">
-            <div className="flex-1 space-y-1">
-              <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Steam ID</label>
-              <Input value={steamId} onChange={(e) => { setSteamId(e.target.value); setVerifySteamHint(null); }} className="h-8 text-xs font-mono bg-secondary border-border" placeholder="76561198…" />
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8 text-xs shrink-0"
-              onClick={async () => {
-                const r = await apiVerifySteam(steamId);
-                if (!r) { setVerifySteamHint("❌ Could not verify"); return; }
-                if (!r.valid) setVerifySteamHint("❌ Invalid Steam64 ID");
-                else if (r.unique === false) setVerifySteamHint("⚠️ Already in use");
-                else setVerifySteamHint(`✅ Valid format (${r.verified_by})`);
-              }}
-            >
-              Verify
-            </Button>
-          </div>
-          {verifySteamHint && <p className="text-[10px] text-muted-foreground">{verifySteamHint}</p>}
-
-          <div className="flex flex-col sm:flex-row sm:items-end gap-2">
-            <div className="flex-1 space-y-1">
-              <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Riot ID</label>
-              <Input value={riotVerifyId} onChange={(e) => { setRiotVerifyId(e.target.value); setVerifyRiotHint(null); }} className="h-8 text-xs font-mono bg-secondary border-border" placeholder="Name#TAG" />
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8 text-xs shrink-0"
-              onClick={async () => {
-                const r = await apiVerifyRiot(riotVerifyId);
-                if (!r) { setVerifyRiotHint("❌ Could not verify"); return; }
-                if (!r.valid) setVerifyRiotHint("❌ Invalid Riot ID");
-                else if (r.unique === false) setVerifyRiotHint("⚠️ Already in use");
-                else setVerifyRiotHint(`✅ Valid format (${r.verified_by})`);
-              }}
-            >
-              Verify
-            </Button>
-          </div>
-          {verifyRiotHint && <p className="text-[10px] text-muted-foreground">{verifyRiotHint}</p>}
-
-          <div className="flex flex-col sm:flex-row sm:items-end gap-2">
-            <div className="flex-1 space-y-1">
-              <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Discord ID</label>
-              <Input value={discordId} onChange={(e) => { setDiscordId(e.target.value); setVerifyDiscordHint(null); }} className="h-8 text-xs font-mono bg-secondary border-border" placeholder="17–19 digit user ID" />
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8 text-xs shrink-0"
-              onClick={async () => {
-                // TODO[VERIF]: Discord OAuth when Discord App is configured
-                const r = await apiVerifyDiscord(discordId);
-                if (!r) { setVerifyDiscordHint("❌ Could not verify"); return; }
-                if (!r.valid) setVerifyDiscordHint("❌ Invalid Discord ID");
-                else setVerifyDiscordHint(`✅ Valid format (${r.verified_by})`);
-              }}
-            >
-              Verify
-            </Button>
-          </div>
-          {verifyDiscordHint && <p className="text-[10px] text-muted-foreground">{verifyDiscordHint}</p>}
         </CardContent>
       </Card>
 
@@ -1508,7 +1418,7 @@ const Profile = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </ArenaPageShell>
   );
 };
 

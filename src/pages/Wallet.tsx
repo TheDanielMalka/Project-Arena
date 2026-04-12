@@ -19,6 +19,7 @@ import type { TransactionType, TransactionStatus } from "@/types";
 import { cn } from "@/lib/utils";
 import { BuyArenaTokensModal }  from "@/components/wallet/BuyArenaTokensModal";
 import { WithdrawATModal }       from "@/components/wallet/WithdrawATModal";
+import { ArenaPageShell } from "@/components/visual";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -113,7 +114,7 @@ const WalletPage = () => {
   };
 
   return (
-    <div className="space-y-4">
+    <ArenaPageShell variant="wallet" contentClassName="space-y-4">
 
       {/* ── Header ── */}
       <div className="flex items-center gap-2">
@@ -542,7 +543,7 @@ const WalletPage = () => {
 
       {/* ── Withdraw AT Modal ── */}
       <WithdrawATModal open={withdrawATOpen} onClose={() => setWithdrawATOpen(false)} />
-    </div>
+    </ArenaPageShell>
   );
 };
 

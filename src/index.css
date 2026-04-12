@@ -236,4 +236,47 @@
     from { transform: rotate(360deg); }
     to { transform: rotate(0deg); }
   }
+
+  @keyframes arena-hud-scan-move {
+    0% { transform: translateY(-100%); }
+    100% { transform: translateY(100%); }
+  }
+
+  .arena-hud-scan {
+    background: linear-gradient(
+      to bottom,
+      transparent 0%,
+      hsl(var(--primary) / 0.12) 48%,
+      hsl(var(--arena-cyan) / 0.08) 52%,
+      transparent 100%
+    );
+    animation: arena-hud-scan-move 14s linear infinite;
+  }
+
+  .arena-id-shimmer {
+    animation: arena-id-shimmer-move 8s ease-in-out infinite;
+  }
+  @keyframes arena-id-shimmer-move {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+  }
+
+  /* Chamfered panel — tactical silhouette */
+  .arena-tactical-frame {
+    clip-path: polygon(0 14px, 14px 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+    box-shadow:
+      0 0 0 1px hsl(var(--arena-cyan) / 0.22),
+      inset 0 0 48px hsl(var(--arena-hud-blue) / 0.04);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .arena-decor-animate,
+    .arena-hud-scan,
+    .arena-id-shimmer {
+      animation: none !important;
+    }
+    .arena-decor-animate {
+      transform: none !important;
+    }
+  }
 }

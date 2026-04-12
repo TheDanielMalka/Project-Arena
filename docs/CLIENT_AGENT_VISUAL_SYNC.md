@@ -30,6 +30,12 @@
    - **Hero panel:** glass card, conic “orb” glow, **orbiting ring** decorations (pure CSS, `animate-arena-orbit`).
    - **Tabs:** controlled by URL — `?tab=custom` vs default public. Changing tab updates `searchParams` with `replace: true`.
 
+6. **Per-route HUD shell (`ArenaPageShell` + `src/components/visual/`)**
+   - Each main authenticated page wraps content in **`ArenaPageShell`** with a **`variant`** — adds a **tactical border** + **unique ambient decor** (pointer-events none): lobby scan line, leaderboard podium mesh, wallet circuit trace, profile ID shimmer + corner brackets, admin system stripes, etc.
+   - **`TacticalFrame`:** optional chamfered clip-path wrapper (used on Profile identity card).
+   - **CSS:** `.arena-hud-scan`, `.arena-tactical-frame`, **`prefers-reduced-motion`** disables decor animations (`.arena-decor-animate`, scan, shimmer).
+   - **Profile:** the redundant **“Platform IDs”** verify block was **removed** from the web UI; Steam still shows on the connections strip from `user.steamId`.
+
 ## What you must NOT break (client)
 
 - Same **HTTP paths**, JSON shapes, and session/token behavior as today.
@@ -57,7 +63,9 @@
 - `src/components/layout/AppLayout.tsx`  
 - `src/components/layout/ArenaSidebar.tsx`  
 - `src/components/layout/ArenaHeader.tsx`  
-- `src/pages/MatchLobby.tsx` — hero + URL-synced tabs  
+- `src/pages/MatchLobby.tsx` — hero + URL-synced tabs + `ArenaPageShell variant="lobby"`  
+- `src/components/visual/` — `ArenaPageShell`, `ArenaPageDecor`, `TacticalFrame`, `types`  
+- Major pages using the shell: `Dashboard`, `MatchLobby`, `Leaderboard`, `Wallet`, `Profile`, `Admin`, `History`, `Hub`, `Forge`, `Settings`, `ArenaClient`, `Players`, `PlayerProfile`  
 
 ---
 

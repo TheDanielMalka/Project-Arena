@@ -15,6 +15,7 @@ import { getAvatarSidebarStyle } from "@/lib/avatarBgs";
 import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
 import { cn } from "@/lib/utils";
 import { hasPendingClientSetup, clearPendingClientSetup } from "@/lib/localArenaPrefs";
+import { ArenaPageShell } from "@/components/visual";
 
 const XP_ICON_MAP: Record<string, LucideIcon> = {
   Medal, Shield, Trophy, Gem, Sparkles, Crown,
@@ -85,7 +86,7 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <ArenaPageShell variant="dashboard" contentClassName="space-y-6">
 
       {/* ── Login Greeting Banner ── */}
       {bannerVisible && (
@@ -301,7 +302,7 @@ const Dashboard = () => {
 
       {/* ── Recent matches ── */}
       <RecentMatches showViewAll limit={5} />
-    </div>
+    </ArenaPageShell>
   );
 };
 

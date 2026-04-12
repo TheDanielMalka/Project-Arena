@@ -28,6 +28,7 @@ import { apiGetLeaderboard } from "@/lib/engine-api";
 import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
 import { renderForgeShopIcon } from "@/lib/forgeItemIcon";
 import { cn } from "@/lib/utils";
+import { ArenaPageShell } from "@/components/visual";
 
 type LeaderboardEntry = LeaderboardPlayerRow;
 
@@ -600,7 +601,7 @@ const Leaderboard = () => {
   const avgEarningsPerMatch = matchesPlayed > 0 ? selectedTopPlayer.earnings / matchesPlayed : 0;
 
   return (
-    <div className="space-y-4">
+    <ArenaPageShell variant="leaderboard" contentClassName="space-y-4">
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -967,7 +968,7 @@ const Leaderboard = () => {
           );
         })}
       </Tabs>
-    </div>
+    </ArenaPageShell>
   );
 };
 
