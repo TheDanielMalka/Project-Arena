@@ -279,4 +279,19 @@
       transform: none !important;
     }
   }
+
+  @keyframes landing-scanline {
+    0% { top: 0; opacity: 0; }
+    10% { opacity: 1; }
+    90% { opacity: 1; }
+    100% { top: 100%; opacity: 0; }
+  }
+  .landing-scanline {
+    animation: landing-scanline 3.5s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .landing-scanline {
+      animation: none;
+    }
+  }
 }
