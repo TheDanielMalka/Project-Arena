@@ -48,6 +48,14 @@ def as_admin():
     app.dependency_overrides.pop(_require_admin, None)
 
 
+@pytest.fixture(autouse=True)
+def no_high_stakes_and_loss_cap_checks():
+    """Issue #40: create/join mocks here only model daily stake + suspension."""
+    with patch("main._check_high_stakes_daily_cap", return_value=None), \
+         patch("main._check_daily_loss_cap", return_value=None):
+        yield
+
+
 def _make_session(fetchone=None, fetchall=None):
     session = MagicMock()
     session.execute.return_value.fetchone.return_value = fetchone

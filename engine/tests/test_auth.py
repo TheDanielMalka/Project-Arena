@@ -32,7 +32,9 @@ client = TestClient(app)
 def no_suspension_check():
     with patch("main._assert_not_suspended", return_value=None), \
          patch("main._check_daily_stake_limit", return_value=None), \
-         patch("main._check_daily_usdt_stake_limit", return_value=None):
+         patch("main._check_daily_usdt_stake_limit", return_value=None), \
+         patch("main._check_high_stakes_daily_cap", return_value=None), \
+         patch("main._check_daily_loss_cap", return_value=None):
         yield
 
 

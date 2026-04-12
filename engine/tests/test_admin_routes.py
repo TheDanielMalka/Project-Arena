@@ -861,12 +861,17 @@ class TestPlatformConfig:
     def _kv_rows(self):
         """Simulate SELECT key, value FROM platform_config."""
         return [
-            ("fee_pct",                "5"),
-            ("daily_bet_max_at",       "500"),
-            ("daily_bet_max_usdt",     "500"),
-            ("maintenance_mode",       "false"),
-            ("new_registrations",      "true"),
-            ("auto_escalate_disputes", "false"),
+            ("fee_pct",                 "5"),
+            ("daily_bet_max_at",        "500"),
+            ("daily_bet_max_usdt",      "500"),
+            ("high_stakes_daily_max",   "0"),
+            ("high_stakes_min_bet_at",  "25000"),
+            ("high_stakes_min_bet_usdt", "100"),
+            ("daily_loss_cap_at",       "0"),
+            ("daily_loss_cap_usdt",     "0"),
+            ("maintenance_mode",        "false"),
+            ("new_registrations",       "true"),
+            ("auto_escalate_disputes",  "false"),
         ]
 
     def test_get_returns_all_fields(self, as_admin):
@@ -878,8 +883,19 @@ class TestPlatformConfig:
 
         assert resp.status_code == 200
         data = resp.json()
-        for field in ("fee_pct", "daily_bet_max_at", "daily_bet_max_usdt", "maintenance_mode",
-                      "new_registrations", "auto_escalate_disputes"):
+        for field in (
+            "fee_pct",
+            "daily_bet_max_at",
+            "daily_bet_max_usdt",
+            "high_stakes_daily_max",
+            "high_stakes_min_bet_at",
+            "high_stakes_min_bet_usdt",
+            "daily_loss_cap_at",
+            "daily_loss_cap_usdt",
+            "maintenance_mode",
+            "new_registrations",
+            "auto_escalate_disputes",
+        ):
             assert field in data, f"Missing field: {field}"
 
     def test_get_fee_pct_value(self, as_admin):
