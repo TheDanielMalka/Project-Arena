@@ -35,6 +35,7 @@ import type {
   TicketStatus,
 } from "@/types";
 import { cn } from "@/lib/utils";
+import { ArenaPageShell } from "@/components/visual";
 import {
   apiAdminFreezeStatus,
   apiAdminFreeze,
@@ -739,7 +740,7 @@ const Admin = () => {
 
   // ─────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-4">
+    <ArenaPageShell variant="admin" contentClassName="space-y-4">
 
       {/* ── Header ── */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -1856,7 +1857,7 @@ const Admin = () => {
         </AlertDialogContent>
       </AlertDialog>
 
-    </div>
+    </ArenaPageShell>
   );
 };
 

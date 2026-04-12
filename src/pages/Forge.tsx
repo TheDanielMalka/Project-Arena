@@ -18,6 +18,7 @@ import { useWalletStore } from "@/stores/walletStore";
 import { cn } from "@/lib/utils";
 import { ForgeLookPreview, renderForgeShopIcon } from "@/lib/forgeItemIcon";
 import type { ForgeCategory } from "@/types";
+import { ArenaPageShell } from "@/components/visual";
 
 // ─── Purchase Confirm Context ─────────────────────────────────────────────────
 // Centralises the confirm dialog so every tab (Shop, Drops, Events) can open it
@@ -1500,7 +1501,7 @@ export default function Forge() {
     <ForgeConfirmContext.Provider value={{ openConfirm, openAtTopUp }}>
     <PurchaseConfirmDialog pending={pending} onClose={() => setPending(null)} />
     <ArenaTokensTopUpDialog open={atTopUpOpen} onClose={() => setAtTopUpOpen(false)} />
-    <div className="min-h-screen bg-background">
+    <ArenaPageShell variant="forge" contentClassName="space-y-4">
       <div className="max-w-6xl mx-auto px-4 py-5 space-y-4">
         {/* Page header */}
         <div className="relative overflow-hidden rounded-xl border border-border/50 bg-gradient-to-br from-card/90 via-background to-primary/[0.06] p-3.5 sm:p-4">
@@ -1562,7 +1563,7 @@ export default function Forge() {
           {tab === "drops"      && <DropsTab />}
         </div>
       </div>
-    </div>
+    </ArenaPageShell>
     </ForgeConfirmContext.Provider>
   );
 }

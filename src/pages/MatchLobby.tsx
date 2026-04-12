@@ -49,6 +49,7 @@ import {
 } from "@/lib/lobbyRosterDisplay";
 import { createFailureMessage, inviteFailureMessage, joinFailureMessage } from "@/lib/stakeErrors";
 import { createMatchOnChain, getBnbBalance } from "@/lib/metamaskBsc";
+import { ArenaPageShell } from "@/components/visual";
 
 // ─── Game configs ─────────────────────────────────────────────────────────────
 // comingSoon: true → game visible in dropdowns but non-selectable (greyed, locked)
@@ -837,7 +838,7 @@ const MatchLobby = () => {
   }, [token, myRoomMatchId, matches]);
 
   return (
-    <div className="space-y-5">
+    <ArenaPageShell variant="lobby" contentClassName="space-y-5">
       {/* ── Hero header (visual shell — same stats & copy) ── */}
       <div className="relative overflow-hidden rounded-2xl arena-glass px-5 py-6 md:px-8 md:py-7">
         <div
@@ -2357,7 +2358,7 @@ const MatchLobby = () => {
           </div>
         </div>
       )}
-    </div>
+    </ArenaPageShell>
   );
 };
 

@@ -24,6 +24,7 @@ const EMPTY_CHAT_MESSAGES: DirectMessage[] = [];
 import { cn } from "@/lib/utils";
 import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
 import { hubGameFilters } from "@/lib/arenaGamesCatalog";
+import { ArenaPageShell } from "@/components/visual";
 
 // ─── Constants ────────────────────────────────────────────────
 
@@ -746,7 +747,11 @@ export default function Hub() {
 
   // ── Render ──────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-full max-h-[calc(100vh-4rem)] overflow-hidden">
+    <ArenaPageShell
+      variant="hub"
+      className="flex flex-1 flex-col min-h-0 max-h-[calc(100vh-4rem)] overflow-hidden"
+      contentClassName="flex flex-1 flex-col min-h-0 overflow-hidden !space-y-0"
+    >
 
       {/* ── Header ── */}
       <div className="px-6 pt-6 pb-4 shrink-0">
@@ -1423,6 +1428,6 @@ export default function Hub() {
         prefillArenaId={replyArenaId}
         onClose={() => { setComposeOpen(false); setReplyArenaId(undefined); }}
       />
-    </div>
+    </ArenaPageShell>
   );
 }

@@ -25,6 +25,7 @@ import { PASSWORD_RULES, isPasswordValid } from "@/lib/passwordValidation";
 import { SupportTicketDialog } from "@/components/support/SupportTicketDialog";
 import { useClientStore } from "@/stores/clientStore";
 import { clearArenaLocalPreferences } from "@/lib/localArenaPrefs";
+import { ArenaPageShell } from "@/components/visual";
 import type { UserSettingsRegion } from "@/types";
 import {
   apiChangePassword,
@@ -358,6 +359,7 @@ const SettingsPage = () => {
   };
 
   return (
+    <ArenaPageShell variant="settings" contentClassName="space-y-6">
     <>
     <div className="flex gap-0 max-w-4xl min-h-[600px]">
 
@@ -1197,6 +1199,7 @@ const SettingsPage = () => {
       mode="general_support"
     />
     </>
+    </ArenaPageShell>
   );
 };
 

@@ -7,6 +7,7 @@ import { Search, Users2, ChevronRight } from "lucide-react";
 import type { Game, PublicPlayerProfile } from "@/types";
 import { useUserStore } from "@/stores/userStore";
 import { cn } from "@/lib/utils";
+import { ArenaPageShell } from "@/components/visual";
 import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
 import { renderForgeShopIcon } from "@/lib/forgeItemIcon";
 
@@ -52,7 +53,7 @@ export default function Players() {
   }, [query, gameFilter, token, searchPlayers]);
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6">
+    <ArenaPageShell variant="players" contentClassName="max-w-5xl mx-auto space-y-6">
 
       {/* Header */}
       <div>
@@ -201,6 +202,6 @@ export default function Players() {
           })}
         </div>
       )}
-    </div>
+    </ArenaPageShell>
   );
 }

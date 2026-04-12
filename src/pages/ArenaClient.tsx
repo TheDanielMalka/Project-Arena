@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { ArenaPageShell } from "@/components/visual";
 import { Button } from "@/components/ui/button";
 import {
   Download, Monitor, ShieldCheck, Radio, ArrowRight, RefreshCw,
@@ -33,7 +34,7 @@ const ArenaClientPage = () => {
   }, [syncFromClientStatus, walletAddress]);
 
   return (
-    <div className="space-y-8 max-w-3xl">
+    <ArenaPageShell variant="arena-client" contentClassName="space-y-8 max-w-3xl">
       <div>
         <p className="text-[10px] text-muted-foreground uppercase tracking-[0.2em] mb-1">Arena</p>
         <h1 className="font-display text-3xl font-bold tracking-wide">Arena Client</h1>
@@ -108,7 +109,7 @@ const ArenaClientPage = () => {
       <p className="text-[10px] text-muted-foreground">
         DB-ready: login to the client and <span className="font-mono">client_sessions</span> will mirror this status server-side.
       </p>
-    </div>
+    </ArenaPageShell>
   );
 };
 
