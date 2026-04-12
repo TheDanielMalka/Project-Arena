@@ -24,6 +24,7 @@ from src.config import DATABASE_URL, ENVIRONMENT, MIN_CLIENT_VERSION
 from src.vision.capture import capture_screen, crop_roi
 from src.vision.engine import VisionEngine, VisionEngineConfig
 from src.vision.rage_quit import RageQuitDetector
+from src.slack_alerts import slack_post
 try:
     from src.contract import build_escrow_client
 except ImportError:
@@ -61,6 +62,13 @@ SessionLocal = sessionmaker(bind=db_engine)
 # CONTRACT-ready: EscrowClient.declare_winner() releases payout on-chain.
 _escrow_client = None
 _listener_task = None  # background thread task — EscrowClient.listen()
+_slack_oracle_task = None  # Slack watchdog (escrow + SLACK_ALERTS_WEBHOOK_URL only)
+
+# Oracle → Slack: OK→bad fires immediately; sustained bad repeats every _SLACK_ORACLE_REPEAT_SECS.
+_slack_oracle_prev_listener_ok: bool | None = None
+_slack_oracle_prev_rpc_ok: bool | None = None
+_slack_oracle_last_repeat: dict[str, float] = {}
+_SLACK_ORACLE_REPEAT_SECS = 900
 
 # ── In-memory rate limiter ────────────────────────────────────────────────────
 # Sliding-window counter; safe under asyncio's single event loop per worker.
@@ -182,6 +190,104 @@ async def _expired_match_cleanup_loop(interval: int = 300) -> None:
             logger.error("_expired_match_cleanup_loop error: %s", exc)
 
 
+async def _oracle_slack_watch_loop(interval: int = 90) -> None:
+    """
+    Periodic check: when EscrowClient is enabled, alert Slack if the listener task
+    died or RPC/contract health fails.
+
+    Anti-spam: immediate notify on transition from healthy → unhealthy; while
+    unhealthy persists, repeat at most once per _SLACK_ORACLE_REPEAT_SECS per channel.
+    """
+    import asyncio as _asyncio
+    import time as _time
+
+    while True:
+        try:
+            await _asyncio.sleep(interval)
+            if not (os.getenv("SLACK_ALERTS_WEBHOOK_URL") or "").strip():
+                continue
+            ec = _escrow_client
+            if not ec:
+                continue
+
+            global _slack_oracle_prev_listener_ok, _slack_oracle_prev_rpc_ok
+            global _slack_oracle_last_repeat
+
+            listener_ok = (
+                _listener_task is not None and not _listener_task.done()
+            )
+            try:
+                rpc_ok = ec.is_healthy()
+            except Exception:
+                rpc_ok = False
+
+            now = _time.monotonic()
+            env_tag = ENVIRONMENT or "unknown"
+
+            def _allow_repeat(key: str) -> bool:
+                last = _slack_oracle_last_repeat.get(key, 0.0)
+                if now - last >= _SLACK_ORACLE_REPEAT_SECS:
+                    _slack_oracle_last_repeat[key] = now
+                    return True
+                return False
+
+            if not listener_ok:
+                prev = _slack_oracle_prev_listener_ok
+                if prev is True:
+                    logger.warning(
+                        "Escrow listener task inactive while escrow is enabled — Slack alert"
+                    )
+                    slack_post(
+                        f"⚠️ [{env_tag}] Arena: Escrow oracle listener task is not running "
+                        f"(escrow enabled). Check engine logs / container."
+                    )
+                elif prev is False:
+                    if _allow_repeat("listener"):
+                        slack_post(
+                            f"⚠️ [{env_tag}] Arena: Escrow listener still inactive (repeat)."
+                        )
+                else:
+                    # First sample after watchdog start
+                    if _allow_repeat("listener"):
+                        logger.warning(
+                            "Escrow listener inactive on first watchdog sample — Slack alert"
+                        )
+                        slack_post(
+                            f"⚠️ [{env_tag}] Arena: Escrow oracle listener inactive."
+                        )
+
+            if not rpc_ok:
+                prev_h = _slack_oracle_prev_rpc_ok
+                if prev_h is True:
+                    logger.warning(
+                        "EscrowClient unhealthy (RPC/pause) — Slack alert"
+                    )
+                    slack_post(
+                        f"⚠️ [{env_tag}] Arena: Escrow RPC or contract unhealthy "
+                        f"(not connected or paused). Check RPC and kill-switch."
+                    )
+                elif prev_h is False:
+                    if _allow_repeat("rpc"):
+                        slack_post(
+                            f"⚠️ [{env_tag}] Arena: Escrow still unhealthy (repeat)."
+                        )
+                else:
+                    if _allow_repeat("rpc"):
+                        logger.warning(
+                            "EscrowClient unhealthy on first watchdog sample — Slack alert"
+                        )
+                        slack_post(
+                            f"⚠️ [{env_tag}] Arena: Escrow RPC/contract unhealthy."
+                        )
+
+            _slack_oracle_prev_listener_ok = listener_ok
+            _slack_oracle_prev_rpc_ok = rpc_ok
+        except _asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("_oracle_slack_watch_loop error: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Create runtime directories at startup, not at import time.
@@ -280,12 +386,24 @@ async def lifespan(app: FastAPI):
     _stale_task = asyncio.create_task(_stale_player_cleanup_loop())
     logger.info("✅ Stale player cleanup task started")
 
+    # Slack alerts for oracle/RPC health — only when escrow is on and webhook URL is set.
+    global _slack_oracle_task
+    if _escrow_client and (os.getenv("SLACK_ALERTS_WEBHOOK_URL") or "").strip():
+        _slack_oracle_task = asyncio.create_task(_oracle_slack_watch_loop())
+        logger.info("✅ Oracle Slack watchdog started")
+
     yield
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
     _rq_task.cancel()
     _cleanup_task.cancel()
     _stale_task.cancel()
+    if _slack_oracle_task:
+        _slack_oracle_task.cancel()
+        try:
+            await _slack_oracle_task
+        except asyncio.CancelledError:
+            pass
     if _listener_task:
         _listener_task.cancel()
         try:
@@ -7216,6 +7334,25 @@ async def admin_oracle_sync(
     except Exception as exc:
         logger.error("admin_oracle_sync error: %s", exc)
         raise HTTPException(500, "Oracle sync failed")
+
+
+@app.post("/admin/alerts/test-slack", status_code=200)
+async def admin_alerts_test_slack(payload: dict = Depends(require_admin)):
+    """
+    Send a one-off Slack message to verify SLACK_ALERTS_WEBHOOK_URL in production.
+
+    Does not affect oracle watchdog throttling.
+    """
+    if not (os.getenv("SLACK_ALERTS_WEBHOOK_URL") or "").strip():
+        raise HTTPException(
+            503,
+            "SLACK_ALERTS_WEBHOOK_URL is not configured",
+        )
+    env_tag = ENVIRONMENT or "unknown"
+    slack_post(
+        f"✅ [{env_tag}] Arena Engine: Slack test alert — admin endpoint OK"
+    )
+    return {"ok": True, "sent": True}
 
 
 class DeclareWinnerRequest(BaseModel):
