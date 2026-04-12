@@ -2716,7 +2716,11 @@ export async function apiAdminTestSlack(token: string): Promise<
     });
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
-    return { ok: true, sent: raw.sent === true };
+    // Engine returns { ok: true, sent: true }; narrow for callers without widening to boolean.
+    if (raw.sent === true) {
+      return { ok: true, sent: true };
+    }
+    return { ok: false, status: res.status, detail: "Invalid response" };
   } catch {
     return { ok: false, status: 0, detail: "Network error" };
   }
