@@ -343,6 +343,7 @@ const Admin = () => {
   const [platform, setPlatform] = useState<PlatformSettings>({
     feePercent:            5,
     platformBettingMax:    PLATFORM_BETTING_MAX,
+    platformCryptoBettingMax: PLATFORM_BETTING_MAX,
     maintenanceMode:       false,
     registrationOpen:      true,
     autoDisputeEscalation: true,
@@ -471,6 +472,7 @@ const Admin = () => {
           ...p,
           feePercent:            parseFloat(r.fee_pct)   || 5,
           platformBettingMax:    parseInt(r.daily_bet_max_at) || 500,
+          platformCryptoBettingMax: parseFloat(r.daily_bet_max_usdt) || 500,
           maintenanceMode:       r.maintenance_mode       === "true",
           registrationOpen:      r.new_registrations      === "true",
           autoDisputeEscalation: r.auto_escalate_disputes === "true",
@@ -596,6 +598,7 @@ const Admin = () => {
     const r = await apiUpdatePlatformConfig(token, {
       fee_pct:                String(platform.feePercent),
       daily_bet_max_at:       String(platform.platformBettingMax),
+      daily_bet_max_usdt:     String(platform.platformCryptoBettingMax),
       maintenance_mode:       String(platform.maintenanceMode),
       new_registrations:      String(platform.registrationOpen),
       auto_escalate_disputes: String(platform.autoDisputeEscalation),
@@ -1380,6 +1383,17 @@ const Admin = () => {
                       <Slider min={50} max={2000} step={50} value={[platform.platformBettingMax]}
                         onValueChange={([v]) => setPlatform((p) => ({ ...p, platformBettingMax: v }))} className="flex-1" />
                       <span className="text-xs font-mono text-arena-gold w-14 text-right">{platform.platformBettingMax} AT</span>
+                    </div>
+                  ),
+                },
+                {
+                  label: "Daily Betting Max (USDT)",
+                  desc: `Crypto escrow — ${platform.platformCryptoBettingMax} USDT / 24h per user (completed CRYPTO matches only)`,
+                  control: (
+                    <div className="flex items-center gap-3 w-48">
+                      <Slider min={10} max={5000} step={10} value={[platform.platformCryptoBettingMax]}
+                        onValueChange={([v]) => setPlatform((p) => ({ ...p, platformCryptoBettingMax: v }))} className="flex-1" />
+                      <span className="text-xs font-mono text-arena-cyan w-16 text-right">{platform.platformCryptoBettingMax} USDT</span>
                     </div>
                   ),
                 },

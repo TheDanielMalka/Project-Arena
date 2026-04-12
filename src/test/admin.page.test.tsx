@@ -53,6 +53,7 @@ vi.mock("@/lib/engine-api", async (importOriginal) => {
       ok: true,
       fee_pct: "5",
       daily_bet_max_at: "500",
+      daily_bet_max_usdt: "500",
       maintenance_mode: "false",
       new_registrations: "true",
       auto_escalate_disputes: "false",
@@ -348,7 +349,8 @@ describe("Admin Panel — platform settings tab", () => {
   it("shows daily betting max control", () => {
     renderAdmin();
     fireEvent.click(screen.getByRole("button", { name: /platform/i }));
-    expect(screen.getByText(/daily betting max/i)).toBeInTheDocument();
+    expect(screen.getByText(/daily betting max \(at\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/daily betting max \(usdt\)/i)).toBeInTheDocument();
   });
 
   it("shows maintenance mode toggle", () => {

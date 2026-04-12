@@ -381,6 +381,8 @@ const MatchLobby = () => {
   const [inviteRateLimitedIds, setInviteRateLimitedIds] = useState<Set<string>>(new Set());
   const [dailyAtStaked,        setDailyAtStaked]        = useState<number | null>(null);
   const [dailyAtLimit,         setDailyAtLimit]         = useState<number | null>(null);
+  const [dailyUsdtStaked,      setDailyUsdtStaked]      = useState<number | null>(null);
+  const [dailyUsdtLimit,     setDailyUsdtLimit]     = useState<number | null>(null);
 
   // Fetch daily AT usage from /auth/me when create form opens with AT selected
   useEffect(() => {
@@ -393,6 +395,20 @@ const MatchLobby = () => {
       if (!me) return;
       setDailyAtStaked(me.daily_staked_at ?? 0);
       setDailyAtLimit(me.daily_limit_at ?? 50000);
+    });
+  }, [createMode, createStakeCurrency, token]);
+
+  // Daily USDT (CRYPTO) usage — same /auth/me fields as engine daily cap
+  useEffect(() => {
+    if (!createMode || createStakeCurrency !== "CRYPTO" || !token) {
+      setDailyUsdtStaked(null);
+      setDailyUsdtLimit(null);
+      return;
+    }
+    void apiGetMe(token).then((me) => {
+      if (!me) return;
+      setDailyUsdtStaked(me.daily_staked_usdt ?? 0);
+      setDailyUsdtLimit(me.daily_limit_usdt ?? 500);
     });
   }, [createMode, createStakeCurrency, token]);
 
@@ -1755,6 +1771,19 @@ const MatchLobby = () => {
                       </span>
                     </div>
                   )}
+                  {createStakeCurrency === "CRYPTO" && dailyUsdtStaked !== null && dailyUsdtLimit !== null && (
+                    <div
+                      className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 px-3 py-1.5 rounded-lg bg-arena-gold/10 border border-arena-gold/25 text-xs mb-3"
+                      title="Only completed CRYPTO matches count toward your daily USDT limit"
+                    >
+                      <TrendingUp className="h-3 w-3 text-arena-gold shrink-0" />
+                      <span className="text-muted-foreground">Daily USDT remaining:</span>
+                      <span className="font-semibold text-arena-gold">
+                        ${Math.max(0, dailyUsdtLimit - dailyUsdtStaked).toFixed(2)} USDT
+                      </span>
+                      <span className="text-muted-foreground">(completed escrow matches only)</span>
+                    </div>
+                  )}
                   <label className="text-xs text-muted-foreground mb-2 block uppercase tracking-wider">Bet amount</label>
                   <div className="flex gap-2 flex-wrap">
                     {(createStakeCurrency === "AT" ? AT_BET_AMOUNTS : CREATE_BET_AMOUNTS).map((a) => (
@@ -1812,6 +1841,19 @@ const MatchLobby = () => {
 
                         if (useServerApi) {
                           if (createStakeCurrency === "CRYPTO") {
+                            if (
+                              dailyUsdtStaked !== null &&
+                              dailyUsdtLimit !== null &&
+                              newMatchBet != null &&
+                              dailyUsdtStaked + newMatchBet > dailyUsdtLimit + 1e-9
+                            ) {
+                              useNotificationStore.getState().addNotification({
+                                type: "system",
+                                title: "Daily USDT limit",
+                                message: `You can stake up to ${Math.max(0, dailyUsdtLimit - dailyUsdtStaked).toFixed(2)} more USDT today (completed matches in the last 24h).`,
+                              });
+                              return;
+                            }
                             try {
                               await createMatchOnChain(teamSize, newMatchBet);
                             } catch (e: unknown) {
@@ -1834,10 +1876,14 @@ const MatchLobby = () => {
                           });
                           if (apiRes.ok === false) {
                             if (apiRes.status === 429) {
+                              const msg =
+                                apiRes.detail && !/^too many requests/i.test(apiRes.detail.trim())
+                                  ? apiRes.detail
+                                  : "Too many requests — please wait a moment and try again";
                               useNotificationStore.getState().addNotification({
                                 type: "system",
-                                title: "Too many requests",
-                                message: "Too many requests — please wait a moment and try again",
+                                title: /USDT|staking limit|Daily/i.test(msg) ? "Limit reached" : "Too many requests",
+                                message: msg,
                               });
                               setCreateRateLimited(true);
                               setTimeout(() => setCreateRateLimited(false), 3000);
