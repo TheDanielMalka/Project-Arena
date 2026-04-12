@@ -4,12 +4,57 @@ Loads environment variables with validation.
 """
 
 import os
+from urllib.parse import quote_plus
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def build_postgresql_url(
+    user: str,
+    password: str,
+    host: str,
+    port: str,
+    database: str,
+) -> str:
+    """Assemble a SQLAlchemy Postgres URL; user/password are percent-encoded."""
+    return (
+        f"postgresql://{quote_plus(user)}:{quote_plus(password)}"
+        f"@{host}:{port}/{database}"
+    )
+
+
+def _database_url_from_components() -> str | None:
+    """Build a SQLAlchemy URL from POSTGRES_* / DB_PASSWORD (password URL-encoded)."""
+    pwd = (os.getenv("POSTGRES_PASSWORD") or os.getenv("DB_PASSWORD") or "").strip()
+    if not pwd:
+        return None
+    user = (os.getenv("POSTGRES_USER") or "arena_admin").strip()
+    host = (os.getenv("POSTGRES_HOST") or "localhost").strip()
+    port = (os.getenv("POSTGRES_PORT") or "5432").strip()
+    db = (os.getenv("POSTGRES_DB") or "arena").strip()
+    return build_postgresql_url(user, pwd, host, port, db)
+
+
+def _resolve_database_url() -> str:
+    """
+    Prefer explicit DATABASE_URL when set (non-empty). Otherwise build from
+    POSTGRES_PASSWORD or DB_PASSWORD so characters like / @ : # do not break the URL.
+    """
+    raw = (os.getenv("DATABASE_URL") or "").strip()
+    if raw:
+        return raw
+    built = _database_url_from_components()
+    if built:
+        return built
+    return "postgresql://arena_admin:arena_secret_change_me@arena-db:5432/arena"
+
+
 # ── Database ──────────────────────────────────────────────────
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://arena_admin:arena_secret_change_me@arena-db:5432/arena")
+DATABASE_URL = _resolve_database_url()
+# Keep getenv() and SQLAlchemy helpers aligned after building from components.
+os.environ["DATABASE_URL"] = DATABASE_URL
 
 # ── Crypto / Wallet ──────────────────────────────────────────
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")
