@@ -27,7 +27,7 @@ import httpx
 import mss
 import mss.tools
 import pystray
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from pystray import MenuItem, Menu
 
 CLIENT_VERSION = "1.0.0"
@@ -55,6 +55,12 @@ BRAND = {
     "error":       "#EF4444",
     "warning":     "#E9A80A",   # arena-gold
     "rank_gold":   "#E9A80A",
+    # AAA HUD extensions
+    "hud_panel":   "#0F1115",
+    "hud_panel_2": "#0B0D10",
+    "hud_border":  "#2A2F3A",
+    "hud_glow":    "#22D3EE",
+    "hud_glow_2":  "#A78BFA",
     # PIL tuples for icon drawing
     "accent_pil":  (228, 37, 53, 255),    # #E42535
     "idle_pil":    (80, 80, 80, 255),
@@ -883,7 +889,7 @@ def _draw_arena_icon(size: int = 64, state: str = "idle",
     colors = {
         "active": BRAND["accent_pil"],
         "match":  BRAND["match_pil"],
-        "error":  (180, 30, 40, 200),
+        "error":  (239, 68, 68, 220),
         "idle":   BRAND["idle_pil"],
     }
     glyph_color = colors.get(state, colors["idle"])
@@ -896,17 +902,23 @@ def _draw_arena_icon(size: int = 64, state: str = "idle",
     s = draw_size
     cx = s // 2
 
-    # Dark pill background — just behind the glyph area, not full square
+    # AAA icon base: matte panel + neon ring glow
     pad_bg = int(s * 0.08)
-    draw.ellipse([pad_bg, pad_bg, s - pad_bg, s - pad_bg],
-                 fill=(15, 15, 15, 230))
+    ring_box = [pad_bg, pad_bg, s - pad_bg, s - pad_bg]
+    draw.ellipse(ring_box, fill=(12, 12, 12, 235))
 
-    # Thin ring
-    lw_ring = max(2, s // 40)
-    draw.ellipse([pad_bg, pad_bg, s - pad_bg, s - pad_bg],
-                 outline=glyph_color, width=lw_ring)
+    lw_ring = max(2, s // 44)
 
-    # 'A' glyph — thick, bold, centred
+    glow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    gdraw = ImageDraw.Draw(glow)
+    gdraw.ellipse(ring_box, outline=(34, 211, 238, 110), width=lw_ring * 3)
+    gdraw.ellipse(ring_box, outline=(167, 139, 250, 80), width=lw_ring * 2)
+    glow = glow.filter(ImageFilter.GaussianBlur(radius=max(2, s // 120)))
+    img.alpha_composite(glow)
+
+    draw.ellipse(ring_box, outline=glyph_color, width=lw_ring)
+
+    # 'A' glyph — thick, bold, centred with subtle shadow
     lw  = max(8, s // 12)
     pad = int(s * 0.18)
 
@@ -917,6 +929,16 @@ def _draw_arena_icon(size: int = 64, state: str = "idle",
     ins  = int(s * 0.28)
     cb_l = (ins,     cb_y)
     cb_r = (s - ins, cb_y)
+
+    sh = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    shd = ImageDraw.Draw(sh)
+    shadow = (0, 0, 0, 160)
+    off = max(2, s // 120)
+    shd.line([(top[0] + off, top[1] + off), (bl[0] + off, bl[1] + off)], fill=shadow, width=lw)
+    shd.line([(top[0] + off, top[1] + off), (br[0] + off, br[1] + off)], fill=shadow, width=lw)
+    shd.line([(cb_l[0] + off, cb_l[1] + off), (cb_r[0] + off, cb_r[1] + off)], fill=shadow, width=max(6, s // 16))
+    sh = sh.filter(ImageFilter.GaussianBlur(radius=max(1, s // 200)))
+    img.alpha_composite(sh)
 
     draw.line([top, bl],    fill=glyph_color, width=lw)
     draw.line([top, br],    fill=glyph_color, width=lw)
@@ -950,17 +972,17 @@ def _draw_arena_icon(size: int = 64, state: str = "idle",
 def generate_ico_file(path: str):
     """
     Save a Windows-compatible ICO for the window titlebar/taskbar.
-    PIL's ICO writer only stores one size reliably; we save 32×32 which
-    Windows scales for titlebar use. The tray icon uses PIL RGBA directly.
+    We save a multi-size ICO so Explorer/Taskbar can pick the best size.
     """
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    # Draw at 256, composite onto dark bg, save as 32x32 ICO
-    # (PIL multi-size ICO is unreliable; single 32px ICO works on all Windows)
-    rgba = _draw_arena_icon(256, state="active")
-    bg   = Image.new("RGBA", (256, 256), (15, 15, 15, 255))
-    bg.paste(rgba, mask=rgba.split()[3])
-    icon = bg.resize((32, 32), Image.LANCZOS).convert("RGBA")
-    icon.save(path, format="ICO")
+    sizes = (16, 24, 32, 48, 64, 128, 256)
+    imgs: list[Image.Image] = []
+    for s in sizes:
+        rgba = _draw_arena_icon(s, state="active")
+        bg = Image.new("RGBA", (s, s), (12, 12, 12, 255))
+        bg.paste(rgba, mask=rgba.split()[3])
+        imgs.append(bg.convert("RGBA"))
+    imgs[0].save(path, format="ICO", sizes=[(s, s) for s in sizes], append_images=imgs[1:])
     logger.info(f"ICO saved: {path} ({os.path.getsize(path)} bytes)")
 
 
@@ -1043,8 +1065,10 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     win = ctk.CTk()
     win.title("Arena Client")
-    win.geometry("400x600")
-    win.resizable(False, False)
+    # AAA HUD layout needs real space (wide, slightly taller)
+    win.geometry("1400x690")
+    win.minsize(1200, 660)
+    win.resizable(True, True)
     win.configure(fg_color=BRAND["bg"])
 
     if ico_path and os.path.exists(ico_path):
@@ -1052,6 +1076,78 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         except Exception: pass
 
     _window_instance = win
+
+    # ── AAA HUD backdrop (scanlines + subtle gradients) ───────────────────────
+    # Pure visuals; safe to redraw on resize.
+    try:
+        import tkinter as tk  # stdlib
+    except Exception:
+        tk = None  # type: ignore
+
+    if tk is not None:
+        bg = tk.Canvas(win, highlightthickness=0, bd=0, relief="flat")
+        bg.place(x=0, y=0, relwidth=1, relheight=1)
+
+        _bg_redraw_job: list[str | None] = [None]
+
+        def _hex_to_rgb(h: str) -> tuple[int, int, int]:
+            h = h.lstrip("#")
+            return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+        def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
+            return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+
+        def _lerp(a: int, b: int, t: float) -> int:
+            return int(a + (b - a) * t)
+
+        def _draw_backdrop() -> None:
+            w = max(1, int(win.winfo_width()))
+            h = max(1, int(win.winfo_height()))
+            bg.delete("all")
+
+            c0 = _hex_to_rgb(BRAND["bg"])
+            c1 = _hex_to_rgb(BRAND["hud_panel"])
+
+            # Vertical gradient base
+            steps = min(220, h)
+            for i in range(steps):
+                t = i / max(1, steps - 1)
+                col = (
+                    _lerp(c0[0], c1[0], t),
+                    _lerp(c0[1], c1[1], t),
+                    _lerp(c0[2], c1[2], t),
+                )
+                y0 = int(i * h / steps)
+                y1 = int((i + 1) * h / steps)
+                bg.create_rectangle(0, y0, w, y1, outline="", fill=_rgb_to_hex(col))
+
+            # Corner glows (cyan + violet) as translucent ovals
+            bg.create_oval(-w * 0.35, -h * 0.55, w * 0.55, h * 0.35, outline="", fill="#0b2a33", stipple="gray25")
+            bg.create_oval(w * 0.45, -h * 0.45, w * 1.35, h * 0.40, outline="", fill="#241136", stipple="gray25")
+
+            # Scanlines
+            for y in range(0, h, 4):
+                bg.create_line(0, y, w, y, fill="#000000", width=1)
+
+            # Soft top divider
+            bg.create_rectangle(0, 0, w, 2, outline="", fill=BRAND["hud_border"])
+
+        def _schedule_backdrop_redraw() -> None:
+            job = _bg_redraw_job[0]
+            if job:
+                try:
+                    win.after_cancel(job)
+                except Exception:
+                    pass
+            _bg_redraw_job[0] = win.after(60, _draw_backdrop)
+
+        win.bind("<Configure>", lambda _e: _schedule_backdrop_redraw(), add="+")
+        win.after(0, _draw_backdrop)
+        # tkinter.Canvas.lower() is for canvas items (needs args). Lower the widget itself.
+        try:
+            bg.tk.call("lower", bg._w)
+        except Exception:
+            pass
 
     def _on_close():
         win.withdraw()
@@ -1070,12 +1166,33 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     # ── Widget helpers ────────────────────────────────────────────────────────
     def _card(parent, title: str) -> ctk.CTkFrame:
-        outer = ctk.CTkFrame(parent, fg_color=BRAND["bg_card"], corner_radius=8,
-                              border_width=1, border_color=BRAND["border"])
-        outer.pack(fill="x", padx=14, pady=(8, 0))
-        ctk.CTkLabel(outer, text=title.upper(),
-                     font=ctk.CTkFont(size=9, weight="bold"),
-                     text_color=BRAND["text_muted"]).pack(anchor="w", padx=14, pady=(10, 2))
+        """
+        AAA HUD card: matte panel + neon edge + header pip.
+        (Pure styling helper: no logic.)
+        """
+        outer = ctk.CTkFrame(
+            parent,
+            fg_color=BRAND["hud_panel"],
+            corner_radius=12,
+            border_width=1,
+            border_color=BRAND["hud_border"],
+        )
+        outer.pack(fill="x", padx=14, pady=(10, 0))
+
+        header = ctk.CTkFrame(outer, fg_color=BRAND["hud_panel_2"], corner_radius=10)
+        header.pack(fill="x", padx=10, pady=(10, 6))
+
+        pip = ctk.CTkFrame(header, width=8, height=8, fg_color=BRAND["hud_glow"], corner_radius=99)
+        pip.pack(side="left", padx=(10, 8), pady=10)
+
+        ctk.CTkLabel(
+            header,
+            text=title.upper(),
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=BRAND["text"],
+        ).pack(side="left", pady=8)
+
+        ctk.CTkFrame(outer, height=1, fg_color=BRAND["hud_border"]).pack(fill="x", padx=10, pady=(0, 6))
         return outer
 
     def _hdivider(parent):
@@ -1087,8 +1204,8 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                              text_color=BRAND["text_muted"])
 
     # ── Header ────────────────────────────────────────────────────────────────
-    header = ctk.CTkFrame(win, fg_color=BRAND["bg_card"], corner_radius=0,
-                           height=52, border_width=0)
+    header = ctk.CTkFrame(win, fg_color=BRAND["hud_panel"], corner_radius=0,
+                           height=66, border_width=0)
     header.pack(fill="x")
     header.pack_propagate(False)
 
@@ -1096,24 +1213,38 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     ctk.CTkFrame(header, width=3, fg_color=BRAND["accent"], corner_radius=0).pack(
         side="left", fill="y")
 
-    ctk.CTkLabel(header, text="ARENA",
-                 font=ctk.CTkFont(size=18, weight="bold"),
-                 text_color=BRAND["accent"]).pack(side="left", padx=14, pady=14)
+    wordmark = ctk.CTkFrame(header, fg_color="transparent")
+    wordmark.pack(side="left", padx=14, pady=10)
+    ctk.CTkLabel(wordmark, text="ARENA",
+                 font=ctk.CTkFont(size=22, weight="bold"),
+                 text_color=BRAND["accent"]).pack(anchor="w")
+    ctk.CTkLabel(wordmark, text="CLIENT HUD",
+                 font=ctk.CTkFont(size=10, weight="bold"),
+                 text_color=BRAND["text_muted"]).pack(anchor="w", pady=(0, 0))
 
-    # Version + engine dot on right
+    # Status chips on right
     hdr_right = ctk.CTkFrame(header, fg_color="transparent")
-    hdr_right.pack(side="right", padx=12, pady=14)
+    hdr_right.pack(side="right", padx=12, pady=12)
 
-    hdr_eng_dot = ctk.CTkLabel(hdr_right, text="●", font=ctk.CTkFont(size=9),
-                                text_color=BRAND["text_muted"])
-    hdr_eng_dot.pack(side="right", padx=(4, 0))
-    hdr_eng_lbl = ctk.CTkLabel(hdr_right, text="Engine",
-                                font=ctk.CTkFont(size=11),
-                                text_color=BRAND["text_muted"])
-    hdr_eng_lbl.pack(side="right")
-    ctk.CTkLabel(hdr_right, text=f"v{CLIENT_VERSION}  ",
-                 font=ctk.CTkFont(size=11),
-                 text_color=BRAND["text_muted"]).pack(side="right")
+    def _chip(parent, text: str, dot_color: str | None = None) -> tuple[ctk.CTkFrame, ctk.CTkLabel | None]:
+        chip = ctk.CTkFrame(
+            parent,
+            fg_color=BRAND["hud_panel_2"],
+            corner_radius=999,
+            border_width=1,
+            border_color=BRAND["hud_border"],
+        )
+        chip.pack(side="right", padx=(8, 0))
+        dot = None
+        if dot_color:
+            dot = ctk.CTkLabel(chip, text="●", font=ctk.CTkFont(size=10), text_color=dot_color)
+            dot.pack(side="left", padx=(10, 4), pady=6)
+        lbl = ctk.CTkLabel(chip, text=text, font=ctk.CTkFont(size=11, weight="bold"), text_color=BRAND["text"])
+        lbl.pack(side="left", padx=(0 if dot_color else 12, 12), pady=6)
+        return chip, dot
+
+    _chip(hdr_right, f"v{CLIENT_VERSION}")
+    _eng_chip, hdr_eng_dot = _chip(hdr_right, "ENGINE", dot_color=BRAND["text_muted"])
 
     # ── Tab view ──────────────────────────────────────────────────────────────
     tabview = ctk.CTkTabview(
@@ -1136,11 +1267,21 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     tab_ev = tabview.tab("Events")
 
     # ── OVERVIEW TAB ──────────────────────────────────────────────────────────
-    ov = ctk.CTkScrollableFrame(tab_ov, fg_color=BRAND["bg"], corner_radius=0)
-    ov.pack(fill="both", expand=True)
+    # Two-column AAA HUD layout (left: identity/match, right: game/monitor)
+    ov_root = ctk.CTkFrame(tab_ov, fg_color=BRAND["bg"], corner_radius=0)
+    ov_root.pack(fill="both", expand=True)
+    ov_root.grid_columnconfigure(0, weight=1, uniform="ov")
+    ov_root.grid_columnconfigure(1, weight=1, uniform="ov")
+    ov_root.grid_rowconfigure(0, weight=1)
+
+    ov_left = ctk.CTkScrollableFrame(ov_root, fg_color=BRAND["bg"], corner_radius=0)
+    ov_left.grid(row=0, column=0, sticky="nsew", padx=(0, 6), pady=0)
+
+    ov_right = ctk.CTkScrollableFrame(ov_root, fg_color=BRAND["bg"], corner_radius=0)
+    ov_right.grid(row=0, column=1, sticky="nsew", padx=(6, 0), pady=0)
 
     # Engine card
-    eng_card = _card(ov, "Engine")
+    eng_card = _card(ov_left, "Engine")
     eng_row  = ctk.CTkFrame(eng_card, fg_color="transparent")
     eng_row.pack(fill="x", padx=14, pady=(0, 12))
     eng_dot  = _status_dot(eng_row)
@@ -1150,7 +1291,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     eng_lbl.pack(side="left", padx=(6, 0))
 
     # Identity card
-    id_card     = _card(ov, "Identity")
+    id_card     = _card(ov_left, "Identity")
     id_inner_ref: list = []
 
     def _rebuild_identity():
@@ -1172,33 +1313,41 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         DB-ready: /auth/login validates identifier against users.email.
                   Email is used because username is changeable in profile.
         """
-        ctk.CTkLabel(parent, text="Sign in to Arena",
-                     font=ctk.CTkFont(size=14, weight="bold"),
-                     text_color=BRAND["text"]).pack(anchor="w", pady=(0, 10))
+        ctk.CTkLabel(parent, text="Sign in",
+                     font=ctk.CTkFont(size=18, weight="bold"),
+                     text_color=BRAND["text"]).pack(anchor="w", pady=(4, 8))
+        ctk.CTkLabel(parent, text="Secure access · 2FA supported",
+                     font=ctk.CTkFont(size=12),
+                     text_color=BRAND["text_muted"]).pack(anchor="w", pady=(0, 14))
+
+        entry_h = 46
+        entry_r = 10
+        entry_border = BRAND["hud_border"]
+        entry_bg = BRAND["hud_panel_2"]
 
         id_entry = ctk.CTkEntry(
             parent, placeholder_text="Email",
-            height=36, corner_radius=6,
-            fg_color=BRAND["bg_hover"],
-            border_color=BRAND["border"],
+            height=entry_h, corner_radius=entry_r,
+            fg_color=entry_bg,
+            border_color=entry_border,
             border_width=1,
             text_color=BRAND["text"],
             placeholder_text_color=BRAND["text_muted"],
-            font=ctk.CTkFont(size=13),
+            font=ctk.CTkFont(size=14),
         )
-        id_entry.pack(fill="x", pady=(0, 6))
+        id_entry.pack(fill="x", pady=(0, 10))
 
         pw_entry = ctk.CTkEntry(
             parent, placeholder_text="Password", show="*",
-            height=36, corner_radius=6,
-            fg_color=BRAND["bg_hover"],
-            border_color=BRAND["border"],
+            height=entry_h, corner_radius=entry_r,
+            fg_color=entry_bg,
+            border_color=entry_border,
             border_width=1,
             text_color=BRAND["text"],
             placeholder_text_color=BRAND["text_muted"],
-            font=ctk.CTkFont(size=13),
+            font=ctk.CTkFont(size=14),
         )
-        pw_entry.pack(fill="x", pady=(0, 8))
+        pw_entry.pack(fill="x", pady=(0, 12))
 
         err_lbl = ctk.CTkLabel(parent, text="",
                                 font=ctk.CTkFont(size=11),
@@ -1209,7 +1358,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             """POST /auth/2fa/confirm after login returned requires_2fa + temp_token."""
             modal = ctk.CTkToplevel(win)
             modal.title("Two-factor authentication")
-            modal.geometry("340x220")
+            modal.geometry("420x260")
             modal.resizable(False, False)
             modal.configure(fg_color=BRAND["bg"])
             modal.transient(win)
@@ -1217,33 +1366,38 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
             ctk.CTkLabel(
                 modal, text="Enter your 2FA code",
-                font=ctk.CTkFont(size=14, weight="bold"),
+                font=ctk.CTkFont(size=18, weight="bold"),
                 text_color=BRAND["text"],
-            ).pack(pady=(18, 8))
+            ).pack(pady=(18, 6))
+            ctk.CTkLabel(
+                modal, text="Check your authenticator app",
+                font=ctk.CTkFont(size=12),
+                text_color=BRAND["text_muted"],
+            ).pack(pady=(0, 14))
 
             code_entry = ctk.CTkEntry(
                 modal, placeholder_text="6-digit code",
-                height=36, corner_radius=6,
-                fg_color=BRAND["bg_hover"],
-                border_color=BRAND["border"],
+                height=48, corner_radius=10,
+                fg_color=BRAND["hud_panel_2"],
+                border_color=BRAND["hud_border"],
                 border_width=1,
                 text_color=BRAND["text"],
                 placeholder_text_color=BRAND["text_muted"],
-                font=ctk.CTkFont(size=15),
+                font=ctk.CTkFont(size=18, weight="bold"),
             )
-            code_entry.pack(fill="x", padx=20, pady=4)
+            code_entry.pack(fill="x", padx=22, pady=(0, 8))
 
             err_m = ctk.CTkLabel(
                 modal, text="",
                 font=ctk.CTkFont(size=11),
                 text_color=BRAND["error"],
             )
-            err_m.pack(anchor="w", padx=20, pady=(0, 4))
+            err_m.pack(anchor="w", padx=22, pady=(0, 8))
 
             verify_btn = ctk.CTkButton(
-                modal, text="Verify", height=36, corner_radius=6,
+                modal, text="VERIFY", height=44, corner_radius=12,
                 fg_color=BRAND["accent"], hover_color=BRAND["accent_dark"],
-                text_color="#FFFFFF", font=ctk.CTkFont(size=13, weight="bold"),
+                text_color="#FFFFFF", font=ctk.CTkFont(size=14, weight="bold"),
             )
 
             def _submit_2fa():
@@ -1316,12 +1470,12 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             threading.Thread(target=_thread, daemon=True).start()
 
         login_btn = ctk.CTkButton(
-            parent, text="Sign In", height=36, corner_radius=6,
+            parent, text="SIGN IN", height=46, corner_radius=12,
             fg_color=BRAND["accent"], hover_color=BRAND["accent_dark"],
-            text_color="#FFFFFF", font=ctk.CTkFont(size=13, weight="bold"),
+            text_color="#FFFFFF", font=ctk.CTkFont(size=14, weight="bold"),
             command=_do_login,
         )
-        login_btn.pack(fill="x", pady=(0, 10))
+        login_btn.pack(fill="x", pady=(0, 14))
         pw_entry.bind("<Return>", lambda e: _do_login())
         id_entry.bind("<Return>",  lambda e: pw_entry.focus())
 
@@ -1338,10 +1492,10 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
         # TODO[GOOGLE]: wire Google sign-in to POST /auth/google when Client ID is set
         ctk.CTkButton(
-            parent, text="Open Arena Website", height=32, corner_radius=6,
-            fg_color=BRAND["bg_hover"], hover_color=BRAND["border"],
-            border_width=1, border_color=BRAND["border"],
-            text_color=BRAND["text_muted"], font=ctk.CTkFont(size=12),
+            parent, text="OPEN WEBSITE", height=40, corner_radius=12,
+            fg_color=BRAND["hud_panel_2"], hover_color=BRAND["hud_border"],
+            border_width=1, border_color=BRAND["hud_border"],
+            text_color=BRAND["text_muted"], font=ctk.CTkFont(size=13, weight="bold"),
             command=_open_website,
         ).pack(fill="x")
 
@@ -1472,7 +1626,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     monitor.engine.set_on_unauthorized(lambda: win.after(0, _handle_session_expired))
 
     # Game status card
-    game_card  = _card(ov, "Game Status")
+    game_card  = _card(ov_right, "Game Status")
     game_row   = ctk.CTkFrame(game_card, fg_color="transparent")
     game_row.pack(fill="x", padx=14, pady=(0, 4))
     game_dot   = _status_dot(game_row)
@@ -1486,15 +1640,10 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     # ── Match Lobby Card — hidden until monitor.current_match_id is set ───────
     # Always exists in layout (between game_card and mon_card); shown/hidden via pack.
-    lobby_container = ctk.CTkFrame(ov, fg_color="transparent")
+    lobby_container = ctk.CTkFrame(ov_left, fg_color="transparent")
     lobby_container.pack(fill="x")
 
-    lobby_outer = ctk.CTkFrame(lobby_container, fg_color=BRAND["bg_card"],
-                                corner_radius=8, border_width=1,
-                                border_color=BRAND["border"])
-    ctk.CTkLabel(lobby_outer, text="MATCH LOBBY",
-                 font=ctk.CTkFont(size=9, weight="bold"),
-                 text_color=BRAND["text_muted"]).pack(anchor="w", padx=14, pady=(10, 2))
+    lobby_outer = _card(lobby_container, "Match Lobby")
 
     lobby_body_ref: list = []
     _lobby_result_cache: list[dict | None] = [None]
@@ -1647,7 +1796,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             lobby_body_ref.append(wait_lbl)
 
     # Monitoring toggle card
-    mon_card = _card(ov, "Monitoring")
+    mon_card = _card(ov_right, "Monitoring")
     mon_row  = ctk.CTkFrame(mon_card, fg_color="transparent")
     mon_row.pack(fill="x", padx=14, pady=(0, 6))
 
@@ -1698,7 +1847,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     thumb_img_lbl.pack(side="left")
     _last_shown_fp: list[str | None] = [None]
 
-    ctk.CTkLabel(ov, text="", height=10).pack()
+    ctk.CTkLabel(ov_left, text="", height=10).pack()
 
     # ── EVENTS TAB ────────────────────────────────────────────────────────────
     ev = ctk.CTkScrollableFrame(tab_ev, fg_color=BRAND["bg"], corner_radius=0)
@@ -1822,12 +1971,10 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 eng_lbl.configure(text=f"Connected  ·  DB: {db}", text_color=BRAND["text"])
                 eng_dot.configure(text_color="#22C55E")
                 hdr_eng_dot.configure(text_color="#22C55E")
-                hdr_eng_lbl.configure(text_color="#22C55E")
             else:
                 eng_lbl.configure(text="Engine offline", text_color=BRAND["text_muted"])
                 eng_dot.configure(text_color=BRAND["error"])
                 hdr_eng_dot.configure(text_color=BRAND["error"])
-                hdr_eng_lbl.configure(text_color=BRAND["text_muted"])
         win.after(0, _apply)
 
     def _poll_engine():
