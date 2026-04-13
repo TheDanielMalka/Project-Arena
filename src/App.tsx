@@ -28,6 +28,8 @@ import Players from "./pages/Players";
 import PlayerProfile from "./pages/PlayerProfile";
 import Hub from "./pages/Hub";
 import Forge from "./pages/Forge";
+import WhyArena from "./pages/WhyArena";
+import HowToPlay from "./pages/HowToPlay";
 
 const queryClient = new QueryClient();
 
@@ -83,6 +85,8 @@ const AppShell = () => (
         <SessionGate>
           <Routes>
             <Route path="/" element={<Index />} />
+            <Route path="/why-arena" element={<WhyArena />} />
+            <Route path="/how-to-play" element={<HowToPlay />} />
             <Route path="/auth" element={<Auth />} />
             <Route path="/dashboard" element={<AppLayout><Dashboard /></AppLayout>} />
             <Route path="/lobby" element={<AppLayout><MatchLobby /></AppLayout>} />
