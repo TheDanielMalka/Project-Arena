@@ -35,7 +35,8 @@ const ArenaClientPage = () => {
 
   return (
     <ArenaPageShell variant="arena-client" contentClassName="space-y-8 max-w-3xl">
-      <div>
+      {/* Inset clears arena-hud-page-shell top-left clip-path so the small “Arena” label isn’t clipped */}
+      <div className="pl-3.5 pt-2 sm:pl-4">
         <p className="text-[10px] text-muted-foreground uppercase tracking-[0.2em] mb-1">Arena</p>
         <h1 className="font-display text-3xl font-bold tracking-wide">Arena Client</h1>
         <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
