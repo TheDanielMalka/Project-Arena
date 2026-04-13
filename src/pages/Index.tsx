@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
   Swords, Wallet, Trophy, Zap, Download, Monitor,
@@ -8,6 +8,9 @@ import {
 import { LANDING_GAMES } from "@/lib/arenaGamesCatalog";
 import { cn } from "@/lib/utils";
 import { LandingArenaWordmark } from "@/components/visual/LandingArenaWordmark";
+import { LandingPublicNav } from "@/components/landing/LandingPublicNav";
+import { LandingGuestFooter } from "@/components/landing/LandingGuestFooter";
+import { useUserStore } from "@/stores/userStore";
 
 /**
  * Hero video: `/landing/hero.mp4` first (bundled stock that evokes tactical FPS — not real CS/VAL),
@@ -468,8 +471,18 @@ function BentoFeatureCard({
 
 const Index = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const isAuthed = useUserStore((s) => s.isAuthenticated);
 
   const [v, e, m, o, r, a] = BENTO_INDICES.map((i) => FEATURES[i]);
+
+  useEffect(() => {
+    if (location.hash !== "#download") return;
+    const id = window.setTimeout(() => {
+      document.getElementById("download")?.scrollIntoView({ behavior: "smooth" });
+    }, 100);
+    return () => window.clearTimeout(id);
+  }, [location.pathname, location.hash]);
 
   return (
     <div className="min-h-screen flex flex-col bg-[hsl(220_24%_3%)] text-foreground overflow-x-hidden relative">
@@ -477,30 +490,7 @@ const Index = () => {
         className="pointer-events-none fixed inset-0 z-[5] opacity-[0.045] motion-reduce:opacity-[0.015] mix-blend-multiply [background:repeating-linear-gradient(0deg,transparent,transparent_2px,hsl(0_0%_0%/0.42)_2px,hsl(0_0%_0%/0.42)_3px)]"
         aria-hidden
       />
-      {/* NAV — HUD bar */}
-      <nav className="fixed top-0 left-0 right-0 z-50 border-b border-arena-cyan/15 bg-[hsl(220_22%_4%/0.85)] backdrop-blur-xl">
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-primary/35 to-transparent" />
-        <div className="max-w-7xl mx-auto px-5 sm:px-8 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="relative flex h-8 w-8 items-center justify-center rounded border border-primary/35 bg-primary/10">
-              <Swords className="h-4 w-4 text-primary" />
-            </div>
-            <span className="font-display text-base font-bold text-primary tracking-[0.25em]">ARENA</span>
-          </div>
-          <div className="flex items-center gap-2 sm:gap-3">
-            <button
-              type="button"
-              onClick={() => navigate("/auth")}
-              className="px-2 text-xs sm:text-sm text-muted-foreground hover:text-foreground transition-colors font-display tracking-wide"
-            >
-              Login
-            </button>
-            <Button type="button" size="sm" onClick={() => navigate("/auth")} className="glow-green font-display tracking-wider text-[10px] sm:text-xs px-3 sm:px-4">
-              <Swords className="mr-1.5 h-3 w-3 sm:h-3.5 sm:w-3.5" /> Enter Arena
-            </Button>
-          </div>
-        </div>
-      </nav>
+      <LandingPublicNav active="home" showMarketingLinks={!isAuthed} />
 
       {/* HERO — split layout, not centered stack */}
       <section className="relative min-h-[min(100svh,920px)] flex flex-col justify-center pt-16 pb-16 overflow-hidden">
@@ -762,64 +752,69 @@ const Index = () => {
         </div>
       </section>
 
-      {/* SITEMAP — staggered columns */}
-      <div className="border-t border-white/[0.06] bg-[hsl(220_22%_4%/0.6)] py-12 px-5 sm:px-8">
-        <div className="mx-auto grid max-w-6xl grid-cols-2 gap-10 md:grid-cols-4 md:gap-8">
-          <div className="col-span-2 flex flex-col gap-3 md:col-span-1">
-            <div className="flex items-center gap-2">
-              <Swords className="h-5 w-5 text-primary" />
-              <span className="font-display text-sm font-bold tracking-[0.2em] text-primary">ARENA</span>
+      {isAuthed ? (
+        <>
+          <div className="border-t border-white/[0.06] bg-[hsl(220_22%_4%/0.6)] py-12 px-5 sm:px-8">
+            <div className="mx-auto grid max-w-6xl grid-cols-2 gap-10 md:grid-cols-4 md:gap-8">
+              <div className="col-span-2 flex flex-col gap-3 md:col-span-1">
+                <div className="flex items-center gap-2">
+                  <Swords className="h-5 w-5 text-primary" />
+                  <span className="font-display text-sm font-bold tracking-[0.2em] text-primary">ARENA</span>
+                </div>
+                <p className="max-w-[220px] text-xs leading-relaxed text-muted-foreground/65">Compete. Earn. Rise. Skill-based wagering for competitive gamers.</p>
+              </div>
+              <div className="flex flex-col gap-3 md:mt-6">
+                <h4 className="text-[10px] font-bold uppercase tracking-[0.35em] text-muted-foreground/45">Platform</h4>
+                <nav className="flex flex-col gap-2">
+                  <Link to="/dashboard" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Dashboard</Link>
+                  <Link to="/lobby" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Match Lobby</Link>
+                  <Link to="/history" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Match History</Link>
+                  <Link to="/leaderboard" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Leaderboard</Link>
+                  <Link to="/hub" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Community Hub</Link>
+                </nav>
+              </div>
+              <div className="flex flex-col gap-3">
+                <h4 className="text-[10px] font-bold uppercase tracking-[0.35em] text-muted-foreground/45">Account</h4>
+                <nav className="flex flex-col gap-2">
+                  <Link to="/profile" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Profile</Link>
+                  <Link to="/wallet" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Wallet</Link>
+                  <Link to="/forge" className="flex items-center gap-1.5 text-sm font-medium text-amber-500/85 hover:text-amber-400 transition-colors">
+                    <Flame className="h-3.5 w-3.5" /> Forge
+                  </Link>
+                  <Link to="/settings" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Settings</Link>
+                </nav>
+              </div>
+              <div className="col-span-2 flex flex-col gap-3 md:col-span-1 md:mt-4">
+                <h4 className="text-[10px] font-bold uppercase tracking-[0.35em] text-muted-foreground/45">Legal</h4>
+                <nav className="flex flex-col gap-2">
+                  <Link to="/legal/terms" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Terms of Service</Link>
+                  <Link to="/legal/privacy" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Privacy Policy</Link>
+                  <Link to="/legal/responsible-gaming" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Responsible Gaming</Link>
+                </nav>
+              </div>
             </div>
-            <p className="max-w-[220px] text-xs leading-relaxed text-muted-foreground/65">Compete. Earn. Rise. Skill-based wagering for competitive gamers.</p>
           </div>
-          <div className="flex flex-col gap-3 md:mt-6">
-            <h4 className="text-[10px] font-bold uppercase tracking-[0.35em] text-muted-foreground/45">Platform</h4>
-            <nav className="flex flex-col gap-2">
-              <Link to="/dashboard" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Dashboard</Link>
-              <Link to="/lobby" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Match Lobby</Link>
-              <Link to="/history" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Match History</Link>
-              <Link to="/leaderboard" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Leaderboard</Link>
-              <Link to="/hub" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Community Hub</Link>
-            </nav>
-          </div>
-          <div className="flex flex-col gap-3">
-            <h4 className="text-[10px] font-bold uppercase tracking-[0.35em] text-muted-foreground/45">Account</h4>
-            <nav className="flex flex-col gap-2">
-              <Link to="/profile" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Profile</Link>
-              <Link to="/wallet" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Wallet</Link>
-              <Link to="/forge" className="flex items-center gap-1.5 text-sm font-medium text-amber-500/85 hover:text-amber-400 transition-colors">
-                <Flame className="h-3.5 w-3.5" /> Forge
-              </Link>
-              <Link to="/settings" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Settings</Link>
-            </nav>
-          </div>
-          <div className="col-span-2 flex flex-col gap-3 md:col-span-1 md:mt-4">
-            <h4 className="text-[10px] font-bold uppercase tracking-[0.35em] text-muted-foreground/45">Legal</h4>
-            <nav className="flex flex-col gap-2">
-              <Link to="/legal/terms" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Terms of Service</Link>
-              <Link to="/legal/privacy" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Privacy Policy</Link>
-              <Link to="/legal/responsible-gaming" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Responsible Gaming</Link>
-            </nav>
-          </div>
-        </div>
-      </div>
 
-      <footer className="border-t border-border/50 py-5 px-6">
-        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 md:flex-row">
-          <div className="flex items-center gap-2">
-            <Swords className="h-4 w-4 text-primary" />
-            <span className="font-display text-sm font-bold tracking-[0.2em] text-primary">ARENA</span>
-          </div>
-          <div className="flex flex-wrap items-center justify-center gap-3 text-xs text-muted-foreground/55">
-            <Link to="/legal/terms" className="hover:text-muted-foreground transition-colors">Terms</Link>
-            <span>·</span>
-            <Link to="/legal/privacy" className="hover:text-muted-foreground transition-colors">Privacy</Link>
-            <span>·</span>
-            <Link to="/legal/responsible-gaming" className="hover:text-muted-foreground transition-colors">Responsible Gaming</Link>
-          </div>
-          <p className="text-center font-mono text-[10px] text-muted-foreground/35">© {new Date().getFullYear()} Arena · 18+</p>
-        </div>
-      </footer>
+          <footer className="border-t border-border/50 py-5 px-6">
+            <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 md:flex-row">
+              <div className="flex items-center gap-2">
+                <Swords className="h-4 w-4 text-primary" />
+                <span className="font-display text-sm font-bold tracking-[0.2em] text-primary">ARENA</span>
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-3 text-xs text-muted-foreground/55">
+                <Link to="/legal/terms" className="hover:text-muted-foreground transition-colors">Terms</Link>
+                <span>·</span>
+                <Link to="/legal/privacy" className="hover:text-muted-foreground transition-colors">Privacy</Link>
+                <span>·</span>
+                <Link to="/legal/responsible-gaming" className="hover:text-muted-foreground transition-colors">Responsible Gaming</Link>
+              </div>
+              <p className="text-center font-mono text-[10px] text-muted-foreground/35">© {new Date().getFullYear()} Arena · 18+</p>
+            </div>
+          </footer>
+        </>
+      ) : (
+        <LandingGuestFooter />
+      )}
     </div>
   );
 };
