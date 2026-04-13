@@ -627,7 +627,8 @@
 
   .arena-hud-modal-surface {
     isolation: isolate;
-    position: relative;
+    /* Do not set position here — DialogContent uses position:fixed + translate centering;
+       relative was winning in some builds and broke viewport placement (full bleed overlay + modal at page bottom). */
     overflow: hidden;
     border-radius: 0 !important;
     clip-path: polygon(
