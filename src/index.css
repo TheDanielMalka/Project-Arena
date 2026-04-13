@@ -700,6 +700,7 @@
 
   .arena-hud-modal-surface {
     isolation: isolate;
+    /* No position:relative here — breaks fixed+translate centering (modal stuck at page bottom). */
     overflow: hidden;
     border-radius: 0 !important;
     clip-path: polygon(
