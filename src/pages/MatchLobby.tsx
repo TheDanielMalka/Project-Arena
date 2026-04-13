@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { useUserStore } from "@/stores/userStore";
@@ -41,6 +41,7 @@ import { useActiveRoomServerSync } from "@/hooks/useActiveRoomServerSync";
 import { looksLikeServerMatchId } from "@/lib/gameAccounts";
 import { friendlyChainErrorMessage } from "@/lib/friendlyChainError";
 import { joinPasswordFailureMessage } from "@/lib/matchRoomPassword";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import {
   lobbyFilledTotal,
   lobbySlotsForSide,
@@ -390,6 +391,7 @@ const MatchLobby = () => {
   const [kickingUserId,        setKickingUserId]        = useState<string | null>(null);
   const [createRateLimited,    setCreateRateLimited]    = useState(false);
   const [inviteRateLimitedIds, setInviteRateLimitedIds] = useState<Set<string>>(new Set());
+  const inviteModalPanelRef = useRef<HTMLDivElement>(null);
   const [dailyAtStaked,        setDailyAtStaked]        = useState<number | null>(null);
   const [dailyAtLimit,         setDailyAtLimit]         = useState<number | null>(null);
   const [dailyUsdtStaked,      setDailyUsdtStaked]      = useState<number | null>(null);
@@ -631,12 +633,24 @@ const MatchLobby = () => {
     setCheckResults(null);
     bumpList();
   };
-  const handleCopyCode = (code: string) => {
-    navigator.clipboard.writeText(code); setCopiedCode(code);
-    const { addNotification } = useNotificationStore.getState();
-    addNotification({ type: "system", title: "📋 Code Copied", message: `Match code ${code} copied. Share with your team!` });
-    setTimeout(() => setCopiedCode(null), 2000);
-  };
+  const handleCopyCode = useCallback(async (code: string) => {
+    const ok = await copyTextToClipboard(code);
+    if (ok) {
+      setCopiedCode(code);
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "📋 Code Copied",
+        message: `Match code ${code} copied. Share with your team!`,
+      });
+      setTimeout(() => setCopiedCode(null), 2000);
+    } else {
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "Copy failed",
+        message: "Clipboard unavailable — copy the code manually or allow clipboard access for this site.",
+      });
+    }
+  }, []);
 
   const filteredCustom = customMatches.filter(m => !selectedGame || m.game === selectedGame);
   const filteredPublicMatches = publicMatches.filter(m => {
@@ -673,6 +687,37 @@ const MatchLobby = () => {
     });
     return false;
   }, [isInActiveRoom]);
+
+  /** In-room / in-match: keep list UIs visible but non-interactive; profile & invites only from Live Room HUD above. */
+  const isLobbyBrowserLocked = isInActiveRoom;
+
+  useEffect(() => {
+    if (!isLobbyBrowserLocked) return;
+    setSelectedPublicLobbyId(null);
+    setDepositConfirm(null);
+    setPasswordPrompt(null);
+  }, [isLobbyBrowserLocked]);
+
+  useEffect(() => {
+    if (!inviteModalOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [inviteModalOpen]);
+
+  useLayoutEffect(() => {
+    if (!inviteModalOpen || !inviteModalPanelRef.current) return;
+    const el = inviteModalPanelRef.current;
+    requestAnimationFrame(() => {
+      try {
+        el.focus({ preventScroll: true });
+      } catch {
+        el.focus();
+      }
+    });
+  }, [inviteModalOpen]);
 
   useEffect(() => {
     if (!myActiveRoom?.lockCountdownStart) {
@@ -1267,11 +1312,24 @@ const MatchLobby = () => {
             <span className="tactical-hud-chip border border-orange-400/35 bg-orange-500/[0.07] px-2 py-0.5 text-[10px] font-bold text-orange-300">
               STK: {formatMatchStakeShort(myActiveRoom)}
             </span>
-            {myActiveRoom.code && (
-              <span className="tactical-hud-chip border border-primary/40 bg-primary/[0.1] px-2 py-0.5 text-[10px] font-semibold text-primary">
-                {myActiveRoom.code}
-              </span>
-            )}
+            {(() => {
+              const share = (myActiveRoom.code && myActiveRoom.code.trim()) || myActiveRoom.id;
+              return (
+                <button
+                  type="button"
+                  title="Copy room code / match id"
+                  onClick={() => void handleCopyCode(share)}
+                  className="tactical-hud-chip inline-flex cursor-pointer items-center gap-1.5 border border-primary/40 bg-primary/[0.1] px-2 py-0.5 text-[10px] font-semibold text-primary transition-colors hover:border-primary/60 hover:bg-primary/[0.16]"
+                >
+                  <Copy className="h-3 w-3 shrink-0 opacity-80" />
+                  {copiedCode === share ? (
+                    <span>Copied</span>
+                  ) : (
+                    <span className="font-mono tracking-wide">{myActiveRoom.code?.trim() || myActiveRoom.id.slice(0, 8)}</span>
+                  )}
+                </button>
+              );
+            })()}
           </div>
 
           {/* Player slots progress */}
@@ -1465,8 +1523,22 @@ const MatchLobby = () => {
         );
       })()}
 
-      {/* ── Tabs (URL ?tab=custom syncs with header pills) ── */}
-      <Tabs value={lobbyTab} onValueChange={setLobbyTab} className="w-full">
+      {/* ── Tabs: still visible in-room, but not interactive — use Live Room HUD above for roster / invite / profile. ── */}
+      <div
+        className={cn(
+          "relative rounded-xl border border-transparent transition-[opacity,border-color]",
+          isLobbyBrowserLocked && "pointer-events-none select-none border-dashed border-border/35 opacity-[0.72]",
+        )}
+        aria-hidden={isLobbyBrowserLocked ? true : undefined}
+      >
+        {isLobbyBrowserLocked && (
+          <div className="pointer-events-none absolute inset-x-0 top-1 z-[2] flex justify-center px-2">
+            <span className="max-w-[min(100%,24rem)] rounded-full border border-arena-cyan/30 bg-background/95 px-3 py-1 text-center text-[9px] font-hud uppercase tracking-[0.2em] text-arena-cyan/85 shadow-sm backdrop-blur-sm sm:text-[10px]">
+              Lobby browser locked — roster, invites &amp; profiles: Live Room above
+            </span>
+          </div>
+        )}
+      <Tabs value={lobbyTab} onValueChange={setLobbyTab} className={cn("w-full", isLobbyBrowserLocked && "pt-7")}>
         <TabsList className="arena-glass-subtle w-full sm:w-auto p-1 gap-1 border border-border/60">
           <TabsTrigger
             value="public"
@@ -2173,7 +2245,7 @@ const MatchLobby = () => {
                         <Badge className={`${status.color} border text-xs gap-1`}>
                           <StatusIcon className="h-3 w-3" />{status.label}
                         </Badge>
-                        <button onClick={() => handleCopyCode(match.code)}
+                        <button type="button" onClick={() => void handleCopyCode(match.code)}
                           className="flex items-center gap-1 text-[11px] font-mono bg-secondary px-1.5 py-0.5 rounded-lg border border-border hover:border-primary/50 transition-colors">
                           <Copy className="h-3 w-3" />
                           {copiedCode === match.code ? "Copied!" : match.code}
@@ -2242,6 +2314,7 @@ const MatchLobby = () => {
           </div>
         </TabsContent>
       </Tabs>
+      </div>
 
       {/* ── Leave Room Confirmation — only non-host players ──────────── */}
       {leaveConfirmOpen && myActiveRoom && myActiveRoom.hostId !== user?.id && (
@@ -2330,7 +2403,9 @@ const MatchLobby = () => {
           onClick={() => setInviteModalOpen(false)}
         >
           <div
-            className="w-full max-w-sm rounded-2xl border border-border bg-card shadow-2xl p-5 space-y-4"
+            ref={inviteModalPanelRef}
+            tabIndex={-1}
+            className="w-full max-w-sm rounded-2xl border border-border bg-card shadow-2xl p-5 space-y-4 outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-arena-cyan/40"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}

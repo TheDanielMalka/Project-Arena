@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { useUserStore } from "@/stores/userStore";
 import { cn } from "@/lib/utils";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { useForgeStore } from "@/stores/forgeStore";
 import { useToast } from "@/hooks/use-toast";
@@ -229,16 +230,20 @@ const Profile = () => {
 
   const addNotification = useNotificationStore((s) => s.addNotification);
 
-  const handleCopyWallet = () => {
+  const handleCopyWallet = async () => {
     const w = user?.walletAddress?.trim();
     if (!w) {
       toast({ title: "No wallet", description: "Link a wallet first.", variant: "destructive" });
       return;
     }
-    void navigator.clipboard.writeText(w);
-    setCopiedWallet(true);
-    addNotification({ type: "system", title: "📋 Wallet Copied", message: "Your wallet address was copied to clipboard." });
-    setTimeout(() => setCopiedWallet(false), 2000);
+    const ok = await copyTextToClipboard(w);
+    if (ok) {
+      setCopiedWallet(true);
+      addNotification({ type: "system", title: "📋 Wallet Copied", message: "Your wallet address was copied to clipboard." });
+      setTimeout(() => setCopiedWallet(false), 2000);
+    } else {
+      toast({ title: "Copy failed", description: "Clipboard unavailable — copy the address manually.", variant: "destructive" });
+    }
   };
 
   const handleSaveProfile = () => {

@@ -17,6 +17,7 @@ import { useWalletStore } from "@/stores/walletStore";
 import { useForgeStore } from "@/stores/forgeStore";
 import type { TransactionType, TransactionStatus } from "@/types";
 import { cn } from "@/lib/utils";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { BuyArenaTokensModal }  from "@/components/wallet/BuyArenaTokensModal";
 import { WithdrawATModal }       from "@/components/wallet/WithdrawATModal";
 import { ArenaPageShell } from "@/components/visual";
@@ -105,12 +106,16 @@ const WalletPage = () => {
   const totalWon    = transactions.filter((t) => t.type === "match_win").reduce((s, t) => s + t.usdValue, 0);
   const totalLost   = transactions.filter((t) => t.type === "match_loss").reduce((s, t) => s + t.usdValue, 0);
 
-  const copyAddress = () => {
+  const copyAddress = async () => {
     if (!connectedAddress) return;
-    navigator.clipboard.writeText(connectedAddress);
-    setCopiedAddress(true);
-    toast({ title: "Address Copied", description: "Wallet address copied to clipboard." });
-    setTimeout(() => setCopiedAddress(false), 2000);
+    const ok = await copyTextToClipboard(connectedAddress);
+    if (ok) {
+      setCopiedAddress(true);
+      toast({ title: "Address Copied", description: "Wallet address copied to clipboard." });
+      setTimeout(() => setCopiedAddress(false), 2000);
+    } else {
+      toast({ variant: "destructive", title: "Copy failed", description: "Allow clipboard access or copy the address manually." });
+    }
   };
 
   return (
@@ -195,7 +200,7 @@ const WalletPage = () => {
                     </p>
                     <code className="font-mono text-xs text-foreground truncate block">{shortAddr}</code>
                   </div>
-                  <button onClick={copyAddress} className="text-muted-foreground hover:text-foreground shrink-0">
+                  <button type="button" onClick={() => void copyAddress()} className="text-muted-foreground hover:text-foreground shrink-0" title="Copy address">
                     {copiedAddress
                       ? <CheckCircle2 className="h-3.5 w-3.5 text-arena-green" />
                       : <Copy className="h-3.5 w-3.5" />
