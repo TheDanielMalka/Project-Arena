@@ -2,6 +2,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Swords } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useUserStore } from "@/stores/userStore";
 
 const chip =
   "inline-flex items-center justify-center border border-arena-cyan/40 bg-gradient-to-b from-black/60 to-black/80 px-2 py-1.5 font-hud text-[7px] font-semibold uppercase tracking-[0.2em] text-arena-cyan/95 shadow-[0_0_22px_-8px_hsl(var(--arena-cyan)/0.4),inset_0_1px_0_hsl(0_0%_100%/0.07)] transition-all hover:border-primary/50 hover:text-foreground hover:shadow-[0_0_28px_-6px_hsl(var(--primary)/0.35)] sm:px-2.5 sm:text-[8px] sm:tracking-[0.24em]";
@@ -17,6 +18,8 @@ export function LandingPublicNav({
   showMarketingLinks?: boolean;
 }) {
   const navigate = useNavigate();
+  const isAuthed = useUserStore((s) => s.isAuthenticated);
+  const goLoginOrDashboard = () => navigate(isAuthed ? "/dashboard" : "/auth");
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 border-b border-arena-cyan/15 bg-[hsl(220_22%_4%/0.9)] backdrop-blur-xl">
@@ -51,18 +54,18 @@ export function LandingPublicNav({
         <div className="flex shrink-0 items-center gap-2 sm:gap-3">
           <button
             type="button"
-            onClick={() => navigate("/auth")}
+            onClick={goLoginOrDashboard}
             className="px-1.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground sm:px-2 sm:text-sm font-display tracking-wide"
           >
-            Login
+            {isAuthed ? "Dashboard" : "Login"}
           </button>
           <Button
             type="button"
             size="sm"
-            onClick={() => navigate("/auth")}
+            onClick={goLoginOrDashboard}
             className="glow-green font-display tracking-wider px-2.5 text-[9px] sm:px-4 sm:text-xs"
           >
-            <Swords className="mr-1 h-3 w-3 sm:mr-1.5 sm:h-3.5 sm:w-3.5" /> Enter Arena
+            <Swords className="mr-1 h-3 w-3 sm:mr-1.5 sm:h-3.5 sm:w-3.5" /> {isAuthed ? "Open app" : "Enter Arena"}
           </Button>
         </div>
       </div>

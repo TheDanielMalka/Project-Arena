@@ -1,13 +1,18 @@
 import { LandingGuestFooter } from "@/components/landing/LandingGuestFooter";
 import { LandingPublicNav } from "@/components/landing/LandingPublicNav";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ArrowRight, CheckCircle2, Lock, Shield, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useUserStore } from "@/stores/userStore";
 
 /**
- * Public marketing — no auth. Explains value prop and flow for guests.
+ * Public marketing — guests + signed-in (same pages; CTAs respect session).
  */
 export default function WhyArena() {
+  const navigate = useNavigate();
+  const isAuthed = useUserStore((s) => s.isAuthenticated);
+  const authOrDashboard = () => navigate(isAuthed ? "/dashboard" : "/auth");
+
   return (
     <div className="relative flex min-h-screen flex-col overflow-x-hidden bg-[hsl(220_24%_3%)] text-foreground">
       <div
@@ -78,16 +83,15 @@ export default function WhyArena() {
         </div>
 
         <div className="mt-10 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-          <Button asChild className="glow-green font-display tracking-wider">
-            <Link to="/auth">
-              Create account <ArrowRight className="ml-2 h-4 w-4" />
-            </Link>
+          <Button type="button" className="glow-green font-display tracking-wider" onClick={authOrDashboard}>
+            {isAuthed ? "Open dashboard" : "Create account"}{" "}
+            <ArrowRight className="ml-2 inline h-4 w-4 align-text-bottom" />
           </Button>
           <Button asChild variant="outline" className="border-arena-cyan/35 font-display tracking-wider">
             <Link to="/how-to-play">How to Play</Link>
           </Button>
           <Button asChild variant="ghost" className="font-display text-muted-foreground hover:text-foreground">
-            <Link to="/#download">Download client</Link>
+            <Link to={{ pathname: "/", hash: "#download" }}>Download client</Link>
           </Button>
         </div>
       </main>
