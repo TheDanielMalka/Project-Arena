@@ -19,7 +19,7 @@ export function ArenaPageShell({ variant, children, className, contentClassName 
   return (
     <section
       className={cn(
-        "arena-page-shell relative isolate min-w-0 overflow-hidden rounded-xl border border-white/[0.06] bg-[hsl(220_22%_4%/0.35)] shadow-[inset_0_1px_0_hsl(0_0%_100%/0.04)]",
+        "arena-page-shell arena-hud-page-shell relative isolate min-w-0 overflow-hidden",
         className,
       )}
       data-arena-page={variant}

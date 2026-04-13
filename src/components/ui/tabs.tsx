@@ -12,7 +12,7 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "inline-flex h-10 items-center justify-center rounded-full border border-white/10 bg-[hsl(220_22%_6%/0.92)] p-1 text-muted-foreground shadow-[inset_0_2px_12px_rgba(0,0,0,0.5)]",
+      "arena-hud-tabs-list inline-flex items-center justify-center border border-white/10 p-1 text-muted-foreground shadow-[inset_0_2px_12px_rgba(0,0,0,0.5)]",
       className,
     )}
     {...props}
@@ -27,7 +27,7 @@ const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "inline-flex items-center justify-center whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-display font-semibold uppercase tracking-wider ring-offset-background transition-all data-[state=active]:border data-[state=active]:border-primary/45 data-[state=active]:bg-gradient-to-b data-[state=active]:from-primary/25 data-[state=active]:to-primary/10 data-[state=active]:text-primary-foreground data-[state=active]:shadow-[0_0_18px_-4px_hsl(var(--primary)/0.45)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-arena-cyan/40 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+      "arena-hud-tabs-trigger inline-flex items-center justify-center whitespace-nowrap px-3 py-2 text-[10px] font-semibold ring-offset-background transition-all data-[state=active]:border data-[state=active]:border-primary/40 data-[state=active]:bg-gradient-to-b data-[state=active]:from-primary/28 data-[state=active]:to-primary/12 data-[state=active]:text-primary-foreground data-[state=active]:shadow-[0_0_18px_-4px_hsl(var(--primary)/0.45)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-arena-cyan/40 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
       className,
     )}
     {...props}

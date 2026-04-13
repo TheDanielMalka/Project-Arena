@@ -5,7 +5,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium font-display tracking-wide uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-arena-cyan/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 transition-all duration-200",
+  "arena-hud-btn-clip inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-none text-sm font-medium font-hud tracking-[0.14em] uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-arena-cyan/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 transition-all duration-200",
   {
     variants: {
       variant: {
@@ -18,13 +18,13 @@ const buttonVariants = cva(
         secondary:
           "border border-white/10 bg-secondary/90 text-secondary-foreground shadow-[inset_0_1px_0_hsl(0_0%_100%/0.04)] hover:border-white/18 hover:bg-secondary",
         ghost: "border border-transparent hover:border-white/10 hover:bg-white/[0.04] hover:text-foreground",
-        link: "normal-case tracking-normal text-primary underline-offset-4 hover:underline shadow-none border-0 bg-transparent hover:bg-transparent",
+        link: "[clip-path:none] rounded-none normal-case tracking-normal text-primary underline-offset-4 hover:underline shadow-none border-0 bg-transparent hover:bg-transparent hover:shadow-none",
       },
       size: {
         default: "h-10 px-4 py-2",
-        sm: "h-9 rounded-md px-3 text-xs",
-        lg: "h-11 rounded-lg px-8 text-sm",
-        icon: "h-10 w-10",
+        sm: "arena-hud-btn-clip-sm h-9 px-3 text-xs",
+        lg: "h-11 px-8 text-sm",
+        icon: "arena-hud-btn-clip-sm h-10 w-10",
       },
     },
     defaultVariants: {

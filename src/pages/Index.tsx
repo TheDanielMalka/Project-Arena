@@ -460,7 +460,11 @@ const Index = () => {
   const [v, e, m, o, r, a] = BENTO_INDICES.map((i) => FEATURES[i]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-[hsl(220_24%_3%)] text-foreground overflow-x-hidden">
+    <div className="min-h-screen flex flex-col bg-[hsl(220_24%_3%)] text-foreground overflow-x-hidden relative">
+      <div
+        className="pointer-events-none fixed inset-0 z-[5] opacity-[0.045] motion-reduce:opacity-[0.015] mix-blend-multiply [background:repeating-linear-gradient(0deg,transparent,transparent_2px,hsl(0_0%_0%/0.42)_2px,hsl(0_0%_0%/0.42)_3px)]"
+        aria-hidden
+      />
       {/* NAV — HUD bar */}
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-arena-cyan/15 bg-[hsl(220_22%_4%/0.85)] backdrop-blur-xl">
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-primary/35 to-transparent" />
