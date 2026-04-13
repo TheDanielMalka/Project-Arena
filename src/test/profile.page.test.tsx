@@ -43,4 +43,14 @@ describe("Profile page", () => {
     expect(container.firstChild).toBeTruthy();
     expect(container.innerHTML).toContain("AR");
   });
+
+  it("opens Identity studio dialog when clicking avatar in edit mode", () => {
+    render(<MemoryRouter><Profile /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: /edit profile/i }));
+    fireEvent.click(screen.getByRole("button", { name: /open identity studio/i }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toBeInTheDocument();
+    expect(dialog).toHaveTextContent(/identity studio/i);
+    expect(dialog).toHaveTextContent(/apply/i);
+  });
 });
