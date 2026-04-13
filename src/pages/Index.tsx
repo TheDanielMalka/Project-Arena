@@ -131,8 +131,8 @@ function HeroCinematicBackdrop() {
           onError={handleVideoError}
         />
       )}
-      <div className="absolute inset-0 z-[2] bg-gradient-to-r from-black/80 via-black/45 to-black/65 pointer-events-none" />
-      <div className="absolute inset-0 z-[2] bg-[radial-gradient(ellipse_100%_80%_at_70%_50%,transparent_0%,rgba(0,0,0,0.5)_100%)] pointer-events-none" />
+      <div className="absolute inset-0 z-[2] bg-gradient-to-r from-black/82 via-black/42 to-black/48 pointer-events-none" />
+      <div className="absolute inset-0 z-[2] bg-[radial-gradient(ellipse_100%_72%_at_72%_42%,transparent_0%,rgba(0,0,0,0.42)_100%)] pointer-events-none" />
     </>
   );
 }
@@ -255,36 +255,92 @@ function HeroCyclingTagline() {
   );
 }
 
+/** Hero wordmark — pure display; layered gradient + HUD chrome (no game/engine coupling). */
+function LandingArenaWordmark() {
+  return (
+    <div className="relative isolate mx-auto max-w-[min(100%,580px)] lg:mx-0">
+      <div className="pointer-events-none absolute -left-0.5 -top-1 h-9 w-9 border-l-2 border-t border-arena-cyan/55 sm:h-10 sm:w-10" aria-hidden />
+      <div className="pointer-events-none absolute -bottom-0.5 -right-0.5 h-7 w-14 border-b border-r border-primary/45 sm:right-0" aria-hidden />
+
+      <div className="mb-1 flex items-center gap-2 font-hud text-[7px] uppercase tracking-[0.55em] text-muted-foreground/50 sm:mb-1.5 sm:text-[8px] sm:tracking-[0.48em]">
+        <span className="h-px w-8 bg-gradient-to-r from-arena-cyan/70 to-transparent sm:w-10" aria-hidden />
+        <span className="whitespace-nowrap">Uplink · Primary</span>
+        <span className="font-mono text-[8px] tracking-[0.2em] text-arena-cyan/55 sm:text-[9px]">ARENA.HERO</span>
+      </div>
+
+      <div className="relative">
+        <span
+          className="pointer-events-none absolute inset-0 translate-x-[3px] translate-y-[2px] font-hero text-[clamp(3.1rem,11vw,6.85rem)] font-black uppercase leading-[0.82] tracking-[0.1em] text-arena-cyan/[0.14] motion-reduce:opacity-0"
+          aria-hidden
+        >
+          ARENA
+        </span>
+        <span
+          className="pointer-events-none absolute inset-0 -translate-x-px font-hero text-[clamp(3.1rem,11vw,6.85rem)] font-black uppercase leading-[0.82] tracking-[0.1em] text-primary/[0.12] blur-[0.35px] motion-reduce:opacity-0"
+          aria-hidden
+        >
+          ARENA
+        </span>
+        <span className="relative block font-hero text-[clamp(3.1rem,11vw,6.85rem)] font-black uppercase leading-[0.82] tracking-[0.1em] landing-arena-wordmark-gradient">
+          ARENA
+        </span>
+        <div className="landing-arena-wordmark-scan motion-reduce:hidden" aria-hidden />
+      </div>
+
+      <div
+        className="mt-3 flex h-[3px] gap-px overflow-hidden border border-white/[0.08] bg-black/40 sm:mt-3.5"
+        style={{ clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 100%, 10px 100%, 0 calc(100% - 4px))" }}
+        aria-hidden
+      >
+        <div className="h-full w-[18%] bg-gradient-to-r from-arena-cyan/30 to-transparent" />
+        <div className="landing-arena-integrity-bar h-full flex-1 bg-gradient-to-r from-primary/90 via-arena-cyan/75 to-primary/80" />
+        <div className="h-full w-[8%] bg-gradient-to-l from-primary/40 to-transparent" />
+      </div>
+    </div>
+  );
+}
+
 function LandingHeroHud() {
   const eqHeights = [0.2, 0.36, 0.58, 0.28, 0.72, 0.44, 0.24, 0.52, 0.66, 0.38];
   const clip = "polygon(0 10%, 10% 0, 100% 0, 100% 90%, 90% 100%, 0 100%)" as const;
 
   return (
     <div
-      className="relative mx-auto w-full max-w-[min(100%,480px)] min-h-[min(64vw,400px)] sm:min-h-[380px] lg:max-w-[500px] lg:min-h-[420px] pointer-events-none select-none"
+      className="relative mx-auto w-full max-w-[min(100%,480px)] min-h-[min(64vw,400px)] sm:min-h-[380px] lg:max-w-[520px] lg:min-h-[420px] lg:-rotate-[0.6deg] pointer-events-none select-none"
       aria-hidden
     >
-      {/* Static frame — primary + cyan only, tied to brand (no rotating rainbow) */}
+      {/* Glass + graded fade into video (right); blur samples the hero backdrop */}
       <div
-        className="absolute inset-0"
+        className="absolute inset-0 backdrop-blur-xl backdrop-saturate-150"
         style={{
           clipPath: clip,
+          WebkitBackdropFilter: "blur(20px) saturate(1.35)",
           boxShadow: `
-            0 0 0 1px hsl(var(--arena-cyan) / 0.28),
-            0 0 0 2px hsl(var(--primary) / 0.1),
-            0 28px 80px -36px hsl(0 0% 0% / 0.75),
-            inset 0 1px 0 hsl(0 0% 100% / 0.04),
-            inset 0 0 100px hsl(var(--arena-hud-blue) / 0.06)
+            0 0 0 1px hsl(var(--arena-cyan) / 0.32),
+            0 0 0 2px hsl(var(--primary) / 0.08),
+            0 32px 100px -40px hsl(0 0% 0% / 0.55),
+            0 0 80px -24px hsl(var(--arena-cyan) / 0.22),
+            inset 0 1px 0 hsl(0 0% 100% / 0.06),
+            inset 0 0 120px hsl(var(--arena-hud-blue) / 0.05)
           `,
           background: `
-            linear-gradient(155deg, hsl(var(--primary) / 0.07) 0%, transparent 42%),
-            linear-gradient(325deg, hsl(var(--arena-cyan) / 0.06) 0%, transparent 45%),
-            linear-gradient(168deg, hsl(220 26% 10% / 0.97) 0%, hsl(220 28% 5% / 0.95) 100%)
+            linear-gradient(105deg, hsl(220 28% 7% / 0.9) 0%, hsl(220 26% 9% / 0.55) 42%, hsl(220 22% 14% / 0.22) 72%, hsl(220 20% 18% / 0.06) 100%),
+            linear-gradient(155deg, hsl(var(--primary) / 0.1) 0%, transparent 38%),
+            linear-gradient(210deg, hsl(var(--arena-cyan) / 0.14) 0%, transparent 52%)
           `,
         }}
       />
+      {/* Tint layer: picks up warmth from the video without a flat “sticker” */}
       <div
-        className="absolute inset-[1px] opacity-[0.035] mix-blend-overlay motion-reduce:opacity-0"
+        className="absolute inset-0 opacity-[0.55] mix-blend-soft-light motion-reduce:opacity-[0.35]"
+        style={{
+          clipPath: clip,
+          background:
+            "radial-gradient(ellipse 90% 70% at 85% 45%, hsl(var(--primary) / 0.35), transparent 55%), radial-gradient(ellipse 60% 50% at 20% 80%, hsl(var(--arena-cyan) / 0.25), transparent 50%)",
+        }}
+      />
+      <div
+        className="absolute inset-[1px] opacity-[0.04] mix-blend-overlay motion-reduce:opacity-0"
         style={{
           clipPath: clip,
           backgroundImage:
@@ -302,7 +358,7 @@ function LandingHeroHud() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="font-hud text-[9px] uppercase tracking-[0.48em] text-muted-foreground/55 sm:text-[10px]">SYS · READOUT</p>
-            <p className="mt-1 font-hud text-[clamp(1.35rem,4vw,1.85rem)] font-bold uppercase tracking-[0.52em] text-foreground/95">
+            <p className="landing-hud-live mt-1 font-hud text-[clamp(1.35rem,4vw,1.85rem)] font-bold uppercase tracking-[0.52em] text-foreground/95">
               LIVE
             </p>
           </div>
@@ -345,7 +401,7 @@ function LandingHeroHud() {
           ))}
         </div>
 
-        <div className="mt-auto overflow-hidden border border-white/[0.06] bg-black/30 py-1.5">
+        <div className="mt-auto overflow-hidden border border-white/[0.08] bg-black/25 py-1.5 backdrop-blur-sm">
           <div
             className="landing-hud-ticker flex w-[200%] whitespace-nowrap font-hud text-[8px] uppercase tracking-[0.26em] text-muted-foreground/35 motion-reduce:w-full motion-reduce:animate-none motion-reduce:whitespace-normal motion-reduce:text-center motion-reduce:text-[9px]"
           >
@@ -499,25 +555,26 @@ const Index = () => {
 
         <div className="relative z-10 mx-auto grid w-full max-w-7xl grid-cols-1 gap-12 px-5 sm:px-8 lg:grid-cols-12 lg:items-center lg:gap-6">
           <div className="space-y-6 text-center lg:col-span-6 lg:text-left">
-            <div className="inline-flex items-center gap-2 rounded-sm border border-primary/35 bg-primary/[0.06] px-3 py-1.5 font-hud text-[9px] uppercase tracking-[0.42em] text-primary/95 lg:mx-0 mx-auto sm:text-[10px]">
-              <span className="h-1.5 w-1.5 shrink-0 rounded-sm bg-primary shadow-[0_0_12px_hsl(var(--primary)/0.55)]" />
+            <div
+              className="relative inline-flex items-center gap-2.5 border border-primary/30 bg-gradient-to-r from-primary/[0.09] via-black/25 to-arena-cyan/[0.06] px-3.5 py-2 font-hud text-[9px] uppercase tracking-[0.44em] text-primary/95 shadow-[0_0_28px_-8px_hsl(var(--primary)/0.35),inset_0_1px_0_hsl(0_0%_100%/0.05)] lg:mx-0 mx-auto sm:px-4 sm:text-[10px] sm:tracking-[0.4em]"
+              style={{ clipPath: "polygon(0 6px, 6px 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%)" }}
+            >
+              <span className="absolute left-2 top-2 h-2 w-2 border-l border-t border-arena-cyan/50 sm:left-2.5 sm:top-2.5" aria-hidden />
+              <span className="relative flex h-2 w-2 shrink-0 items-center justify-center rounded-[1px] bg-primary shadow-[0_0_14px_hsl(var(--primary)/0.75)] motion-safe:animate-pulse" aria-hidden>
+                <span className="h-1 w-1 rounded-[1px] bg-white/90" />
+              </span>
               SKILL · P2P · ON-CHAIN
             </div>
             <h1 className="font-hero font-extrabold leading-[0.88] tracking-[0.04em]">
-              <span
-                className="block text-[clamp(3.1rem,11vw,6.6rem)] uppercase text-primary"
-                style={{
-                  textShadow:
-                    "0 0 40px hsl(var(--primary)/0.4), 0 0 88px hsl(var(--arena-cyan)/0.14), 0 2px 0 hsl(0 0% 0% / 0.45)",
-                }}
-              >
-                ARENA
-              </span>
+              <LandingArenaWordmark />
               <HeroCyclingTagline />
             </h1>
-            <p className="mx-auto max-w-md text-sm leading-relaxed text-muted-foreground lg:mx-0 md:text-base md:leading-relaxed">
-              Competitive gaming meets real stakes. Head-to-head matches, smart contract escrow, instant payouts.
-            </p>
+            <div className="mx-auto max-w-md space-y-2 lg:mx-0">
+              <p className="font-hud text-[8px] uppercase tracking-[0.48em] text-muted-foreground/40 sm:text-[9px]">Mission brief</p>
+              <p className="text-sm leading-relaxed text-muted-foreground/95 md:text-base md:leading-relaxed [text-shadow:0_1px_24px_hsl(0_0%_0%/0.35)]">
+                Competitive gaming meets real stakes. Head-to-head matches, smart contract escrow, instant payouts.
+              </p>
+            </div>
             <div className="flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:flex-wrap lg:justify-start">
               <Button type="button" size="lg" onClick={() => navigate("/auth")} className="glow-green font-display px-8 py-6 text-sm tracking-wider">
                 <Swords className="mr-2 h-4 w-4" /> Enter Arena
