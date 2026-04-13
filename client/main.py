@@ -1077,6 +1077,74 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     _window_instance = win
 
+    # ── AAA HUD backdrop (scanlines + subtle gradients) ───────────────────────
+    # Pure visuals; safe to redraw on resize.
+    try:
+        import tkinter as tk  # stdlib
+    except Exception:
+        tk = None  # type: ignore
+
+    if tk is not None:
+        bg = tk.Canvas(win, highlightthickness=0, bd=0, relief="flat")
+        bg.place(x=0, y=0, relwidth=1, relheight=1)
+
+        _bg_redraw_job: list[str | None] = [None]
+
+        def _hex_to_rgb(h: str) -> tuple[int, int, int]:
+            h = h.lstrip("#")
+            return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+        def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
+            return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+
+        def _lerp(a: int, b: int, t: float) -> int:
+            return int(a + (b - a) * t)
+
+        def _draw_backdrop() -> None:
+            w = max(1, int(win.winfo_width()))
+            h = max(1, int(win.winfo_height()))
+            bg.delete("all")
+
+            c0 = _hex_to_rgb(BRAND["bg"])
+            c1 = _hex_to_rgb(BRAND["hud_panel"])
+
+            # Vertical gradient base
+            steps = min(220, h)
+            for i in range(steps):
+                t = i / max(1, steps - 1)
+                col = (
+                    _lerp(c0[0], c1[0], t),
+                    _lerp(c0[1], c1[1], t),
+                    _lerp(c0[2], c1[2], t),
+                )
+                y0 = int(i * h / steps)
+                y1 = int((i + 1) * h / steps)
+                bg.create_rectangle(0, y0, w, y1, outline="", fill=_rgb_to_hex(col))
+
+            # Corner glows (cyan + violet) as translucent ovals
+            bg.create_oval(-w * 0.35, -h * 0.55, w * 0.55, h * 0.35, outline="", fill="#0b2a33", stipple="gray25")
+            bg.create_oval(w * 0.45, -h * 0.45, w * 1.35, h * 0.40, outline="", fill="#241136", stipple="gray25")
+
+            # Scanlines
+            for y in range(0, h, 4):
+                bg.create_line(0, y, w, y, fill="#000000", width=1)
+
+            # Soft top divider
+            bg.create_rectangle(0, 0, w, 2, outline="", fill=BRAND["hud_border"])
+
+        def _schedule_backdrop_redraw() -> None:
+            job = _bg_redraw_job[0]
+            if job:
+                try:
+                    win.after_cancel(job)
+                except Exception:
+                    pass
+            _bg_redraw_job[0] = win.after(60, _draw_backdrop)
+
+        win.bind("<Configure>", lambda _e: _schedule_backdrop_redraw(), add="+")
+        win.after(0, _draw_backdrop)
+        bg.lower()
+
     def _on_close():
         win.withdraw()
     win.protocol("WM_DELETE_WINDOW", _on_close)
@@ -1132,8 +1200,8 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                              text_color=BRAND["text_muted"])
 
     # ── Header ────────────────────────────────────────────────────────────────
-    header = ctk.CTkFrame(win, fg_color=BRAND["bg_card"], corner_radius=0,
-                           height=52, border_width=0)
+    header = ctk.CTkFrame(win, fg_color=BRAND["hud_panel"], corner_radius=0,
+                           height=66, border_width=0)
     header.pack(fill="x")
     header.pack_propagate(False)
 
@@ -1141,24 +1209,38 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     ctk.CTkFrame(header, width=3, fg_color=BRAND["accent"], corner_radius=0).pack(
         side="left", fill="y")
 
-    ctk.CTkLabel(header, text="ARENA",
-                 font=ctk.CTkFont(size=18, weight="bold"),
-                 text_color=BRAND["accent"]).pack(side="left", padx=14, pady=14)
+    wordmark = ctk.CTkFrame(header, fg_color="transparent")
+    wordmark.pack(side="left", padx=14, pady=10)
+    ctk.CTkLabel(wordmark, text="ARENA",
+                 font=ctk.CTkFont(size=22, weight="bold"),
+                 text_color=BRAND["accent"]).pack(anchor="w")
+    ctk.CTkLabel(wordmark, text="CLIENT HUD",
+                 font=ctk.CTkFont(size=10, weight="bold"),
+                 text_color=BRAND["text_muted"]).pack(anchor="w", pady=(0, 0))
 
-    # Version + engine dot on right
+    # Status chips on right
     hdr_right = ctk.CTkFrame(header, fg_color="transparent")
-    hdr_right.pack(side="right", padx=12, pady=14)
+    hdr_right.pack(side="right", padx=12, pady=12)
 
-    hdr_eng_dot = ctk.CTkLabel(hdr_right, text="●", font=ctk.CTkFont(size=9),
-                                text_color=BRAND["text_muted"])
-    hdr_eng_dot.pack(side="right", padx=(4, 0))
-    hdr_eng_lbl = ctk.CTkLabel(hdr_right, text="Engine",
-                                font=ctk.CTkFont(size=11),
-                                text_color=BRAND["text_muted"])
-    hdr_eng_lbl.pack(side="right")
-    ctk.CTkLabel(hdr_right, text=f"v{CLIENT_VERSION}  ",
-                 font=ctk.CTkFont(size=11),
-                 text_color=BRAND["text_muted"]).pack(side="right")
+    def _chip(parent, text: str, dot_color: str | None = None) -> tuple[ctk.CTkFrame, ctk.CTkLabel | None]:
+        chip = ctk.CTkFrame(
+            parent,
+            fg_color=BRAND["hud_panel_2"],
+            corner_radius=999,
+            border_width=1,
+            border_color=BRAND["hud_border"],
+        )
+        chip.pack(side="right", padx=(8, 0))
+        dot = None
+        if dot_color:
+            dot = ctk.CTkLabel(chip, text="●", font=ctk.CTkFont(size=10), text_color=dot_color)
+            dot.pack(side="left", padx=(10, 4), pady=6)
+        lbl = ctk.CTkLabel(chip, text=text, font=ctk.CTkFont(size=11, weight="bold"), text_color=BRAND["text"])
+        lbl.pack(side="left", padx=(0 if dot_color else 12, 12), pady=6)
+        return chip, dot
+
+    _chip(hdr_right, f"v{CLIENT_VERSION}")
+    _eng_chip, hdr_eng_dot = _chip(hdr_right, "ENGINE", dot_color=BRAND["text_muted"])
 
     # ── Tab view ──────────────────────────────────────────────────────────────
     tabview = ctk.CTkTabview(
@@ -1227,33 +1309,41 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         DB-ready: /auth/login validates identifier against users.email.
                   Email is used because username is changeable in profile.
         """
-        ctk.CTkLabel(parent, text="Sign in to Arena",
-                     font=ctk.CTkFont(size=14, weight="bold"),
-                     text_color=BRAND["text"]).pack(anchor="w", pady=(0, 10))
+        ctk.CTkLabel(parent, text="Sign in",
+                     font=ctk.CTkFont(size=18, weight="bold"),
+                     text_color=BRAND["text"]).pack(anchor="w", pady=(4, 8))
+        ctk.CTkLabel(parent, text="Secure access · 2FA supported",
+                     font=ctk.CTkFont(size=12),
+                     text_color=BRAND["text_muted"]).pack(anchor="w", pady=(0, 14))
+
+        entry_h = 46
+        entry_r = 10
+        entry_border = BRAND["hud_border"]
+        entry_bg = BRAND["hud_panel_2"]
 
         id_entry = ctk.CTkEntry(
             parent, placeholder_text="Email",
-            height=36, corner_radius=6,
-            fg_color=BRAND["bg_hover"],
-            border_color=BRAND["border"],
+            height=entry_h, corner_radius=entry_r,
+            fg_color=entry_bg,
+            border_color=entry_border,
             border_width=1,
             text_color=BRAND["text"],
             placeholder_text_color=BRAND["text_muted"],
-            font=ctk.CTkFont(size=13),
+            font=ctk.CTkFont(size=14),
         )
-        id_entry.pack(fill="x", pady=(0, 6))
+        id_entry.pack(fill="x", pady=(0, 10))
 
         pw_entry = ctk.CTkEntry(
             parent, placeholder_text="Password", show="*",
-            height=36, corner_radius=6,
-            fg_color=BRAND["bg_hover"],
-            border_color=BRAND["border"],
+            height=entry_h, corner_radius=entry_r,
+            fg_color=entry_bg,
+            border_color=entry_border,
             border_width=1,
             text_color=BRAND["text"],
             placeholder_text_color=BRAND["text_muted"],
-            font=ctk.CTkFont(size=13),
+            font=ctk.CTkFont(size=14),
         )
-        pw_entry.pack(fill="x", pady=(0, 8))
+        pw_entry.pack(fill="x", pady=(0, 12))
 
         err_lbl = ctk.CTkLabel(parent, text="",
                                 font=ctk.CTkFont(size=11),
@@ -1264,7 +1354,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             """POST /auth/2fa/confirm after login returned requires_2fa + temp_token."""
             modal = ctk.CTkToplevel(win)
             modal.title("Two-factor authentication")
-            modal.geometry("340x220")
+            modal.geometry("420x260")
             modal.resizable(False, False)
             modal.configure(fg_color=BRAND["bg"])
             modal.transient(win)
@@ -1272,33 +1362,38 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
             ctk.CTkLabel(
                 modal, text="Enter your 2FA code",
-                font=ctk.CTkFont(size=14, weight="bold"),
+                font=ctk.CTkFont(size=18, weight="bold"),
                 text_color=BRAND["text"],
-            ).pack(pady=(18, 8))
+            ).pack(pady=(18, 6))
+            ctk.CTkLabel(
+                modal, text="Check your authenticator app",
+                font=ctk.CTkFont(size=12),
+                text_color=BRAND["text_muted"],
+            ).pack(pady=(0, 14))
 
             code_entry = ctk.CTkEntry(
                 modal, placeholder_text="6-digit code",
-                height=36, corner_radius=6,
-                fg_color=BRAND["bg_hover"],
-                border_color=BRAND["border"],
+                height=48, corner_radius=10,
+                fg_color=BRAND["hud_panel_2"],
+                border_color=BRAND["hud_border"],
                 border_width=1,
                 text_color=BRAND["text"],
                 placeholder_text_color=BRAND["text_muted"],
-                font=ctk.CTkFont(size=15),
+                font=ctk.CTkFont(size=18, weight="bold"),
             )
-            code_entry.pack(fill="x", padx=20, pady=4)
+            code_entry.pack(fill="x", padx=22, pady=(0, 8))
 
             err_m = ctk.CTkLabel(
                 modal, text="",
                 font=ctk.CTkFont(size=11),
                 text_color=BRAND["error"],
             )
-            err_m.pack(anchor="w", padx=20, pady=(0, 4))
+            err_m.pack(anchor="w", padx=22, pady=(0, 8))
 
             verify_btn = ctk.CTkButton(
-                modal, text="Verify", height=36, corner_radius=6,
+                modal, text="VERIFY", height=44, corner_radius=12,
                 fg_color=BRAND["accent"], hover_color=BRAND["accent_dark"],
-                text_color="#FFFFFF", font=ctk.CTkFont(size=13, weight="bold"),
+                text_color="#FFFFFF", font=ctk.CTkFont(size=14, weight="bold"),
             )
 
             def _submit_2fa():
@@ -1371,12 +1466,12 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             threading.Thread(target=_thread, daemon=True).start()
 
         login_btn = ctk.CTkButton(
-            parent, text="Sign In", height=36, corner_radius=6,
+            parent, text="SIGN IN", height=46, corner_radius=12,
             fg_color=BRAND["accent"], hover_color=BRAND["accent_dark"],
-            text_color="#FFFFFF", font=ctk.CTkFont(size=13, weight="bold"),
+            text_color="#FFFFFF", font=ctk.CTkFont(size=14, weight="bold"),
             command=_do_login,
         )
-        login_btn.pack(fill="x", pady=(0, 10))
+        login_btn.pack(fill="x", pady=(0, 14))
         pw_entry.bind("<Return>", lambda e: _do_login())
         id_entry.bind("<Return>",  lambda e: pw_entry.focus())
 
@@ -1393,10 +1488,10 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
         # TODO[GOOGLE]: wire Google sign-in to POST /auth/google when Client ID is set
         ctk.CTkButton(
-            parent, text="Open Arena Website", height=32, corner_radius=6,
-            fg_color=BRAND["bg_hover"], hover_color=BRAND["border"],
-            border_width=1, border_color=BRAND["border"],
-            text_color=BRAND["text_muted"], font=ctk.CTkFont(size=12),
+            parent, text="OPEN WEBSITE", height=40, corner_radius=12,
+            fg_color=BRAND["hud_panel_2"], hover_color=BRAND["hud_border"],
+            border_width=1, border_color=BRAND["hud_border"],
+            text_color=BRAND["text_muted"], font=ctk.CTkFont(size=13, weight="bold"),
             command=_open_website,
         ).pack(fill="x")
 
@@ -1872,12 +1967,10 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 eng_lbl.configure(text=f"Connected  ·  DB: {db}", text_color=BRAND["text"])
                 eng_dot.configure(text_color="#22C55E")
                 hdr_eng_dot.configure(text_color="#22C55E")
-                hdr_eng_lbl.configure(text_color="#22C55E")
             else:
                 eng_lbl.configure(text="Engine offline", text_color=BRAND["text_muted"])
                 eng_dot.configure(text_color=BRAND["error"])
                 hdr_eng_dot.configure(text_color=BRAND["error"])
-                hdr_eng_lbl.configure(text_color=BRAND["text_muted"])
         win.after(0, _apply)
 
     def _poll_engine():
