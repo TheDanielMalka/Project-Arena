@@ -5727,61 +5727,155 @@ async def list_matches(
 
 # ── Leaderboard ────────────────────────────────────────────────────────────────
 
+def _leaderboard_game_scope_sql(game: str | None) -> tuple[str, dict[str, object]]:
+    """
+    Users visible on a per-game tab: preferred_game matches OR they have played
+    that game at least once. (Previously only match_players — hid users who
+    never completed a ranked row but still identify as CS2/Valorant.)
+    """
+    if not game:
+        return "", {}
+    g = _normalize_game(game)
+    if g not in _VALID_GAMES:
+        raise HTTPException(400, f"Invalid game: {game}")
+    clause = """
+        AND (
+            u.preferred_game = :game
+            OR u.id IN (
+                SELECT DISTINCT mp.user_id FROM match_players mp
+                JOIN matches m ON m.id = mp.match_id
+                WHERE m.game = :game
+            )
+        )
+    """
+    return clause, {"game": g}
+
+
+def _leaderboard_range_days(range_raw: str | None) -> int | None:
+    """weekly → 7, monthly → 30, else all-time (lifetime user_stats)."""
+    if not range_raw:
+        return None
+    r = range_raw.strip().lower()
+    if r == "weekly":
+        return 7
+    if r == "monthly":
+        return 30
+    if r in ("alltime", "all_time", "all-time"):
+        return None
+    raise HTTPException(400, f"Invalid range: {range_raw}")
+
+
 @app.get("/leaderboard")
 async def leaderboard(
     game: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
+    range_param: str | None = Query(default=None, alias="range"),
     token: dict | None = Depends(optional_token),
 ):
     """
     Return the top players ranked by wins then xp.
 
     Optional filters:
-      ?game=CS2|Valorant  — per-game leaderboard (filtered by matches played in that game)
+      ?game=CS2|Valorant  — roster = preferred_game OR ≥1 match in that game
+      ?range=weekly|monthly|alltime — weekly/monthly use completed matches in
+        the window (wins/losses/matches/win_rate); xp and total_earnings stay
+        lifetime from user_stats. alltime (default) uses full user_stats row.
       ?limit=N            — top N players (1–200, default 50)
 
     Returns user profile fields + stats for leaderboard display.
     DB-ready: users JOIN user_stats ORDER BY wins DESC, xp DESC.
     """
-    params: dict = {"lim": limit}
+    params: dict[str, object] = {"lim": limit}
+    game_filter, game_params = _leaderboard_game_scope_sql(game)
+    params.update(game_params)
 
-    # Per-game filter: only include users who have played ≥1 match in that game.
-    game_filter = ""
-    if game:
-        game_filter = """
-            AND u.id IN (
-                SELECT DISTINCT mp.user_id FROM match_players mp
-                JOIN matches m ON m.id = mp.match_id
-                WHERE m.game = :game
-            )
-        """
-        params["game"] = _normalize_game(game)
+    period_days = _leaderboard_range_days(range_param)
 
     try:
         with SessionLocal() as session:
-            rows = session.execute(
-                text(f"""
-                    SELECT
-                        u.id,
-                        u.username,
-                        u.arena_id,
-                        u.avatar,
-                        u.equipped_badge_icon,
-                        u.rank,
-                        COALESCE(s.wins,    0) AS wins,
-                        COALESCE(s.losses,  0) AS losses,
-                        COALESCE(s.matches, 0) AS matches,
-                        COALESCE(s.win_rate, 0) AS win_rate,
-                        COALESCE(s.xp,      0) AS xp,
-                        COALESCE(s.total_earnings, 0) AS total_earnings
-                    FROM users u
-                    LEFT JOIN user_stats s ON s.user_id = u.id
-                    WHERE TRUE {game_filter}
-                    ORDER BY wins DESC, xp DESC
-                    LIMIT :lim
-                """),
-                params,
-            ).fetchall()
+            if period_days is None:
+                rows = session.execute(
+                    text(f"""
+                        SELECT
+                            u.id,
+                            u.username,
+                            u.arena_id,
+                            u.avatar,
+                            u.equipped_badge_icon,
+                            u.rank,
+                            COALESCE(s.wins,    0) AS wins,
+                            COALESCE(s.losses,  0) AS losses,
+                            COALESCE(s.matches, 0) AS matches,
+                            COALESCE(s.win_rate, 0) AS win_rate,
+                            COALESCE(s.xp,      0) AS xp,
+                            COALESCE(s.total_earnings, 0) AS total_earnings
+                        FROM users u
+                        LEFT JOIN user_stats s ON s.user_id = u.id
+                        WHERE TRUE {game_filter}
+                        ORDER BY wins DESC, xp DESC
+                        LIMIT :lim
+                    """),
+                    params,
+                ).fetchall()
+            else:
+                inner_game = "AND m.game = :game" if game_params.get("game") else ""
+                params_period = dict(params)
+                params_period["lb_days"] = period_days
+                rows = session.execute(
+                    text(f"""
+                        SELECT
+                            u.id,
+                            u.username,
+                            u.arena_id,
+                            u.avatar,
+                            u.equipped_badge_icon,
+                            u.rank,
+                            COALESCE(ps.wins, 0) AS wins,
+                            COALESCE(ps.losses, 0) AS losses,
+                            COALESCE(ps.matches, 0) AS matches,
+                            CASE
+                                WHEN COALESCE(ps.matches, 0) > 0 THEN
+                                    ROUND(
+                                        COALESCE(ps.wins, 0)::NUMERIC
+                                        / NULLIF(ps.matches, 0) * 100,
+                                        2
+                                    )
+                                ELSE 0
+                            END AS win_rate,
+                            COALESCE(s.xp, 0) AS xp,
+                            COALESCE(s.total_earnings, 0) AS total_earnings
+                        FROM users u
+                        LEFT JOIN user_stats s ON s.user_id = u.id
+                        LEFT JOIN (
+                            SELECT
+                                mp.user_id,
+                                COUNT(*)::INT AS matches,
+                                SUM(
+                                    CASE WHEN m.winner_id IS NOT NULL
+                                         AND m.winner_id = mp.user_id
+                                    THEN 1 ELSE 0 END
+                                )::INT AS wins,
+                                SUM(
+                                    CASE WHEN m.winner_id IS NOT NULL
+                                         AND m.winner_id <> mp.user_id
+                                    THEN 1 ELSE 0 END
+                                )::INT AS losses
+                            FROM match_players mp
+                            INNER JOIN matches m ON m.id = mp.match_id
+                            WHERE m.status = 'completed'
+                              AND m.ended_at IS NOT NULL
+                              AND m.ended_at >= NOW() - make_interval(days => :lb_days)
+                              {inner_game}
+                            GROUP BY mp.user_id
+                        ) ps ON ps.user_id = u.id
+                        WHERE TRUE {game_filter}
+                        ORDER BY wins DESC, xp DESC
+                        LIMIT :lim
+                    """),
+                    params_period,
+                ).fetchall()
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("leaderboard error: %s", exc)
         raise HTTPException(500, "Failed to load leaderboard")

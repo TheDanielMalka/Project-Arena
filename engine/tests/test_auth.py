@@ -1924,6 +1924,33 @@ class TestLeaderboard:
             resp = client.get("/leaderboard")
         assert resp.status_code == 200
 
+    def test_leaderboard_alltime_range_uses_lifetime_query(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = [self._player_row()]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/leaderboard?range=alltime")
+        assert resp.status_code == 200
+        sql = str(session.execute.call_args[0][0])
+        assert "user_stats" in sql
+        assert "make_interval" not in sql
+
+    def test_leaderboard_weekly_range_uses_period_subquery(self):
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchall.return_value = [self._player_row()]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/leaderboard?range=weekly")
+        assert resp.status_code == 200
+        sql = str(session.execute.call_args[0][0])
+        assert "make_interval" in sql
+
+    def test_leaderboard_invalid_range_400(self):
+        resp = client.get("/leaderboard?range=invalid")
+        assert resp.status_code == 400
+
+    def test_leaderboard_invalid_game_400(self):
+        resp = client.get("/leaderboard?game=Fortnite")
+        assert resp.status_code == 400
+
 
 # ─── GET /players ──────────────────────────────────────────────────────────────
 
