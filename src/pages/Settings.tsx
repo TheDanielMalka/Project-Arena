@@ -21,6 +21,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useUserStore } from "@/stores/userStore";
 import { useWalletStore } from "@/stores/walletStore";
 import { cn } from "@/lib/utils";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { PASSWORD_RULES, isPasswordValid } from "@/lib/passwordValidation";
 import { SupportTicketDialog } from "@/components/support/SupportTicketDialog";
 import { useClientStore } from "@/stores/clientStore";
@@ -216,10 +217,16 @@ const SettingsPage = () => {
     }
   };
 
-  const handleCopySecret = () => {
+  const handleCopySecret = async () => {
     if (!twoFASecret) return;
-    navigator.clipboard.writeText(twoFASecret);
-    setCopiedSecret(true); setTimeout(() => setCopiedSecret(false), 2000);
+    const ok = await copyTextToClipboard(twoFASecret);
+    if (ok) {
+      setCopiedSecret(true);
+      setTimeout(() => setCopiedSecret(false), 2000);
+      toast({ title: "Secret copied", description: "Store it somewhere safe." });
+    } else {
+      toast({ variant: "destructive", title: "Copy failed", description: "Copy the secret manually from the field above." });
+    }
   };
 
   const handleTwoFAToggle = async (v: boolean) => {

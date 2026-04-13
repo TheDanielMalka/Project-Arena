@@ -476,8 +476,20 @@ export function PlayerPopoverLayer({
   enableLeaveRoom?: boolean;
 }) {
   if (!open || !slotValue || !rect) return null;
-  const top = Math.min(rect.bottom + 8, typeof window !== "undefined" ? window.innerHeight - 320 : rect.bottom + 8);
-  const left = Math.min(rect.left, typeof window !== "undefined" ? window.innerWidth - 232 : rect.left);
+  const POPOVER_W = 232;
+  const POPOVER_H = 300;
+  const gutter = 8;
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+
+  let top = rect.bottom + gutter;
+  if (top + POPOVER_H > vh - gutter) {
+    const above = rect.top - POPOVER_H - gutter;
+    if (above >= gutter) top = above;
+    else top = Math.max(gutter, vh - POPOVER_H - gutter);
+  }
+
+  const left = Math.max(gutter, Math.min(rect.left, vw - POPOVER_W - gutter));
 
   return (
     <>
