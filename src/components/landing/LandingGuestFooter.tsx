@@ -1,8 +1,12 @@
 import { Link } from "react-router-dom";
-import { Download, Swords } from "lucide-react";
+import { Download, Monitor, Swords } from "lucide-react";
+
+/** Matches landing download CTA (Index). */
+const ARENA_CLIENT_SETUP_URL =
+  "https://arena-client-dist.s3.us-east-1.amazonaws.com/setup.zip" as const;
 
 /**
- * Footer + bottom bar for guests on marketing pages (no dashboard/lobby links).
+ * Marketing footer: Client (2 links) + Legal (3). No dashboard/lobby — those live in AppLayout sidebar.
  */
 export function LandingGuestFooter() {
   return (
@@ -19,21 +23,24 @@ export function LandingGuestFooter() {
             </p>
           </div>
           <div className="flex flex-col gap-3 sm:mt-0">
-            <h4 className="text-[10px] font-bold uppercase tracking-[0.35em] text-muted-foreground/45">Start here</h4>
+            <h4 className="text-[10px] font-bold uppercase tracking-[0.35em] text-muted-foreground/45">Client</h4>
             <nav className="flex flex-col gap-2">
-              <Link to="/why-arena" className="text-sm text-muted-foreground/75 transition-colors hover:text-foreground">
-                Why Arena
-              </Link>
-              <Link to="/how-to-play" className="text-sm text-muted-foreground/75 transition-colors hover:text-foreground">
-                How to Play
-              </Link>
               <Link
-                to="/#download"
+                to={{ pathname: "/", hash: "#download" }}
                 className="flex items-center gap-2 text-sm font-medium text-arena-cyan/90 transition-colors hover:text-arena-cyan"
               >
-                <Download className="h-3.5 w-3.5" />
+                <Download className="h-3.5 w-3.5 shrink-0" />
                 Download client
               </Link>
+              <a
+                href={ARENA_CLIENT_SETUP_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 text-sm text-muted-foreground/75 transition-colors hover:text-foreground"
+              >
+                <Monitor className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
+                Arena Client setup (.zip)
+              </a>
             </nav>
           </div>
           <div className="flex flex-col gap-3 sm:mt-0">
@@ -63,17 +70,13 @@ export function LandingGuestFooter() {
             <span className="font-display text-sm font-bold tracking-[0.2em] text-primary">ARENA</span>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-[11px] text-muted-foreground/55 sm:text-xs">
-            <Link to="/why-arena" className="hover:text-muted-foreground transition-colors">
-              Why Arena
-            </Link>
-            <span aria-hidden>·</span>
-            <Link to="/how-to-play" className="hover:text-muted-foreground transition-colors">
-              How to Play
-            </Link>
-            <span aria-hidden>·</span>
-            <Link to="/#download" className="hover:text-muted-foreground transition-colors">
+            <Link to={{ pathname: "/", hash: "#download" }} className="hover:text-muted-foreground transition-colors">
               Download
             </Link>
+            <span aria-hidden>·</span>
+            <a href={ARENA_CLIENT_SETUP_URL} target="_blank" rel="noopener noreferrer" className="hover:text-muted-foreground transition-colors">
+              Client setup
+            </a>
             <span aria-hidden>·</span>
             <Link to="/legal/terms" className="hover:text-muted-foreground transition-colors">
               Terms

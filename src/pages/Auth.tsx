@@ -53,7 +53,7 @@ const Auth = () => {
 
   // Redirect if already logged in (do NOT navigate during render)
   useEffect(() => {
-    if (isAuthenticated) navigate("/dashboard", { replace: true });
+    if (isAuthenticated) navigate("/", { replace: true });
   }, [isAuthenticated, navigate]);
 
   if (isAuthenticated) return null;
@@ -81,7 +81,7 @@ const Auth = () => {
       toast({ title: "Login failed", description: "Invalid email or password.", variant: "destructive" });
       return;
     }
-    navigate("/dashboard");
+    navigate("/");
   };
 
   const handleLogin2fa = async (e: React.FormEvent) => {
@@ -99,7 +99,7 @@ const Auth = () => {
     setLoginAuthPhase("credentials");
     setLoginTempToken("");
     setLoginTwoFaCode("");
-    navigate("/dashboard");
+    navigate("/");
   };
 
   const handleSignup = async (e: React.FormEvent) => {
@@ -160,7 +160,7 @@ const Auth = () => {
       }
       return;
     }
-    navigate("/dashboard");
+    navigate("/");
   };
 
   const handleGoogleCredential = async (credential: string | undefined) => {
@@ -196,7 +196,7 @@ const Auth = () => {
       });
       return;
     }
-    navigate("/dashboard");
+    navigate("/");
   };
 
   if (forgotMode) {

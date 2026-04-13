@@ -3,14 +3,13 @@ import { useNavigate, Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
   Swords, Wallet, Trophy, Zap, Download, Monitor,
-  CheckCircle, ArrowRight, Lock, Eye, Cpu, Flame,
+  CheckCircle, ArrowRight, Lock, Eye, Cpu,
 } from "lucide-react";
 import { LANDING_GAMES } from "@/lib/arenaGamesCatalog";
 import { cn } from "@/lib/utils";
 import { LandingArenaWordmark } from "@/components/visual/LandingArenaWordmark";
 import { LandingPublicNav } from "@/components/landing/LandingPublicNav";
 import { LandingGuestFooter } from "@/components/landing/LandingGuestFooter";
-import { useUserStore } from "@/stores/userStore";
 
 /**
  * Hero video: `/landing/hero.mp4` first (bundled stock that evokes tactical FPS — not real CS/VAL),
@@ -90,7 +89,7 @@ function HeroCinematicBackdrop() {
     v.addEventListener("loadedmetadata", onMeta);
     v.addEventListener("playing", onPlaying);
 
-    void v.play().catch(() => {
+    void Promise.resolve(v.play()).catch(() => {
       if (!envSrc && sourceIndex + 1 < ORDERED_HERO_VIDEO_SOURCES.length) {
         setSourceIndex((i) => i + 1);
       }
@@ -472,7 +471,6 @@ function BentoFeatureCard({
 const Index = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const isAuthed = useUserStore((s) => s.isAuthenticated);
 
   const [v, e, m, o, r, a] = BENTO_INDICES.map((i) => FEATURES[i]);
 
@@ -490,7 +488,7 @@ const Index = () => {
         className="pointer-events-none fixed inset-0 z-[5] opacity-[0.045] motion-reduce:opacity-[0.015] mix-blend-multiply [background:repeating-linear-gradient(0deg,transparent,transparent_2px,hsl(0_0%_0%/0.42)_2px,hsl(0_0%_0%/0.42)_3px)]"
         aria-hidden
       />
-      <LandingPublicNav active="home" showMarketingLinks={!isAuthed} />
+      <LandingPublicNav active="home" />
 
       {/* HERO — split layout, not centered stack */}
       <section className="relative min-h-[min(100svh,920px)] flex flex-col justify-center pt-16 pb-16 overflow-hidden">
@@ -752,69 +750,7 @@ const Index = () => {
         </div>
       </section>
 
-      {isAuthed ? (
-        <>
-          <div className="border-t border-white/[0.06] bg-[hsl(220_22%_4%/0.6)] py-12 px-5 sm:px-8">
-            <div className="mx-auto grid max-w-6xl grid-cols-2 gap-10 md:grid-cols-4 md:gap-8">
-              <div className="col-span-2 flex flex-col gap-3 md:col-span-1">
-                <div className="flex items-center gap-2">
-                  <Swords className="h-5 w-5 text-primary" />
-                  <span className="font-display text-sm font-bold tracking-[0.2em] text-primary">ARENA</span>
-                </div>
-                <p className="max-w-[220px] text-xs leading-relaxed text-muted-foreground/65">Compete. Earn. Rise. Skill-based wagering for competitive gamers.</p>
-              </div>
-              <div className="flex flex-col gap-3 md:mt-6">
-                <h4 className="text-[10px] font-bold uppercase tracking-[0.35em] text-muted-foreground/45">Platform</h4>
-                <nav className="flex flex-col gap-2">
-                  <Link to="/dashboard" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Dashboard</Link>
-                  <Link to="/lobby" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Match Lobby</Link>
-                  <Link to="/history" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Match History</Link>
-                  <Link to="/leaderboard" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Leaderboard</Link>
-                  <Link to="/hub" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Community Hub</Link>
-                </nav>
-              </div>
-              <div className="flex flex-col gap-3">
-                <h4 className="text-[10px] font-bold uppercase tracking-[0.35em] text-muted-foreground/45">Account</h4>
-                <nav className="flex flex-col gap-2">
-                  <Link to="/profile" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Profile</Link>
-                  <Link to="/wallet" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Wallet</Link>
-                  <Link to="/forge" className="flex items-center gap-1.5 text-sm font-medium text-amber-500/85 hover:text-amber-400 transition-colors">
-                    <Flame className="h-3.5 w-3.5" /> Forge
-                  </Link>
-                  <Link to="/settings" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Settings</Link>
-                </nav>
-              </div>
-              <div className="col-span-2 flex flex-col gap-3 md:col-span-1 md:mt-4">
-                <h4 className="text-[10px] font-bold uppercase tracking-[0.35em] text-muted-foreground/45">Legal</h4>
-                <nav className="flex flex-col gap-2">
-                  <Link to="/legal/terms" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Terms of Service</Link>
-                  <Link to="/legal/privacy" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Privacy Policy</Link>
-                  <Link to="/legal/responsible-gaming" className="text-sm text-muted-foreground/75 hover:text-foreground transition-colors">Responsible Gaming</Link>
-                </nav>
-              </div>
-            </div>
-          </div>
-
-          <footer className="border-t border-border/50 py-5 px-6">
-            <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 md:flex-row">
-              <div className="flex items-center gap-2">
-                <Swords className="h-4 w-4 text-primary" />
-                <span className="font-display text-sm font-bold tracking-[0.2em] text-primary">ARENA</span>
-              </div>
-              <div className="flex flex-wrap items-center justify-center gap-3 text-xs text-muted-foreground/55">
-                <Link to="/legal/terms" className="hover:text-muted-foreground transition-colors">Terms</Link>
-                <span>·</span>
-                <Link to="/legal/privacy" className="hover:text-muted-foreground transition-colors">Privacy</Link>
-                <span>·</span>
-                <Link to="/legal/responsible-gaming" className="hover:text-muted-foreground transition-colors">Responsible Gaming</Link>
-              </div>
-              <p className="text-center font-mono text-[10px] text-muted-foreground/35">© {new Date().getFullYear()} Arena · 18+</p>
-            </div>
-          </footer>
-        </>
-      ) : (
-        <LandingGuestFooter />
-      )}
+      <LandingGuestFooter />
     </div>
   );
 };

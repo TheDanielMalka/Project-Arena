@@ -23,7 +23,7 @@ export function Breadcrumbs() {
   return (
     <nav className="flex items-center gap-1 text-xs text-muted-foreground mb-4">
       <button
-        onClick={() => navigate("/dashboard")}
+        onClick={() => navigate("/")}
         className="flex items-center gap-1 hover:text-primary transition-colors"
       >
         <Home className="h-3 w-3" />

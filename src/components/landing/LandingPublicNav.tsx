@@ -13,7 +13,7 @@ export function LandingPublicNav({
   showMarketingLinks = true,
 }: {
   active: LandingPublicNavActive;
-  /** Why / How links — hide on home when user is already signed in */
+  /** Why / How chips next to wordmark (default: visible) */
   showMarketingLinks?: boolean;
 }) {
   const navigate = useNavigate();
