@@ -19,7 +19,7 @@ const SheetOverlay = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <SheetPrimitive.Overlay
     className={cn(
-      "fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      "fixed inset-0 z-50 arena-hud-overlay data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
       className,
     )}
     {...props}
@@ -51,13 +51,29 @@ interface SheetContentProps
   extends React.ComponentPropsWithoutRef<typeof SheetPrimitive.Content>,
     VariantProps<typeof sheetVariants> {}
 
+const sheetSideHud: Record<NonNullable<VariantProps<typeof sheetVariants>["side"]>, string> = {
+  right: "arena-hud-sheet-right",
+  left: "arena-hud-sheet-left",
+  top: "arena-hud-sheet-top",
+  bottom: "arena-hud-sheet-bottom",
+};
+
 const SheetContent = React.forwardRef<React.ElementRef<typeof SheetPrimitive.Content>, SheetContentProps>(
   ({ side = "right", className, children, ...props }, ref) => (
     <SheetPortal>
       <SheetOverlay />
-      <SheetPrimitive.Content ref={ref} className={cn(sheetVariants({ side }), className)} {...props}>
+      <SheetPrimitive.Content
+        ref={ref}
+        className={cn(
+          sheetVariants({ side }),
+          sheetSideHud[side ?? "right"],
+          "border-arena-cyan/20 bg-[hsl(220_22%_4%/0.97)] backdrop-blur-xl",
+          className,
+        )}
+        {...props}
+      >
         {children}
-        <SheetPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity data-[state=open]:bg-secondary hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
+        <SheetPrimitive.Close className="arena-hud-modal-close absolute right-3 top-3 flex h-8 w-8 items-center justify-center opacity-80 text-muted-foreground ring-offset-background transition-opacity hover:text-foreground focus:outline-none focus:ring-2 focus:ring-arena-cyan/40 focus:ring-offset-2 focus:ring-offset-background disabled:pointer-events-none">
           <X className="h-4 w-4" />
           <span className="sr-only">Close</span>
         </SheetPrimitive.Close>

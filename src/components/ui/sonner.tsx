@@ -13,10 +13,12 @@ const Toaster = ({ ...props }: ToasterProps) => {
       toastOptions={{
         classNames: {
           toast:
-            "group toast group-[.toaster]:bg-background group-[.toaster]:text-foreground group-[.toaster]:border-border group-[.toaster]:shadow-lg",
-          description: "group-[.toast]:text-muted-foreground",
-          actionButton: "group-[.toast]:bg-primary group-[.toast]:text-primary-foreground",
-          cancelButton: "group-[.toast]:bg-muted group-[.toast]:text-muted-foreground",
+            "group toast arena-hud-toast-surface group-[.toaster]:border-arena-cyan/22 group-[.toaster]:bg-[hsl(220_22%_6%/0.94)] group-[.toaster]:text-foreground group-[.toaster]:shadow-[0_0_40px_-12px_hsl(var(--primary)/0.35)] group-[.toaster]:backdrop-blur-md",
+          description: "group-[.toast]:font-hud group-[.toast]:text-[11px] group-[.toast]:uppercase group-[.toast]:tracking-[0.08em] group-[.toast]:text-muted-foreground/85",
+          actionButton:
+            "group-[.toast]:arena-hud-btn-clip-sm group-[.toast]:rounded-none group-[.toast]:bg-primary group-[.toast]:text-primary-foreground group-[.toast]:font-hud group-[.toast]:text-[10px] group-[.toast]:uppercase group-[.toast]:tracking-[0.14em]",
+          cancelButton:
+            "group-[.toast]:arena-hud-btn-clip-sm group-[.toast]:rounded-none group-[.toast]:border group-[.toast]:border-arena-cyan/35 group-[.toast]:bg-black/40 group-[.toast]:text-muted-foreground group-[.toast]:font-hud group-[.toast]:text-[10px] group-[.toast]:uppercase",
         },
       }}
       {...props}
