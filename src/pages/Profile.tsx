@@ -443,6 +443,7 @@ const Profile = () => {
     <ArenaPageShell variant="profile" contentClassName="space-y-6">
       <div className="flex items-center justify-between">
         <Button
+          type="button"
           variant="outline"
           size="sm"
           onClick={() => {
@@ -461,14 +462,16 @@ const Profile = () => {
         {/* Red accent bar */}
         <div className="h-1 w-full bg-gradient-to-r from-primary via-primary/60 to-transparent" />
         <CardContent className="p-6">
-          <div className="flex items-center gap-5">
+          <div className="flex min-w-0 flex-col gap-5 lg:flex-row lg:items-center lg:gap-6">
+            <div className="flex min-w-0 flex-1 flex-col gap-4 sm:flex-row sm:items-start sm:gap-5">
             {/* Avatar — only interactive in edit mode */}
             <div className="relative shrink-0">
               {editMode ? (
                 <button
+                  type="button"
                   onClick={() => { setPickerMode("avatar"); setShowAvatarPicker(true); }}
                   className={cn(
-                    "group relative flex h-16 w-16 items-center justify-center overflow-hidden rounded-full ring-1 ring-white/15 transition-all",
+                    "group relative flex h-[4.25rem] w-[4.25rem] items-center justify-center overflow-hidden rounded-full ring-2 ring-arena-cyan/25 ring-offset-2 ring-offset-card shadow-[0_0_24px_-8px_hsl(var(--primary)/0.35)] transition-all hover:ring-arena-cyan/45",
                     getAvatarBackground(selectedBg).pulse && "motion-safe:animate-pulse",
                   )}
                   style={getAvatarCircleStyle(selectedBg)}
@@ -482,7 +485,7 @@ const Profile = () => {
               ) : (
                 <div
                   className={cn(
-                    "relative flex h-16 w-16 items-center justify-center overflow-hidden rounded-full ring-1 ring-white/15",
+                    "relative flex h-[4.25rem] w-[4.25rem] items-center justify-center overflow-hidden rounded-full ring-2 ring-white/12 ring-offset-2 ring-offset-card",
                     getAvatarBackground(selectedBg).pulse && "motion-safe:animate-pulse",
                   )}
                   style={getAvatarCircleStyle(selectedBg)}
@@ -503,7 +506,7 @@ const Profile = () => {
             </div>
 
             {/* Name + rank + info */}
-            <div className="flex-1 min-w-0">
+            <div className="min-w-0 flex-1">
               {editMode ? (
                 <Input
                   value={username}
@@ -553,9 +556,10 @@ const Profile = () => {
                 <span className="text-xs text-muted-foreground">Since March 2026</span>
               </div>
             </div>
+            </div>
 
-            {/* Stats — right side */}
-            <div className="flex items-center gap-4 shrink-0 border-l border-border/50 pl-5">
+            {/* Stats — right side (wraps on narrow viewports to avoid horizontal bleed) */}
+            <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-3 border-t border-border/50 pt-4 sm:justify-end sm:gap-4 lg:w-auto lg:shrink-0 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
               <div className="text-center">
                 <Trophy className="h-4 w-4 text-arena-gold mx-auto mb-0.5" />
                 <p className="font-display text-lg font-bold leading-none">{user?.stats.matches ?? 0}</p>
@@ -585,7 +589,7 @@ const Profile = () => {
             <CardTitle className="font-display text-sm tracking-widest uppercase text-muted-foreground flex items-center gap-2">
               <Trophy className="h-4 w-4" /> Game Stats
             </CardTitle>
-            <button onClick={() => navigate(`/history?game=${encodeURIComponent(activeGameTab)}`)} className="text-[10px] font-display text-muted-foreground hover:text-primary transition-colors tracking-wider uppercase">
+            <button type="button" onClick={() => navigate(`/history?game=${encodeURIComponent(activeGameTab)}`)} className="text-[10px] font-display text-muted-foreground hover:text-primary transition-colors tracking-wider uppercase">
               Full Stats →
             </button>
           </div>
@@ -599,6 +603,7 @@ const Profile = () => {
               return (
                 <button
                   key={gameName}
+                  type="button"
                   onClick={() => setActiveGameTab(gameName)}
                   className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-display font-semibold transition-all"
                   style={{
@@ -940,7 +945,7 @@ const Profile = () => {
           {pickerMode === "avatar" && (
             <div className="flex gap-1 mb-3 bg-secondary/40 rounded-lg p-0.5">
               {(["free","event","premium"] as const).map((tab) => (
-                <button key={tab} onClick={() => setAvatarTab(tab)}
+                <button key={tab} type="button" onClick={() => setAvatarTab(tab)}
                   className={`flex-1 text-[10px] font-display uppercase tracking-widest py-1.5 rounded-md transition-all ${
                     avatarTab === tab ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
                   }`}>
@@ -954,7 +959,7 @@ const Profile = () => {
           {pickerMode === "background" && (
             <div className="flex gap-1 mb-3 bg-secondary/40 rounded-lg p-0.5">
               {(["free","event","premium"] as const).map((tab) => (
-                <button key={tab} onClick={() => setBgTab(tab)}
+                <button key={tab} type="button" onClick={() => setBgTab(tab)}
                   className={`flex-1 text-[10px] font-display uppercase tracking-widest py-1.5 rounded-md transition-all ${
                     bgTab === tab ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
                   }`}>
