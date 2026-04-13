@@ -27,7 +27,7 @@ import httpx
 import mss
 import mss.tools
 import pystray
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from pystray import MenuItem, Menu
 
 CLIENT_VERSION = "1.0.0"
@@ -55,6 +55,12 @@ BRAND = {
     "error":       "#EF4444",
     "warning":     "#E9A80A",   # arena-gold
     "rank_gold":   "#E9A80A",
+    # AAA HUD extensions
+    "hud_panel":   "#0F1115",
+    "hud_panel_2": "#0B0D10",
+    "hud_border":  "#2A2F3A",
+    "hud_glow":    "#22D3EE",
+    "hud_glow_2":  "#A78BFA",
     # PIL tuples for icon drawing
     "accent_pil":  (228, 37, 53, 255),    # #E42535
     "idle_pil":    (80, 80, 80, 255),
@@ -883,7 +889,7 @@ def _draw_arena_icon(size: int = 64, state: str = "idle",
     colors = {
         "active": BRAND["accent_pil"],
         "match":  BRAND["match_pil"],
-        "error":  (180, 30, 40, 200),
+        "error":  (239, 68, 68, 220),
         "idle":   BRAND["idle_pil"],
     }
     glyph_color = colors.get(state, colors["idle"])
@@ -896,17 +902,23 @@ def _draw_arena_icon(size: int = 64, state: str = "idle",
     s = draw_size
     cx = s // 2
 
-    # Dark pill background — just behind the glyph area, not full square
+    # AAA icon base: matte panel + neon ring glow
     pad_bg = int(s * 0.08)
-    draw.ellipse([pad_bg, pad_bg, s - pad_bg, s - pad_bg],
-                 fill=(15, 15, 15, 230))
+    ring_box = [pad_bg, pad_bg, s - pad_bg, s - pad_bg]
+    draw.ellipse(ring_box, fill=(12, 12, 12, 235))
 
-    # Thin ring
-    lw_ring = max(2, s // 40)
-    draw.ellipse([pad_bg, pad_bg, s - pad_bg, s - pad_bg],
-                 outline=glyph_color, width=lw_ring)
+    lw_ring = max(2, s // 44)
 
-    # 'A' glyph — thick, bold, centred
+    glow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    gdraw = ImageDraw.Draw(glow)
+    gdraw.ellipse(ring_box, outline=(34, 211, 238, 110), width=lw_ring * 3)
+    gdraw.ellipse(ring_box, outline=(167, 139, 250, 80), width=lw_ring * 2)
+    glow = glow.filter(ImageFilter.GaussianBlur(radius=max(2, s // 120)))
+    img.alpha_composite(glow)
+
+    draw.ellipse(ring_box, outline=glyph_color, width=lw_ring)
+
+    # 'A' glyph — thick, bold, centred with subtle shadow
     lw  = max(8, s // 12)
     pad = int(s * 0.18)
 
@@ -917,6 +929,16 @@ def _draw_arena_icon(size: int = 64, state: str = "idle",
     ins  = int(s * 0.28)
     cb_l = (ins,     cb_y)
     cb_r = (s - ins, cb_y)
+
+    sh = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    shd = ImageDraw.Draw(sh)
+    shadow = (0, 0, 0, 160)
+    off = max(2, s // 120)
+    shd.line([(top[0] + off, top[1] + off), (bl[0] + off, bl[1] + off)], fill=shadow, width=lw)
+    shd.line([(top[0] + off, top[1] + off), (br[0] + off, br[1] + off)], fill=shadow, width=lw)
+    shd.line([(cb_l[0] + off, cb_l[1] + off), (cb_r[0] + off, cb_r[1] + off)], fill=shadow, width=max(6, s // 16))
+    sh = sh.filter(ImageFilter.GaussianBlur(radius=max(1, s // 200)))
+    img.alpha_composite(sh)
 
     draw.line([top, bl],    fill=glyph_color, width=lw)
     draw.line([top, br],    fill=glyph_color, width=lw)
@@ -950,17 +972,17 @@ def _draw_arena_icon(size: int = 64, state: str = "idle",
 def generate_ico_file(path: str):
     """
     Save a Windows-compatible ICO for the window titlebar/taskbar.
-    PIL's ICO writer only stores one size reliably; we save 32×32 which
-    Windows scales for titlebar use. The tray icon uses PIL RGBA directly.
+    We save a multi-size ICO so Explorer/Taskbar can pick the best size.
     """
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    # Draw at 256, composite onto dark bg, save as 32x32 ICO
-    # (PIL multi-size ICO is unreliable; single 32px ICO works on all Windows)
-    rgba = _draw_arena_icon(256, state="active")
-    bg   = Image.new("RGBA", (256, 256), (15, 15, 15, 255))
-    bg.paste(rgba, mask=rgba.split()[3])
-    icon = bg.resize((32, 32), Image.LANCZOS).convert("RGBA")
-    icon.save(path, format="ICO")
+    sizes = (16, 24, 32, 48, 64, 128, 256)
+    imgs: list[Image.Image] = []
+    for s in sizes:
+        rgba = _draw_arena_icon(s, state="active")
+        bg = Image.new("RGBA", (s, s), (12, 12, 12, 255))
+        bg.paste(rgba, mask=rgba.split()[3])
+        imgs.append(bg.convert("RGBA"))
+    imgs[0].save(path, format="ICO", sizes=[(s, s) for s in sizes], append_images=imgs[1:])
     logger.info(f"ICO saved: {path} ({os.path.getsize(path)} bytes)")
 
 
@@ -1043,8 +1065,10 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     win = ctk.CTk()
     win.title("Arena Client")
-    win.geometry("400x600")
-    win.resizable(False, False)
+    # AAA HUD layout needs real space (wide, slightly taller)
+    win.geometry("1400x690")
+    win.minsize(1200, 660)
+    win.resizable(True, True)
     win.configure(fg_color=BRAND["bg"])
 
     if ico_path and os.path.exists(ico_path):
@@ -1070,12 +1094,33 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     # ── Widget helpers ────────────────────────────────────────────────────────
     def _card(parent, title: str) -> ctk.CTkFrame:
-        outer = ctk.CTkFrame(parent, fg_color=BRAND["bg_card"], corner_radius=8,
-                              border_width=1, border_color=BRAND["border"])
-        outer.pack(fill="x", padx=14, pady=(8, 0))
-        ctk.CTkLabel(outer, text=title.upper(),
-                     font=ctk.CTkFont(size=9, weight="bold"),
-                     text_color=BRAND["text_muted"]).pack(anchor="w", padx=14, pady=(10, 2))
+        """
+        AAA HUD card: matte panel + neon edge + header pip.
+        (Pure styling helper: no logic.)
+        """
+        outer = ctk.CTkFrame(
+            parent,
+            fg_color=BRAND["hud_panel"],
+            corner_radius=12,
+            border_width=1,
+            border_color=BRAND["hud_border"],
+        )
+        outer.pack(fill="x", padx=14, pady=(10, 0))
+
+        header = ctk.CTkFrame(outer, fg_color=BRAND["hud_panel_2"], corner_radius=10)
+        header.pack(fill="x", padx=10, pady=(10, 6))
+
+        pip = ctk.CTkFrame(header, width=8, height=8, fg_color=BRAND["hud_glow"], corner_radius=99)
+        pip.pack(side="left", padx=(10, 8), pady=10)
+
+        ctk.CTkLabel(
+            header,
+            text=title.upper(),
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=BRAND["text"],
+        ).pack(side="left", pady=8)
+
+        ctk.CTkFrame(outer, height=1, fg_color=BRAND["hud_border"]).pack(fill="x", padx=10, pady=(0, 6))
         return outer
 
     def _hdivider(parent):
@@ -1136,11 +1181,21 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     tab_ev = tabview.tab("Events")
 
     # ── OVERVIEW TAB ──────────────────────────────────────────────────────────
-    ov = ctk.CTkScrollableFrame(tab_ov, fg_color=BRAND["bg"], corner_radius=0)
-    ov.pack(fill="both", expand=True)
+    # Two-column AAA HUD layout (left: identity/match, right: game/monitor)
+    ov_root = ctk.CTkFrame(tab_ov, fg_color=BRAND["bg"], corner_radius=0)
+    ov_root.pack(fill="both", expand=True)
+    ov_root.grid_columnconfigure(0, weight=1, uniform="ov")
+    ov_root.grid_columnconfigure(1, weight=1, uniform="ov")
+    ov_root.grid_rowconfigure(0, weight=1)
+
+    ov_left = ctk.CTkScrollableFrame(ov_root, fg_color=BRAND["bg"], corner_radius=0)
+    ov_left.grid(row=0, column=0, sticky="nsew", padx=(0, 6), pady=0)
+
+    ov_right = ctk.CTkScrollableFrame(ov_root, fg_color=BRAND["bg"], corner_radius=0)
+    ov_right.grid(row=0, column=1, sticky="nsew", padx=(6, 0), pady=0)
 
     # Engine card
-    eng_card = _card(ov, "Engine")
+    eng_card = _card(ov_left, "Engine")
     eng_row  = ctk.CTkFrame(eng_card, fg_color="transparent")
     eng_row.pack(fill="x", padx=14, pady=(0, 12))
     eng_dot  = _status_dot(eng_row)
@@ -1150,7 +1205,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     eng_lbl.pack(side="left", padx=(6, 0))
 
     # Identity card
-    id_card     = _card(ov, "Identity")
+    id_card     = _card(ov_left, "Identity")
     id_inner_ref: list = []
 
     def _rebuild_identity():
@@ -1472,7 +1527,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     monitor.engine.set_on_unauthorized(lambda: win.after(0, _handle_session_expired))
 
     # Game status card
-    game_card  = _card(ov, "Game Status")
+    game_card  = _card(ov_right, "Game Status")
     game_row   = ctk.CTkFrame(game_card, fg_color="transparent")
     game_row.pack(fill="x", padx=14, pady=(0, 4))
     game_dot   = _status_dot(game_row)
@@ -1647,7 +1702,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             lobby_body_ref.append(wait_lbl)
 
     # Monitoring toggle card
-    mon_card = _card(ov, "Monitoring")
+    mon_card = _card(ov_right, "Monitoring")
     mon_row  = ctk.CTkFrame(mon_card, fg_color="transparent")
     mon_row.pack(fill="x", padx=14, pady=(0, 6))
 

@@ -17,6 +17,7 @@ import time
 
 
 APP_NAME = "ArenaClient"
+ALT_EXE_NAME = "ArenaClient_HUD"
 ICON_PATH = "assets/arena_icon.ico"
 MAIN_SCRIPT = "main.py"
 
@@ -248,6 +249,15 @@ def build():
             if sys.platform == "win32":
                 _sign_exe(abs_exe)
                 _unblock_exe(abs_exe)
+                # Copy to a new filename to avoid Windows icon cache issues.
+                alt_path = os.path.abspath(os.path.join(os.path.dirname(abs_exe), f"{ALT_EXE_NAME}.exe"))
+                try:
+                    shutil.copy2(abs_exe, alt_path)
+                    _sign_exe(alt_path)
+                    _unblock_exe(alt_path)
+                    print(f"  Output (alt): {os.path.relpath(alt_path, os.path.dirname(__file__))}")
+                except Exception as e:
+                    print(f"  WARNING: Could not write alt EXE copy: {e}")
             _copy_distribution_extras()
     else:
         print("Build failed!")
