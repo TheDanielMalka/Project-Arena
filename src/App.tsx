@@ -44,7 +44,7 @@ const PublicLegal = ({ children }: { children: React.ReactNode }) => (
 
 const AdminRoute = () => {
   const user = useUserStore((s) => s.user);
-  return user?.role === "admin" ? <AppLayout><Admin /></AppLayout> : <Navigate to="/dashboard" replace />;
+  return user?.role === "admin" ? <AppLayout><Admin /></AppLayout> : <Navigate to="/" replace />;
 };
 
 function SessionGate({ children }: { children: ReactNode }) {

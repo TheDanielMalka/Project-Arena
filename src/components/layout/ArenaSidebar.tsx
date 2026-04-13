@@ -132,7 +132,7 @@ export function ArenaSidebar() {
           collapsed ? "px-3 py-4 justify-center" : "px-5 py-4"
         )}>
           <button
-            onClick={() => navigate("/dashboard")}
+            onClick={() => navigate("/")}
             className="focus:outline-none group flex items-center gap-2"
           >
             {/* Glow dot */}
