@@ -36,13 +36,13 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 p-6 shadow-lg duration-200 arena-hud-modal-surface data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]",
+        "fixed left-[50%] top-[50%] z-[60] grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 p-6 shadow-lg duration-200 arena-hud-modal-surface data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]",
         className,
       )}
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="arena-hud-modal-close absolute right-3 top-3 flex h-8 w-8 items-center justify-center opacity-80 text-muted-foreground ring-offset-background transition-opacity hover:text-foreground focus:outline-none focus:ring-2 focus:ring-arena-cyan/40 focus:ring-offset-2 focus:ring-offset-background disabled:pointer-events-none">
+      <DialogPrimitive.Close className="arena-hud-modal-close absolute right-3 top-3 z-[1] flex h-8 w-8 items-center justify-center opacity-80 text-muted-foreground ring-offset-background transition-opacity hover:text-foreground focus:outline-none focus:ring-2 focus:ring-arena-cyan/40 focus:ring-offset-2 focus:ring-offset-background disabled:pointer-events-none">
         <X className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>
