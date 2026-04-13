@@ -50,6 +50,63 @@ def ensure_pyinstaller_installed():
     sys.exit(1)
 
 
+def _generate_build_icon(ico_path: str) -> None:
+    """
+    Generate the build-time ICO that gets embedded into the EXE.
+    This must run BEFORE PyInstaller so Windows Explorer shows the new icon.
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFilter  # type: ignore
+    except Exception:
+        print("WARNING: Pillow not available; cannot generate build icon.")
+        return
+
+    os.makedirs(os.path.dirname(os.path.abspath(ico_path)), exist_ok=True)
+
+    def draw_icon(size: int) -> "Image.Image":
+        s = size * 4
+        img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+
+        pad = int(s * 0.08)
+        ring = [pad, pad, s - pad, s - pad]
+        d.ellipse(ring, fill=(12, 12, 12, 255))
+
+        lw = max(2, s // 44)
+        glow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+        gd = ImageDraw.Draw(glow)
+        gd.ellipse(ring, outline=(34, 211, 238, 110), width=lw * 3)
+        gd.ellipse(ring, outline=(167, 139, 250, 80), width=lw * 2)
+        glow = glow.filter(ImageFilter.GaussianBlur(radius=max(2, s // 120)))
+        img.alpha_composite(glow)
+
+        # Outer ring (Arena red)
+        d.ellipse(ring, outline=(228, 37, 53, 255), width=lw)
+
+        # "A" glyph
+        cx = s // 2
+        top = (cx, int(s * 0.12))
+        bl = (int(s * 0.1), int(s * 0.88))
+        br = (int(s * 0.9), int(s * 0.88))
+        cb_y = int(s * 0.55)
+        ins = int(s * 0.28)
+        cb_l = (ins, cb_y)
+        cb_r = (s - ins, cb_y)
+
+        glyph = (228, 37, 53, 255)
+        gw = max(8, s // 12)
+        d.line([top, bl], fill=glyph, width=gw)
+        d.line([top, br], fill=glyph, width=gw)
+        d.line([cb_l, cb_r], fill=glyph, width=max(6, s // 16))
+
+        return img.resize((size, size), Image.LANCZOS)
+
+    sizes = (16, 24, 32, 48, 64, 128, 256)
+    imgs = [draw_icon(s) for s in sizes]
+    imgs[0].save(ico_path, format="ICO", sizes=[(s, s) for s in sizes], append_images=imgs[1:])
+    print(f"Generated icon: {ico_path}")
+
+
 def stop_running_client_processes():
     """
     Stop running ArenaClient.exe processes that lock dist/ArenaClient.exe.
@@ -66,13 +123,14 @@ def stop_running_client_processes():
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     target_exe = os.path.abspath(os.path.join(script_dir, "dist", f"{APP_NAME}.exe")).lower()
+    target_alt = os.path.abspath(os.path.join(script_dir, "dist", f"{ALT_EXE_NAME}.exe")).lower()
     stopped = 0
 
     for proc in psutil.process_iter(attrs=["pid", "name", "exe"]):
         try:
             exe_path = (proc.info.get("exe") or "").lower()
             name = (proc.info.get("name") or "").lower()
-            if exe_path == target_exe or name == f"{APP_NAME.lower()}.exe":
+            if exe_path in (target_exe, target_alt) or name in (f"{APP_NAME.lower()}.exe", f"{ALT_EXE_NAME.lower()}.exe"):
                 proc.terminate()
                 stopped += 1
         except Exception:
@@ -208,6 +266,10 @@ def build():
     stop_running_client_processes()
     print(f"\n  Building {APP_NAME}...\n")
 
+    # Ensure the embedded EXE icon is always the latest (no stale assets).
+    if os.path.exists(os.path.dirname(os.path.abspath(ICON_PATH))):
+        _generate_build_icon(ICON_PATH)
+
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--onefile",
@@ -251,13 +313,22 @@ def build():
                 _unblock_exe(abs_exe)
                 # Copy to a new filename to avoid Windows icon cache issues.
                 alt_path = os.path.abspath(os.path.join(os.path.dirname(abs_exe), f"{ALT_EXE_NAME}.exe"))
-                try:
-                    shutil.copy2(abs_exe, alt_path)
+                copied = False
+                last_err: Exception | None = None
+                for _ in range(8):
+                    try:
+                        shutil.copy2(abs_exe, alt_path)
+                        copied = True
+                        break
+                    except Exception as e:
+                        last_err = e
+                        time.sleep(0.6)
+                if copied:
                     _sign_exe(alt_path)
                     _unblock_exe(alt_path)
                     print(f"  Output (alt): {os.path.relpath(alt_path, os.path.dirname(__file__))}")
-                except Exception as e:
-                    print(f"  WARNING: Could not write alt EXE copy: {e}")
+                else:
+                    print(f"  WARNING: Could not write alt EXE copy: {last_err}")
             _copy_distribution_extras()
     else:
         print("Build failed!")
