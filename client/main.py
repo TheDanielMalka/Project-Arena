@@ -1143,7 +1143,11 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
         win.bind("<Configure>", lambda _e: _schedule_backdrop_redraw(), add="+")
         win.after(0, _draw_backdrop)
-        bg.lower()
+        # tkinter.Canvas.lower() is for canvas items (needs args). Lower the widget itself.
+        try:
+            bg.tk.call("lower", bg._w)
+        except Exception:
+            pass
 
     def _on_close():
         win.withdraw()
