@@ -1541,15 +1541,10 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     # ── Match Lobby Card — hidden until monitor.current_match_id is set ───────
     # Always exists in layout (between game_card and mon_card); shown/hidden via pack.
-    lobby_container = ctk.CTkFrame(ov, fg_color="transparent")
+    lobby_container = ctk.CTkFrame(ov_left, fg_color="transparent")
     lobby_container.pack(fill="x")
 
-    lobby_outer = ctk.CTkFrame(lobby_container, fg_color=BRAND["bg_card"],
-                                corner_radius=8, border_width=1,
-                                border_color=BRAND["border"])
-    ctk.CTkLabel(lobby_outer, text="MATCH LOBBY",
-                 font=ctk.CTkFont(size=9, weight="bold"),
-                 text_color=BRAND["text_muted"]).pack(anchor="w", padx=14, pady=(10, 2))
+    lobby_outer = _card(lobby_container, "Match Lobby")
 
     lobby_body_ref: list = []
     _lobby_result_cache: list[dict | None] = [None]
@@ -1753,7 +1748,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     thumb_img_lbl.pack(side="left")
     _last_shown_fp: list[str | None] = [None]
 
-    ctk.CTkLabel(ov, text="", height=10).pack()
+    ctk.CTkLabel(ov_left, text="", height=10).pack()
 
     # ── EVENTS TAB ────────────────────────────────────────────────────────────
     ev = ctk.CTkScrollableFrame(tab_ev, fg_color=BRAND["bg"], corner_radius=0)
