@@ -1181,58 +1181,77 @@ const MatchLobby = () => {
         );
       })()}
 
-      {/* ── IN-ROOM PANEL ───────────────────────────────────────────── */}
+      {/* ── IN-ROOM PANEL (AAA shell — same handlers & conditions) ── */}
       {myActiveRoom && (
         <div className={cn(
-          "rounded-2xl border p-4 mb-4 transition-all",
+          "relative mb-4 overflow-hidden rounded-2xl border p-0 transition-all",
+          "lobby-room-panel-bg",
           countdown !== null && countdown <= 3
-            ? "border-destructive/60 bg-destructive/10 animate-pulse"
+            ? "border-destructive/60 shadow-[0_0_40px_-12px_hsl(var(--destructive)/0.35)] animate-pulse"
             : countdown !== null
-              ? "border-arena-gold/60 bg-arena-gold/10"
-              : "border-primary/40 bg-primary/5"
+              ? "border-arena-gold/55 shadow-[0_0_36px_-14px_hsl(var(--arena-gold)/0.25)]"
+              : "border-primary/35 shadow-[0_0_32px_-16px_hsl(var(--primary)/0.22)]"
         )}>
+          <div className="pointer-events-none absolute inset-0 lobby-room-panel-grid opacity-50 motion-reduce:opacity-0" aria-hidden />
+          <div className="relative p-4 sm:p-5">
           {/* Header row */}
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <div className={cn(
-                "w-2 h-2 rounded-full animate-pulse",
-                countdown !== null ? "bg-arena-gold" : "bg-primary"
-              )} />
-              <span className="text-xs font-display font-bold uppercase tracking-widest text-foreground">
-                {countdown !== null ? "Room Filling — Leave Window" : "You're In The Room"}
-              </span>
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <div
+                className={cn(
+                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-black/30",
+                  countdown !== null ? "border-arena-gold/40 shadow-[0_0_16px_-4px_hsl(var(--arena-gold)/0.35)]" : "border-primary/35 shadow-[0_0_14px_-4px_hsl(var(--primary)/0.3)]",
+                )}
+                aria-hidden
+              >
+                <div
+                  className={cn(
+                    "h-2 w-2 rounded-full motion-safe:animate-pulse",
+                    countdown !== null ? "bg-arena-gold" : "bg-primary",
+                  )}
+                />
+              </div>
+              <div>
+                <p className="font-hud text-[9px] uppercase tracking-[0.35em] text-muted-foreground/55">Match session</p>
+                <span className="font-display text-sm font-bold uppercase tracking-[0.2em] text-foreground sm:text-base">
+                  {countdown !== null ? "Room Filling — Leave Window" : "You're In The Room"}
+                </span>
+              </div>
             </div>
 
             {/* Countdown or status badge */}
             {countdown !== null ? (
               <div className={cn(
-                "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold font-mono",
+                "flex items-center gap-1.5 rounded-md border px-3 py-1.5 font-mono text-xs font-bold",
                 countdown <= 3
-                  ? "bg-destructive/20 text-destructive border border-destructive/40"
-                  : "bg-arena-gold/20 text-arena-gold border border-arena-gold/40"
+                  ? "border-destructive/50 bg-destructive/15 text-destructive"
+                  : "border-arena-gold/45 bg-arena-gold/10 text-arena-gold",
               )}>
-                <Timer className="w-3 h-3" />
+                <Timer className="h-3.5 w-3.5 shrink-0" />
                 {countdown}s to lock
               </div>
             ) : (
-              <span className="text-[10px] text-muted-foreground px-2 py-0.5 rounded-full border border-border/40 bg-secondary/40">
+              <span className="inline-flex w-fit items-center rounded-md border border-arena-cyan/25 bg-arena-cyan/[0.07] px-2.5 py-1 font-hud text-[10px] uppercase tracking-[0.22em] text-arena-cyan/80">
                 Waiting for players
               </span>
             )}
           </div>
 
-          {/* Match info */}
-          <div className="flex items-center gap-3 mb-3 text-xs text-muted-foreground">
-            <span className="font-mono text-foreground font-semibold">{myActiveRoom.game}</span>
-            <span>·</span>
-            <span>{myActiveRoom.mode}</span>
-            <span>·</span>
-            <span className="text-arena-gold font-bold">Stakes: {formatMatchStakeShort(myActiveRoom)}</span>
+          {/* Match info — chips (same data as before) */}
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <span className="rounded-md border border-white/[0.08] bg-black/35 px-2.5 py-1 font-mono text-[11px] font-semibold text-foreground">
+              {myActiveRoom.game}
+            </span>
+            <span className="rounded-md border border-border/60 bg-secondary/25 px-2.5 py-1 font-display text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+              {myActiveRoom.mode}
+            </span>
+            <span className="rounded-md border border-arena-gold/35 bg-arena-gold/[0.08] px-2.5 py-1 text-[11px] font-bold text-arena-gold">
+              Stakes: {formatMatchStakeShort(myActiveRoom)}
+            </span>
             {myActiveRoom.code && (
-              <>
-                <span>·</span>
-                <span className="font-mono text-primary">{myActiveRoom.code}</span>
-              </>
+              <span className="rounded-md border border-primary/35 bg-primary/[0.08] px-2.5 py-1 font-mono text-[11px] font-semibold text-primary">
+                {myActiveRoom.code}
+              </span>
             )}
           </div>
 
@@ -1247,9 +1266,10 @@ const MatchLobby = () => {
                 const renderSlot = (slot: LobbySlot, i: number, team: "A" | "B") => {
                   const filledCls =
                     team === "A"
-                      ? "bg-primary/15 border border-primary/30 text-foreground"
-                      : "bg-arena-purple/15 border border-arena-purple/30 text-foreground";
-                  const openCls = "bg-secondary/30 border border-border/30 text-muted-foreground/40";
+                      ? "min-h-[2rem] rounded-md border border-primary/35 bg-gradient-to-r from-primary/[0.14] to-primary/[0.04] text-foreground shadow-[inset_0_1px_0_hsl(0_0%_100%/0.05)]"
+                      : "min-h-[2rem] rounded-md border border-arena-purple/35 bg-gradient-to-r from-arena-purple/[0.14] to-arena-purple/[0.04] text-foreground shadow-[inset_0_1px_0_hsl(0_0%_100%/0.05)]";
+                  const openCls =
+                    "min-h-[2rem] rounded-md border border-dashed border-border/45 bg-secondary/25 text-muted-foreground/45";
                   if (slot.kind === "player") {
                     const rosterEntry = myActiveRoom.playersRoster?.find((p) => p.username === slot.name);
                     const canKick =
@@ -1258,7 +1278,7 @@ const MatchLobby = () => {
                       rosterEntry.userId !== user?.id &&
                       myActiveRoom.status === "waiting";
                     return (
-                      <div key={i} className={cn("h-6 rounded flex items-center px-2 text-[10px] gap-1", filledCls)}>
+                      <div key={i} className={cn("flex items-center gap-1 px-2.5 text-[10px]", filledCls)}>
                         <button
                           className="truncate text-left hover:text-primary transition-colors flex-1 min-w-0"
                           onClick={(e) => {
@@ -1297,13 +1317,13 @@ const MatchLobby = () => {
                   }
                   if (slot.kind === "filled") {
                     return (
-                      <div key={i} className={cn("h-6 rounded flex items-center px-2 text-[10px] italic", filledCls)}>
+                      <div key={i} className={cn("flex items-center px-2.5 text-[10px] italic", filledCls)}>
                         <span className="truncate w-full">In lobby</span>
                       </div>
                     );
                   }
                   return (
-                    <div key={i} className={cn("h-6 rounded flex items-center px-2 text-[10px]", openCls)}>
+                    <div key={i} className={cn("flex items-center px-2.5 text-[10px]", openCls)}>
                       <button
                         className="flex items-center gap-1 hover:text-primary transition-colors w-full"
                         onClick={(e) => { e.stopPropagation(); void handleOpenInviteModal(); }}
@@ -1317,34 +1337,48 @@ const MatchLobby = () => {
                   );
                 };
                 return (
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">
-                        Team A ({rv.filledA}/{rv.maxPerTeam})
-                      </p>
-                      <div className="space-y-1">{sideA.map((s, i) => renderSlot(s, i, "A"))}</div>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">
-                        Team B ({rv.filledB}/{rv.maxPerTeam})
-                      </p>
-                      <div className="space-y-1">{sideB.map((s, i) => renderSlot(s, i, "B"))}</div>
+                  <div className="relative rounded-xl border border-white/[0.07] bg-black/30 p-3 sm:p-4">
+                    <div className="grid grid-cols-1 gap-5 md:grid-cols-[1fr_auto_1fr] md:items-start md:gap-4">
+                      <div className="min-w-0 md:pr-1">
+                        <p className="mb-2 flex items-center gap-2 font-display text-[10px] font-bold uppercase tracking-[0.22em] text-primary">
+                          <Shield className="h-3 w-3 shrink-0" />
+                          Team A
+                          <span className="font-mono font-normal text-muted-foreground">
+                            ({rv.filledA}/{rv.maxPerTeam})
+                          </span>
+                        </p>
+                        <div className="space-y-1.5">{sideA.map((s, i) => renderSlot(s, i, "A"))}</div>
+                      </div>
+                      <div className="hidden flex-col items-center justify-start gap-2 pt-7 md:flex" aria-hidden>
+                        <span className="font-display text-xl font-black leading-none tracking-widest text-primary/35">VS</span>
+                        <div className="lobby-room-vs-glow h-24 w-px rounded-full opacity-70" />
+                      </div>
+                      <div className="min-w-0 md:pl-1">
+                        <p className="mb-2 flex items-center gap-2 font-display text-[10px] font-bold uppercase tracking-[0.22em] text-arena-orange">
+                          <Shield className="h-3 w-3 shrink-0 text-arena-orange" />
+                          Team B
+                          <span className="font-mono font-normal text-muted-foreground">
+                            ({rv.filledB}/{rv.maxPerTeam})
+                          </span>
+                        </p>
+                        <div className="space-y-1.5">{sideB.map((s, i) => renderSlot(s, i, "B"))}</div>
+                      </div>
                     </div>
                   </div>
                 );
               })()
             ) : (
-              /* Public match — simple progress bar */
-              <div>
-                <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
-                  <span>Players</span>
-                  <span className="font-mono">
+              /* Public match — roster fill bar */
+              <div className="rounded-xl border border-white/[0.07] bg-black/30 p-3 sm:p-4">
+                <div className="mb-2 flex items-center justify-between text-[10px] text-muted-foreground">
+                  <span className="font-hud uppercase tracking-[0.28em]">Lobby fill</span>
+                  <span className="font-mono text-foreground/90">
                     {lobbyFilledTotal(myActiveRoom)} / {myActiveRoom.maxPlayers}
                   </span>
                 </div>
-                <div className="h-1.5 rounded-full bg-secondary/50 overflow-hidden">
+                <div className="h-2 overflow-hidden rounded-full bg-secondary/50 ring-1 ring-inset ring-white/[0.04]">
                   <div
-                    className="h-full bg-primary rounded-full transition-all"
+                    className="h-full rounded-full bg-gradient-to-r from-primary/90 to-arena-cyan/80 transition-all duration-500"
                     style={{
                       width: `${(lobbyFilledTotal(myActiveRoom) / Math.max(1, myActiveRoom.maxPlayers)) * 100}%`,
                     }}
@@ -1355,7 +1389,7 @@ const MatchLobby = () => {
           </div>
 
           {/* Action row */}
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="mt-1 flex flex-wrap items-center gap-2 border-t border-white/[0.06] pt-4">
             {/* Leave Room — only for non-host players. Host uses Delete Room below. */}
             {myActiveRoom.hostId !== user?.id && (
               <Button
@@ -1404,6 +1438,7 @@ const MatchLobby = () => {
                 Delete Room
               </Button>
             )}
+          </div>
           </div>
         </div>
       )}
