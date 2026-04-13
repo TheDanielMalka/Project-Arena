@@ -474,6 +474,7 @@ const Profile = () => {
               {editMode ? (
                 <button
                   type="button"
+                  aria-label="Open identity studio"
                   onClick={() => { setPickerMode("avatar"); setShowAvatarPicker(true); }}
                   className={cn(
                     "group relative flex h-[4.25rem] w-[4.25rem] items-center justify-center overflow-hidden rounded-full ring-2 ring-arena-cyan/25 ring-offset-2 ring-offset-card shadow-[0_0_24px_-8px_hsl(var(--primary)/0.35)] transition-all hover:ring-arena-cyan/45",
