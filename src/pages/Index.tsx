@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { LANDING_GAMES } from "@/lib/arenaGamesCatalog";
 import { cn } from "@/lib/utils";
+import { LandingArenaWordmark } from "@/components/visual/LandingArenaWordmark";
 
 /**
  * Hero video: `/landing/hero.mp4` first (bundled stock that evokes tactical FPS — not real CS/VAL),
@@ -252,51 +253,6 @@ function HeroCyclingTagline() {
         <span className="landing-typewriter-cursor ml-1 inline-block h-[1em] w-[2px] align-[-0.12em] bg-arena-cyan/75" aria-hidden />
       )}
     </span>
-  );
-}
-
-/** Hero wordmark — pure display; layered gradient + HUD chrome (no game/engine coupling). */
-function LandingArenaWordmark() {
-  return (
-    <div className="relative isolate mx-auto max-w-[min(100%,580px)] lg:mx-0">
-      <div className="pointer-events-none absolute -left-0.5 -top-1 h-9 w-9 border-l-2 border-t border-arena-cyan/55 sm:h-10 sm:w-10" aria-hidden />
-      <div className="pointer-events-none absolute -bottom-0.5 -right-0.5 h-7 w-14 border-b border-r border-primary/45 sm:right-0" aria-hidden />
-
-      <div className="mb-1 flex items-center gap-2 font-hud text-[7px] uppercase tracking-[0.55em] text-muted-foreground/50 sm:mb-1.5 sm:text-[8px] sm:tracking-[0.48em]">
-        <span className="h-px w-8 bg-gradient-to-r from-arena-cyan/70 to-transparent sm:w-10" aria-hidden />
-        <span className="whitespace-nowrap">Uplink · Primary</span>
-        <span className="font-mono text-[8px] tracking-[0.2em] text-arena-cyan/55 sm:text-[9px]">ARENA.HERO</span>
-      </div>
-
-      <div className="relative">
-        <span
-          className="pointer-events-none absolute inset-0 translate-x-[3px] translate-y-[2px] font-hero text-[clamp(3.1rem,11vw,6.85rem)] font-black uppercase leading-[0.82] tracking-[0.1em] text-arena-cyan/[0.14] motion-reduce:opacity-0"
-          aria-hidden
-        >
-          ARENA
-        </span>
-        <span
-          className="pointer-events-none absolute inset-0 -translate-x-px font-hero text-[clamp(3.1rem,11vw,6.85rem)] font-black uppercase leading-[0.82] tracking-[0.1em] text-primary/[0.12] blur-[0.35px] motion-reduce:opacity-0"
-          aria-hidden
-        >
-          ARENA
-        </span>
-        <span className="relative block font-hero text-[clamp(3.1rem,11vw,6.85rem)] font-black uppercase leading-[0.82] tracking-[0.1em] landing-arena-wordmark-gradient">
-          ARENA
-        </span>
-        <div className="landing-arena-wordmark-scan motion-reduce:hidden" aria-hidden />
-      </div>
-
-      <div
-        className="mt-3 flex h-[3px] gap-px overflow-hidden border border-white/[0.08] bg-black/40 sm:mt-3.5"
-        style={{ clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 100%, 10px 100%, 0 calc(100% - 4px))" }}
-        aria-hidden
-      >
-        <div className="h-full w-[18%] bg-gradient-to-r from-arena-cyan/30 to-transparent" />
-        <div className="landing-arena-integrity-bar h-full flex-1 bg-gradient-to-r from-primary/90 via-arena-cyan/75 to-primary/80" />
-        <div className="h-full w-[8%] bg-gradient-to-l from-primary/40 to-transparent" />
-      </div>
-    </div>
   );
 }
 
