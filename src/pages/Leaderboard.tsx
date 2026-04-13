@@ -13,9 +13,9 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Trophy, Flame, Crown, ChevronUp, ChevronDown, Minus, Zap, TrendingUp,
+  Trophy, Flame, Crown, ChevronUp, ChevronDown, ChevronRight, Minus, Zap, TrendingUp,
   Star, Gem, Shield, UserPlus, UserCheck, Clock, MessageSquare, Flag,
-  ExternalLink, Send, CheckCircle2, Ban,
+  ExternalLink, Send, CheckCircle2, Ban, Radio, Crosshair, Cpu,
 } from "lucide-react";
 import { useUserStore }         from "@/stores/userStore";
 import { ignoredRefMatchesContext, useFriendStore } from "@/stores/friendStore";
@@ -35,6 +35,13 @@ type LeaderboardEntry = LeaderboardPlayerRow;
 // All defined game tabs (order matters for display)
 const GAME_TABS = ["all", "CS2", "Valorant", "Fortnite", "Apex Legends"] as const;
 type GameTab = typeof GAME_TABS[number];
+
+const LB_NAV = [
+  { id: "board" as const, icon: Trophy, label: "Live Board", short: "LIVE", desc: "Podium · roster · live sync" },
+  { id: "tiers" as const, icon: Crown, label: "Rank Matrix", short: "RNK", desc: "Tier classification" },
+  { id: "intel" as const, icon: Radio, label: "Intel Uplink", short: "INT", desc: "Ops brief · rules" },
+] as const;
+type LbSectionId = (typeof LB_NAV)[number]["id"];
 
 const PLACEHOLDER_LEADER: LeaderboardEntry = {
   id: "—",
@@ -555,9 +562,121 @@ function PlayerActionPopover({ player, children }: PlayerActionPopoverProps) {
   );
 }
 
+// ─── Section panels (display-only; no API / store side effects) ─
+
+function TierMatrixPanel() {
+  return (
+    <div className="space-y-4">
+      <div className="tactical-hud-arena relative overflow-hidden border border-arena-cyan/22 p-4 sm:p-5">
+        <div className="pointer-events-none absolute inset-0 opacity-[0.06] tactical-hud-scanlines motion-reduce:opacity-[0.02]" aria-hidden />
+        <span className="pointer-events-none absolute right-3 top-2.5 font-hud text-[7px] uppercase tracking-[0.38em] text-arena-cyan/45">
+          TIER_MATRIX · V1
+        </span>
+        <h2 className="relative z-[1] mb-4 flex items-center gap-2 font-hud text-[11px] font-bold uppercase tracking-[0.28em] text-foreground">
+          <Crosshair className="h-4 w-4 text-arena-cyan" />
+          Rank protocol
+        </h2>
+        <div className="relative z-[1] grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {RANK_TIERS.map((tier) => {
+            const Ic = tier.Icon;
+            const band = tier.min === tier.max ? `#${tier.min}` : `#${tier.min}–${tier.max}`;
+            return (
+              <div
+                key={tier.label}
+                className="tactical-hud-slot-cut tactical-hud-slot-glow group border border-white/[0.09] bg-gradient-to-br from-black/55 to-black/30 p-3.5 transition-[box-shadow,border-color] hover:border-arena-cyan/35"
+              >
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className={cn("flex items-center gap-2", tier.color)}>
+                    <Ic className={tier.iconSize} />
+                    <span className="font-hud text-[10px] font-bold uppercase tracking-[0.2em]">{tier.label}</span>
+                  </div>
+                  <span className="font-mono text-[9px] text-muted-foreground/55">{band}</span>
+                </div>
+                <div className="h-px w-full bg-gradient-to-r from-arena-cyan/25 via-transparent to-primary/15" />
+                <p className="mt-2 font-hud text-[8px] uppercase leading-relaxed tracking-[0.14em] text-muted-foreground/50">
+                  Ladder slice · icon binds to live rank from GET /leaderboard
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function IntelFeedPanel({
+  timeRange,
+  entryCount,
+  activeGameTab,
+}: {
+  timeRange: "weekly" | "monthly" | "alltime";
+  entryCount: number;
+  activeGameTab: string;
+}) {
+  const rangeLabel = timeRange === "alltime" ? "ALL_TIME" : timeRange.toUpperCase();
+  const lines = useMemo(
+    () => [
+      { k: "SRC", t: "Verified match ledger → aggregated wins/losses per player." },
+      { k: "WR", t: "Win rate = wins ÷ (wins + losses) for the selected season slice." },
+      { k: "Δ", t: "Movement glyph vs previous poll — cosmetic until full history API lands." },
+      { k: "STR", t: "Streak flame caps at 5 visible pips; overflow shown as +N." },
+      { k: "PRIV", t: "Message / friend / report actions respect ignore + friendship state." },
+    ],
+    [],
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="tactical-hud-shell tactical-hud-shell--idle relative overflow-hidden">
+        <div className="pointer-events-none absolute inset-0 tactical-hud-grid opacity-[0.2] motion-reduce:opacity-[0.08]" aria-hidden />
+        <div className="pointer-events-none absolute inset-0 opacity-[0.07] tactical-hud-scanlines motion-reduce:opacity-[0.02]" aria-hidden />
+        <div className="tactical-hud-bracket tactical-hud-bracket-tl" aria-hidden />
+        <div className="tactical-hud-bracket tactical-hud-bracket-tr" aria-hidden />
+        <div className="tactical-hud-bracket tactical-hud-bracket-bl" aria-hidden />
+        <div className="tactical-hud-bracket tactical-hud-bracket-br" aria-hidden />
+        <div className="relative z-[1] p-4 sm:p-5">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-arena-cyan/15 pb-3">
+            <h2 className="flex items-center gap-2 font-hud text-[11px] font-bold uppercase tracking-[0.26em] text-foreground">
+              <Cpu className="h-4 w-4 text-arena-cyan" />
+              Intel uplink
+            </h2>
+            <div className="flex flex-wrap gap-2">
+              <span className="tactical-hud-chip border border-arena-cyan/30 bg-arena-cyan/10 px-2 py-0.5 font-hud text-[8px] uppercase tracking-[0.2em] text-arena-cyan/90">
+                RNG: {rangeLabel}
+              </span>
+              <span className="tactical-hud-chip border border-white/10 bg-black/40 px-2 py-0.5 font-mono text-[9px] text-muted-foreground">
+                ROWS_IN_VIEW: {entryCount}
+              </span>
+              <span className="tactical-hud-chip border border-primary/35 bg-primary/10 px-2 py-0.5 font-mono text-[9px] text-primary/90">
+                CH: {activeGameTab === "all" ? "OMNI" : activeGameTab}
+              </span>
+            </div>
+          </div>
+          <ul className="space-y-2.5">
+            {lines.map(({ k, t }, i) => (
+              <li
+                key={k}
+                className="tactical-hud-slot-cut flex gap-3 border border-white/[0.06] bg-black/35 px-3 py-2.5"
+              >
+                <span className="font-mono text-[9px] text-arena-gold/80 w-8 shrink-0 pt-0.5">{String(i + 1).padStart(2, "0")}</span>
+                <div>
+                  <span className="font-hud text-[8px] font-bold uppercase tracking-[0.28em] text-arena-cyan/70">{k}</span>
+                  <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground/90">{t}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────
 
 const Leaderboard = () => {
+  const [section, setSection] = useState<LbSectionId>("board");
   const [timeRange, setTimeRange] = useState<"weekly" | "monthly" | "alltime">("weekly");
   const [tab, setTab] = useState<GameTab>("all");
   const [entriesByTab, setEntriesByTab] = useState<Partial<Record<GameTab, LeaderboardEntry[]>>>({});
@@ -600,20 +719,97 @@ const Leaderboard = () => {
   const matchesPlayed      = selectedTopPlayer.wins + selectedTopPlayer.losses;
   const avgEarningsPerMatch = matchesPlayed > 0 ? selectedTopPlayer.earnings / matchesPlayed : 0;
 
+  const boardSysRef = useMemo(() => {
+    const salt = `${tab}:${timeRange}:${entries.length}`;
+    let h = 0;
+    for (let i = 0; i < salt.length; i++) h = (Math.imul(31, h) + salt.charCodeAt(i)) >>> 0;
+    return `REF_${(h & 0xffff).toString(16).toUpperCase().padStart(4, "0")}`;
+  }, [tab, timeRange, entries.length]);
+
   return (
     <ArenaPageShell variant="leaderboard" contentClassName="space-y-4">
-
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="font-display text-3xl font-bold tracking-wide flex items-center gap-3">
-            <Trophy className="h-7 w-7 text-arena-gold" /> Leaderboard
-          </h1>
+      {/* Command banner — global HUD chrome (all sections) */}
+      <div className="tactical-hud-shell tactical-hud-shell--idle relative mb-2 overflow-hidden">
+        <div className="pointer-events-none absolute inset-0 opacity-[0.08] tactical-hud-scanlines motion-reduce:opacity-[0.03]" aria-hidden />
+        <div className="pointer-events-none absolute inset-0 tactical-hud-grid opacity-[0.22] motion-reduce:opacity-[0.1]" aria-hidden />
+        <div className="tactical-hud-rail-v motion-reduce:opacity-20" aria-hidden />
+        <div className="tactical-hud-bracket tactical-hud-bracket-tl" aria-hidden />
+        <div className="tactical-hud-bracket tactical-hud-bracket-tr" aria-hidden />
+        <span className="pointer-events-none absolute left-10 top-2.5 z-[2] font-hud text-[7px] uppercase tracking-[0.35em] text-arena-cyan/55 sm:text-[8px]">
+          SYS_{boardSysRef}
+        </span>
+        <span className="pointer-events-none absolute right-10 top-2.5 z-[2] font-hud text-[7px] uppercase tracking-[0.28em] text-muted-foreground/40 sm:text-[8px]">
+          ARENA_LADDER · SYNC 60S
+        </span>
+        <div className="relative z-[1] flex flex-col gap-3 px-4 pb-4 pt-8 sm:flex-row sm:items-end sm:justify-between sm:px-5 sm:pb-5 sm:pt-9">
+          <div>
+            <p className="font-hud text-[8px] uppercase tracking-[0.42em] text-muted-foreground/50">Global standings</p>
+            <h1 className="mt-1 flex items-center gap-3 font-display text-2xl font-black uppercase tracking-[0.18em] text-foreground sm:text-3xl">
+              <Trophy className="h-7 w-7 shrink-0 text-arena-gold drop-shadow-[0_0_18px_hsl(43_96%_56%/0.35)]" />
+              Leaderboard
+            </h1>
+            <p className="mt-1 max-w-xl font-hud text-[10px] uppercase tracking-[0.14em] text-muted-foreground/55">
+              Tactical roster · podium lock · per-game channels — pick a deck on the left.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="tactical-hud-chip border border-orange-400/35 bg-orange-500/[0.08] px-2 py-1 font-hud text-[8px] font-bold uppercase tracking-[0.2em] text-orange-300">
+              TOP 50 · LIVE
+            </span>
+            <span className="tactical-hud-chip border border-arena-cyan/30 bg-arena-cyan/[0.07] px-2 py-1 font-mono text-[9px] text-arena-cyan/85">
+              SEC_{section.toUpperCase()}
+            </span>
+          </div>
         </div>
-        <div className="flex gap-1.5">
+      </div>
+
+      {/* Admin-style section nav + panel */}
+      <div className="flex min-h-[520px] flex-col gap-4 lg:flex-row lg:gap-0">
+        <nav
+          aria-label="Leaderboard sections"
+          className="flex shrink-0 flex-row gap-1 overflow-x-auto border-b border-arena-cyan/12 pb-2 lg:w-[172px] lg:flex-col lg:border-b-0 lg:border-r lg:pr-3 lg:pb-0"
+        >
+          {LB_NAV.map(({ id, icon: Icon, label, short, desc }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setSection(id)}
+              className={cn(
+                "group flex min-w-[7.5rem] flex-1 items-center gap-2.5 rounded-none border px-3 py-2.5 text-left transition-all lg:min-w-0 lg:flex-none",
+                "tactical-hud-slot-cut",
+                section === id
+                  ? "border-arena-cyan/45 bg-arena-cyan/[0.08] text-foreground shadow-[0_0_20px_-6px_hsl(var(--arena-cyan)/0.35)]"
+                  : "border-transparent bg-black/20 text-muted-foreground hover:border-white/10 hover:bg-secondary/30 hover:text-foreground",
+              )}
+            >
+              <Icon className={cn("h-4 w-4 shrink-0", section === id ? "text-arena-cyan" : "text-muted-foreground group-hover:text-foreground")} />
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center justify-between gap-1">
+                  <span className="font-hud text-[10px] font-bold uppercase tracking-[0.16em] lg:text-[11px]">{label}</span>
+                  <span className="font-mono text-[8px] text-muted-foreground/50 lg:hidden">{short}</span>
+                </span>
+                <span className="mt-0.5 hidden font-hud text-[7px] uppercase tracking-[0.2em] text-muted-foreground/45 lg:block">{desc}</span>
+              </span>
+              {section === id && <ChevronRight className="hidden h-3 w-3 shrink-0 text-arena-cyan/60 lg:block" />}
+            </button>
+          ))}
+        </nav>
+
+        <div className="min-w-0 flex-1 space-y-4 lg:pl-5">
+          {section === "board" && (
+            <>
+      {/* Time range (board only) */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+        <span className="font-hud text-[8px] uppercase tracking-[0.3em] text-muted-foreground/50 sm:mr-auto">Season slice</span>
+        <div className="flex flex-wrap gap-1.5">
           {(["weekly", "monthly", "alltime"] as const).map((range) => (
-            <Button key={range} size="sm" variant={timeRange === range ? "default" : "outline"}
-              onClick={() => setTimeRange(range)} className="font-display capitalize text-xs h-7 px-3">
+            <Button
+              key={range}
+              size="sm"
+              variant={timeRange === range ? "default" : "outline"}
+              onClick={() => setTimeRange(range)}
+              className="h-7 px-3 font-hud text-[9px] uppercase tracking-[0.14em]"
+            >
               {range === "alltime" ? "All Time" : range.charAt(0).toUpperCase() + range.slice(1)}
             </Button>
           ))}
@@ -633,9 +829,16 @@ const Leaderboard = () => {
               key={player.username}
               data-testid={`podium-card-${player.username}`}
               onClick={() => setSelectedTopPlayer(player)}
-              className={`relative cursor-pointer rounded-xl border ${cfg.border} ${cfg.bg} ${cfg.glow} ${cfg.mt} transition-all duration-200 ${
-                isSelected ? "ring-1 ring-primary/40 scale-[1.01]" : "hover:scale-[1.005]"
-              } overflow-hidden`}
+              className={cn(
+                "tactical-hud-slot-cut tactical-hud-slot-glow relative cursor-pointer overflow-hidden border transition-all duration-200",
+                cfg.border,
+                cfg.bg,
+                cfg.glow,
+                cfg.mt,
+                isSelected
+                  ? "scale-[1.02] shadow-[0_0_28px_-8px_hsl(var(--primary)/0.45)] ring-1 ring-arena-cyan/40"
+                  : "hover:scale-[1.01] hover:shadow-[0_0_22px_-10px_hsl(var(--arena-cyan)/0.2)]",
+              )}
             >
               {/* Rank number in background */}
               <span className="absolute bottom-1 right-2 font-display font-black text-5xl text-white/[0.04] select-none leading-none">
@@ -730,9 +933,12 @@ const Leaderboard = () => {
       )}
 
       {/* ── COMPACT QUICK STATS ── */}
-      <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3">
+      <div className="tactical-hud-arena relative overflow-hidden border border-primary/25 bg-primary/[0.07] px-4 py-3 shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.12),0_0_32px_-14px_hsl(var(--primary)/0.15)]">
+        <div className="pointer-events-none absolute right-2 top-2 font-hud text-[6px] uppercase tracking-[0.35em] text-muted-foreground/35">
+          QSTAT_V2
+        </div>
         <span className="sr-only">{selectedTopPlayer.username} - Quick Stats (Top 3)</span>
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="relative z-[1] flex flex-col gap-3 sm:flex-row sm:items-center">
           {/* Player identity */}
           <div className="flex items-center gap-2 shrink-0">
             <Zap className="h-3.5 w-3.5 text-arena-gold" />
@@ -769,12 +975,12 @@ const Leaderboard = () => {
       {/* DB-ready: tab change triggers GET /api/leaderboard?game={tab}&range={timeRange} */}
       <Tabs value={tab} onValueChange={(v) => setTab(v as GameTab)} className="w-full">
         {/* DB-ready: tabs driven by games.enabled — Coming Soon games non-selectable until Client supports them */}
-        <TabsList className="bg-secondary border border-border h-8 flex-wrap gap-0">
+        <TabsList className="arena-hud-tabs-list h-auto min-h-8 w-full flex-wrap justify-start gap-0.5 sm:w-auto">
           {(GAME_TABS as readonly string[]).map((tabName) => {
             const isLive = tabName === "all" || tabName === "CS2" || tabName === "Valorant";
             return isLive ? (
               <TabsTrigger key={tabName} value={tabName}
-                className="font-display text-xs data-[state=active]:bg-primary/20 data-[state=active]:text-primary h-6 px-3">
+                className="arena-hud-tabs-trigger h-7 px-3 data-[state=active]:text-primary-foreground">
                 {tabName === "all" ? "All Games" : tabName}
               </TabsTrigger>
             ) : (
@@ -793,7 +999,7 @@ const Leaderboard = () => {
 
           return (
           <TabsContent key={tabKey} value={tabKey} className="mt-3">
-            <Card className="bg-card border-border overflow-hidden">
+            <Card className="overflow-hidden border-arena-cyan/18 shadow-[0_0_44px_-16px_hsl(var(--arena-cyan)/0.14)]">
               {/* Table header */}
               <div className="grid grid-cols-[3rem_1fr_4.5rem_4.5rem_6rem_6rem_3rem] gap-2 px-4 py-2 text-[10px] text-muted-foreground/60 uppercase tracking-widest font-display border-b border-border/50">
                 <span>#</span>
@@ -968,6 +1174,14 @@ const Leaderboard = () => {
           );
         })}
       </Tabs>
+            </>
+          )}
+          {section === "tiers" && <TierMatrixPanel />}
+          {section === "intel" && (
+            <IntelFeedPanel timeRange={timeRange} entryCount={entries.length} activeGameTab={tab} />
+          )}
+        </div>
+      </div>
     </ArenaPageShell>
   );
 };
