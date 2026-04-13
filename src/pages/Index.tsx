@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { LandingArenaWordmark } from "@/components/visual/LandingArenaWordmark";
 import { LandingPublicNav } from "@/components/landing/LandingPublicNav";
 import { LandingGuestFooter } from "@/components/landing/LandingGuestFooter";
+import { useUserStore } from "@/stores/userStore";
 
 /**
  * Hero video: `/landing/hero.mp4` first (bundled stock that evokes tactical FPS — not real CS/VAL),
@@ -471,8 +472,10 @@ function BentoFeatureCard({
 const Index = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const isAuthed = useUserStore((s) => s.isAuthenticated);
 
   const [v, e, m, o, r, a] = BENTO_INDICES.map((i) => FEATURES[i]);
+  const authOrDashboard = () => navigate(isAuthed ? "/dashboard" : "/auth");
 
   useEffect(() => {
     if (location.hash !== "#download") return;
@@ -520,8 +523,8 @@ const Index = () => {
               </p>
             </div>
             <div className="flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:flex-wrap lg:justify-start">
-              <Button type="button" size="lg" onClick={() => navigate("/auth")} className="glow-green font-display px-8 py-6 text-sm tracking-wider">
-                <Swords className="mr-2 h-4 w-4" /> Enter Arena
+              <Button type="button" size="lg" onClick={authOrDashboard} className="glow-green font-display px-8 py-6 text-sm tracking-wider">
+                <Swords className="mr-2 h-4 w-4" /> {isAuthed ? "Go to dashboard" : "Enter Arena"}
               </Button>
               <Button
                 type="button"
@@ -742,8 +745,8 @@ const Index = () => {
             Ready to <span className="text-primary" style={{ textShadow: "0 0 28px hsl(var(--primary)/0.4)" }}>compete</span>?
           </h2>
           <p className="text-sm text-muted-foreground">Sign up in seconds — compete when you are ready.</p>
-          <Button type="button" size="lg" onClick={() => navigate("/auth")} className="glow-green font-display px-10 py-6 text-sm tracking-wider">
-            <Swords className="mr-2 h-4 w-4" /> Get Started Free
+          <Button type="button" size="lg" onClick={authOrDashboard} className="glow-green font-display px-10 py-6 text-sm tracking-wider">
+            <Swords className="mr-2 h-4 w-4" /> {isAuthed ? "Open dashboard" : "Get Started Free"}
             <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
           <p className="font-mono text-[10px] text-muted-foreground/45">No fees to join · Withdraw anytime · 18+ only</p>

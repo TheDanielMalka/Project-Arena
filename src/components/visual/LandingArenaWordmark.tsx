@@ -30,17 +30,17 @@ export function LandingArenaWordmark() {
   return (
     <div
       className={cn(
-        "landing-arena-wordmark-root relative isolate mx-auto max-w-[min(100%,620px)] lg:mx-0",
+        "landing-arena-wordmark-root relative mx-auto max-w-[min(100%,620px)] lg:mx-0",
         reducedMotion && "landing-arena-motion-off",
       )}
     >
-      {/* Tactical frame + rotating rim glow */}
+      {/* Soft rim glow — no “plate”; stays behind copy */}
       <div
-        className="pointer-events-none absolute -inset-3 -z-10 opacity-90 motion-reduce:opacity-50 sm:-inset-4"
+        className="pointer-events-none absolute -inset-6 -z-10 opacity-[0.42] motion-reduce:opacity-25 sm:-inset-8 sm:opacity-[0.38]"
         aria-hidden
       >
         <div className="landing-arena-wordmark-orbit absolute inset-0" />
-        <div className="landing-arena-wordmark-orbit-inner absolute inset-[3px] opacity-40 motion-reduce:animate-none" />
+        <div className="landing-arena-wordmark-orbit-inner absolute inset-[4px] opacity-50 motion-reduce:animate-none" />
       </div>
 
       <div className="pointer-events-none absolute -left-1 -top-2 h-10 w-10 sm:h-11 sm:w-11" aria-hidden>
@@ -73,16 +73,16 @@ export function LandingArenaWordmark() {
       </div>
 
       <div className="landing-arena-wordmark-glow-wrap relative">
-        <div className="landing-arena-wordmark-stack landing-arena-glitch-target relative px-1 py-0.5 sm:px-1.5">
+        <div className="landing-arena-wordmark-stack landing-arena-glitch-target relative bg-transparent px-0 py-0 sm:px-0.5">
         <div className="relative w-min max-w-full">
           {/* Depth plate */}
-          <span className={cn(letterClass, "pointer-events-none absolute inset-0 translate-y-[5px] text-black/80 blur-[0.5px]")} aria-hidden>
+          <span className={cn(letterClass, "pointer-events-none absolute inset-0 translate-y-[5px] text-black/70 blur-[0.5px]")} aria-hidden>
             ARENA
           </span>
           <span
             className={cn(
               letterClass,
-              "pointer-events-none absolute inset-0 text-[hsl(188_100%_52%_/0.22)] mix-blend-screen motion-reduce:opacity-30",
+              "pointer-events-none absolute inset-0 text-[hsl(188_70%_48%_/0.14)] mix-blend-screen motion-reduce:opacity-25",
               !reducedMotion && "landing-arena-chroma-c",
             )}
             aria-hidden
@@ -92,27 +92,17 @@ export function LandingArenaWordmark() {
           <span
             className={cn(
               letterClass,
-              "pointer-events-none absolute inset-0 text-[hsl(355_90%_58%_/0.2)] mix-blend-screen motion-reduce:opacity-25",
+              "pointer-events-none absolute inset-0 text-[hsl(var(--primary)_/_0.12)] mix-blend-screen motion-reduce:opacity-20",
               !reducedMotion && "landing-arena-chroma-r",
             )}
             aria-hidden
           >
             ARENA
           </span>
-          <span
-            className={cn(
-              letterClass,
-              "pointer-events-none absolute inset-0 text-[hsl(300_85%_55%_/0.12)] motion-reduce:opacity-0",
-              !reducedMotion && "landing-arena-chroma-m",
-            )}
-            aria-hidden
-          >
-            ARENA
-          </span>
 
-          <span className={cn(letterClass, "relative block landing-arena-wordmark-gradient")}>ARENA</span>
+          <span className={cn(letterClass, "relative z-[1] block landing-arena-wordmark-gradient")}>ARENA</span>
           {!reducedMotion && (
-            <span className="landing-arena-sheen-layer pointer-events-none absolute inset-0 overflow-hidden" aria-hidden />
+            <span className="landing-arena-sheen-layer pointer-events-none absolute inset-0 z-[2] overflow-hidden" aria-hidden />
           )}
           <div className="landing-arena-wordmark-scan motion-reduce:hidden" aria-hidden />
           <div className="landing-arena-wordmark-noise motion-reduce:opacity-0" aria-hidden />
@@ -133,21 +123,21 @@ export function LandingArenaWordmark() {
       </div>
 
       <div
-        className="mt-3 flex h-[4px] gap-px overflow-hidden border border-white/10 bg-black/50 shadow-[0_0_24px_-4px_hsl(var(--primary)/0.25)] sm:mt-3.5"
+        className="mt-3 flex h-[4px] gap-px overflow-hidden border border-white/[0.06] bg-transparent shadow-[0_0_20px_-6px_hsl(var(--arena-cyan)/0.12)] sm:mt-3.5"
         style={{ clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 100%, 12px 100%, 0 calc(100% - 5px))" }}
         aria-hidden
       >
-        <div className="h-full w-[10%] bg-gradient-to-r from-arena-cyan/50 to-transparent" />
+        <div className="h-full w-[10%] bg-gradient-to-r from-arena-cyan/35 to-transparent" />
         <div className="flex h-full flex-1 gap-px">
           {Array.from({ length: 14 }).map((_, i) => (
             <div
               key={i}
-              className="landing-arena-seg flex-1 bg-gradient-to-t from-black/80 via-primary/30 to-arena-cyan/50 motion-reduce:opacity-80"
+              className="landing-arena-seg flex-1 bg-gradient-to-t from-transparent via-arena-cyan/25 to-arena-cyan/40 motion-reduce:opacity-80"
               style={{ animationDelay: `${i * 0.07}s` }}
             />
           ))}
         </div>
-        <div className="h-full w-[12%] bg-gradient-to-l from-primary/50 to-transparent" />
+        <div className="h-full w-[12%] bg-gradient-to-l from-primary/35 to-transparent" />
       </div>
     </div>
   );

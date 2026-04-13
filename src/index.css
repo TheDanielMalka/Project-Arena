@@ -434,10 +434,10 @@
   @keyframes landing-arena-stack-glow {
     0%,
     100% {
-      filter: drop-shadow(0 0 20px hsl(var(--primary) / 0.5)) drop-shadow(0 0 56px hsl(var(--arena-cyan) / 0.14));
+      filter: drop-shadow(0 0 14px hsl(var(--arena-cyan) / 0.22)) drop-shadow(0 0 40px hsl(var(--primary) / 0.08));
     }
     50% {
-      filter: drop-shadow(0 0 32px hsl(var(--arena-cyan) / 0.55)) drop-shadow(0 0 72px hsl(var(--primary) / 0.22));
+      filter: drop-shadow(0 0 22px hsl(var(--arena-cyan) / 0.28)) drop-shadow(0 0 48px hsl(var(--primary) / 0.12));
     }
   }
   @keyframes landing-arena-glitch {
@@ -525,10 +525,10 @@
       opacity: 0;
     }
     12% {
-      opacity: 0.28;
+      opacity: 0.14;
     }
     88% {
-      opacity: 0.22;
+      opacity: 0.12;
     }
     100% {
       transform: translateY(120%);
@@ -575,31 +575,29 @@
   }
 
   .landing-arena-wordmark-orbit {
-    border-radius: 4px;
+    border-radius: 50%;
     background: conic-gradient(
       from 0deg,
       transparent 0deg,
-      hsl(var(--primary) / 0.65) 48deg,
-      transparent 110deg,
-      hsl(var(--arena-cyan) / 0.55) 200deg,
-      transparent 280deg,
-      hsl(var(--arena-hud-magenta) / 0.35) 320deg,
+      hsl(var(--arena-cyan) / 0.22) 90deg,
+      transparent 200deg,
+      hsl(var(--primary) / 0.18) 280deg,
       transparent 360deg
     );
-    filter: blur(16px);
+    filter: blur(22px);
     animation: landing-arena-orbit-spin 16s linear infinite;
   }
   .landing-arena-wordmark-orbit-inner {
-    border-radius: 6px;
+    border-radius: 50%;
     background: conic-gradient(
       from 180deg,
       transparent,
-      hsl(var(--arena-cyan) / 0.4) 25%,
-      transparent 45%,
-      hsl(var(--primary) / 0.35) 70%,
+      hsl(var(--arena-cyan) / 0.15) 30%,
+      transparent 50%,
+      hsl(var(--primary) / 0.12) 75%,
       transparent
     );
-    filter: blur(12px);
+    filter: blur(18px);
     animation: landing-arena-orbit-spin 24s linear infinite reverse;
   }
 
@@ -636,26 +634,25 @@
     animation: landing-arena-chroma-m-drift 4.1s ease-in-out infinite;
   }
 
+  /* Tactical gaming: cool steel + cyan, no magenta “rainbow” */
   .landing-arena-wordmark-gradient {
     background: linear-gradient(
-      128deg,
-      hsl(0 0% 100%) 0%,
-      hsl(var(--primary)) 18%,
-      hsl(0 0% 96%) 34%,
-      hsl(var(--arena-cyan)) 48%,
-      hsl(var(--primary)) 62%,
-      hsl(var(--arena-hud-magenta)) 76%,
-      hsl(var(--arena-cyan)) 88%,
-      hsl(var(--primary)) 100%
+      118deg,
+      hsl(215 12% 82%) 0%,
+      hsl(188 38% 58%) 26%,
+      hsl(220 10% 76%) 48%,
+      hsl(188 32% 52%) 62%,
+      hsl(215 8% 68%) 78%,
+      hsl(188 42% 54%) 92%,
+      hsl(220 12% 80%) 100%
     );
-    background-size: 260% 260%;
+    background-size: 220% 220%;
     animation: landing-arena-gradient-flow 10s ease-in-out infinite;
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
-    -webkit-text-stroke: 0.55px hsl(0 0% 0% / 0.55);
-    filter: drop-shadow(0 0 28px hsl(var(--primary) / 0.48)) drop-shadow(0 0 64px hsl(var(--arena-cyan) / 0.2))
-      drop-shadow(0 5px 0 hsl(0 0% 0% / 0.65));
+    -webkit-text-stroke: 0.45px hsl(220 20% 6% / 0.45);
+    filter: drop-shadow(0 0 18px hsl(var(--arena-cyan) / 0.2)) drop-shadow(0 4px 0 hsl(0 0% 0% / 0.55));
   }
 
   .landing-arena-sheen-layer::after {
@@ -665,7 +662,7 @@
     background: linear-gradient(
       102deg,
       transparent 36%,
-      hsl(0 0% 100% / 0.22) 50%,
+      hsl(0 0% 100% / 0.1) 50%,
       transparent 64%
     );
     animation: landing-arena-sheen-slide 3.1s ease-in-out infinite;
@@ -676,10 +673,12 @@
   .landing-arena-wordmark-scan {
     pointer-events: none;
     position: absolute;
-    inset: -12% -8%;
+    inset: -10% -6%;
     overflow: hidden;
-    border-radius: 2px;
+    border-radius: 0;
     z-index: 5;
+    mask-image: radial-gradient(ellipse 72% 88% at 50% 48%, black 0%, transparent 78%);
+    -webkit-mask-image: radial-gradient(ellipse 72% 88% at 50% 48%, black 0%, transparent 78%);
   }
   .landing-arena-wordmark-scan::after {
     content: "";
@@ -690,8 +689,8 @@
     background: linear-gradient(
       to bottom,
       transparent,
-      hsl(var(--arena-cyan) / 0.2),
-      hsl(var(--primary) / 0.1),
+      hsl(var(--arena-cyan) / 0.11),
+      hsl(var(--primary) / 0.06),
       transparent
     );
     animation: landing-arena-scan 4.8s ease-in-out infinite;
@@ -702,8 +701,10 @@
     position: absolute;
     inset: 0;
     z-index: 4;
-    opacity: 0.1;
+    opacity: 0.038;
     mix-blend-mode: overlay;
+    mask-image: radial-gradient(ellipse 78% 92% at 50% 50%, black 0%, transparent 75%);
+    -webkit-mask-image: radial-gradient(ellipse 78% 92% at 50% 50%, black 0%, transparent 75%);
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
 
@@ -712,11 +713,12 @@
     position: absolute;
     inset: 0;
     z-index: 3;
-    opacity: 0.45;
-    background-image: linear-gradient(hsl(var(--arena-cyan) / 0.09) 1px, transparent 1px),
-      linear-gradient(90deg, hsl(var(--arena-cyan) / 0.06) 1px, transparent 1px);
+    opacity: 0.14;
+    background-image: linear-gradient(hsl(var(--arena-cyan) / 0.07) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--arena-cyan) / 0.05) 1px, transparent 1px);
     background-size: 10px 10px;
-    mask-image: linear-gradient(to bottom, black 0%, rgba(0, 0, 0, 0.35) 55%, black 100%);
+    mask-image: radial-gradient(ellipse 75% 90% at 50% 46%, black 18%, transparent 72%);
+    -webkit-mask-image: radial-gradient(ellipse 75% 90% at 50% 46%, black 18%, transparent 72%);
   }
 
   .landing-arena-seg {
