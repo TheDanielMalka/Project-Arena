@@ -19,7 +19,7 @@ const DialogOverlay = React.forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      "fixed inset-0 z-50 arena-hud-overlay data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      "fixed inset-0 z-[200] arena-hud-overlay data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
       className,
     )}
     {...props}
@@ -36,9 +36,8 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        /* !fixed / !translate* — must beat .arena-hud-modal-surface and must not fight
-           tailwindcss-animate slide-* utilities (those replace transform and break viewport centering). */
-        "!fixed !left-1/2 !top-1/2 z-[60] grid w-full max-w-lg !-translate-x-1/2 !-translate-y-1/2 gap-4 p-6 shadow-lg duration-200 arena-hud-modal-surface data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
+        /* Overlay z-[200], content z-[210] — above sidebar/HUD. !fixed/!translate + no slide-* = centered modals. */
+        "!fixed !left-1/2 !top-1/2 z-[210] grid w-full max-w-lg !-translate-x-1/2 !-translate-y-1/2 gap-4 p-6 text-popover-foreground shadow-lg duration-200 opacity-100 arena-hud-modal-surface data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
         className,
       )}
       {...props}
