@@ -91,7 +91,7 @@ function NotificationItem({
               <span className="h-2 w-2 rounded-full bg-primary shrink-0 animate-pulse-glow" />
             )}
           </div>
-          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-4 break-words [overflow-wrap:anywhere] leading-snug">
             {notification.message}
           </p>
           <span className="text-[10px] text-muted-foreground/60 mt-1 block">
@@ -214,7 +214,8 @@ export function NotificationCenter() {
 
       <PopoverContent
         align="end"
-        className="w-[380px] p-0 border-border bg-card shadow-2xl"
+        collisionPadding={16}
+        className="w-[min(440px,calc(100vw-1.25rem))] max-w-[calc(100vw-1.25rem)] p-0 border-border bg-card shadow-2xl overflow-hidden rounded-lg z-[220]"
         sideOffset={8}
       >
         {/* Header */}
@@ -258,7 +259,13 @@ export function NotificationCenter() {
         <Separator />
 
         {/* Notification List */}
-        <ScrollArea className="max-h-[400px]">
+        <ScrollArea
+          className={cn(
+            notifications.length === 0
+              ? "max-h-[200px]"
+              : "h-[min(360px,calc(100dvh-11rem))]",
+          )}
+        >
           {notifications.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <Bell className="h-8 w-8 mb-2 opacity-30" />
