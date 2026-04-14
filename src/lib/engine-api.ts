@@ -2900,12 +2900,21 @@ export async function apiAdminIssuePenalty(
 
 // ── GET /platform/config ─────────────────────────────────────────────────────
 export interface PlatformConfig {
-  fee_pct:                string;
-  daily_bet_max_at:       string;
-  daily_bet_max_usdt:     string;
-  maintenance_mode:       string;
-  new_registrations:      string;
-  auto_escalate_disputes: string;
+  fee_pct:                          string;
+  daily_bet_max_at:                 string;
+  daily_bet_max_usdt:               string;
+  high_stakes_daily_max:            string;
+  high_stakes_min_bet_at:           string;
+  high_stakes_min_bet_usdt:         string;
+  daily_loss_cap_at:                string;
+  daily_loss_cap_usdt:              string;
+  maintenance_mode:                 string;
+  new_registrations:                string;
+  auto_escalate_disputes:           string;
+  fraud_pair_match_gt:              string;
+  fraud_pair_window_hours:          string;
+  fraud_intentional_loss_min_count: string;
+  fraud_intentional_loss_days:      string;
 }
 
 export async function apiGetPlatformConfig(token: string): Promise<
@@ -2917,13 +2926,22 @@ export async function apiGetPlatformConfig(token: string): Promise<
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
     return {
-      ok:                     true,
-      fee_pct:                String(raw.fee_pct                ?? "5"),
-      daily_bet_max_at:       String(raw.daily_bet_max_at       ?? "500"),
-      daily_bet_max_usdt:     String(raw.daily_bet_max_usdt     ?? "500"),
-      maintenance_mode:       String(raw.maintenance_mode       ?? "false"),
-      new_registrations:      String(raw.new_registrations      ?? "true"),
-      auto_escalate_disputes: String(raw.auto_escalate_disputes ?? "false"),
+      ok:                               true,
+      fee_pct:                          String(raw.fee_pct                          ?? "5"),
+      daily_bet_max_at:                 String(raw.daily_bet_max_at                 ?? "50000"),
+      daily_bet_max_usdt:               String(raw.daily_bet_max_usdt               ?? "500"),
+      high_stakes_daily_max:            String(raw.high_stakes_daily_max            ?? "0"),
+      high_stakes_min_bet_at:           String(raw.high_stakes_min_bet_at           ?? "25000"),
+      high_stakes_min_bet_usdt:         String(raw.high_stakes_min_bet_usdt         ?? "100"),
+      daily_loss_cap_at:                String(raw.daily_loss_cap_at                ?? "0"),
+      daily_loss_cap_usdt:              String(raw.daily_loss_cap_usdt              ?? "0"),
+      maintenance_mode:                 String(raw.maintenance_mode                 ?? "false"),
+      new_registrations:                String(raw.new_registrations                ?? "true"),
+      auto_escalate_disputes:           String(raw.auto_escalate_disputes           ?? "false"),
+      fraud_pair_match_gt:              String(raw.fraud_pair_match_gt              ?? "3"),
+      fraud_pair_window_hours:          String(raw.fraud_pair_window_hours          ?? "24"),
+      fraud_intentional_loss_min_count: String(raw.fraud_intentional_loss_min_count ?? "5"),
+      fraud_intentional_loss_days:      String(raw.fraud_intentional_loss_days      ?? "7"),
     };
   } catch {
     return { ok: false, status: 0, detail: "Network error" };

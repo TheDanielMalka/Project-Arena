@@ -349,6 +349,10 @@ const Admin = () => {
     registrationOpen:      true,
     autoDisputeEscalation: true,
     killSwitchActive:      false,
+    fraudPairMatchGt:              3,
+    fraudPairWindowHours:          24,
+    fraudIntentionalLossMinCount:  5,
+    fraudIntentionalLossDays:      7,
   });
   const [platformSaving, setPlatformSaving] = useState(false);
 
@@ -469,14 +473,22 @@ const Admin = () => {
     });
     void apiGetPlatformConfig(token).then((r) => {
       if (r.ok) {
+        const fpGt = parseInt(r.fraud_pair_match_gt, 10);
+        const fpH = parseInt(r.fraud_pair_window_hours, 10);
+        const flMin = parseInt(r.fraud_intentional_loss_min_count, 10);
+        const flDays = parseInt(r.fraud_intentional_loss_days, 10);
         setPlatform((p) => ({
           ...p,
           feePercent:            parseFloat(r.fee_pct)   || 5,
-          platformBettingMax:    parseInt(r.daily_bet_max_at) || 500,
+          platformBettingMax:    parseInt(r.daily_bet_max_at, 10) || 500,
           platformCryptoBettingMax: parseFloat(r.daily_bet_max_usdt) || 500,
           maintenanceMode:       r.maintenance_mode       === "true",
           registrationOpen:      r.new_registrations      === "true",
           autoDisputeEscalation: r.auto_escalate_disputes === "true",
+          fraudPairMatchGt:              Number.isFinite(fpGt) ? fpGt : 3,
+          fraudPairWindowHours:          Number.isFinite(fpH) ? fpH : 24,
+          fraudIntentionalLossMinCount:  Number.isFinite(flMin) ? flMin : 5,
+          fraudIntentionalLossDays:      Number.isFinite(flDays) ? flDays : 7,
         }));
       }
     });
@@ -603,6 +615,10 @@ const Admin = () => {
       maintenance_mode:       String(platform.maintenanceMode),
       new_registrations:      String(platform.registrationOpen),
       auto_escalate_disputes: String(platform.autoDisputeEscalation),
+      fraud_pair_match_gt:              String(platform.fraudPairMatchGt),
+      fraud_pair_window_hours:          String(platform.fraudPairWindowHours),
+      fraud_intentional_loss_min_count: String(platform.fraudIntentionalLossMinCount),
+      fraud_intentional_loss_days:      String(platform.fraudIntentionalLossDays),
     });
     setPlatformSaving(false);
     if (!r.ok) {
@@ -1416,6 +1432,74 @@ const Admin = () => {
                   label: "Auto-Escalate Disputes",
                   desc: "Escalate unresolved disputes after 24h",
                   control: <Switch checked={platform.autoDisputeEscalation} onCheckedChange={(v) => setPlatform((p) => ({ ...p, autoDisputeEscalation: v }))} />,
+                },
+                {
+                  label: "Fraud — pair match threshold",
+                  desc: "Flag when the same two players exceed this many matches in the window below (1–500)",
+                  control: (
+                    <Input
+                      type="number"
+                      min={1}
+                      max={500}
+                      className="h-8 w-20 font-mono text-xs text-right"
+                      value={platform.fraudPairMatchGt}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10);
+                        setPlatform((p) => ({ ...p, fraudPairMatchGt: Number.isFinite(v) ? v : p.fraudPairMatchGt }));
+                      }}
+                    />
+                  ),
+                },
+                {
+                  label: "Fraud — pair time window (hours)",
+                  desc: "Rolling window for pair-farming detection (1–8760)",
+                  control: (
+                    <Input
+                      type="number"
+                      min={1}
+                      max={8760}
+                      className="h-8 w-20 font-mono text-xs text-right"
+                      value={platform.fraudPairWindowHours}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10);
+                        setPlatform((p) => ({ ...p, fraudPairWindowHours: Number.isFinite(v) ? v : p.fraudPairWindowHours }));
+                      }}
+                    />
+                  ),
+                },
+                {
+                  label: "Fraud — intentional loss min count",
+                  desc: "Minimum directional losses in the lookback to flag (2–500)",
+                  control: (
+                    <Input
+                      type="number"
+                      min={2}
+                      max={500}
+                      className="h-8 w-20 font-mono text-xs text-right"
+                      value={platform.fraudIntentionalLossMinCount}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10);
+                        setPlatform((p) => ({ ...p, fraudIntentionalLossMinCount: Number.isFinite(v) ? v : p.fraudIntentionalLossMinCount }));
+                      }}
+                    />
+                  ),
+                },
+                {
+                  label: "Fraud — intentional loss lookback (days)",
+                  desc: "Days of history for intentional-loss heuristic (1–365)",
+                  control: (
+                    <Input
+                      type="number"
+                      min={1}
+                      max={365}
+                      className="h-8 w-20 font-mono text-xs text-right"
+                      value={platform.fraudIntentionalLossDays}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10);
+                        setPlatform((p) => ({ ...p, fraudIntentionalLossDays: Number.isFinite(v) ? v : p.fraudIntentionalLossDays }));
+                      }}
+                    />
+                  ),
                 },
               ].map(({ label, desc, control }, i, arr) => (
                 <div key={label} className={cn("flex items-center justify-between py-3 gap-4", i < arr.length - 1 && "border-b border-border/50")}>
