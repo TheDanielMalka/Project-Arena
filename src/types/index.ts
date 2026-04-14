@@ -267,6 +267,12 @@ export interface PlatformSettings {
   registrationOpen: boolean;        // DB: registration_open  default true
   autoDisputeEscalation: boolean;   // DB: auto_dispute_escalation default true
   killSwitchActive: boolean;        // DB: kill_switch_active default false
+  /** Pair-farming: HAVING COUNT(*) > this within fraudPairWindowHours — platform_config */
+  fraudPairMatchGt: number;
+  fraudPairWindowHours: number;
+  /** Intentional-loss heuristic — platform_config */
+  fraudIntentionalLossMinCount: number;
+  fraudIntentionalLossDays: number;
 }
 
 // ─── Daily Challenges ────────────────────────────────────────
