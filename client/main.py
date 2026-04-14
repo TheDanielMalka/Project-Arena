@@ -1401,11 +1401,13 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     ov_root.grid_columnconfigure(1, weight=1, uniform="ov")
     ov_root.grid_rowconfigure(0, weight=1)
 
-    ov_left = ctk.CTkScrollableFrame(ov_root, fg_color=BRAND["bg"], corner_radius=0)
+    ov_left = ctk.CTkFrame(ov_root, fg_color="transparent", corner_radius=0)
     ov_left.grid(row=0, column=0, sticky="nsew", padx=(0, 6), pady=0)
+    ov_left.grid_columnconfigure(0, weight=1)
 
-    ov_right = ctk.CTkScrollableFrame(ov_root, fg_color=BRAND["bg"], corner_radius=0)
+    ov_right = ctk.CTkFrame(ov_root, fg_color="transparent", corner_radius=0)
     ov_right.grid(row=0, column=1, sticky="nsew", padx=(6, 0), pady=0)
+    ov_right.grid_columnconfigure(0, weight=1)
 
     # Engine card
     eng_card = _card(ov_left, "Engine")
@@ -1973,7 +1975,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     ctk.CTkLabel(ov_left, text="", height=10).pack()
 
     # ── EVENTS TAB ────────────────────────────────────────────────────────────
-    ev = ctk.CTkScrollableFrame(tab_ev, fg_color=BRAND["bg"], corner_radius=0)
+    ev = ctk.CTkFrame(tab_ev, fg_color="transparent", corner_radius=0)
     ev.pack(fill="both", expand=True)
 
     ev_status = ctk.CTkLabel(ev, text="",
