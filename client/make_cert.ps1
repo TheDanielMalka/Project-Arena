@@ -2,7 +2,7 @@
 $ErrorActionPreference = "Stop"
 
 $certSubject  = "CN=ArenaClient, O=ProjectArena"
-$pfxPath      = "C:\Users\LENOVO\aa\ProjectArena\client\arena_sign.pfx"
+$pfxPath      = Join-Path $PSScriptRoot "arena_sign.pfx"
 $pfxPassword  = "arena2026"
 $cerTmp       = "$env:TEMP\arena_cert.cer"
 
@@ -29,6 +29,7 @@ $pass = ConvertTo-SecureString $pfxPassword -AsPlainText -Force
 Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $pass | Out-Null
 
 Copy-Item $cerTmp "C:\Users\LENOVO\aa\ProjectArena\client\arena_cert.cer" -Force
+Copy-Item $cerTmp (Join-Path $PSScriptRoot "arena_cert.cer") -Force
 
 Write-Host ""
 Write-Host "Done. Certificate installed and PFX exported to:" -ForegroundColor Green

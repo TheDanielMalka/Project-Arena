@@ -20,6 +20,8 @@ APP_NAME = "ArenaClient"
 ALT_EXE_NAME = "ArenaClient_HUD"
 ICON_PATH = "assets/arena_icon.ico"
 MAIN_SCRIPT = "main.py"
+REQUIRE_SIGNING = os.environ.get("ARENA_REQUIRE_SIGNING", "1") not in ("0", "false", "False")
+ALLOW_UNSIGNED = os.environ.get("ARENA_ALLOW_UNSIGNED", "0") in ("1", "true", "True")
 
 # Only config file - no Python modules as data
 DATA_FILES = [
@@ -265,6 +267,18 @@ def build():
     ensure_pyinstaller_installed()
     stop_running_client_processes()
     print(f"\n  Building {APP_NAME}...\n")
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    pfx_path = os.path.join(script_dir, "arena_sign.pfx")
+    if sys.platform == "win32" and REQUIRE_SIGNING and not ALLOW_UNSIGNED and not os.path.exists(pfx_path):
+        print("ERROR: Signing is required but arena_sign.pfx is missing.")
+        print("Fix:")
+        print("  1) Run client/make_cert.ps1 as Administrator once (generates arena_sign.pfx + arena_cert.cer).")
+        print("  2) Re-run: python build.py --clean")
+        print("")
+        print("If you really want an unsigned build (may be blocked by Windows policy), run:")
+        print("  $env:ARENA_ALLOW_UNSIGNED=1; python build.py --clean")
+        sys.exit(2)
 
     # Ensure the embedded EXE icon is always the latest (no stale assets).
     if os.path.exists(os.path.dirname(os.path.abspath(ICON_PATH))):
