@@ -872,6 +872,10 @@ class TestPlatformConfig:
             ("maintenance_mode",        "false"),
             ("new_registrations",       "true"),
             ("auto_escalate_disputes",  "false"),
+            ("fraud_pair_match_gt",              "3"),
+            ("fraud_pair_window_hours",          "24"),
+            ("fraud_intentional_loss_min_count", "5"),
+            ("fraud_intentional_loss_days",      "7"),
         ]
 
     def test_get_returns_all_fields(self, as_admin):
@@ -895,6 +899,10 @@ class TestPlatformConfig:
             "maintenance_mode",
             "new_registrations",
             "auto_escalate_disputes",
+            "fraud_pair_match_gt",
+            "fraud_pair_window_hours",
+            "fraud_intentional_loss_min_count",
+            "fraud_intentional_loss_days",
         ):
             assert field in data, f"Missing field: {field}"
 
@@ -966,6 +974,31 @@ class TestPlatformConfig:
                 headers=_ADMIN_HEADERS,
             )
         assert resp.status_code == 400
+
+    def test_put_fraud_threshold_invalid_returns_400(self, as_admin):
+        """fraud_pair_match_gt out of range → 400."""
+        ctx, session = _make_session()
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.put(
+                "/platform/config",
+                json={"fraud_pair_match_gt": "0"},
+                headers=_ADMIN_HEADERS,
+            )
+        assert resp.status_code == 400
+
+    def test_put_fraud_threshold_triggers_reload(self, as_admin):
+        """Valid fraud_* PUT calls _reload_fraud_detection_config."""
+        ctx, session = _make_session()
+        with patch("main.SessionLocal", return_value=ctx), \
+             patch("main._log_audit"), \
+             patch("main._reload_fraud_detection_config") as mock_reload:
+            resp = client.put(
+                "/platform/config",
+                json={"fraud_pair_match_gt": "4"},
+                headers=_ADMIN_HEADERS,
+            )
+        assert resp.status_code == 200
+        mock_reload.assert_called_once()
 
     def test_get_requires_admin(self):
         """Non-admin cannot GET config — 403."""

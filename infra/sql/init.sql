@@ -845,6 +845,14 @@ INSERT INTO platform_config (key, value)
 VALUES ('daily_bet_max_at', '50000')
 ON CONFLICT (key) DO UPDATE SET value = '50000', updated_at = NOW();
 
+-- ── Migration 030 — Fraud / AML report thresholds (Issue #57) ────────────────
+INSERT INTO platform_config (key, value) VALUES
+    ('fraud_pair_match_gt',              '3'),
+    ('fraud_pair_window_hours',          '24'),
+    ('fraud_intentional_loss_min_count', '5'),
+    ('fraud_intentional_loss_days',      '7')
+ON CONFLICT (key) DO NOTHING;
+
 -- ── Migration 021 — Index for daily staked AT query ──────────────────────────
 CREATE INDEX IF NOT EXISTS idx_match_players_user_id
     ON match_players(user_id);
