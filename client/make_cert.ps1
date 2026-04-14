@@ -14,18 +14,19 @@ try {
         -Type CodeSigningCert `
         -Subject $certSubject `
         -CertStoreLocation "Cert:\CurrentUser\My" `
+        -KeyStorageProvider "Microsoft Software Key Storage Provider" `
         -KeyAlgorithm RSA `
         -KeyLength 2048 `
         -KeyExportPolicy Exportable `
         -HashAlgorithm SHA256 `
         -NotAfter (Get-Date).AddYears(5)
 } catch {
-    Write-Host "      CurrentUser cert creation failed. Trying LocalMachine (requires Admin)..." -ForegroundColor Yellow
+    Write-Host "      CurrentUser cert creation failed. Trying legacy CSP provider..." -ForegroundColor Yellow
     $cert = New-SelfSignedCertificate `
         -Type CodeSigningCert `
         -Subject $certSubject `
-        -CertStoreLocation "Cert:\LocalMachine\My" `
-        -KeyAlgorithm RSA `
+        -CertStoreLocation "Cert:\CurrentUser\My" `
+        -Provider "Microsoft Enhanced RSA and AES Cryptographic Provider" `
         -KeyLength 2048 `
         -KeyExportPolicy Exportable `
         -HashAlgorithm SHA256 `
