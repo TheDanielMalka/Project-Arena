@@ -42,7 +42,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         <ArenaSidebar />
         <div className="relative z-10 flex-1 flex flex-col min-w-0">
           <ArenaHeader />
-          <main className="flex-1 p-6 overflow-auto relative border-t border-arena-cyan/[0.07] shadow-[inset_0_1px_0_hsl(0_0%_100%/0.03)]">
+          <main className="arena-main-scroll flex-1 p-6 overflow-auto relative border-t border-arena-cyan/[0.07] shadow-[inset_0_1px_0_hsl(0_0%_100%/0.03)]">
             <Breadcrumbs />
             {children}
           </main>
