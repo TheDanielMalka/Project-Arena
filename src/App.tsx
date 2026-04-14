@@ -9,6 +9,7 @@ import { registerAuth401Handler, clearAuth401Handler } from "@/lib/authSession";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Routes, Route } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { ArenaGlobalStarfield } from "@/components/visual/ArenaGlobalStarfield";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
@@ -35,8 +36,9 @@ const queryClient = new QueryClient();
 
 const PublicLegal = ({ children }: { children: React.ReactNode }) => (
   <div className="min-h-screen bg-background text-foreground relative">
-    <div className="pointer-events-none absolute inset-0 opacity-[0.06] motion-reduce:opacity-[0.02] [background:repeating-linear-gradient(0deg,transparent,transparent_2px,hsl(0_0%_0%/0.4)_2px,hsl(0_0%_0%/0.4)_3px)] mix-blend-multiply" aria-hidden />
-    <div className="max-w-4xl mx-auto px-6 py-10 relative z-[1]">
+    <ArenaGlobalStarfield className="fixed inset-0 z-0" />
+    <div className="pointer-events-none absolute inset-0 z-[1] opacity-[0.06] motion-reduce:opacity-[0.02] [background:repeating-linear-gradient(0deg,transparent,transparent_2px,hsl(0_0%_0%/0.4)_2px,hsl(0_0%_0%/0.4)_3px)] mix-blend-multiply" aria-hidden />
+    <div className="max-w-4xl mx-auto px-6 py-10 relative z-[2]">
       <div className="arena-hud-legal-frame">{children}</div>
     </div>
   </div>
@@ -62,6 +64,7 @@ function SessionGate({ children }: { children: ReactNode }) {
   if (!authHydrated) {
     return (
       <div className="arena-hud-loading-screen min-h-screen flex flex-col items-center justify-center gap-3 bg-background text-muted-foreground relative z-0">
+        <ArenaGlobalStarfield className="fixed inset-0 z-0" />
         <div className="relative z-[1] flex flex-col items-center gap-2">
           <div className="h-1.5 w-1.5 tactical-hud-slot-cut bg-arena-cyan motion-safe:animate-pulse shadow-[0_0_12px_hsl(var(--arena-cyan)/0.5)]" aria-hidden />
           <span className="font-hud text-[10px] uppercase tracking-[0.4em] text-arena-cyan/70">Initializing</span>

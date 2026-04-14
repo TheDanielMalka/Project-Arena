@@ -25,8 +25,6 @@ export function ArenaPageShell({ variant, children, className, contentClassName 
       data-arena-page={variant}
     >
       <ArenaPageDecor variant={variant} />
-      {/* In-panel sparkles — above route decor, below content (visible in gaps / edges of cards) */}
-      <div className="arena-page-shell-starfield" aria-hidden />
       <div className={cn("relative z-[2]", contentClassName ?? "space-y-6")}>{children}</div>
     </section>
   );

@@ -1315,8 +1315,8 @@
     mix-blend-mode: multiply;
   }
 
-  /* In-panel stars: screen blend + larger dots so they read on dark frosted HUD */
-  @keyframes arena-page-shell-star-twinkle {
+  /* Twinkling stars: full app (AppLayout) + public routes — position via Tailwind on ArenaGlobalStarfield */
+  @keyframes arena-global-star-twinkle {
     0%,
     100% {
       opacity: 0.72;
@@ -1326,16 +1326,12 @@
     }
   }
 
-  .arena-page-shell-starfield {
-    pointer-events: none;
-    position: absolute;
-    inset: 0;
-    z-index: 1;
-    mix-blend-mode: screen;
-    filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.25));
+  .arena-global-starfield {
     background-repeat: no-repeat;
     background-size: 100% 100%;
-    animation: arena-page-shell-star-twinkle 4.2s ease-in-out infinite;
+    animation: arena-global-star-twinkle 4.2s ease-in-out infinite;
+    /* normal blend: screen + full-layer drop-shadow failed under stacked HUD (invisible) */
+    mix-blend-mode: normal;
     background-image:
       radial-gradient(circle 3.5px at 6% 10%, rgba(255, 255, 255, 0.95), transparent 55%),
       radial-gradient(circle 3px at 18% 5%, rgba(220, 250, 255, 0.92), transparent 55%),
@@ -1364,13 +1360,6 @@
       radial-gradient(circle 2.4px at 62% 8%, rgba(255, 255, 255, 0.7), transparent 55%),
       radial-gradient(circle 2.6px at 25% 78%, rgba(255, 255, 255, 0.65), transparent 55%),
       radial-gradient(circle 2.5px at 74% 88%, rgba(255, 255, 255, 0.68), transparent 55%);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .arena-page-shell-starfield {
-      animation: none;
-      opacity: 0.78;
-    }
   }
 
   .arena-hud-btn-clip {
@@ -1506,6 +1495,10 @@
     .arena-hud-card-surface::after,
     .arena-hud-page-shell::after {
       opacity: 0.025;
+    }
+    .arena-global-starfield {
+      animation: none;
+      opacity: 0.78;
     }
     .arena-hud-overlay::before {
       opacity: 0.05;

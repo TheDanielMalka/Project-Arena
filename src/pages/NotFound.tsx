@@ -1,5 +1,6 @@
 import { useLocation } from "react-router-dom";
 import { useEffect } from "react";
+import { ArenaGlobalStarfield } from "@/components/visual/ArenaGlobalStarfield";
 
 const NotFound = () => {
   const location = useLocation();
@@ -10,7 +11,8 @@ const NotFound = () => {
 
   return (
     <div className="arena-hud-loading-screen relative flex min-h-screen items-center justify-center bg-background">
-      <div className="pointer-events-none absolute inset-0 opacity-[0.06] [background:repeating-linear-gradient(0deg,transparent,transparent_2px,hsl(0_0%_0%/0.4)_2px,hsl(0_0%_0%/0.4)_3px)] mix-blend-multiply" aria-hidden />
+      <ArenaGlobalStarfield className="fixed inset-0 z-0" />
+      <div className="pointer-events-none absolute inset-0 z-[1] opacity-[0.06] [background:repeating-linear-gradient(0deg,transparent,transparent_2px,hsl(0_0%_0%/0.4)_2px,hsl(0_0%_0%/0.4)_3px)] mix-blend-multiply" aria-hidden />
       <div className="arena-hud-modal-surface relative z-[1] max-w-md px-10 py-12 text-center shadow-2xl">
         <p className="font-hud mb-2 text-[9px] uppercase tracking-[0.45em] text-arena-cyan/55">ERR_ROUTE</p>
         <h1 className="mb-3 font-display text-5xl font-black tracking-widest text-primary">404</h1>

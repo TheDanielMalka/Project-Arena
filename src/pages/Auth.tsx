@@ -10,6 +10,7 @@ import { useUserStore } from "@/stores/userStore";
 import { useToast } from "@/hooks/use-toast";
 import { PASSWORD_RULES, isPasswordValid } from "@/lib/passwordValidation";
 import { cn } from "@/lib/utils";
+import { ArenaGlobalStarfield } from "@/components/visual/ArenaGlobalStarfield";
 import {
   Tooltip,
   TooltipContent,
@@ -201,8 +202,9 @@ const Auth = () => {
 
   if (forgotMode) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background px-4">
-        <Card className="w-full max-w-md bg-card border-border">
+      <div className="relative min-h-screen flex items-center justify-center bg-background px-4">
+        <ArenaGlobalStarfield className="fixed inset-0 z-0" />
+        <Card className="relative z-[1] w-full max-w-md bg-card border-border">
           <CardHeader className="text-center">
             <h1 className="font-display text-3xl font-bold text-primary text-glow-green tracking-wider mb-1">ARENA</h1>
             <CardTitle className="font-display text-xl">Reset Password</CardTitle>
@@ -239,8 +241,9 @@ const Auth = () => {
 
   return (
     <TooltipProvider delayDuration={200}>
-    <div className="min-h-screen flex flex-col items-center justify-center bg-background px-4 gap-4">
-      <Card className="w-full max-w-md bg-card border-border">
+    <div className="relative min-h-screen flex flex-col items-center justify-center bg-background px-4 gap-4">
+      <ArenaGlobalStarfield className="fixed inset-0 z-0" />
+      <Card className="relative z-[1] w-full max-w-md bg-card border-border">
         <CardHeader className="text-center">
           <h1 className="font-display text-3xl font-bold text-primary text-glow-green tracking-wider mb-1">ARENA</h1>
           <p className="text-sm text-muted-foreground">Play for Stakes</p>
@@ -652,7 +655,7 @@ const Auth = () => {
       </Card>
 
       {/* Public legal footer */}
-      <div className="flex items-center gap-4 text-xs text-muted-foreground/60">
+      <div className="relative z-[1] flex items-center gap-4 text-xs text-muted-foreground/60">
         <Link to="/legal/terms" target="_blank" className="hover:text-muted-foreground transition-colors">
           Terms of Service
         </Link>
