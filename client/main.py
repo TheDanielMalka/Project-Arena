@@ -1311,11 +1311,17 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         return ctk.CTkLabel(parent, text="●", font=ctk.CTkFont(size=9),
                              text_color=BRAND["text_muted"])
 
+    # Use grid for stable layout: Header / Content / Footer
+    win.grid_rowconfigure(0, weight=0)
+    win.grid_rowconfigure(1, weight=1)
+    win.grid_rowconfigure(2, weight=0)
+    win.grid_columnconfigure(0, weight=1)
+
     # ── Header ────────────────────────────────────────────────────────────────
     header = ctk.CTkFrame(win, fg_color=BRAND["hud_panel"], corner_radius=0,
                            height=66, border_width=0)
-    header.pack(fill="x")
-    header.pack_propagate(False)
+    header.grid(row=0, column=0, sticky="ew")
+    header.grid_propagate(False)
 
     # Red left accent bar
     ctk.CTkFrame(header, width=3, fg_color=BRAND["accent"], corner_radius=0).pack(
@@ -1354,6 +1360,19 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     _chip(hdr_right, f"v{CLIENT_VERSION}")
     _eng_chip, hdr_eng_dot = _chip(hdr_right, "ENGINE", dot_color=BRAND["text_muted"])
 
+    # ── Footer ────────────────────────────────────────────────────────────────
+    footer = ctk.CTkFrame(win, fg_color=BRAND["bg_card"], corner_radius=0,
+                           height=58, border_width=0)
+    footer.grid(row=2, column=0, sticky="ew")
+    footer.grid_propagate(False)
+
+    # Top border line on footer
+    ctk.CTkFrame(footer, height=1, fg_color=BRAND["border"], corner_radius=0).pack(
+        fill="x", side="top")
+
+    btn_row = ctk.CTkFrame(footer, fg_color="transparent")
+    btn_row.pack(expand=True)
+
     # ── Tab view ──────────────────────────────────────────────────────────────
     tabview = ctk.CTkTabview(
         win,
@@ -1367,7 +1386,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         text_color=BRAND["text"],
         text_color_disabled=BRAND["text_muted"],
     )
-    tabview.pack(fill="both", expand=True)
+    tabview.grid(row=1, column=0, sticky="nsew")
     tabview.add("Overview")
     tabview.add("Events")
 
@@ -2037,19 +2056,6 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                         threading.Thread(target=_do, daemon=True).start()
                     return _claim
                 cbtn.configure(command=_make_handler(ev_id, cbtn))
-
-    # ── Footer ─────────────────────────────────────────────────────────────────
-    footer = ctk.CTkFrame(win, fg_color=BRAND["bg_card"], corner_radius=0,
-                           height=58, border_width=0)
-    footer.pack(fill="x", side="bottom")
-    footer.pack_propagate(False)
-
-    # Top border line on footer
-    ctk.CTkFrame(footer, height=1, fg_color=BRAND["border"], corner_radius=0).pack(
-        fill="x", side="top")
-
-    btn_row = ctk.CTkFrame(footer, fg_color="transparent")
-    btn_row.pack(expand=True)
 
     def _check_engine_btn():
         threading.Thread(target=_do_engine_check, daemon=True).start()
