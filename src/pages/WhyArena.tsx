@@ -1,3 +1,4 @@
+import { ArenaGlobalStarfield } from "@/components/visual/ArenaGlobalStarfield";
 import { LandingGuestFooter } from "@/components/landing/LandingGuestFooter";
 import { LandingPublicNav } from "@/components/landing/LandingPublicNav";
 import { Link, useNavigate } from "react-router-dom";
@@ -15,6 +16,7 @@ export default function WhyArena() {
 
   return (
     <div className="relative flex min-h-screen flex-col overflow-x-hidden bg-[hsl(220_24%_3%)] text-foreground">
+      <ArenaGlobalStarfield className="fixed inset-0 z-0" />
       <div
         className="pointer-events-none fixed inset-0 z-[1] opacity-[0.04] motion-reduce:opacity-[0.015] mix-blend-multiply [background:repeating-linear-gradient(0deg,transparent,transparent_2px,hsl(0_0%_0%/0.42)_2px,hsl(0_0%_0%/0.42)_3px)]"
         aria-hidden

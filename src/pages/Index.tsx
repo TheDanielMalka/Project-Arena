@@ -9,6 +9,7 @@ import { LANDING_GAMES } from "@/lib/arenaGamesCatalog";
 import { cn } from "@/lib/utils";
 import { LandingArenaWordmark } from "@/components/visual/LandingArenaWordmark";
 import { LandingPublicNav } from "@/components/landing/LandingPublicNav";
+import { ArenaGlobalStarfield } from "@/components/visual/ArenaGlobalStarfield";
 import { LandingGuestFooter } from "@/components/landing/LandingGuestFooter";
 import { useUserStore } from "@/stores/userStore";
 
@@ -487,6 +488,7 @@ const Index = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-[hsl(220_24%_3%)] text-foreground overflow-x-hidden relative">
+      <ArenaGlobalStarfield className="fixed inset-0 z-[1]" />
       <div
         className="pointer-events-none fixed inset-0 z-[5] opacity-[0.045] motion-reduce:opacity-[0.015] mix-blend-multiply [background:repeating-linear-gradient(0deg,transparent,transparent_2px,hsl(0_0%_0%/0.42)_2px,hsl(0_0%_0%/0.42)_3px)]"
         aria-hidden
