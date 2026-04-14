@@ -155,6 +155,120 @@ async def _stale_player_cleanup_loop(interval: int = 15) -> None:
             logger.error("_stale_player_cleanup_loop error: %s", exc)
 
 
+def _get_client_host_lobby_timeout_seconds() -> int:
+    """
+    Seconds without a desktop /client/heartbeat before we auto-cancel a *waiting* match
+    whose host has previously been seen in client_sessions (user_id = host_id).
+
+    Config key: platform_config.client_lobby_host_timeout_sec (optional; default 60).
+    """
+    default = 60
+    lo, hi = 30, 3600
+    try:
+        with SessionLocal() as s:
+            row = s.execute(
+                text(
+                    "SELECT value FROM platform_config WHERE key = 'client_lobby_host_timeout_sec'"
+                )
+            ).fetchone()
+            if row and row[0] is not None and str(row[0]).strip() != "":
+                v = int(float(row[0]))
+                return max(lo, min(hi, v))
+    except Exception:
+        pass
+    return default
+
+
+def _find_waiting_matches_host_client_timed_out(cutoff_utc: datetime) -> list[str]:
+    """
+    Waiting matches whose host has at least one client_sessions row and
+    max(last_heartbeat) is older than cutoff_utc.
+
+    Hosts who never opened the desktop client (no session rows) are excluded.
+    """
+    try:
+        with SessionLocal() as read_session:
+            rows = read_session.execute(
+                text(
+                    "SELECT m.id::text "
+                    "FROM matches m "
+                    "CROSS JOIN LATERAL ( "
+                    "  SELECT MAX(cs.last_heartbeat) AS mx "
+                    "  FROM client_sessions cs "
+                    "  WHERE cs.user_id = m.host_id AND cs.user_id IS NOT NULL "
+                    ") hb "
+                    "WHERE m.status = 'waiting' "
+                    "  AND hb.mx IS NOT NULL "
+                    "  AND hb.mx < :cutoff"
+                ),
+                {"cutoff": cutoff_utc},
+            ).fetchall()
+        return [str(r[0]) for r in rows if r[0]]
+    except Exception as exc:
+        logger.error("_find_waiting_matches_host_client_timed_out: %s", exc)
+        return []
+
+
+def _try_cancel_waiting_match_host_client_timeout(match_id: str) -> bool:
+    """
+    Same outcome as host DELETE /matches/{id} for a waiting room: cancel + AT refund.
+    Uses UPDATE ... WHERE status='waiting' so concurrent callers cannot double-refund.
+
+    Returns True if this invocation transitioned the match to cancelled.
+    """
+    try:
+        stake_currency: str | None = None
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "UPDATE matches SET status = 'cancelled', ended_at = NOW() "
+                    "WHERE id = CAST(:mid AS uuid) AND status = 'waiting' "
+                    "RETURNING stake_currency"
+                ),
+                {"mid": match_id},
+            ).fetchone()
+            if not row:
+                return False
+            stake_currency = str(row[0]) if row[0] is not None else None
+            session.commit()
+
+        if stake_currency == "AT":
+            _refund_at_match(match_id)
+
+        logger.info(
+            "host_client_timeout: cancelled match_id=%s stake_currency=%s",
+            match_id,
+            stake_currency,
+        )
+        return True
+    except Exception as exc:
+        logger.error(
+            "host_client_timeout: cancel failed match_id=%s error=%s",
+            match_id,
+            exc,
+        )
+        return False
+
+
+async def _host_client_lobby_timeout_loop(interval: int = 15) -> None:
+    """
+    Periodically cancel waiting matches whose host's desktop client has been silent
+    longer than client_lobby_host_timeout_sec (default 60s).
+    """
+    import asyncio as _asyncio
+
+    while True:
+        try:
+            await _asyncio.sleep(interval)
+            secs = _get_client_host_lobby_timeout_seconds()
+            cutoff = datetime.now(timezone.utc) - timedelta(seconds=secs)
+            mids = _find_waiting_matches_host_client_timed_out(cutoff)
+            for mid in mids:
+                _try_cancel_waiting_match_host_client_timeout(mid)
+        except Exception as exc:
+            logger.error("_host_client_lobby_timeout_loop error: %s", exc)
+
+
 async def _expired_match_cleanup_loop(interval: int = 300) -> None:
     """
     Background task: every `interval` seconds (default 5 min), cancel
@@ -405,6 +519,9 @@ async def lifespan(app: FastAPI):
     _stale_task = asyncio.create_task(_stale_player_cleanup_loop())
     logger.info("✅ Stale player cleanup task started")
 
+    _host_client_timeout_task = asyncio.create_task(_host_client_lobby_timeout_loop())
+    logger.info("✅ Host client lobby timeout task started")
+
     # Slack alerts for oracle/RPC health — only when escrow is on and webhook URL is set.
     global _slack_oracle_task
     if _escrow_client and (os.getenv("SLACK_ALERTS_WEBHOOK_URL") or "").strip():
@@ -417,6 +534,11 @@ async def lifespan(app: FastAPI):
     _rq_task.cancel()
     _cleanup_task.cancel()
     _stale_task.cancel()
+    _host_client_timeout_task.cancel()
+    try:
+        await _host_client_timeout_task
+    except asyncio.CancelledError:
+        pass
     if _slack_oracle_task:
         _slack_oracle_task.cancel()
         try:
