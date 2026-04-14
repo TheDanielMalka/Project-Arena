@@ -242,9 +242,16 @@ def _sign_exe(abs_exe: str) -> None:
     )
     status = result.stdout.strip()
     if status == "Valid":
-        print("  Code signing: OK (SAC will not block this EXE)\n")
-    else:
-        print(f"  Code signing failed: {status} {result.stderr.strip()}\n")
+        print("  Code signing: OK\n")
+        return
+
+    # On machines where the self-signed root is not yet trusted, Windows may report
+    # UnknownError even though the signature was applied. setup.ps1 installs trust.
+    if status in ("UnknownError", "Unknown"):
+        print("  Code signing: APPLIED (certificate not trusted yet on this machine)\n")
+        return
+
+    print(f"  Code signing failed: {status} {result.stderr.strip()}\n")
 
 
 def _unblock_exe(abs_exe: str) -> None:
