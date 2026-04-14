@@ -1,3 +1,5 @@
+import { ArenaStarfield } from "@/components/visual/ArenaStarfield";
+
 /**
  * Full-viewport decorative layer — no pointer events, no data fetching.
  * HUD reference: central radar / energy core + cyan field + soft grid (not “flat boxes behind UI”).
@@ -63,6 +65,8 @@ export function ArenaAmbientBackground() {
         className="absolute -right-24 bottom-1/4 h-80 w-80 rounded-full bg-primary/12 blur-[90px] opacity-80"
         style={{ animation: "arena-float 18s ease-in-out infinite" }}
       />
+
+      <ArenaStarfield />
     </div>
   );
 }

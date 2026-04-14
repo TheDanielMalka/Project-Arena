@@ -3,7 +3,6 @@ import { GoogleOAuthProvider } from "@react-oauth/google";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { GlobalStarfield } from "@/components/visual/GlobalStarfield";
 import { NotificationToastListener } from "@/components/notifications/NotificationToast";
 import { useUserStore } from "@/stores/userStore";
 import { registerAuth401Handler, clearAuth401Handler } from "@/lib/authSession";
@@ -79,7 +78,6 @@ const googleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID ?? "").trim();
 const AppShell = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <GlobalStarfield />
       <Toaster />
       <Sonner />
       <NotificationToastListener />
