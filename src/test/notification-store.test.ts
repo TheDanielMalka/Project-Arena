@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useNotificationStore } from "@/stores/notificationStore";
+import { userFacingNotification } from "@/lib/userFacingNotification";
 
 // ─── Helper ───────────────────────────────────────────────────
 
@@ -112,5 +113,17 @@ describe("notificationStore", () => {
     const { notifications, unreadCount } = useNotificationStore.getState();
     expect(notifications).toHaveLength(0);
     expect(unreadCount).toBe(0);
+  });
+
+  it("addNotification softens technical profile copy for users", () => {
+    useNotificationStore.getState().clearAll();
+    useNotificationStore.getState().addNotification({
+      type: "system",
+      title: "✅ Profile Updated",
+      message: "Identity saved — users.avatar, avatar_bg, equipped_badge_icon.",
+    });
+    const n = useNotificationStore.getState().notifications[0];
+    expect(n.title).toBe("Profile updated");
+    expect(n.message).toBe(userFacingNotification.profileSaved.message);
   });
 });
