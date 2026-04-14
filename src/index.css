@@ -228,6 +228,135 @@
     50% { transform: translate(12px, -8px) scale(1.05); opacity: 0.85; }
   }
 
+  /* ── Global starfield — sparse distant sparkles (subtle, not a dense field) ── */
+  @keyframes arena-starfield-shimmer {
+    0%, 100% { opacity: 0.12; }
+    28% { opacity: 0.34; }
+    51% { opacity: 0.18; }
+    74% { opacity: 0.4; }
+  }
+  @keyframes arena-starfield-shimmer-slow {
+    0%, 100% { opacity: 0.08; }
+    35% { opacity: 0.26; }
+    62% { opacity: 0.14; }
+  }
+  @keyframes arena-starfield-shimmer-cyan {
+    0%, 100% { opacity: 0.06; }
+    45% { opacity: 0.22; }
+    70% { opacity: 0.11; }
+  }
+
+  .arena-global-starfield {
+    pointer-events: none;
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    /* Softer in the focal “HUD” center so it feels rare, not wallpaper */
+    -webkit-mask-image: radial-gradient(
+      ellipse 72% 68% at 50% 44%,
+      hsl(0 0% 0% / 0.2) 0%,
+      hsl(0 0% 0% / 0.55) 38%,
+      hsl(0 0% 0% / 1) 78%
+    );
+    mask-image: radial-gradient(
+      ellipse 72% 68% at 50% 44%,
+      hsl(0 0% 0% / 0.2) 0%,
+      hsl(0 0% 0% / 0.55) 38%,
+      hsl(0 0% 0% / 1) 78%
+    );
+  }
+
+  .arena-global-starfield .arena-star-layer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 1px;
+    height: 1px;
+    border-radius: 50%;
+    will-change: opacity;
+  }
+
+  /* Brightest — few points, edges & thin sky band */
+  .arena-star-layer--a {
+    animation: arena-starfield-shimmer 7.8s ease-in-out infinite;
+    animation-delay: -2.1s;
+    box-shadow:
+      5vw 9vh 0 0 rgba(236, 252, 255, 0.48),
+      92vw 12vh 0 0 rgba(255, 255, 255, 0.32),
+      10vw 90vh 0 0 rgba(228, 244, 255, 0.4),
+      91vw 82vh 0 0 rgba(255, 255, 255, 0.28),
+      3vw 48vh 0 0 rgba(220, 238, 255, 0.36),
+      97vw 44vh 0 0 rgba(255, 255, 255, 0.26),
+      49vw 6vh 0 0 rgba(232, 250, 255, 0.38),
+      22vw 7vh 0 0 rgba(255, 255, 255, 0.22),
+      78vw 91vh 0 0 rgba(240, 248, 255, 0.3);
+  }
+
+  /* Mid field — more dots, still sparse vs screen area */
+  .arena-star-layer--b {
+    animation: arena-starfield-shimmer-slow 14.2s ease-in-out infinite;
+    animation-delay: -5s;
+    box-shadow:
+      17vw 21vh 0 0 rgba(255, 255, 255, 0.14),
+      84vw 19vh 0 0 rgba(255, 255, 255, 0.12),
+      13vw 76vh 0 0 rgba(255, 255, 255, 0.13),
+      87vw 71vh 0 0 rgba(255, 255, 255, 0.11),
+      26vw 11vh 0 0 rgba(245, 250, 255, 0.15),
+      74vw 13vh 0 0 rgba(255, 255, 255, 0.1),
+      8vw 33vh 0 0 rgba(255, 255, 255, 0.12),
+      93vw 31vh 0 0 rgba(255, 255, 255, 0.09),
+      19vw 58vh 0 0 rgba(255, 255, 255, 0.08),
+      81vw 56vh 0 0 rgba(255, 255, 255, 0.1),
+      36vw 86vh 0 0 rgba(255, 255, 255, 0.11),
+      66vw 89vh 0 0 rgba(255, 255, 255, 0.09),
+      31vw 38vh 0 0 rgba(255, 255, 255, 0.07),
+      69vw 35vh 0 0 rgba(255, 255, 255, 0.08),
+      44vw 16vh 0 0 rgba(255, 255, 255, 0.1),
+      56vw 93vh 0 0 rgba(255, 255, 255, 0.09),
+      14vw 67vh 0 0 rgba(255, 255, 255, 0.08),
+      86vw 63vh 0 0 rgba(255, 255, 255, 0.07),
+      52vw 78vh 0 0 rgba(255, 255, 255, 0.06),
+      7vw 18vh 0 0 rgba(255, 255, 255, 0.09),
+      95vw 84vh 0 0 rgba(255, 255, 255, 0.08);
+  }
+
+  /* Cyan tech glints — cooler tone, dimmer */
+  .arena-star-layer--c {
+    animation: arena-starfield-shimmer-cyan 11.4s ease-in-out infinite;
+    animation-delay: -3.6s;
+    box-shadow:
+      28vw 15vh 0 0 hsla(188, 88%, 68%, 0.2),
+      72vw 10vh 0 0 hsla(195, 80%, 70%, 0.16),
+      11vw 41vh 0 0 hsla(188, 75%, 72%, 0.14),
+      89vw 39vh 0 0 hsla(200, 70%, 68%, 0.12),
+      6vw 80vh 0 0 hsla(188, 85%, 65%, 0.15),
+      94vw 76vh 0 0 hsla(192, 78%, 70%, 0.13),
+      38vw 24vh 0 0 hsla(188, 90%, 72%, 0.11),
+      62vw 20vh 0 0 hsla(195, 82%, 68%, 0.1),
+      23vw 95vh 0 0 hsla(188, 70%, 70%, 0.12),
+      41vw 68vh 0 0 hsla(190, 75%, 66%, 0.09),
+      59vw 72vh 0 0 hsla(188, 80%, 68%, 0.1),
+      33vw 29vh 0 0 hsla(200, 72%, 72%, 0.08),
+      67vw 48vh 0 0 hsla(188, 85%, 64%, 0.07),
+      48vw 88vh 0 0 hsla(192, 78%, 68%, 0.1),
+      16vw 52vh 0 0 hsla(188, 88%, 66%, 0.09),
+      84vw 50vh 0 0 hsla(195, 75%, 70%, 0.08);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .arena-global-starfield .arena-star-layer {
+      animation: none !important;
+      opacity: 0.2;
+    }
+    .arena-star-layer--b {
+      opacity: 0.14;
+    }
+    .arena-star-layer--c {
+      opacity: 0.1;
+    }
+  }
+
   @keyframes arena-radar-spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
