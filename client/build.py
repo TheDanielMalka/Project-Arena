@@ -20,6 +20,8 @@ APP_NAME = "ArenaClient"
 ALT_EXE_NAME = "ArenaClient_HUD"
 ICON_PATH = "assets/arena_icon.ico"
 MAIN_SCRIPT = "main.py"
+REQUIRE_SIGNING = os.environ.get("ARENA_REQUIRE_SIGNING", "1") not in ("0", "false", "False")
+ALLOW_UNSIGNED = os.environ.get("ARENA_ALLOW_UNSIGNED", "0") in ("1", "true", "True")
 
 # Only config file - no Python modules as data
 DATA_FILES = [
@@ -243,15 +245,29 @@ def _sign_exe(abs_exe: str) -> None:
     status = result.stdout.strip()
     if status == "Valid":
         print("  Code signing: OK\n")
-        return
+    else:
+        # setup.ps1 will install trust. Still keep going (signature is applied).
+        print(f"  Code signing status: {status} {result.stderr.strip()}\n")
 
-    # On machines where the self-signed root is not yet trusted, Windows may report
-    # UnknownError even though the signature was applied. setup.ps1 installs trust.
-    if status in ("UnknownError", "Unknown"):
-        print("  Code signing: APPLIED (certificate not trusted yet on this machine)\n")
-        return
 
-    print(f"  Code signing failed: {status} {result.stderr.strip()}\n")
+def _export_cer_from_pfx() -> None:
+    """Keep arena_cert.cer always in sync with arena_sign.pfx."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    pfx_path = os.path.join(script_dir, "arena_sign.pfx")
+    cer_path = os.path.join(script_dir, "arena_cert.cer")
+    if not os.path.exists(pfx_path):
+        return
+    export_cmd = (
+        f"$b=[System.IO.File]::ReadAllBytes('{pfx_path}');"
+        f"$c=New-Object System.Security.Cryptography.X509Certificates.X509Certificate2("
+        f"$b,'arena2026',[System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable);"
+        f"[System.IO.File]::WriteAllBytes('{cer_path}',$c.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert));"
+        f"Write-Host OK"
+    )
+    subprocess.run(
+        ["powershell", "-ExecutionPolicy", "Bypass", "-Command", export_cmd],
+        capture_output=True, text=True,
+    )
 
 
 def _unblock_exe(abs_exe: str) -> None:
@@ -272,6 +288,13 @@ def build():
     ensure_pyinstaller_installed()
     stop_running_client_processes()
     print(f"\n  Building {APP_NAME}...\n")
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    pfx_path = os.path.join(script_dir, "arena_sign.pfx")
+    if sys.platform == "win32" and REQUIRE_SIGNING and not ALLOW_UNSIGNED and not os.path.exists(pfx_path):
+        print("ERROR: Signing is required but arena_sign.pfx is missing.")
+        print("Fix: run client/make_cert.ps1 once, then re-run build.")
+        sys.exit(2)
 
     # Ensure the embedded EXE icon is always the latest (no stale assets).
     if os.path.exists(os.path.dirname(os.path.abspath(ICON_PATH))):
@@ -318,6 +341,7 @@ def build():
             if sys.platform == "win32":
                 _sign_exe(abs_exe)
                 _unblock_exe(abs_exe)
+                _export_cer_from_pfx()
                 # Copy to a new filename to avoid Windows icon cache issues.
                 alt_path = os.path.abspath(os.path.join(os.path.dirname(abs_exe), f"{ALT_EXE_NAME}.exe"))
                 copied = False
@@ -333,6 +357,7 @@ def build():
                 if copied:
                     _sign_exe(alt_path)
                     _unblock_exe(alt_path)
+                    _export_cer_from_pfx()
                     print(f"  Output (alt): {os.path.relpath(alt_path, os.path.dirname(__file__))}")
                 else:
                     print(f"  WARNING: Could not write alt EXE copy: {last_err}")
