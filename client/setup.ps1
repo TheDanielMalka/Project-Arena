@@ -22,6 +22,8 @@ if (-not (Test-Path $exePath)) {
 Write-Host ""
 Write-Host "  Arena Client - Setup" -ForegroundColor Cyan
 Write-Host "  --------------------"
+Write-Host ("  Folder: " + $PSScriptRoot) -ForegroundColor DarkGray
+Write-Host ("  Target EXE: " + $exePath) -ForegroundColor DarkGray
 
 if (Test-Path $cerPath) {
     try {
@@ -35,9 +37,18 @@ if (Test-Path $cerPath) {
     Write-Host "  [1/4] arena_cert.cer not found - skipping cert install." -ForegroundColor Yellow
 }
 
-Unblock-File -Path $exePath -ErrorAction SilentlyContinue
-if (Test-Path $hudExePath) { Unblock-File -Path $hudExePath -ErrorAction SilentlyContinue }
-Write-Host "  [2/4] Zone identifier cleared: OK" -ForegroundColor Green
+try {
+    # IMPORTANT: If files came from a downloaded ZIP, Windows may propagate Mark-of-the-Web to every extracted file.
+    # Clear it for the entire folder, not just the EXE.
+    Get-ChildItem -Path $PSScriptRoot -File -Recurse | ForEach-Object {
+        Unblock-File -Path $_.FullName -ErrorAction SilentlyContinue
+    }
+    Write-Host "  [2/4] Zone identifier cleared (folder): OK" -ForegroundColor Green
+} catch {
+    Unblock-File -Path $exePath -ErrorAction SilentlyContinue
+    if (Test-Path $hudExePath) { Unblock-File -Path $hudExePath -ErrorAction SilentlyContinue }
+    Write-Host "  [2/4] Zone identifier cleared (exe only): OK" -ForegroundColor Yellow
+}
 
 try {
     $sig = Get-AuthenticodeSignature -FilePath $exePath
