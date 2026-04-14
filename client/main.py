@@ -1195,6 +1195,205 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         ctk.CTkFrame(outer, height=1, fg_color=BRAND["hud_border"]).pack(fill="x", padx=10, pady=(0, 6))
         return outer
 
+ 
+    def _hud_button(parent, text: str, command, *,
+                    variant: str = "neutral",
+                    height: int = 44,
+                    font_size: int = 13,
+                    min_width: int = 140) -> ctk.CTkButton:
+        """
+        AAA HUD button with cut corners + neon edge + hover glow.
+        Uses a Pillow-drawn background image so it feels like the website UI.
+        """
+        # Keep image refs alive (tk will drop them otherwise)
+        if not hasattr(win, "_hud_btn_imgs"):
+            win._hud_btn_imgs = []  # type: ignore[attr-defined]
+
+        colors = {
+            "neutral": {"fill": BRAND["hud_panel_2"], "edge": BRAND["hud_border"], "glow": BRAND["hud_glow"], "text": BRAND["text"]},
+            "primary": {"fill": BRAND["accent_dark"], "edge": BRAND["accent"], "glow": BRAND["accent"], "text": "#FFFFFF"},
+            "danger":  {"fill": BRAND["accent"], "edge": BRAND["accent"], "glow": BRAND["hud_glow_2"], "text": "#FFFFFF"},
+        }.get(variant, None)
+        if colors is None:
+            colors = {"fill": BRAND["hud_panel_2"], "edge": BRAND["hud_border"], "glow": BRAND["hud_glow"], "text": BRAND["text"]}
+
+        def _hex_to_rgba(h: str, a: int = 255) -> tuple[int, int, int, int]:
+            h = h.lstrip("#")
+            return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), a
+
+        def _make_bg(w: int, h: int, glow_alpha: int) -> Image.Image:
+            scale = 3
+            W, H = w * scale, h * scale
+            img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+
+            edge = _hex_to_rgba(colors["edge"], 255)
+            fill = _hex_to_rgba(colors["fill"], 255)
+            glow = _hex_to_rgba(colors["glow"], glow_alpha)
+
+            cut = max(10, int(H * 0.26))
+            pad = 4 * scale
+            x0, y0, x1, y1 = pad, pad, W - pad, H - pad
+
+            poly = [
+                (x0 + cut, y0),
+                (x1 - cut, y0),
+                (x1, y0 + cut),
+                (x1, y1 - cut),
+                (x1 - cut, y1),
+                (x0 + cut, y1),
+                (x0, y1 - cut),
+                (x0, y0 + cut),
+            ]
+
+            # Glow
+            g = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            gd = ImageDraw.Draw(g)
+            gd.polygon(poly, outline=glow, width=max(3, 3 * scale))
+            g = g.filter(ImageFilter.GaussianBlur(radius=4 * scale))
+            img.alpha_composite(g)
+
+            d = ImageDraw.Draw(img)
+            d.polygon(poly, fill=fill)
+            d.polygon(poly, outline=edge, width=max(2, 2 * scale))
+
+            # Subtle top sheen
+            sheen_h = int(H * 0.42)
+            sheen = Image.new("RGBA", (W, sheen_h), (255, 255, 255, 0))
+            sd = ImageDraw.Draw(sheen)
+            for i in range(sheen_h):
+                a = int(48 * (1 - i / max(1, sheen_h - 1)))
+                sd.line([(0, i), (W, i)], fill=(255, 255, 255, a))
+            img.alpha_composite(sheen, dest=(0, 0))
+
+            return img.resize((w, h), Image.LANCZOS)
+
+        w = max(min_width, 10 + len(text) * 9)
+        normal_img = _make_bg(w, height, glow_alpha=50)
+        hover_img  = _make_bg(w, height, glow_alpha=95)
+        n = ctk.CTkImage(light_image=normal_img, dark_image=normal_img, size=(w, height))
+        himg = ctk.CTkImage(light_image=hover_img, dark_image=hover_img, size=(w, height))
+        win._hud_btn_imgs.extend([n, himg])  # type: ignore[attr-defined]
+
+        btn = ctk.CTkButton(
+            parent,
+            text=text,
+            command=command,
+            height=height,
+            width=w,
+            fg_color="transparent",
+            hover=False,  # we handle hover via image swap
+            text_color=colors["text"],
+            font=ctk.CTkFont(size=font_size, weight="bold"),
+            image=n,
+            compound="center",
+        )
+
+        def _on_enter(_e=None):
+            try:
+                btn.configure(image=himg)
+            except Exception:
+                pass
+
+        def _on_leave(_e=None):
+            try:
+                btn.configure(image=n)
+            except Exception:
+                pass
+
+        btn.bind("<Enter>", _on_enter)
+        btn.bind("<Leave>", _on_leave)
+        return btn
+
+    def _hud_input(parent, *, placeholder: str, show: str | None = None,
+                   height: int = 48, min_width: int = 520) -> tuple[ctk.CTkFrame, ctk.CTkEntry]:
+        """
+        HUD input field (cut corners + subtle glow) that matches website style.
+        Returns (container_frame, entry).
+        """
+        if not hasattr(win, "_hud_inp_imgs"):
+            win._hud_inp_imgs = []  # type: ignore[attr-defined]
+
+        def _hex_to_rgba(h: str, a: int = 255) -> tuple[int, int, int, int]:
+            h = h.lstrip("#")
+            return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), a
+
+        def _make_bg(w: int, h: int, glow_alpha: int) -> Image.Image:
+            scale = 3
+            W, H = w * scale, h * scale
+            img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            d = ImageDraw.Draw(img)
+
+            edge = _hex_to_rgba(BRAND["hud_border"], 255)
+            fill = _hex_to_rgba(BRAND["hud_panel_2"], 255)
+            glow = _hex_to_rgba(BRAND["hud_glow"], glow_alpha)
+
+            cut = max(12, int(H * 0.22))
+            pad = 4 * scale
+            x0, y0, x1, y1 = pad, pad, W - pad, H - pad
+            poly = [
+                (x0 + cut, y0),
+                (x1 - cut, y0),
+                (x1, y0 + cut),
+                (x1, y1 - cut),
+                (x1 - cut, y1),
+                (x0 + cut, y1),
+                (x0, y1 - cut),
+                (x0, y0 + cut),
+            ]
+
+            g = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            gd = ImageDraw.Draw(g)
+            gd.polygon(poly, outline=glow, width=max(3, 3 * scale))
+            g = g.filter(ImageFilter.GaussianBlur(radius=4 * scale))
+            img.alpha_composite(g)
+
+            d.polygon(poly, fill=fill)
+            d.polygon(poly, outline=edge, width=max(2, 2 * scale))
+            return img.resize((w, h), Image.LANCZOS)
+
+        w = max(min_width, 520)
+        bg_n = _make_bg(w, height, glow_alpha=35)
+        bg_f = _make_bg(w, height, glow_alpha=95)
+        img_n = ctk.CTkImage(light_image=bg_n, dark_image=bg_n, size=(w, height))
+        img_f = ctk.CTkImage(light_image=bg_f, dark_image=bg_f, size=(w, height))
+        win._hud_inp_imgs.extend([img_n, img_f])  # type: ignore[attr-defined]
+
+        wrap = ctk.CTkFrame(parent, fg_color="transparent")
+        bg_lbl = ctk.CTkLabel(wrap, text="", image=img_n)
+        bg_lbl.pack()
+
+        entry = ctk.CTkEntry(
+            wrap,
+            placeholder_text=placeholder,
+            show=show if show else None,
+            height=height - 10,
+            width=w - 26,
+            fg_color=BRAND["hud_panel_2"],
+            border_width=0,
+            corner_radius=0,
+            text_color=BRAND["text"],
+            placeholder_text_color=BRAND["text_muted"],
+            font=ctk.CTkFont(size=14, weight="bold"),
+        )
+        entry.place(x=13, y=5)
+
+        def _focus_in(_e=None):
+            try:
+                bg_lbl.configure(image=img_f)
+            except Exception:
+                pass
+
+        def _focus_out(_e=None):
+            try:
+                bg_lbl.configure(image=img_n)
+            except Exception:
+                pass
+
+        entry.bind("<FocusIn>", _focus_in)
+        entry.bind("<FocusOut>", _focus_out)
+        return wrap, entry
+
+
     def _hdivider(parent):
         ctk.CTkFrame(parent, height=1, fg_color=BRAND["border"]).pack(
             fill="x", padx=14, pady=(0, 4))
@@ -1320,34 +1519,11 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                      font=ctk.CTkFont(size=12),
                      text_color=BRAND["text_muted"]).pack(anchor="w", pady=(0, 14))
 
-        entry_h = 46
-        entry_r = 10
-        entry_border = BRAND["hud_border"]
-        entry_bg = BRAND["hud_panel_2"]
+        id_wrap, id_entry = _hud_input(parent, placeholder="Email", height=48, min_width=520)
+        id_wrap.pack(fill="x", pady=(0, 10))
 
-        id_entry = ctk.CTkEntry(
-            parent, placeholder_text="Email",
-            height=entry_h, corner_radius=entry_r,
-            fg_color=entry_bg,
-            border_color=entry_border,
-            border_width=1,
-            text_color=BRAND["text"],
-            placeholder_text_color=BRAND["text_muted"],
-            font=ctk.CTkFont(size=14),
-        )
-        id_entry.pack(fill="x", pady=(0, 10))
-
-        pw_entry = ctk.CTkEntry(
-            parent, placeholder_text="Password", show="*",
-            height=entry_h, corner_radius=entry_r,
-            fg_color=entry_bg,
-            border_color=entry_border,
-            border_width=1,
-            text_color=BRAND["text"],
-            placeholder_text_color=BRAND["text_muted"],
-            font=ctk.CTkFont(size=14),
-        )
-        pw_entry.pack(fill="x", pady=(0, 12))
+        pw_wrap, pw_entry = _hud_input(parent, placeholder="Password", show="*", height=48, min_width=520)
+        pw_wrap.pack(fill="x", pady=(0, 12))
 
         err_lbl = ctk.CTkLabel(parent, text="",
                                 font=ctk.CTkFont(size=11),
@@ -1375,17 +1551,8 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 text_color=BRAND["text_muted"],
             ).pack(pady=(0, 14))
 
-            code_entry = ctk.CTkEntry(
-                modal, placeholder_text="6-digit code",
-                height=48, corner_radius=10,
-                fg_color=BRAND["hud_panel_2"],
-                border_color=BRAND["hud_border"],
-                border_width=1,
-                text_color=BRAND["text"],
-                placeholder_text_color=BRAND["text_muted"],
-                font=ctk.CTkFont(size=18, weight="bold"),
-            )
-            code_entry.pack(fill="x", padx=22, pady=(0, 8))
+            code_wrap, code_entry = _hud_input(modal, placeholder="6-digit code", height=52, min_width=330)
+            code_wrap.pack(fill="x", padx=22, pady=(0, 8))
 
             err_m = ctk.CTkLabel(
                 modal, text="",
@@ -1469,12 +1636,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 win.after(0, _after)
             threading.Thread(target=_thread, daemon=True).start()
 
-        login_btn = ctk.CTkButton(
-            parent, text="SIGN IN", height=46, corner_radius=12,
-            fg_color=BRAND["accent"], hover_color=BRAND["accent_dark"],
-            text_color="#FFFFFF", font=ctk.CTkFont(size=14, weight="bold"),
-            command=_do_login,
-        )
+        login_btn = _hud_button(parent, "SIGN IN", _do_login, variant="primary", height=46, min_width=520)
         login_btn.pack(fill="x", pady=(0, 14))
         pw_entry.bind("<Return>", lambda e: _do_login())
         id_entry.bind("<Return>",  lambda e: pw_entry.focus())
