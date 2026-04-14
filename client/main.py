@@ -1121,16 +1121,17 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 y1 = int((i + 1) * h / steps)
                 bg.create_rectangle(0, y0, w, y1, outline="", fill=_rgb_to_hex(col))
 
-            # Corner glows (cyan + violet) as translucent ovals
-            bg.create_oval(-w * 0.35, -h * 0.55, w * 0.55, h * 0.35, outline="", fill="#0b2a33", stipple="gray25")
-            bg.create_oval(w * 0.45, -h * 0.45, w * 1.35, h * 0.40, outline="", fill="#241136", stipple="gray25")
+            # Corner glows (cyan top-left + violet top-right + red bottom hint)
+            bg.create_oval(-w * 0.38, -h * 0.60, w * 0.60, h * 0.38, outline="", fill="#0d3340", stipple="gray25")
+            bg.create_oval(w * 0.42, -h * 0.48, w * 1.38, h * 0.42, outline="", fill="#2d1445", stipple="gray25")
+            bg.create_oval(-w * 0.10, h * 0.62, w * 0.32, h * 1.35, outline="", fill="#1a0808", stipple="gray12")
 
-            # Scanlines
+            # Scanlines (every 4px for CRT feel)
             for y in range(0, h, 4):
                 bg.create_line(0, y, w, y, fill="#000000", width=1)
 
-            # Soft top divider
-            bg.create_rectangle(0, 0, w, 2, outline="", fill=BRAND["hud_border"])
+            # Cyan accent line at very top
+            bg.create_rectangle(0, 0, w, 1, outline="", fill=BRAND["hud_glow"])
 
         def _schedule_backdrop_redraw() -> None:
             job = _bg_redraw_job[0]
@@ -1167,80 +1168,105 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     # ── Widget helpers ────────────────────────────────────────────────────────
     def _card(parent, title: str) -> ctk.CTkFrame:
         """
-        AAA HUD card: matte panel + neon edge + header pip.
+        AAA HUD card: neon-top strip + red left accent + tactical header pip.
         (Pure styling helper: no logic.)
         """
         outer = ctk.CTkFrame(
             parent,
             fg_color=BRAND["hud_panel"],
-            corner_radius=12,
+            corner_radius=8,
             border_width=1,
             border_color=BRAND["hud_border"],
         )
         outer.pack(fill="x", padx=14, pady=(10, 0))
 
-        header = ctk.CTkFrame(outer, fg_color=BRAND["hud_panel_2"], corner_radius=10)
-        header.pack(fill="x", padx=10, pady=(10, 6))
+        # Cyan neon strip at top of each card
+        ctk.CTkFrame(outer, height=2, fg_color=BRAND["hud_glow"], corner_radius=0).pack(fill="x")
 
-        pip = ctk.CTkFrame(header, width=8, height=8, fg_color=BRAND["hud_glow"], corner_radius=99)
-        pip.pack(side="left", padx=(10, 8), pady=10)
+        # Header row: red left strip + header content
+        header_row = ctk.CTkFrame(outer, fg_color="transparent")
+        header_row.pack(fill="x")
+
+        # Red left accent strip
+        ctk.CTkFrame(header_row, width=3, fg_color=BRAND["accent"], corner_radius=0).pack(
+            side="left", fill="y")
+
+        header = ctk.CTkFrame(header_row, fg_color=BRAND["hud_panel_2"], corner_radius=0)
+        header.pack(side="left", fill="x", expand=True)
+
+        # Status pip
+        pip = ctk.CTkFrame(header, width=7, height=7, fg_color=BRAND["hud_glow"], corner_radius=99)
+        pip.pack(side="left", padx=(12, 7), pady=12)
 
         ctk.CTkLabel(
             header,
             text=title.upper(),
-            font=ctk.CTkFont(size=11, weight="bold"),
+            font=ctk.CTkFont(family="Courier New", size=10, weight="bold"),
             text_color=BRAND["text"],
-        ).pack(side="left", pady=8)
+        ).pack(side="left", pady=10)
 
-        ctk.CTkFrame(outer, height=1, fg_color=BRAND["hud_border"]).pack(fill="x", padx=10, pady=(0, 6))
+        # Right corner slash decoration
+        ctk.CTkLabel(
+            header, text="/// ",
+            font=ctk.CTkFont(size=9),
+            text_color=BRAND["hud_border"],
+        ).pack(side="right", pady=10)
+
+        ctk.CTkFrame(outer, height=1, fg_color=BRAND["hud_border"]).pack(fill="x")
         return outer
 
     def _hdivider(parent):
-        ctk.CTkFrame(parent, height=1, fg_color=BRAND["border"]).pack(
-            fill="x", padx=14, pady=(0, 4))
+        ctk.CTkFrame(parent, height=1, fg_color=BRAND["hud_border"]).pack(
+            fill="x", padx=14, pady=(4, 4))
 
     def _status_dot(parent) -> ctk.CTkLabel:
-        return ctk.CTkLabel(parent, text="●", font=ctk.CTkFont(size=9),
-                             text_color=BRAND["text_muted"])
+        return ctk.CTkLabel(parent, text="●", font=ctk.CTkFont(size=12),
+                             text_color=BRAND["text_muted"], padx=2)
 
     # ── Header ────────────────────────────────────────────────────────────────
     header = ctk.CTkFrame(win, fg_color=BRAND["hud_panel"], corner_radius=0,
-                           height=66, border_width=0)
+                           height=72, border_width=0)
     header.pack(fill="x")
     header.pack_propagate(False)
 
-    # Red left accent bar
-    ctk.CTkFrame(header, width=3, fg_color=BRAND["accent"], corner_radius=0).pack(
+    # Red left accent bar (wider for more presence)
+    ctk.CTkFrame(header, width=4, fg_color=BRAND["accent"], corner_radius=0).pack(
         side="left", fill="y")
 
     wordmark = ctk.CTkFrame(header, fg_color="transparent")
-    wordmark.pack(side="left", padx=14, pady=10)
+    wordmark.pack(side="left", padx=16, pady=10)
     ctk.CTkLabel(wordmark, text="ARENA",
-                 font=ctk.CTkFont(size=22, weight="bold"),
+                 font=ctk.CTkFont(family="Courier New", size=24, weight="bold"),
                  text_color=BRAND["accent"]).pack(anchor="w")
-    ctk.CTkLabel(wordmark, text="CLIENT HUD",
-                 font=ctk.CTkFont(size=10, weight="bold"),
-                 text_color=BRAND["text_muted"]).pack(anchor="w", pady=(0, 0))
+    ctk.CTkLabel(wordmark, text="CLIENT  HUD",
+                 font=ctk.CTkFont(family="Courier New", size=9, weight="bold"),
+                 text_color=BRAND["hud_glow"]).pack(anchor="w")
+
+    # Cyan accent line at bottom of header
+    ctk.CTkFrame(header, height=1, fg_color=BRAND["hud_glow"], corner_radius=0).pack(
+        side="bottom", fill="x")
 
     # Status chips on right
     hdr_right = ctk.CTkFrame(header, fg_color="transparent")
-    hdr_right.pack(side="right", padx=12, pady=12)
+    hdr_right.pack(side="right", padx=14, pady=12)
 
     def _chip(parent, text: str, dot_color: str | None = None) -> tuple[ctk.CTkFrame, ctk.CTkLabel | None]:
         chip = ctk.CTkFrame(
             parent,
             fg_color=BRAND["hud_panel_2"],
-            corner_radius=999,
+            corner_radius=4,
             border_width=1,
             border_color=BRAND["hud_border"],
         )
         chip.pack(side="right", padx=(8, 0))
         dot = None
         if dot_color:
-            dot = ctk.CTkLabel(chip, text="●", font=ctk.CTkFont(size=10), text_color=dot_color)
-            dot.pack(side="left", padx=(10, 4), pady=6)
-        lbl = ctk.CTkLabel(chip, text=text, font=ctk.CTkFont(size=11, weight="bold"), text_color=BRAND["text"])
-        lbl.pack(side="left", padx=(0 if dot_color else 12, 12), pady=6)
+            dot = ctk.CTkLabel(chip, text="●", font=ctk.CTkFont(size=11), text_color=dot_color)
+            dot.pack(side="left", padx=(10, 4), pady=7)
+        lbl = ctk.CTkLabel(chip, text=text,
+                           font=ctk.CTkFont(family="Courier New", size=10, weight="bold"),
+                           text_color=BRAND["text"])
+        lbl.pack(side="left", padx=(0 if dot_color else 12, 12), pady=7)
         return chip, dot
 
     _chip(hdr_right, f"v{CLIENT_VERSION}")
@@ -1251,11 +1277,11 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         win,
         fg_color=BRAND["bg"],
         corner_radius=0,
-        segmented_button_fg_color=BRAND["bg_card"],
+        segmented_button_fg_color=BRAND["hud_panel"],
         segmented_button_selected_color=BRAND["accent"],
         segmented_button_selected_hover_color=BRAND["accent_dark"],
-        segmented_button_unselected_color=BRAND["bg_card"],
-        segmented_button_unselected_hover_color=BRAND["bg_hover"],
+        segmented_button_unselected_color=BRAND["hud_panel"],
+        segmented_button_unselected_hover_color=BRAND["hud_panel_2"],
         text_color=BRAND["text"],
         text_color_disabled=BRAND["text_muted"],
     )
@@ -1287,7 +1313,8 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     eng_dot  = _status_dot(eng_row)
     eng_dot.pack(side="left")
     eng_lbl  = ctk.CTkLabel(eng_row, text="Checking…",
-                              font=ctk.CTkFont(size=13), text_color=BRAND["text"])
+                              font=ctk.CTkFont(family="Courier New", size=12),
+                              text_color=BRAND["text"])
     eng_lbl.pack(side="left", padx=(6, 0))
 
     # Identity card
@@ -1313,12 +1340,12 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         DB-ready: /auth/login validates identifier against users.email.
                   Email is used because username is changeable in profile.
         """
-        ctk.CTkLabel(parent, text="Sign in",
-                     font=ctk.CTkFont(size=18, weight="bold"),
-                     text_color=BRAND["text"]).pack(anchor="w", pady=(4, 8))
-        ctk.CTkLabel(parent, text="Secure access · 2FA supported",
-                     font=ctk.CTkFont(size=12),
-                     text_color=BRAND["text_muted"]).pack(anchor="w", pady=(0, 14))
+        ctk.CTkLabel(parent, text="SIGN IN",
+                     font=ctk.CTkFont(family="Courier New", size=16, weight="bold"),
+                     text_color=BRAND["text"]).pack(anchor="w", pady=(4, 6))
+        ctk.CTkLabel(parent, text="Secure access  ·  2FA supported",
+                     font=ctk.CTkFont(size=11),
+                     text_color=BRAND["hud_glow"]).pack(anchor="w", pady=(0, 14))
 
         entry_h = 46
         entry_r = 10
@@ -1365,14 +1392,14 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             modal.grab_set()
 
             ctk.CTkLabel(
-                modal, text="Enter your 2FA code",
-                font=ctk.CTkFont(size=18, weight="bold"),
+                modal, text="TWO-FACTOR AUTH",
+                font=ctk.CTkFont(family="Courier New", size=15, weight="bold"),
                 text_color=BRAND["text"],
             ).pack(pady=(18, 6))
             ctk.CTkLabel(
                 modal, text="Check your authenticator app",
-                font=ctk.CTkFont(size=12),
-                text_color=BRAND["text_muted"],
+                font=ctk.CTkFont(size=11),
+                text_color=BRAND["hud_glow"],
             ).pack(pady=(0, 14))
 
             code_entry = ctk.CTkEntry(
@@ -1395,9 +1422,10 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             err_m.pack(anchor="w", padx=22, pady=(0, 8))
 
             verify_btn = ctk.CTkButton(
-                modal, text="VERIFY", height=44, corner_radius=12,
+                modal, text="VERIFY", height=44, corner_radius=4,
                 fg_color=BRAND["accent"], hover_color=BRAND["accent_dark"],
-                text_color="#FFFFFF", font=ctk.CTkFont(size=14, weight="bold"),
+                text_color="#FFFFFF",
+                font=ctk.CTkFont(family="Courier New", size=13, weight="bold"),
             )
 
             def _submit_2fa():
@@ -1470,9 +1498,11 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             threading.Thread(target=_thread, daemon=True).start()
 
         login_btn = ctk.CTkButton(
-            parent, text="SIGN IN", height=46, corner_radius=12,
+            parent, text="SIGN IN", height=48, corner_radius=4,
             fg_color=BRAND["accent"], hover_color=BRAND["accent_dark"],
-            text_color="#FFFFFF", font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(family="Courier New", size=13, weight="bold"),
+            border_width=1, border_color=BRAND["accent"],
             command=_do_login,
         )
         login_btn.pack(fill="x", pady=(0, 14))
@@ -1492,10 +1522,11 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
         # TODO[GOOGLE]: wire Google sign-in to POST /auth/google when Client ID is set
         ctk.CTkButton(
-            parent, text="OPEN WEBSITE", height=40, corner_radius=12,
+            parent, text="OPEN WEBSITE", height=40, corner_radius=4,
             fg_color=BRAND["hud_panel_2"], hover_color=BRAND["hud_border"],
             border_width=1, border_color=BRAND["hud_border"],
-            text_color=BRAND["text_muted"], font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=BRAND["text_muted"],
+            font=ctk.CTkFont(family="Courier New", size=11, weight="bold"),
             command=_open_website,
         ).pack(fill="x")
 
@@ -1531,8 +1562,8 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         # Username + optional badge chip on the same line
         name_row = ctk.CTkFrame(info, fg_color="transparent")
         name_row.pack(anchor="w")
-        ctk.CTkLabel(name_row, text=uname,
-                     font=ctk.CTkFont(size=14, weight="bold"),
+        ctk.CTkLabel(name_row, text=uname.upper(),
+                     font=ctk.CTkFont(family="Courier New", size=13, weight="bold"),
                      text_color=BRAND["text"]).pack(side="left")
         if badge_emoji:
             ctk.CTkLabel(name_row, text=f" {badge_emoji}",
@@ -1555,15 +1586,15 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         # Rank + XP
         rank       = auth.rank or "Unranked"
         rank_color = BRAND["rank_gold"] if auth.rank else BRAND["text_muted"]
-        ctk.CTkLabel(parent, text=f"Rank: {rank}",
-                     font=ctk.CTkFont(size=12, weight="bold"),
+        ctk.CTkLabel(parent, text=f"RANK  {rank}",
+                     font=ctk.CTkFont(family="Courier New", size=11, weight="bold"),
                      text_color=rank_color).pack(anchor="w", pady=(0, 4))
 
         reg = auth.region
         if reg:
             ctk.CTkLabel(
-                parent, text=f"Region: {reg}",
-                font=ctk.CTkFont(size=10, weight="bold"),
+                parent, text=f"REGION  {reg}",
+                font=ctk.CTkFont(family="Courier New", size=10, weight="bold"),
                 text_color=BRAND["warning"],
             ).pack(anchor="w", pady=(0, 4))
 
@@ -1572,8 +1603,8 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         # Once Claude confirms the field name, remove this comment.
         xp_to_next = auth.xp_to_next_level
         xp_ratio   = max(0.0, min(1.0, auth.xp / xp_to_next))
-        ctk.CTkLabel(parent, text=f"XP: {auth.xp:,} / {xp_to_next:,}",
-                     font=ctk.CTkFont(size=11),
+        ctk.CTkLabel(parent, text=f"XP  {auth.xp:,} / {xp_to_next:,}",
+                     font=ctk.CTkFont(family="Courier New", size=10),
                      text_color=BRAND["text_muted"]).pack(anchor="w", pady=(0, 4))
         xp_bar = ctk.CTkProgressBar(parent, height=5, corner_radius=3,
                                      progress_color=BRAND["accent"],
@@ -1595,10 +1626,11 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             win.after(0, _rebuild_identity)
 
         ctk.CTkButton(
-            parent, text="Sign Out", height=30, corner_radius=6,
-            fg_color=BRAND["bg_hover"], hover_color=BRAND["border"],
-            border_width=1, border_color=BRAND["border"],
-            text_color=BRAND["text_muted"], font=ctk.CTkFont(size=12),
+            parent, text="SIGN OUT", height=32, corner_radius=4,
+            fg_color=BRAND["hud_panel_2"], hover_color=BRAND["hud_border"],
+            border_width=1, border_color=BRAND["hud_border"],
+            text_color=BRAND["text_muted"],
+            font=ctk.CTkFont(family="Courier New", size=10, weight="bold"),
             command=_do_logout,
         ).pack(anchor="w")
 
@@ -1632,10 +1664,12 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     game_dot   = _status_dot(game_row)
     game_dot.pack(side="left")
     game_lbl   = ctk.CTkLabel(game_row, text="No game detected",
-                               font=ctk.CTkFont(size=13), text_color=BRAND["text"])
+                               font=ctk.CTkFont(family="Courier New", size=12),
+                               text_color=BRAND["text"])
     game_lbl.pack(side="left", padx=(6, 0))
     match_lbl  = ctk.CTkLabel(game_card, text="",
-                               font=ctk.CTkFont(size=11), text_color=BRAND["warning"])
+                               font=ctk.CTkFont(family="Courier New", size=10),
+                               text_color=BRAND["warning"])
     match_lbl.pack(anchor="w", padx=14, pady=(0, 10))
 
     # ── Match Lobby Card — hidden until monitor.current_match_id is set ───────
@@ -1711,12 +1745,12 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         lobby_body_ref.append(info_row)
 
         ctk.CTkLabel(info_row,
-                     text=f"Code: {code}  ·  {game_name}  ·  {mode}",
-                     font=ctk.CTkFont(size=12, weight="bold"),
+                     text=f"CODE: {code}  ·  {game_name}  ·  {mode}",
+                     font=ctk.CTkFont(family="Courier New", size=11, weight="bold"),
                      text_color=BRAND["text"]).pack(side="left")
         ctk.CTkLabel(info_row,
-                     text=f"Team: {your_team}",
-                     font=ctk.CTkFont(size=11),
+                     text=f"TEAM: {your_team}",
+                     font=ctk.CTkFont(family="Courier New", size=10),
                      text_color=BRAND["warning"]).pack(side="right")
 
         # Status chip
@@ -1728,7 +1762,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         }
         status_lbl = ctk.CTkLabel(lobby_outer,
                                    text=status.replace("_", " ").upper(),
-                                   font=ctk.CTkFont(size=10),
+                                   font=ctk.CTkFont(family="Courier New", size=9),
                                    text_color=status_colors.get(status, BRAND["text_muted"]))
         status_lbl.pack(anchor="w", padx=14, pady=(0, 6))
         lobby_body_ref.append(status_lbl)
@@ -1784,7 +1818,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             tail = f"{res_val}" + (f" ({score_val})" if score_val else "")
             res_text = f"Match ended — result: {tail}"
             res_banner = ctk.CTkLabel(lobby_outer, text=res_text,
-                                      font=ctk.CTkFont(size=13, weight="bold"),
+                                      font=ctk.CTkFont(family="Courier New", size=12, weight="bold"),
                                       text_color=res_color)
             res_banner.pack(anchor="w", padx=14, pady=(0, 10))
             lobby_body_ref.append(res_banner)
@@ -1803,9 +1837,9 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     mon_var = ctk.BooleanVar(value=monitor.running)
     mon_lbl = ctk.CTkLabel(mon_row,
                             text="ON" if monitor.running else "OFF",
-                            font=ctk.CTkFont(size=11, weight="bold"),
+                            font=ctk.CTkFont(family="Courier New", size=11, weight="bold"),
                             text_color=BRAND["accent"] if monitor.running else BRAND["text_muted"],
-                            width=32)
+                            width=36)
     mon_lbl.pack(side="left")
 
     def _on_toggle():
@@ -1820,7 +1854,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         mon_row, text="Capture & upload screenshots",
         variable=mon_var, onvalue=True, offvalue=False,
         command=_on_toggle,
-        font=ctk.CTkFont(size=12), text_color=BRAND["text"],
+        font=ctk.CTkFont(family="Courier New", size=11), text_color=BRAND["text"],
         button_color=BRAND["accent"],
         button_hover_color=BRAND["accent_dark"],
         progress_color=BRAND["accent_dark"],
@@ -1834,7 +1868,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             mon_lbl.configure(text="ON", text_color=BRAND["accent"])
 
     cap_lbl = ctk.CTkLabel(mon_row, text="0 captures",
-                            font=ctk.CTkFont(size=10),
+                            font=ctk.CTkFont(family="Courier New", size=10),
                             text_color=BRAND["text_muted"])
     cap_lbl.pack(side="right")
 
@@ -1883,8 +1917,8 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                                 border_width=1, border_color=BRAND["border"])
             row.pack(fill="x", pady=(0, 8))
 
-            ctk.CTkLabel(row, text=evt.get("name", "Event"),
-                          font=ctk.CTkFont(size=13, weight="bold"),
+            ctk.CTkLabel(row, text=(evt.get("name", "Event") or "Event").upper(),
+                          font=ctk.CTkFont(family="Courier New", size=12, weight="bold"),
                           text_color=BRAND["text"]).pack(anchor="w", padx=12, pady=(10, 0))
 
             desc = evt.get("description", "")
@@ -1902,16 +1936,18 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             ev_id     = evt.get("id", "")
 
             ctk.CTkLabel(br, text=f"+{xp_reward} XP",
-                          font=ctk.CTkFont(size=12, weight="bold"),
+                          font=ctk.CTkFont(family="Courier New", size=12, weight="bold"),
                           text_color=BRAND["warning"]).pack(side="left")
 
             cbtn = ctk.CTkButton(
-                br, text="Claimed" if claimed else "Claim XP",
-                height=28, width=90, corner_radius=6,
-                fg_color=BRAND["bg_hover"] if claimed else BRAND["accent"],
-                hover_color=BRAND["border"] if claimed else BRAND["accent_dark"],
+                br, text="CLAIMED" if claimed else "CLAIM XP",
+                height=30, width=100, corner_radius=4,
+                fg_color=BRAND["hud_panel_2"] if claimed else BRAND["accent"],
+                hover_color=BRAND["hud_border"] if claimed else BRAND["accent_dark"],
+                border_width=1,
+                border_color=BRAND["hud_border"] if claimed else BRAND["accent"],
                 text_color=BRAND["text_muted"] if claimed else "#FFFFFF",
-                font=ctk.CTkFont(size=12, weight="bold"),
+                font=ctk.CTkFont(family="Courier New", size=10, weight="bold"),
                 state="disabled" if claimed else "normal",
             )
             cbtn.pack(side="right")
@@ -1924,24 +1960,24 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                             ok = monitor.engine.claim_event(eid, auth.access_token or "")
                             def _after():
                                 if ok:
-                                    btn.configure(text="Claimed",
-                                                   fg_color=BRAND["bg_hover"],
+                                    btn.configure(text="CLAIMED",
+                                                   fg_color=BRAND["hud_panel_2"],
                                                    text_color=BRAND["text_muted"])
                                 else:
-                                    btn.configure(state="normal", text="Claim XP")
+                                    btn.configure(state="normal", text="CLAIM XP")
                             win.after(0, _after)
                         threading.Thread(target=_do, daemon=True).start()
                     return _claim
                 cbtn.configure(command=_make_handler(ev_id, cbtn))
 
     # ── Footer ─────────────────────────────────────────────────────────────────
-    footer = ctk.CTkFrame(win, fg_color=BRAND["bg_card"], corner_radius=0,
-                           height=58, border_width=0)
+    footer = ctk.CTkFrame(win, fg_color=BRAND["hud_panel"], corner_radius=0,
+                           height=62, border_width=0)
     footer.pack(fill="x", side="bottom")
     footer.pack_propagate(False)
 
-    # Top border line on footer
-    ctk.CTkFrame(footer, height=1, fg_color=BRAND["border"], corner_radius=0).pack(
+    # Cyan accent line at top of footer
+    ctk.CTkFrame(footer, height=2, fg_color=BRAND["hud_glow"], corner_radius=0).pack(
         fill="x", side="top")
 
     btn_row = ctk.CTkFrame(footer, fg_color="transparent")
@@ -1950,15 +1986,17 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     def _check_engine_btn():
         threading.Thread(target=_do_engine_check, daemon=True).start()
 
-    for text, cmd, fg, hv, tc in [
-        ("Check Engine", _check_engine_btn, BRAND["bg_hover"], BRAND["border"], BRAND["text"]),
-        ("Website",      _open_website,     BRAND["bg_hover"], BRAND["border"], BRAND["text"]),
-        ("Quit",         _quit_app,         BRAND["accent"],   BRAND["accent_dark"], "#FFFFFF"),
+    for text, cmd, fg, hv, tc, bc in [
+        ("CHECK ENGINE", _check_engine_btn, BRAND["hud_panel_2"], BRAND["hud_border"], BRAND["text"],    BRAND["hud_border"]),
+        ("WEBSITE",      _open_website,     BRAND["hud_panel_2"], BRAND["hud_border"], BRAND["text"],    BRAND["hud_border"]),
+        ("QUIT",         _quit_app,         BRAND["accent"],       BRAND["accent_dark"], "#FFFFFF",       BRAND["accent"]),
     ]:
-        ctk.CTkButton(btn_row, text=text, height=30, corner_radius=6,
+        ctk.CTkButton(btn_row, text=text, height=36, corner_radius=4,
                        fg_color=fg, hover_color=hv,
-                       text_color=tc, font=ctk.CTkFont(size=12),
-                       command=cmd).pack(side="left", padx=4, pady=10)
+                       border_width=1, border_color=bc,
+                       text_color=tc,
+                       font=ctk.CTkFont(family="Courier New", size=11, weight="bold"),
+                       command=cmd).pack(side="left", padx=6, pady=10)
 
     # ── Thread-safe polls — all via win.after() ────────────────────────────────
 
