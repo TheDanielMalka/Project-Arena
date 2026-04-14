@@ -5,10 +5,16 @@
 $ErrorActionPreference = "SilentlyContinue"
 
 $exePath = Join-Path $PSScriptRoot "ArenaClient.exe"
+$hudExePath = Join-Path $PSScriptRoot "ArenaClient_HUD.exe"
 $cerPath = Join-Path $PSScriptRoot "arena_cert.cer"
 
+if (Test-Path $hudExePath) {
+    $exePath = $hudExePath
+}
+
 if (-not (Test-Path $exePath)) {
-    Write-Host "ERROR: ArenaClient.exe not found next to this script." -ForegroundColor Red
+    Write-Host "ERROR: Client EXE not found next to this script." -ForegroundColor Red
+    Write-Host "Expected: ArenaClient_HUD.exe (preferred) or ArenaClient.exe" -ForegroundColor Yellow
     Read-Host "Press Enter to exit"
     exit 1
 }
@@ -39,8 +45,18 @@ if (Test-Path $cerPath) {
     Write-Host "  [1/3] arena_cert.cer not found - skipping cert install." -ForegroundColor Yellow
 }
 
-Unblock-File -Path $exePath
-Write-Host "  [2/3] Zone identifier cleared: OK" -ForegroundColor Green
+Unblock-File -Path $exePath -ErrorAction SilentlyContinue
+Write-Host "  [2/4] Zone identifier cleared: OK" -ForegroundColor Green
+
+try {
+    $sig = Get-AuthenticodeSignature -FilePath $exePath
+    Write-Host ("  [3/4] Signature status: " + $sig.Status) -ForegroundColor Cyan
+    if ($sig.Status -ne "Valid") {
+        Write-Host "        WARNING: EXE is not validly signed. Windows may block it." -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "  [3/4] Signature status: unknown" -ForegroundColor Yellow
+}
 
 try {
     $shell = New-Object -ComObject WScript.Shell
@@ -49,9 +65,9 @@ try {
     $lnk.WorkingDirectory = $PSScriptRoot
     $lnk.IconLocation = $exePath
     $lnk.Save()
-    Write-Host "  [3/3] Desktop shortcut created: OK" -ForegroundColor Green
+    Write-Host "  [4/4] Desktop shortcut created: OK" -ForegroundColor Green
 } catch {
-    Write-Host "  [3/3] Shortcut skipped: $_" -ForegroundColor Yellow
+    Write-Host "  [4/4] Shortcut skipped: $_" -ForegroundColor Yellow
 }
 
 Write-Host ""
