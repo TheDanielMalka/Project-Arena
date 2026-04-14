@@ -1048,17 +1048,21 @@ const Admin = () => {
                   onClick={() => void loadReportTickets()} disabled={reportsLoading}>
                   <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", reportsLoading && "animate-spin")} /> Refresh
                 </Button>
-                <select
+                <Select
                   value={reportStatusFilter}
-                  onChange={(e) => setReportStatusFilter(e.target.value as TicketStatus | "all")}
-                  className="h-8 px-2 text-xs bg-secondary/60 border border-border rounded-md text-foreground"
+                  onValueChange={(v) => setReportStatusFilter(v as TicketStatus | "all")}
                 >
-                  <option value="all">All</option>
-                  <option value="open">Open</option>
-                  <option value="investigating">Investigating</option>
-                  <option value="dismissed">Dismissed</option>
-                  <option value="resolved">Resolved</option>
-                </select>
+                  <SelectTrigger className="h-8 w-36 shrink-0 bg-secondary/60 border-border text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent align="end">
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="open">Open</SelectItem>
+                    <SelectItem value="investigating">Investigating</SelectItem>
+                    <SelectItem value="dismissed">Dismissed</SelectItem>
+                    <SelectItem value="resolved">Resolved</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               {/* Ticket list */}
