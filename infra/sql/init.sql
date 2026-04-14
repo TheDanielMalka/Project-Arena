@@ -853,6 +853,11 @@ INSERT INTO platform_config (key, value) VALUES
     ('fraud_intentional_loss_days',      '7')
 ON CONFLICT (key) DO NOTHING;
 
+-- ── Migration 031 — Host client lobby auto-cancel timeout (seconds) ─────────
+INSERT INTO platform_config (key, value) VALUES
+    ('client_lobby_host_timeout_sec', '60')
+ON CONFLICT (key) DO NOTHING;
+
 -- ── Migration 021 — Index for daily staked AT query ──────────────────────────
 CREATE INDEX IF NOT EXISTS idx_match_players_user_id
     ON match_players(user_id);
