@@ -22,6 +22,7 @@ import { useUserStore } from "@/stores/userStore";
 import { cn } from "@/lib/utils";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { useNotificationStore } from "@/stores/notificationStore";
+import { userFacingNotification } from "@/lib/userFacingNotification";
 import { useForgeStore } from "@/stores/forgeStore";
 import { useToast } from "@/hooks/use-toast";
 import { getXpInfo } from "@/lib/xp";
@@ -256,8 +257,8 @@ const Profile = () => {
     });
     addNotification({
       type: "system",
-      title: "✅ Profile Updated",
-      message: `Identity saved for "${username}" (portrait, frame, ring badge) — same fields as DB: users.avatar, avatar_bg, equipped_badge_icon.`,
+      title: userFacingNotification.profileSaved.title,
+      message: userFacingNotification.profileSaved.message,
     });
   };
 
@@ -322,9 +323,10 @@ const Profile = () => {
       equippedBadgeIcon: draftEquippedBadge,
     });
     setShowAvatarPicker(false);
-    toast({
-      title: "Look locked in",
-      description: "Synced to your Arena profile (sidebar, Forge preview, DB fields on deploy). Save still updates username if you edit it.",
+    addNotification({
+      type: "system",
+      title: userFacingNotification.lookApplied.title,
+      message: userFacingNotification.lookApplied.message,
     });
   };
 

@@ -7,16 +7,18 @@ import {
   apiDeleteNotification,
   type ApiNotificationRow,
 } from "@/lib/engine-api";
+import { softenNotificationForDisplay } from "@/lib/userFacingNotification";
 
 // Re-export so consumers can import from either path
 export type { NotificationType, Notification };
 
 function mapApiRowToNotification(row: ApiNotificationRow): Notification {
+  const softened = softenNotificationForDisplay(row.title ?? "", row.message ?? "");
   return {
     id:        row.id,
     type:      row.type as NotificationType,
-    title:     row.title,
-    message:   row.message,
+    title:     softened.title,
+    message:   softened.message,
     timestamp: row.created_at ? new Date(row.created_at) : new Date(),
     read:      row.read,
     metadata:  row.metadata ?? undefined,
@@ -58,8 +60,11 @@ export const useNotificationStore = create<NotificationState>((set) => ({
   },
 
   addNotification: (notification) => {
+    const softened = softenNotificationForDisplay(notification.title, notification.message);
     const newNotif: Notification = {
       ...notification,
+      title:     softened.title,
+      message:   softened.message,
       id:        `notif-${++idCounter}`,
       timestamp: new Date(),
       read:      false,
