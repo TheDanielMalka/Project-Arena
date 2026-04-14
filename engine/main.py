@@ -359,6 +359,15 @@ async def lifespan(app: FastAPI):
         _daily_loss_cap_at,
         _daily_loss_cap_usdt,
     )
+    _reload_fraud_detection_config()
+    fp = _fraud_report_bind_params()
+    logger.info(
+        "✅ Fraud detection thresholds: pair_gt=%d pair_hours=%d loss_min=%d loss_days=%d",
+        fp["fraud_pair_gt"],
+        fp["fraud_pair_hours"],
+        fp["fraud_loss_min"],
+        fp["fraud_loss_days"],
+    )
 
     # Escrow client — optional, requires BLOCKCHAIN_RPC_URL + CONTRACT_ADDRESS + PRIVATE_KEY
     global _escrow_client
@@ -2904,6 +2913,52 @@ _high_stakes_min_bet_at: int = 25000
 _high_stakes_min_bet_usdt: float = 100.0
 _daily_loss_cap_at: int = 0
 _daily_loss_cap_usdt: float = 0.0
+
+# AML / fraud report thresholds (Issue #57) — loaded from platform_config via _reload_fraud_detection_config().
+# Pair farming: same two players with COUNT(*) > fraud_pair_match_gt within fraud_pair_window_hours.
+# Intentional losing: directional losses >= fraud_intentional_loss_min_count within fraud_intentional_loss_days.
+_fraud_pair_match_gt: int = 3
+_fraud_pair_window_hours: int = 24
+_fraud_intentional_loss_min_count: int = 5
+_fraud_intentional_loss_days: int = 7
+
+
+def _fraud_report_bind_params() -> dict[str, int]:
+    """Bound params for fraud SQL (integers only — safe for make_interval / HAVING)."""
+    return {
+        "fraud_pair_gt": _fraud_pair_match_gt,
+        "fraud_pair_hours": _fraud_pair_window_hours,
+        "fraud_loss_min": _fraud_intentional_loss_min_count,
+        "fraud_loss_days": _fraud_intentional_loss_days,
+    }
+
+
+def _reload_fraud_detection_config() -> None:
+    """Load fraud_* keys from platform_config. Non-fatal on DB errors."""
+    global _fraud_pair_match_gt, _fraud_pair_window_hours
+    global _fraud_intentional_loss_min_count, _fraud_intentional_loss_days
+    try:
+        with SessionLocal() as s:
+
+            def _cfg_int_clamped(key: str, default: int, lo: int, hi: int) -> int:
+                row = s.execute(
+                    text("SELECT value FROM platform_config WHERE key = :k"),
+                    {"k": key},
+                ).fetchone()
+                if not row or row[0] is None or str(row[0]).strip() == "":
+                    v = default
+                else:
+                    v = int(float(row[0]))
+                return max(lo, min(hi, v))
+
+            _fraud_pair_match_gt = _cfg_int_clamped("fraud_pair_match_gt", 3, 1, 500)
+            _fraud_pair_window_hours = _cfg_int_clamped("fraud_pair_window_hours", 24, 1, 8760)
+            _fraud_intentional_loss_min_count = _cfg_int_clamped(
+                "fraud_intentional_loss_min_count", 5, 2, 500
+            )
+            _fraud_intentional_loss_days = _cfg_int_clamped("fraud_intentional_loss_days", 7, 1, 365)
+    except Exception:
+        pass
 
 
 def _reload_at_daily_limit() -> None:
@@ -7991,14 +8046,17 @@ async def admin_fraud_report(payload: dict = Depends(require_admin)):
     """
     M8 Anomaly Detection — scan for suspicious activity patterns.
 
-    Runs 4 queries:
+    Runs 5 query groups:
       1. High win-rate players: win_rate > 80% with 10+ matches
-      2. Player-pair farming: same two players matched >3 times in 24h
+      2. Player-pair farming: same two players, COUNT(*) > fraud_pair_match_gt
+         within fraud_pair_window_hours (platform_config)
       3. Repeat offenders: players with 2+ penalties in player_penalties
       4. Recently banned: players banned in the last 7 days
+      5. Intentional losing: directional losses >= fraud_intentional_loss_min_count
+         within fraud_intentional_loss_days (platform_config)
 
     Response: { generated_at, flagged_players, suspicious_pairs,
-                repeat_offenders, recently_banned, summary }
+                repeat_offenders, recently_banned, intentional_losing, summary }
 
     DB-ready: user_stats, match_players, player_penalties (migration 016).
     """
@@ -8028,7 +8086,8 @@ async def admin_fraud_report(payload: dict = Depends(require_admin)):
                 for r in wr_rows
             ]
 
-            # ── 2. Player-pair farming (same pair >3 matches in 24h) ──────────
+            # ── 2. Player-pair farming (configurable window + COUNT threshold) ─
+            _fb = _fraud_report_bind_params()
             pair_rows = session.execute(
                 text(
                     "SELECT mp1.user_id, u1.username, mp2.user_id, u2.username, "
@@ -8036,15 +8095,17 @@ async def admin_fraud_report(payload: dict = Depends(require_admin)):
                     "FROM match_players mp1 "
                     "JOIN match_players mp2 "
                     "  ON mp1.match_id = mp2.match_id AND mp1.user_id < mp2.user_id "
+                    "  AND mp1.user_id IS NOT NULL AND mp2.user_id IS NOT NULL "
                     "JOIN users u1 ON u1.id = mp1.user_id "
                     "JOIN users u2 ON u2.id = mp2.user_id "
                     "JOIN matches m ON m.id = mp1.match_id "
-                    "WHERE m.created_at > NOW() - INTERVAL '24 hours' "
+                    "WHERE m.created_at > NOW() - make_interval(0, 0, 0, 0, :fraud_pair_hours, 0, 0.0) "
                     "GROUP BY mp1.user_id, u1.username, mp2.user_id, u2.username "
-                    "HAVING COUNT(*) > 3 "
+                    "HAVING COUNT(*) > :fraud_pair_gt "
                     "ORDER BY match_count DESC "
                     "LIMIT 50"
-                )
+                ),
+                _fb,
             ).fetchall()
             suspicious_pairs = [
                 {
@@ -8109,9 +8170,7 @@ async def admin_fraud_report(payload: dict = Depends(require_admin)):
             ]
 
             # ── 5. Intentional losing / AML (Issue #57) ───────────────────────
-            # Detects player A consistently losing to player B (5+ directional
-            # losses in 7 days) — possible money transfer via matches.
-            # match_players.user_id may be NULL (migration 026) — filter those out.
+            # Directional losses >= fraud_loss_min within fraud_loss_days (platform_config).
             intl_rows = session.execute(
                 text(
                     "SELECT mp_loser.user_id, u_loser.username, "
@@ -8129,13 +8188,14 @@ async def admin_fraud_report(payload: dict = Depends(require_admin)):
                     "JOIN users u_loser   ON u_loser.id  = mp_loser.user_id "
                     "JOIN users u_winner  ON u_winner.id = mp_winner.user_id "
                     "WHERE m.status = 'completed' "
-                    "  AND m.created_at > NOW() - INTERVAL '7 days' "
+                    "  AND m.created_at > NOW() - make_interval(0, 0, 0, :fraud_loss_days, 0, 0, 0.0) "
                     "GROUP BY mp_loser.user_id, u_loser.username, "
                     "         mp_winner.user_id, u_winner.username "
-                    "HAVING COUNT(*) >= 5 "
+                    "HAVING COUNT(*) >= :fraud_loss_min "
                     "ORDER BY loss_count DESC "
                     "LIMIT 50"
-                )
+                ),
+                _fb,
             ).fetchall()
             intentional_losing = [
                 {
@@ -8157,6 +8217,22 @@ async def admin_fraud_report(payload: dict = Depends(require_admin)):
             + len(repeat_offenders)
             + len(recently_banned)
             + len(intentional_losing)
+        )
+
+        _fp = _fraud_report_bind_params()
+        logger.info(
+            "admin_fraud_report: total=%d high_wr=%d pairs=%d repeat=%d banned7d=%d intentional=%d "
+            "| thresholds pair_gt=%d pair_h=%d loss_min=%d loss_d=%d",
+            total_flagged,
+            len(flagged_players),
+            len(suspicious_pairs),
+            len(repeat_offenders),
+            len(recently_banned),
+            len(intentional_losing),
+            _fp["fraud_pair_gt"],
+            _fp["fraud_pair_hours"],
+            _fp["fraud_loss_min"],
+            _fp["fraud_loss_days"],
         )
 
         return {
@@ -8192,6 +8268,7 @@ async def admin_fraud_summary(payload: dict = Depends(require_admin)):
     DB-ready: user_stats, match_players, player_penalties (migrations 016, 026).
     """
     try:
+        _fs = _fraud_report_bind_params()
         with SessionLocal() as session:
             high_wr = session.execute(
                 text(
@@ -8208,10 +8285,11 @@ async def admin_fraud_summary(payload: dict = Depends(require_admin)):
                     "    AND mp1.user_id < mp2.user_id "
                     "    AND mp1.user_id IS NOT NULL AND mp2.user_id IS NOT NULL "
                     "  JOIN matches m ON m.id = mp1.match_id "
-                    "  WHERE m.created_at > NOW() - INTERVAL '24 hours' "
-                    "  GROUP BY mp1.user_id, mp2.user_id HAVING COUNT(*) > 3"
+                    "  WHERE m.created_at > NOW() - make_interval(0, 0, 0, 0, :fraud_pair_hours, 0, 0.0) "
+                    "  GROUP BY mp1.user_id, mp2.user_id HAVING COUNT(*) > :fraud_pair_gt"
                     ") sub"
-                )
+                ),
+                _fs,
             ).scalar() or 0
 
             repeat_off = session.execute(
@@ -8232,13 +8310,22 @@ async def admin_fraud_summary(payload: dict = Depends(require_admin)):
                     "  JOIN match_players mp_winner ON mp_winner.match_id = m.id "
                     "       AND mp_winner.user_id = m.winner_id AND mp_winner.user_id IS NOT NULL "
                     "  WHERE m.status = 'completed' "
-                    "    AND m.created_at > NOW() - INTERVAL '7 days' "
-                    "  GROUP BY mp_loser.user_id, mp_winner.user_id HAVING COUNT(*) >= 5"
+                    "    AND m.created_at > NOW() - make_interval(0, 0, 0, :fraud_loss_days, 0, 0, 0.0) "
+                    "  GROUP BY mp_loser.user_id, mp_winner.user_id HAVING COUNT(*) >= :fraud_loss_min"
                     ") sub"
-                )
+                ),
+                _fs,
             ).scalar() or 0
 
         total = int(high_wr) + int(pair_farming) + int(repeat_off) + int(intl_losing)
+        logger.info(
+            "admin_fraud_summary: total=%d pair_farming=%d intentional=%d (thresholds pair_gt=%d pair_h=%d)",
+            total,
+            int(pair_farming),
+            int(intl_losing),
+            _fs["fraud_pair_gt"],
+            _fs["fraud_pair_hours"],
+        )
         return {
             "generated_at":      datetime.now(timezone.utc).isoformat(),
             "total_flagged":      total,
@@ -8266,6 +8353,7 @@ async def admin_fraud_report_export(payload: dict = Depends(require_admin)):
     Admin-only.
     """
     try:
+        _fe = _fraud_report_bind_params()
         with SessionLocal() as session:
             wr_rows = session.execute(
                 text(
@@ -8285,10 +8373,11 @@ async def admin_fraud_report_export(payload: dict = Depends(require_admin)):
                     "JOIN users u1 ON u1.id = mp1.user_id "
                     "JOIN users u2 ON u2.id = mp2.user_id "
                     "JOIN matches m ON m.id = mp1.match_id "
-                    "WHERE m.created_at > NOW() - INTERVAL '24 hours' "
+                    "WHERE m.created_at > NOW() - make_interval(0, 0, 0, 0, :fraud_pair_hours, 0, 0.0) "
                     "GROUP BY mp1.user_id, u1.username, mp2.user_id, u2.username "
-                    "HAVING COUNT(*) > 3 ORDER BY 5 DESC LIMIT 50"
-                )
+                    "HAVING COUNT(*) > :fraud_pair_gt ORDER BY 5 DESC LIMIT 50"
+                ),
+                _fe,
             ).fetchall()
             repeat_rows = session.execute(
                 text(
@@ -8311,13 +8400,21 @@ async def admin_fraud_report_export(payload: dict = Depends(require_admin)):
                     "     AND mp_winner.user_id = m.winner_id AND mp_winner.user_id IS NOT NULL "
                     "JOIN users u_loser   ON u_loser.id  = mp_loser.user_id "
                     "JOIN users u_winner  ON u_winner.id = mp_winner.user_id "
-                    "WHERE m.status = 'completed' AND m.created_at > NOW() - INTERVAL '7 days' "
+                    "WHERE m.status = 'completed' "
+                    "  AND m.created_at > NOW() - make_interval(0, 0, 0, :fraud_loss_days, 0, 0, 0.0) "
                     "GROUP BY mp_loser.user_id, u_loser.username, mp_winner.user_id, u_winner.username "
-                    "HAVING COUNT(*) >= 5 ORDER BY 5 DESC LIMIT 50"
-                )
+                    "HAVING COUNT(*) >= :fraud_loss_min ORDER BY 5 DESC LIMIT 50"
+                ),
+                _fe,
             ).fetchall()
 
         now = datetime.now(timezone.utc)
+        logger.info(
+            "admin_fraud_report_export: rows wr=%d pairs=%d intl=%d",
+            len(wr_rows),
+            len(pair_rows),
+            len(intl_rows),
+        )
         report = {
             "generated_at": now.isoformat(),
             "flagged_players": [
@@ -8622,7 +8719,8 @@ async def admin_list_disputes(
 # Uses platform_config (key-value table, migration 017).
 # Known keys: fee_pct, daily_bet_max_at, daily_bet_max_usdt, maintenance_mode,
 #             new_registrations, auto_escalate_disputes,
-#             high_stakes_*, daily_loss_cap_* (Issue #40)
+#             high_stakes_*, daily_loss_cap_* (Issue #40),
+#             fraud_* (AML report thresholds, Issue #57)
 
 _PLATFORM_CONFIG_KEYS = {
     "fee_pct",
@@ -8636,6 +8734,10 @@ _PLATFORM_CONFIG_KEYS = {
     "maintenance_mode",
     "new_registrations",
     "auto_escalate_disputes",
+    "fraud_pair_match_gt",
+    "fraud_pair_window_hours",
+    "fraud_intentional_loss_min_count",
+    "fraud_intentional_loss_days",
 }
 
 
@@ -8652,6 +8754,10 @@ class PlatformConfigUpdate(BaseModel):
     maintenance_mode:        str | None = None   # "true" | "false"
     new_registrations:       str | None = None   # "true" | "false"
     auto_escalate_disputes:  str | None = None   # "true" | "false"
+    fraud_pair_match_gt:              str | None = None  # HAVING COUNT(*) > this (pair farming)
+    fraud_pair_window_hours:          str | None = None  # rolling window for pair query
+    fraud_intentional_loss_min_count: str | None = None  # HAVING COUNT(*) >= this
+    fraud_intentional_loss_days:      str | None = None  # lookback for intentional losing
 
 
 @app.get("/platform/config", status_code=200)
@@ -8683,6 +8789,10 @@ async def get_platform_config(payload: dict = Depends(require_admin)):
             "maintenance_mode":        cfg.get("maintenance_mode", "false"),
             "new_registrations":       cfg.get("new_registrations", "true"),
             "auto_escalate_disputes":  cfg.get("auto_escalate_disputes", "false"),
+            "fraud_pair_match_gt":              cfg.get("fraud_pair_match_gt", "3"),
+            "fraud_pair_window_hours":          cfg.get("fraud_pair_window_hours", "24"),
+            "fraud_intentional_loss_min_count": cfg.get("fraud_intentional_loss_min_count", "5"),
+            "fraud_intentional_loss_days":      cfg.get("fraud_intentional_loss_days", "7"),
         }
     except HTTPException:
         raise
@@ -8776,6 +8886,21 @@ async def update_platform_config(
         if v < 0:
             raise HTTPException(400, "daily_loss_cap_usdt must be >= 0")
 
+    _fraud_int_fields = {
+        "fraud_pair_match_gt":              (1, 500),
+        "fraud_pair_window_hours":          (1, 8760),
+        "fraud_intentional_loss_min_count": (2, 500),
+        "fraud_intentional_loss_days":      (1, 365),
+    }
+    for fk, (lo, hi) in _fraud_int_fields.items():
+        if fk in updates:
+            try:
+                v = int(float(updates[fk]))
+            except ValueError:
+                raise HTTPException(400, f"{fk} must be an integer")
+            if not (lo <= v <= hi):
+                raise HTTPException(400, f"{fk} must be between {lo} and {hi}")
+
     try:
         with SessionLocal() as session:
             for key, val in updates.items():
@@ -8808,6 +8933,23 @@ async def update_platform_config(
         }
         if _risk_reload_keys & set(updates.keys()):
             _reload_risk_limits()
+
+        _fraud_reload_keys = {
+            "fraud_pair_match_gt",
+            "fraud_pair_window_hours",
+            "fraud_intentional_loss_min_count",
+            "fraud_intentional_loss_days",
+        }
+        if _fraud_reload_keys & set(updates.keys()):
+            _reload_fraud_detection_config()
+            fp = _fraud_report_bind_params()
+            logger.info(
+                "Fraud thresholds reloaded: pair_gt=%d pair_h=%d loss_min=%d loss_d=%d",
+                fp["fraud_pair_gt"],
+                fp["fraud_pair_hours"],
+                fp["fraud_loss_min"],
+                fp["fraud_loss_days"],
+            )
 
         logger.info("update_platform_config: admin=%s keys=%s", admin_id, list(updates.keys()))
         _log_audit(
