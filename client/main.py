@@ -1195,6 +1195,114 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         ctk.CTkFrame(outer, height=1, fg_color=BRAND["hud_border"]).pack(fill="x", padx=10, pady=(0, 6))
         return outer
 
+    def _hud_button(parent, text: str, command, *,
+                    variant: str = "neutral",
+                    height: int = 44,
+                    font_size: int = 13,
+                    min_width: int = 140) -> ctk.CTkButton:
+        """
+        AAA HUD button with cut corners + neon edge + hover glow.
+        Uses a Pillow-drawn background image so it feels like the website UI.
+        """
+        # Keep image refs alive (tk will drop them otherwise)
+        if not hasattr(win, "_hud_btn_imgs"):
+            win._hud_btn_imgs = []  # type: ignore[attr-defined]
+
+        colors = {
+            "neutral": {"fill": BRAND["hud_panel_2"], "edge": BRAND["hud_border"], "glow": BRAND["hud_glow"], "text": BRAND["text"]},
+            "primary": {"fill": BRAND["accent_dark"], "edge": BRAND["accent"], "glow": BRAND["accent"], "text": "#FFFFFF"},
+            "danger":  {"fill": BRAND["accent"], "edge": BRAND["accent"], "glow": BRAND["hud_glow_2"], "text": "#FFFFFF"},
+        }.get(variant, None)
+        if colors is None:
+            colors = {"fill": BRAND["hud_panel_2"], "edge": BRAND["hud_border"], "glow": BRAND["hud_glow"], "text": BRAND["text"]}
+
+        def _hex_to_rgba(h: str, a: int = 255) -> tuple[int, int, int, int]:
+            h = h.lstrip("#")
+            return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), a
+
+        def _make_bg(w: int, h: int, glow_alpha: int) -> Image.Image:
+            scale = 3
+            W, H = w * scale, h * scale
+            img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+
+            edge = _hex_to_rgba(colors["edge"], 255)
+            fill = _hex_to_rgba(colors["fill"], 255)
+            glow = _hex_to_rgba(colors["glow"], glow_alpha)
+
+            cut = max(10, int(H * 0.26))
+            pad = 4 * scale
+            x0, y0, x1, y1 = pad, pad, W - pad, H - pad
+
+            poly = [
+                (x0 + cut, y0),
+                (x1 - cut, y0),
+                (x1, y0 + cut),
+                (x1, y1 - cut),
+                (x1 - cut, y1),
+                (x0 + cut, y1),
+                (x0, y1 - cut),
+                (x0, y0 + cut),
+            ]
+
+            # Glow
+            g = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            gd = ImageDraw.Draw(g)
+            gd.polygon(poly, outline=glow, width=max(3, 3 * scale))
+            g = g.filter(ImageFilter.GaussianBlur(radius=4 * scale))
+            img.alpha_composite(g)
+
+            d = ImageDraw.Draw(img)
+            d.polygon(poly, fill=fill)
+            d.polygon(poly, outline=edge, width=max(2, 2 * scale))
+
+            # Subtle top sheen
+            sheen_h = int(H * 0.42)
+            sheen = Image.new("RGBA", (W, sheen_h), (255, 255, 255, 0))
+            sd = ImageDraw.Draw(sheen)
+            for i in range(sheen_h):
+                a = int(48 * (1 - i / max(1, sheen_h - 1)))
+                sd.line([(0, i), (W, i)], fill=(255, 255, 255, a))
+            img.alpha_composite(sheen, dest=(0, 0))
+
+            return img.resize((w, h), Image.LANCZOS)
+
+        w = max(min_width, 10 + len(text) * 9)
+        normal_img = _make_bg(w, height, glow_alpha=50)
+        hover_img  = _make_bg(w, height, glow_alpha=95)
+        n = ctk.CTkImage(light_image=normal_img, dark_image=normal_img, size=(w, height))
+        himg = ctk.CTkImage(light_image=hover_img, dark_image=hover_img, size=(w, height))
+        win._hud_btn_imgs.extend([n, himg])  # type: ignore[attr-defined]
+
+        btn = ctk.CTkButton(
+            parent,
+            text=text,
+            command=command,
+            height=height,
+            width=w,
+            fg_color="transparent",
+            hover=False,  # we handle hover via image swap
+            text_color=colors["text"],
+            font=ctk.CTkFont(size=font_size, weight="bold"),
+            image=n,
+            compound="center",
+        )
+
+        def _on_enter(_e=None):
+            try:
+                btn.configure(image=himg)
+            except Exception:
+                pass
+
+        def _on_leave(_e=None):
+            try:
+                btn.configure(image=n)
+            except Exception:
+                pass
+
+        btn.bind("<Enter>", _on_enter)
+        btn.bind("<Leave>", _on_leave)
+        return btn
+
     def _hdivider(parent):
         ctk.CTkFrame(parent, height=1, fg_color=BRAND["border"]).pack(
             fill="x", padx=14, pady=(0, 4))
@@ -1394,11 +1502,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             )
             err_m.pack(anchor="w", padx=22, pady=(0, 8))
 
-            verify_btn = ctk.CTkButton(
-                modal, text="VERIFY", height=44, corner_radius=12,
-                fg_color=BRAND["accent"], hover_color=BRAND["accent_dark"],
-                text_color="#FFFFFF", font=ctk.CTkFont(size=14, weight="bold"),
-            )
+            verify_btn = _hud_button(modal, "VERIFY", lambda: None, variant="primary", height=46, min_width=200)
 
             def _submit_2fa():
                 raw = code_entry.get().strip().replace(" ", "")
@@ -1413,7 +1517,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                         monitor.engine, raw, session_id=monitor._session_id)
 
                     def _af():
-                        verify_btn.configure(state="normal", text="Verify")
+                        verify_btn.configure(state="normal", text="VERIFY")
                         if terr:
                             err_m.configure(text=terr)
                         else:
@@ -1452,7 +1556,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 error = auth.login(monitor.engine, ident, pwd,
                                    session_id=monitor._session_id)
                 def _after():
-                    login_btn.configure(state="normal", text="Sign In")
+                    login_btn.configure(state="normal", text="SIGN IN")
                     if error == "__2FA__":
                         err_lbl.configure(text="")
                         _open_2fa_modal()
@@ -1950,15 +2054,9 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     def _check_engine_btn():
         threading.Thread(target=_do_engine_check, daemon=True).start()
 
-    for text, cmd, fg, hv, tc in [
-        ("Check Engine", _check_engine_btn, BRAND["bg_hover"], BRAND["border"], BRAND["text"]),
-        ("Website",      _open_website,     BRAND["bg_hover"], BRAND["border"], BRAND["text"]),
-        ("Quit",         _quit_app,         BRAND["accent"],   BRAND["accent_dark"], "#FFFFFF"),
-    ]:
-        ctk.CTkButton(btn_row, text=text, height=30, corner_radius=6,
-                       fg_color=fg, hover_color=hv,
-                       text_color=tc, font=ctk.CTkFont(size=12),
-                       command=cmd).pack(side="left", padx=4, pady=10)
+    _hud_button(btn_row, "CHECK ENGINE", _check_engine_btn, variant="neutral", height=40, min_width=160).pack(side="left", padx=8, pady=10)
+    _hud_button(btn_row, "WEBSITE", _open_website, variant="neutral", height=40, min_width=140).pack(side="left", padx=8, pady=10)
+    _hud_button(btn_row, "QUIT", _quit_app, variant="danger", height=40, min_width=140).pack(side="left", padx=8, pady=10)
 
     # ── Thread-safe polls — all via win.after() ────────────────────────────────
 
