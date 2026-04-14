@@ -25,7 +25,6 @@ Write-Host "  --------------------"
 
 if (Test-Path $cerPath) {
     try {
-        # Prefer certutil (more reliable on hardened Windows).
         certutil.exe -user -addstore "Root" $cerPath | Out-Null
         certutil.exe -user -addstore "TrustedPublisher" $cerPath | Out-Null
         Write-Host "  [1/4] Certificate trusted (CurrentUser): OK" -ForegroundColor Green
@@ -38,20 +37,10 @@ if (Test-Path $cerPath) {
             Write-Host "  [1/4] Certificate install failed (CurrentUser)." -ForegroundColor Yellow
         }
     }
-
-    # Optional: also install to LocalMachine when running elevated (helps all users on the PC).
-    try {
-        certutil.exe -addstore "Root" $cerPath | Out-Null
-        certutil.exe -addstore "TrustedPublisher" $cerPath | Out-Null
-        Write-Host "        Certificate trusted (LocalMachine): OK" -ForegroundColor Green
-    } catch {
-        # Non-admin is fine.
-    }
 } else {
     Write-Host "  [1/4] arena_cert.cer not found - skipping cert install." -ForegroundColor Yellow
 }
 
-# Remove Mark-of-the-Web for both EXEs if present
 Unblock-File -Path $exePath -ErrorAction SilentlyContinue
 if (Test-Path $hudExePath) { Unblock-File -Path $hudExePath -ErrorAction SilentlyContinue }
 Write-Host "  [2/4] Zone identifier cleared: OK" -ForegroundColor Green
