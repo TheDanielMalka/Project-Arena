@@ -55,12 +55,16 @@ BRAND = {
     "error":       "#EF4444",
     "warning":     "#E9A80A",   # arena-gold
     "rank_gold":   "#E9A80A",
-    # AAA HUD extensions
+    # AAA HUD extensions — mirror tokens from src/index.css
     "hud_panel":   "#0F1115",
     "hud_panel_2": "#0B0D10",
     "hud_border":  "#2A2F3A",
-    "hud_glow":    "#22D3EE",
-    "hud_glow_2":  "#A78BFA",
+    "hud_glow":    "#13C4E0",   # --arena-cyan  hsl(188 94% 42%)
+    "hud_glow_2":  "#D93EE8",   # --arena-hud-magenta hsl(300 85% 55%)
+    "hud_blue":    "#2A84FF",   # --arena-hud-blue hsl(210 100% 58%)
+    "cyan":        "#13C4E0",
+    "cyan_soft":   "#0d3340",
+    "magenta":     "#D93EE8",
     # PIL tuples for icon drawing
     "accent_pil":  (228, 37, 53, 255),    # #E42535
     "idle_pil":    (80, 80, 80, 255),
@@ -120,6 +124,74 @@ DEFAULT_CONFIG = {
     # Phase 5: user_settings.region from GET /auth/me (EU | NA | ASIA | SA | OCE | ME)
     "region":             None,
 }
+
+
+# ── Embedded fonts (bundled TTFs matching the Arena website) ──────────────────
+# Fallback chain is used if AddFontResourceExW registration fails or the
+# font files are missing (dev-mode before PyInstaller bundles them).
+FONT_DISPLAY = "Orbitron"          # wordmarks, card titles, tactical headings
+FONT_BODY    = "Inter"             # body text / buttons
+FONT_MONO    = "Share Tech Mono"   # telemetry, chips, stat values, labels
+FONT_HUD     = "Rajdhani"          # supporting HUD labels
+FONT_ALT     = "Tektur"            # accent headings (optional)
+
+def _assets_dir() -> str:
+    """Locate the bundled 'assets/' dir (works under PyInstaller --onefile)."""
+    # PyInstaller: _MEIPASS holds the temp unpack dir
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        cand = os.path.join(base, "assets")
+        if os.path.isdir(cand):
+            return cand
+    # Dev-mode: sibling of this file
+    here = os.path.dirname(os.path.abspath(__file__))
+    cand = os.path.join(here, "assets")
+    return cand
+
+def _load_bundled_fonts() -> None:
+    """
+    Register every TTF under assets/fonts/ with GDI so Tk + PIL can resolve
+    the family names (Orbitron, Inter, Rajdhani, Share Tech Mono, Tektur).
+    Uses FR_PRIVATE (0x10) so the fonts live only for this process.
+    Safe no-op on non-Windows or if files are missing.
+    """
+    try:
+        if not sys.platform.startswith("win"):
+            return
+        fonts_dir = os.path.join(_assets_dir(), "fonts")
+        if not os.path.isdir(fonts_dir):
+            return
+        FR_PRIVATE = 0x10
+        # IMPORTANT: use a *private* WinDLL instance and DO NOT mutate
+        # argtypes on the shared ctypes.windll.gdi32 — customtkinter also
+        # calls AddFontResourceExW with a different signature and will
+        # crash if we changed the shared attribute.
+        _gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+        AddFont = _gdi32.AddFontResourceExW
+        AddFont.argtypes = [ctypes.c_wchar_p, ctypes.c_uint, ctypes.c_void_p]
+        AddFont.restype  = ctypes.c_int
+        loaded = 0
+        for name in os.listdir(fonts_dir):
+            if not name.lower().endswith((".ttf", ".otf")):
+                continue
+            path = os.path.join(fonts_dir, name)
+            try:
+                n = AddFont(ctypes.c_wchar_p(path), ctypes.c_uint(FR_PRIVATE), None)
+                if n:
+                    loaded += 1
+            except Exception:
+                pass
+        # Broadcast WM_FONTCHANGE so the font cache picks them up.
+        try:
+            HWND_BROADCAST = 0xFFFF
+            WM_FONTCHANGE  = 0x001D
+            ctypes.windll.user32.SendMessageW(HWND_BROADCAST, WM_FONTCHANGE, 0, 0)
+        except Exception:
+            pass
+    except Exception:
+        # Visuals fall back to system defaults; never block startup.
+        pass
+
 
 
 def load_config() -> dict:
@@ -1201,7 +1273,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         ctk.CTkLabel(
             header,
             text=title.upper(),
-            font=ctk.CTkFont(family="Courier New", size=10, weight="bold"),
+            font=ctk.CTkFont(family=FONT_DISPLAY, size=11, weight="bold"),
             text_color=BRAND["text"],
         ).pack(side="left", pady=10)
 
@@ -1236,10 +1308,10 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     wordmark = ctk.CTkFrame(header, fg_color="transparent")
     wordmark.pack(side="left", padx=16, pady=10)
     ctk.CTkLabel(wordmark, text="ARENA",
-                 font=ctk.CTkFont(family="Courier New", size=24, weight="bold"),
+                 font=ctk.CTkFont(family=FONT_DISPLAY, size=26, weight="bold"),
                  text_color=BRAND["accent"]).pack(anchor="w")
-    ctk.CTkLabel(wordmark, text="CLIENT  HUD",
-                 font=ctk.CTkFont(family="Courier New", size=9, weight="bold"),
+    ctk.CTkLabel(wordmark, text="TACTICAL  CLIENT  //  HUD",
+                 font=ctk.CTkFont(family=FONT_MONO, size=9, weight="bold"),
                  text_color=BRAND["hud_glow"]).pack(anchor="w")
 
     # Cyan accent line at bottom of header
@@ -1264,7 +1336,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             dot = ctk.CTkLabel(chip, text="●", font=ctk.CTkFont(size=11), text_color=dot_color)
             dot.pack(side="left", padx=(10, 4), pady=7)
         lbl = ctk.CTkLabel(chip, text=text,
-                           font=ctk.CTkFont(family="Courier New", size=10, weight="bold"),
+                           font=ctk.CTkFont(family=FONT_MONO, size=10, weight="bold"),
                            text_color=BRAND["text"])
         lbl.pack(side="left", padx=(0 if dot_color else 12, 12), pady=7)
         return chip, dot
@@ -1313,7 +1385,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     eng_dot  = _status_dot(eng_row)
     eng_dot.pack(side="left")
     eng_lbl  = ctk.CTkLabel(eng_row, text="Checking…",
-                              font=ctk.CTkFont(family="Courier New", size=12),
+                              font=ctk.CTkFont(family=FONT_MONO, size=12),
                               text_color=BRAND["text"])
     eng_lbl.pack(side="left", padx=(6, 0))
 
@@ -1340,9 +1412,9 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         DB-ready: /auth/login validates identifier against users.email.
                   Email is used because username is changeable in profile.
         """
-        ctk.CTkLabel(parent, text="SIGN IN",
-                     font=ctk.CTkFont(family="Courier New", size=16, weight="bold"),
-                     text_color=BRAND["text"]).pack(anchor="w", pady=(4, 6))
+        ctk.CTkLabel(parent, text="ENTER ARENA",
+                     font=ctk.CTkFont(family=FONT_DISPLAY, size=18, weight="bold"),
+                     text_color=BRAND["accent"]).pack(anchor="w", pady=(4, 6))
         ctk.CTkLabel(parent, text="Secure access  ·  2FA supported",
                      font=ctk.CTkFont(size=11),
                      text_color=BRAND["hud_glow"]).pack(anchor="w", pady=(0, 14))
@@ -1393,7 +1465,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
             ctk.CTkLabel(
                 modal, text="TWO-FACTOR AUTH",
-                font=ctk.CTkFont(family="Courier New", size=15, weight="bold"),
+                font=ctk.CTkFont(family=FONT_MONO, size=15, weight="bold"),
                 text_color=BRAND["text"],
             ).pack(pady=(18, 6))
             ctk.CTkLabel(
@@ -1425,7 +1497,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 modal, text="VERIFY", height=44, corner_radius=4,
                 fg_color=BRAND["accent"], hover_color=BRAND["accent_dark"],
                 text_color="#FFFFFF",
-                font=ctk.CTkFont(family="Courier New", size=13, weight="bold"),
+                font=ctk.CTkFont(family=FONT_MONO, size=13, weight="bold"),
             )
 
             def _submit_2fa():
@@ -1498,10 +1570,10 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             threading.Thread(target=_thread, daemon=True).start()
 
         login_btn = ctk.CTkButton(
-            parent, text="SIGN IN", height=48, corner_radius=4,
+            parent, text="ENTER ARENA", height=48, corner_radius=4,
             fg_color=BRAND["accent"], hover_color=BRAND["accent_dark"],
             text_color="#FFFFFF",
-            font=ctk.CTkFont(family="Courier New", size=13, weight="bold"),
+            font=ctk.CTkFont(family=FONT_DISPLAY, size=14, weight="bold"),
             border_width=1, border_color=BRAND["accent"],
             command=_do_login,
         )
@@ -1526,7 +1598,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             fg_color=BRAND["hud_panel_2"], hover_color=BRAND["hud_border"],
             border_width=1, border_color=BRAND["hud_border"],
             text_color=BRAND["text_muted"],
-            font=ctk.CTkFont(family="Courier New", size=11, weight="bold"),
+            font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
             command=_open_website,
         ).pack(fill="x")
 
@@ -1563,7 +1635,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         name_row = ctk.CTkFrame(info, fg_color="transparent")
         name_row.pack(anchor="w")
         ctk.CTkLabel(name_row, text=uname.upper(),
-                     font=ctk.CTkFont(family="Courier New", size=13, weight="bold"),
+                     font=ctk.CTkFont(family=FONT_MONO, size=13, weight="bold"),
                      text_color=BRAND["text"]).pack(side="left")
         if badge_emoji:
             ctk.CTkLabel(name_row, text=f" {badge_emoji}",
@@ -1587,14 +1659,14 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         rank       = auth.rank or "Unranked"
         rank_color = BRAND["rank_gold"] if auth.rank else BRAND["text_muted"]
         ctk.CTkLabel(parent, text=f"RANK  {rank}",
-                     font=ctk.CTkFont(family="Courier New", size=11, weight="bold"),
+                     font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
                      text_color=rank_color).pack(anchor="w", pady=(0, 4))
 
         reg = auth.region
         if reg:
             ctk.CTkLabel(
                 parent, text=f"REGION  {reg}",
-                font=ctk.CTkFont(family="Courier New", size=10, weight="bold"),
+                font=ctk.CTkFont(family=FONT_MONO, size=10, weight="bold"),
                 text_color=BRAND["warning"],
             ).pack(anchor="w", pady=(0, 4))
 
@@ -1604,7 +1676,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         xp_to_next = auth.xp_to_next_level
         xp_ratio   = max(0.0, min(1.0, auth.xp / xp_to_next))
         ctk.CTkLabel(parent, text=f"XP  {auth.xp:,} / {xp_to_next:,}",
-                     font=ctk.CTkFont(family="Courier New", size=10),
+                     font=ctk.CTkFont(family=FONT_MONO, size=10),
                      text_color=BRAND["text_muted"]).pack(anchor="w", pady=(0, 4))
         xp_bar = ctk.CTkProgressBar(parent, height=5, corner_radius=3,
                                      progress_color=BRAND["accent"],
@@ -1630,7 +1702,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             fg_color=BRAND["hud_panel_2"], hover_color=BRAND["hud_border"],
             border_width=1, border_color=BRAND["hud_border"],
             text_color=BRAND["text_muted"],
-            font=ctk.CTkFont(family="Courier New", size=10, weight="bold"),
+            font=ctk.CTkFont(family=FONT_MONO, size=10, weight="bold"),
             command=_do_logout,
         ).pack(anchor="w")
 
@@ -1664,11 +1736,11 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     game_dot   = _status_dot(game_row)
     game_dot.pack(side="left")
     game_lbl   = ctk.CTkLabel(game_row, text="No game detected",
-                               font=ctk.CTkFont(family="Courier New", size=12),
+                               font=ctk.CTkFont(family=FONT_MONO, size=12),
                                text_color=BRAND["text"])
     game_lbl.pack(side="left", padx=(6, 0))
     match_lbl  = ctk.CTkLabel(game_card, text="",
-                               font=ctk.CTkFont(family="Courier New", size=10),
+                               font=ctk.CTkFont(family=FONT_MONO, size=10),
                                text_color=BRAND["warning"])
     match_lbl.pack(anchor="w", padx=14, pady=(0, 10))
 
@@ -1746,11 +1818,11 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
         ctk.CTkLabel(info_row,
                      text=f"CODE: {code}  ·  {game_name}  ·  {mode}",
-                     font=ctk.CTkFont(family="Courier New", size=11, weight="bold"),
+                     font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
                      text_color=BRAND["text"]).pack(side="left")
         ctk.CTkLabel(info_row,
                      text=f"TEAM: {your_team}",
-                     font=ctk.CTkFont(family="Courier New", size=10),
+                     font=ctk.CTkFont(family=FONT_MONO, size=10),
                      text_color=BRAND["warning"]).pack(side="right")
 
         # Status chip
@@ -1762,7 +1834,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         }
         status_lbl = ctk.CTkLabel(lobby_outer,
                                    text=status.replace("_", " ").upper(),
-                                   font=ctk.CTkFont(family="Courier New", size=9),
+                                   font=ctk.CTkFont(family=FONT_MONO, size=9),
                                    text_color=status_colors.get(status, BRAND["text_muted"]))
         status_lbl.pack(anchor="w", padx=14, pady=(0, 6))
         lobby_body_ref.append(status_lbl)
@@ -1818,7 +1890,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             tail = f"{res_val}" + (f" ({score_val})" if score_val else "")
             res_text = f"Match ended — result: {tail}"
             res_banner = ctk.CTkLabel(lobby_outer, text=res_text,
-                                      font=ctk.CTkFont(family="Courier New", size=12, weight="bold"),
+                                      font=ctk.CTkFont(family=FONT_MONO, size=12, weight="bold"),
                                       text_color=res_color)
             res_banner.pack(anchor="w", padx=14, pady=(0, 10))
             lobby_body_ref.append(res_banner)
@@ -1837,7 +1909,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     mon_var = ctk.BooleanVar(value=monitor.running)
     mon_lbl = ctk.CTkLabel(mon_row,
                             text="ON" if monitor.running else "OFF",
-                            font=ctk.CTkFont(family="Courier New", size=11, weight="bold"),
+                            font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
                             text_color=BRAND["accent"] if monitor.running else BRAND["text_muted"],
                             width=36)
     mon_lbl.pack(side="left")
@@ -1854,7 +1926,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         mon_row, text="Capture & upload screenshots",
         variable=mon_var, onvalue=True, offvalue=False,
         command=_on_toggle,
-        font=ctk.CTkFont(family="Courier New", size=11), text_color=BRAND["text"],
+        font=ctk.CTkFont(family=FONT_MONO, size=11), text_color=BRAND["text"],
         button_color=BRAND["accent"],
         button_hover_color=BRAND["accent_dark"],
         progress_color=BRAND["accent_dark"],
@@ -1868,7 +1940,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             mon_lbl.configure(text="ON", text_color=BRAND["accent"])
 
     cap_lbl = ctk.CTkLabel(mon_row, text="0 captures",
-                            font=ctk.CTkFont(family="Courier New", size=10),
+                            font=ctk.CTkFont(family=FONT_MONO, size=10),
                             text_color=BRAND["text_muted"])
     cap_lbl.pack(side="right")
 
@@ -1918,7 +1990,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             row.pack(fill="x", pady=(0, 8))
 
             ctk.CTkLabel(row, text=(evt.get("name", "Event") or "Event").upper(),
-                          font=ctk.CTkFont(family="Courier New", size=12, weight="bold"),
+                          font=ctk.CTkFont(family=FONT_MONO, size=12, weight="bold"),
                           text_color=BRAND["text"]).pack(anchor="w", padx=12, pady=(10, 0))
 
             desc = evt.get("description", "")
@@ -1936,7 +2008,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             ev_id     = evt.get("id", "")
 
             ctk.CTkLabel(br, text=f"+{xp_reward} XP",
-                          font=ctk.CTkFont(family="Courier New", size=12, weight="bold"),
+                          font=ctk.CTkFont(family=FONT_MONO, size=12, weight="bold"),
                           text_color=BRAND["warning"]).pack(side="left")
 
             cbtn = ctk.CTkButton(
@@ -1947,7 +2019,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 border_width=1,
                 border_color=BRAND["hud_border"] if claimed else BRAND["accent"],
                 text_color=BRAND["text_muted"] if claimed else "#FFFFFF",
-                font=ctk.CTkFont(family="Courier New", size=10, weight="bold"),
+                font=ctk.CTkFont(family=FONT_MONO, size=10, weight="bold"),
                 state="disabled" if claimed else "normal",
             )
             cbtn.pack(side="right")
@@ -1995,7 +2067,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                        fg_color=fg, hover_color=hv,
                        border_width=1, border_color=bc,
                        text_color=tc,
-                       font=ctk.CTkFont(family="Courier New", size=11, weight="bold"),
+                       font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
                        command=cmd).pack(side="left", padx=6, pady=10)
 
     # ── Thread-safe polls — all via win.after() ────────────────────────────────
@@ -2396,6 +2468,10 @@ if __name__ == "__main__":
         sys.exit(0)
 
     print(f"\n  ARENA Desktop Client v{CLIENT_VERSION}\n")
+
+    # Register bundled TTFs (Orbitron / Inter / Rajdhani / Share Tech Mono /
+    # Tektur) so the HUD matches the website typography.
+    _load_bundled_fonts()
 
     if not os.path.exists(CONFIG_FILE):
         save_config(DEFAULT_CONFIG)

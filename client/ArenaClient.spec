@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('config.json', '.')],
+    datas=[('config.json', '.'), ('assets', 'assets')],
     hiddenimports=['pystray._win32', 'PIL._tkinter_finder', 'psutil', 'mss', 'mss.tools', 'httpx', 'customtkinter', 'customtkinter.windows', 'customtkinter.windows.widgets'],
     hookspath=[],
     hooksconfig={},

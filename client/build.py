@@ -26,6 +26,9 @@ ALLOW_UNSIGNED = os.environ.get("ARENA_ALLOW_UNSIGNED", "0") in ("1", "true", "T
 # Only config file - no Python modules as data
 DATA_FILES = [
     ("config.json", "."),
+    # HUD assets (fonts + icon) must travel with the EXE so the UI keeps
+    # its tactical typography on clean machines.
+    ("assets", "assets"),
 ]
 
 # Client only needs: pystray, PIL, mss, httpx, psutil

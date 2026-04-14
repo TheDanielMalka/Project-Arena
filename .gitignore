@@ -6,6 +6,7 @@ CLAUDE.md
 .cursor/
 *.mdc
 AGENT_SYNC.md
+.claude/
 
 
 # -----------------------------
@@ -112,3 +113,5 @@ engine/contracts/artifacts/
 engine/contracts/cache/
 engine/contracts/node_modules/
 engine/contracts/typechain-types/
+arena_sign.pfx
+client/arena_sign.pfx
