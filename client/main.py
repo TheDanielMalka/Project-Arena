@@ -27,7 +27,7 @@ import httpx
 import mss
 import mss.tools
 import pystray
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageTk
 from pystray import MenuItem, Menu
 
 CLIENT_VERSION = "1.0.0"
@@ -95,8 +95,8 @@ else:
 CONFIG_FILE = os.path.join(_BASE_DIR, "config.json")
 
 DEFAULT_CONFIG = {
-    "engine_url":          "http://3.236.9.133/api",
-    "frontend_url":        "http://3.236.9.133",
+    "engine_url":          "https://project-arena.com/api",
+    "frontend_url":        "https://project-arena.com",
     "auth_token":          "",
     "screenshot_interval": 5,
     "monitor":             1,
@@ -198,7 +198,26 @@ def load_config() -> dict:
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r") as f:
             saved = json.load(f)
-            return {**DEFAULT_CONFIG, **saved}
+        merged = {**DEFAULT_CONFIG, **saved}
+        # Silent migration: older installs have the raw IP server address
+        # (pre-domain). Rewrite to project-arena.com so WEBSITE button and
+        # engine heartbeat target the new domain without forcing re-login.
+        _legacy_markers = ("3.236.9.133", "localhost:3000",
+                           "localhost:8000", "localhost:8001")
+        migrated = False
+        if any(m in (merged.get("engine_url") or "") for m in _legacy_markers):
+            merged["engine_url"]   = DEFAULT_CONFIG["engine_url"]
+            migrated = True
+        if any(m in (merged.get("frontend_url") or "") for m in _legacy_markers):
+            merged["frontend_url"] = DEFAULT_CONFIG["frontend_url"]
+            migrated = True
+        if migrated:
+            try:
+                with open(CONFIG_FILE, "w") as f:
+                    json.dump(merged, f, indent=2)
+            except OSError:
+                pass
+        return merged
     return DEFAULT_CONFIG.copy()
 
 
@@ -1041,6 +1060,48 @@ def _draw_arena_icon(size: int = 64, state: str = "idle",
     return img
 
 
+# ── Neon glow cache ──────────────────────────────────────────────────────────
+# Draws a blurred chamfered outline onto transparent RGBA. Cached per
+# (w, h, cut, color, glow, alpha) and per-Tk-root so ImageTk.PhotoImage
+# references aren't garbage-collected while the UI is live.
+_NEON_CACHE: dict = {}
+
+def _hex_to_rgb(h: str):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+def make_neon_glow(root, w: int, h: int, cut: int, color_hex: str,
+                   glow: int = 18, alpha: int = 170, inner_alpha: int = 230):
+    """
+    Returns an ImageTk.PhotoImage of a chamfered border with neon bloom.
+    The image is WxH pixels; place it on a Canvas at (0,0) under the panel.
+    """
+    key = (id(root), w, h, cut, color_hex, glow, alpha, inner_alpha)
+    hit = _NEON_CACHE.get(key)
+    if hit is not None:
+        return hit
+    if w < 4 or h < 4:
+        return None
+    r, g, b = _hex_to_rgb(color_hex)
+    pts = [
+        (cut, 0), (w - 1, 0), (w - 1, h - 1 - cut),
+        (w - 1 - cut, h - 1), (0, h - 1), (0, cut),
+    ]
+    # Outer blurred ring
+    ring = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(ring).polygon(pts, outline=(r, g, b, alpha))
+    # Thicken by drawing 3 offsets so the blur has body
+    for dx, dy in ((1, 0), (0, 1), (-1, 0), (0, -1)):
+        ImageDraw.Draw(ring).polygon(
+            [(x + dx, y + dy) for x, y in pts], outline=(r, g, b, alpha))
+    ring = ring.filter(ImageFilter.GaussianBlur(radius=glow))
+    # Crisp inner line on top
+    ImageDraw.Draw(ring).polygon(pts, outline=(r, g, b, inner_alpha))
+    photo = ImageTk.PhotoImage(ring, master=root)
+    _NEON_CACHE[key] = photo
+    return photo
+
+
 def generate_ico_file(path: str):
     """
     Save a Windows-compatible ICO for the window titlebar/taskbar.
@@ -1229,7 +1290,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     # ── All shared actions defined first — before any closure references them ─
     def _open_website():
         import webbrowser
-        url = config.get("frontend_url", "http://localhost:3000")
+        url = config.get("frontend_url", "https://project-arena.com")
         webbrowser.open(url)
 
     def _quit_app():
@@ -1296,26 +1357,25 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                              text_color=BRAND["text_muted"], padx=2)
 
     # ── Header ────────────────────────────────────────────────────────────────
+    # Minimal clean header matching the Support-ticket reference — no red
+    # side-bar, no "TACTICAL CLIENT // HUD" subtitle. Just a compact wordmark
+    # + status chips, with a subtle cyan underline.
     header = ctk.CTkFrame(win, fg_color=BRAND["hud_panel"], corner_radius=0,
-                           height=72, border_width=0)
+                           height=52, border_width=0)
     header.pack(fill="x")
     header.pack_propagate(False)
 
-    # Red left accent bar (wider for more presence)
-    ctk.CTkFrame(header, width=4, fg_color=BRAND["accent"], corner_radius=0).pack(
-        side="left", fill="y")
-
     wordmark = ctk.CTkFrame(header, fg_color="transparent")
-    wordmark.pack(side="left", padx=16, pady=10)
+    wordmark.pack(side="left", padx=18, pady=8)
     ctk.CTkLabel(wordmark, text="ARENA",
-                 font=ctk.CTkFont(family=FONT_DISPLAY, size=26, weight="bold"),
-                 text_color=BRAND["accent"]).pack(anchor="w")
-    ctk.CTkLabel(wordmark, text="TACTICAL  CLIENT  //  HUD",
-                 font=ctk.CTkFont(family=FONT_MONO, size=9, weight="bold"),
-                 text_color=BRAND["hud_glow"]).pack(anchor="w")
+                 font=ctk.CTkFont(family=FONT_DISPLAY, size=20, weight="bold"),
+                 text_color=BRAND["text"]).pack(side="left")
+    ctk.CTkLabel(wordmark, text="  CLIENT",
+                 font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
+                 text_color=BRAND["cyan"]).pack(side="left", pady=(4, 0))
 
-    # Cyan accent line at bottom of header
-    ctk.CTkFrame(header, height=1, fg_color=BRAND["hud_glow"], corner_radius=0).pack(
+    # Subtle cyan underline at bottom of header
+    ctk.CTkFrame(header, height=1, fg_color=BRAND["hud_border"], corner_radius=0).pack(
         side="bottom", fill="x")
 
     # Status chips on right
@@ -1366,6 +1426,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     # ── OVERVIEW TAB ──────────────────────────────────────────────────────────
     # Two-column AAA HUD layout (left: identity/match, right: game/monitor)
+
     ov_root = ctk.CTkFrame(tab_ov, fg_color=BRAND["bg"], corner_radius=0)
     ov_root.pack(fill="both", expand=True)
     ov_root.grid_columnconfigure(0, weight=1, uniform="ov")
@@ -1419,10 +1480,11 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         def _redraw(_event=None):
             w = max(120, cvs.winfo_width())
             h = 40
-            cut = 9
+            # Bigger chamfer to match _chamfer_panel and the Support-ticket
+            # reference. Clean flat look — no L-brackets, no red stripe, no
+            # /// decoration (those were earlier cyberpunk noise).
+            cut = 14
             panel  = BRAND["hud_panel"]
-            rim    = BRAND["cyan"]
-            red    = BRAND["accent"]
             border = BRAND["hud_border"]
 
             pts = [
@@ -1433,70 +1495,54 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 0, h - 1,
                 0, cut,
             ]
+            # Neon cyan glow behind the frame — subtle bloom matching website HUD.
+            glow_img = make_neon_glow(cvs, w, h, cut, BRAND["cyan"],
+                                      glow=10, alpha=90, inner_alpha=200)
+            if glow_img is not None:
+                if ids.get("glow") is None:
+                    ids["glow"] = cvs.create_image(0, 0, anchor="nw", image=glow_img)
+                else:
+                    cvs.itemconfig(ids["glow"], image=glow_img)
+                    cvs.coords(ids["glow"], 0, 0)
+                cvs._glow_ref = glow_img  # keep ref alive
             if ids["frame"] is None:
                 ids["frame"] = cvs.create_polygon(pts, fill=panel, outline=border, width=1)
             else:
                 cvs.coords(ids["frame"], *pts)
-
-            if ids["strip"] is None:
-                ids["strip"] = cvs.create_rectangle(0, cut, 3, h - 1, fill=red, outline="")
-            else:
-                cvs.coords(ids["strip"], 0, cut, 3, h - 1)
-
-            if ids["tl1"] is None:
-                ids["tl1"] = cvs.create_line(0, cut, cut, 0, fill=rim, width=2)
-                ids["tl2"] = cvs.create_line(cut, 0, cut + 14, 0, fill=rim, width=2)
-            else:
-                cvs.coords(ids["tl1"], 0, cut, cut, 0)
-                cvs.coords(ids["tl2"], cut, 0, cut + 14, 0)
-
-            if ids["br1"] is None:
-                ids["br1"] = cvs.create_line(w - 1, h - cut, w - 1 - cut, h - 1, fill=rim, width=2)
-                ids["br2"] = cvs.create_line(w - 1 - cut, h - 1, w - 1 - cut - 14, h - 1, fill=rim, width=2)
-            else:
-                cvs.coords(ids["br1"], w - 1, h - cut, w - 1 - cut, h - 1)
-                cvs.coords(ids["br2"], w - 1 - cut, h - 1, w - 1 - cut - 14, h - 1)
+            # Ensure glow is below the frame polygon
+            if ids.get("glow") is not None:
+                try: cvs.tag_lower(ids["glow"], ids["frame"])
+                except Exception: pass
 
             title_text = title.upper()
 
             if ids["dot"] is None:
                 ids["dot"] = cvs.create_text(
-                    16, h // 2, text="●", fill=BRAND["text_muted"],
-                    font=(FONT_MONO, 12, "bold"), anchor="w",
-                )
-                ids["title"] = cvs.create_text(
-                    32, h // 2, text=title_text, fill=BRAND["text"],
-                    font=(FONT_DISPLAY, 11, "bold"), anchor="w",
-                )
-                # measure actual rendered title width → place sep+status past it
-                try:
-                    bb = cvs.bbox(ids["title"])
-                    title_right = bb[2] if bb else 32 + 8 * len(title_text)
-                except Exception:
-                    title_right = 32 + 8 * len(title_text)
-                sep_x  = title_right + 10
-                stat_x = sep_x + 18
-                ids["sep"] = cvs.create_text(
-                    sep_x, h // 2, text="//", fill=BRAND["hud_border"],
+                    20, h // 2, text="●", fill=BRAND["text_muted"],
                     font=(FONT_MONO, 11, "bold"), anchor="w",
                 )
+                ids["title"] = cvs.create_text(
+                    34, h // 2, text=title_text, fill=BRAND["text"],
+                    font=(FONT_DISPLAY, 12, "bold"), anchor="w",
+                )
+                try:
+                    bb = cvs.bbox(ids["title"])
+                    title_right = bb[2] if bb else 34 + 8 * len(title_text)
+                except Exception:
+                    title_right = 34 + 8 * len(title_text)
+                stat_x = title_right + 14
                 ids["status"] = cvs.create_text(
-                    stat_x, h // 2, text=initial_status, fill=BRAND["text"],
+                    stat_x, h // 2, text=initial_status, fill=BRAND["text_muted"],
                     font=(FONT_MONO, 11), anchor="w",
                 )
                 if with_extra:
                     ids["extra"] = cvs.create_text(
-                        w - 32, h // 2, text="", fill=BRAND["warning"],
+                        w - 20, h // 2, text="", fill=BRAND["warning"],
                         font=(FONT_MONO, 10), anchor="e",
                     )
-                ids["slash"] = cvs.create_text(
-                    w - 14, h // 2 + 14, text="///", fill=BRAND["hud_border"],
-                    font=(FONT_MONO, 9), anchor="e",
-                )
             else:
                 if with_extra and ids["extra"] is not None:
-                    cvs.coords(ids["extra"], w - 32, h // 2)
-                cvs.coords(ids["slash"], w - 14, h // 2 + 14)
+                    cvs.coords(ids["extra"], w - 20, h // 2)
 
         cvs.bind("<Configure>", _redraw)
         cvs.after(0, _redraw)
@@ -1530,7 +1576,9 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
         inner = ctk.CTkFrame(cvs, fg_color=BRAND["hud_panel"], corner_radius=0)
 
-        PAD_L, PAD_T, PAD_R, PAD_B = 10, 26, 6, 12
+        # Larger top padding because the title is now big+bold+white like the
+        # reference ("TOPIC" / "DETAILS" labels on the Support-ticket popup).
+        PAD_L, PAD_T, PAD_R, PAD_B = 16, 36, 14, 16
         state = {"h": min_height, "win": None}
 
         def _redraw():
@@ -1543,33 +1591,28 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 cvs.config(height=total_h)
                 state["h"] = total_h
             h = total_h
-            cut = 10
+            # Pronounced chamfer (Support-ticket reference cuts ~18px).
+            cut = 18
             cvs.delete("deco")
 
+            # Neon cyan bloom behind the frame — gives the HUD its soul.
+            glow_img = make_neon_glow(cvs, w, h, cut, BRAND["cyan"],
+                                      glow=14, alpha=110, inner_alpha=220)
+            if glow_img is not None:
+                cvs.create_image(0, 0, anchor="nw", image=glow_img, tags="deco")
+                cvs._glow_ref = glow_img
+
+            # Clean chamfered border: thin subtle outline, TL + BR corner cuts.
             pts = [cut, 0, w - 1, 0, w - 1, h - cut,
                    w - 1 - cut, h - 1, 0, h - 1, 0, cut]
             cvs.create_polygon(pts, fill=BRAND["hud_panel"],
                                outline=BRAND["hud_border"], width=1, tags="deco")
 
-            # Red left accent stripe
-            cvs.create_rectangle(0, cut, 3, h - 1, fill=BRAND["accent"],
-                                 outline="", tags="deco")
-
-            # Cyan L-brackets top-left + bottom-right
-            cvs.create_line(0, cut, cut, 0, fill=BRAND["cyan"], width=2, tags="deco")
-            cvs.create_line(cut, 0, cut + 22, 0, fill=BRAND["cyan"], width=2, tags="deco")
-            cvs.create_line(w - 1, h - cut, w - 1 - cut, h - 1,
-                            fill=BRAND["cyan"], width=2, tags="deco")
-            cvs.create_line(w - 1 - cut, h - 1, w - 1 - cut - 22, h - 1,
-                            fill=BRAND["cyan"], width=2, tags="deco")
-
-            # Title at very top (dot + title + ///)
-            cvs.create_text(16, 10, text="●", fill=BRAND["cyan"],
-                            font=(FONT_MONO, 10, "bold"), anchor="w", tags="deco")
-            cvs.create_text(28, 10, text=title.upper(), fill=BRAND["text"],
-                            font=(FONT_DISPLAY, 11, "bold"), anchor="w", tags="deco")
-            cvs.create_text(w - 14, 10, text="///", fill=BRAND["hud_border"],
-                            font=(FONT_MONO, 9), anchor="e", tags="deco")
+            # Title at top-left — big, bold, white, uppercase, generous spacing.
+            # Matches the "TOPIC" / "DETAILS" labels on the website popup.
+            cvs.create_text(16, 16, text=title.upper(), fill=BRAND["text"],
+                            font=(FONT_DISPLAY, 13, "bold"), anchor="w",
+                            tags="deco")
 
             # Place / resize inner content window
             iw = max(100, w - PAD_L - PAD_R)
@@ -1586,6 +1629,10 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         cvs.bind("<Configure>", _on_cfg)
         inner.bind("<Configure>", _on_cfg)
         cvs.after(50, _redraw)
+        # Expose the outer holder so callers can pack_forget/pack the whole card
+        # (the returned `inner` frame is embedded inside a Canvas via
+        # create_window, so its own pack state is not visible in the layout).
+        inner._chamfer_holder = holder  # type: ignore[attr-defined]
         return inner
 
     # ── Chamfered entry field (admin-support-dialog style) ────────────────────
@@ -1624,15 +1671,13 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             h = height
             cut = 6
             frame_cvs.delete("deco")
-            # corner cuts only (top-left + bottom-right)
-            frame_cvs.create_line(0, cut, cut, 0, fill=BRAND["cyan"],
-                                  width=2, tags="deco")
-            frame_cvs.create_line(cut, 0, cut + 10, 0, fill=BRAND["cyan"],
-                                  width=2, tags="deco")
-            frame_cvs.create_line(w - 1, h - cut, w - 1 - cut, h - 1,
-                                  fill=BRAND["cyan"], width=2, tags="deco")
-            frame_cvs.create_line(w - 1 - cut, h - 1, w - 1 - cut - 10, h - 1,
-                                  fill=BRAND["cyan"], width=2, tags="deco")
+            # Chamfered polygon border around the input (TL+BR cuts), thin
+            # hud_border — no cyan L-brackets on fields (Support-ticket style).
+            pts = [cut, 0, w - 1, 0, w - 1, h - cut,
+                   w - 1 - cut, h - 1, 0, h - 1, 0, cut]
+            frame_cvs.create_polygon(pts, fill=BRAND["hud_panel_2"],
+                                     outline=BRAND["hud_border"], width=1,
+                                     tags="deco")
             if entry_win[0] is None:
                 entry_win[0] = frame_cvs.create_window(
                     2, 2, window=entry, anchor="nw",
@@ -1672,14 +1717,13 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             w = max(80, cvs.winfo_width())
             h = height
             cut = 7
-            cyan = BRAND["cyan"]
             cvs.delete("deco")
-            cvs.create_line(0, cut, cut, 0, fill=cyan, width=2, tags="deco")
-            cvs.create_line(cut, 0, cut + 14, 0, fill=cyan, width=2, tags="deco")
-            cvs.create_line(w - 1, h - cut, w - 1 - cut, h - 1,
-                            fill=cyan, width=2, tags="deco")
-            cvs.create_line(w - 1 - cut, h - 1, w - 1 - cut - 14, h - 1,
-                            fill=cyan, width=2, tags="deco")
+            # Chamfered polygon background (TL+BR). Primary = solid accent red;
+            # secondary = panel fill with hud_border outline. Matches the
+            # CANCEL / CONFIRM & SEND TICKET pair from the website.
+            pts = [cut, 0, w - 1, 0, w - 1, h - cut,
+                   w - 1 - cut, h - 1, 0, h - 1, 0, cut]
+            cvs.create_polygon(pts, fill=fg, outline=bc, width=1, tags="deco")
             if btn_win[0] is None:
                 btn_win[0] = cvs.create_window(2, 2, window=btn, anchor="nw",
                                                width=w - 4, height=h - 4)
@@ -1690,8 +1734,9 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         return btn
 
     # Identity card — compact chamfered tactical panel (admin-dialog style).
-    # Width shrunk ~15% (40px right pad), title sits at the very top edge.
-    id_card = _chamfer_panel(ov_left, "Identity", width_shrink=40, min_height=70)
+    # Uses the same 80px right-shrink as the Engine / Game Status strips so
+    # every card in the column ends on the same vertical line.
+    id_card = _chamfer_panel(ov_left, "Identity", width_shrink=80, min_height=70)
     id_inner_ref: list = []
 
     def _rebuild_identity():
@@ -1918,32 +1963,36 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                          font=ctk.CTkFont(size=11),
                          text_color=BRAND["text_muted"]).pack(anchor="w")
 
-        # Rank + XP
-        rank       = auth.rank or "Unranked"
-        rank_color = BRAND["rank_gold"] if auth.rank else BRAND["text_muted"]
-        ctk.CTkLabel(parent, text=f"RANK  {rank}",
-                     font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
-                     text_color=rank_color).pack(anchor="w", pady=(0, 4))
-
-        reg = auth.region
-        if reg:
-            ctk.CTkLabel(
-                parent, text=f"REGION  {reg}",
-                font=ctk.CTkFont(family=FONT_MONO, size=10, weight="bold"),
-                text_color=BRAND["warning"],
-            ).pack(anchor="w", pady=(0, 4))
-
-        # TODO(Claude): confirm /auth/me returns xp_to_next_level field.
-        # Currently reading it from profile; falls back to 1000 if not present.
-        # Once Claude confirms the field name, remove this comment.
+        # Stat row — RANK / REGION / XP in one clean horizontal strip, all
+        # same muted style (labels gray, values white). Matches the reference
+        # pattern of `TOPIC` / `DETAILS` — uniform palette, no rainbow colors.
+        rank = auth.rank or "Unranked"
+        reg  = auth.region or "—"
         xp_to_next = auth.xp_to_next_level
         xp_ratio   = max(0.0, min(1.0, auth.xp / xp_to_next))
-        ctk.CTkLabel(parent, text=f"XP  {auth.xp:,} / {xp_to_next:,}",
-                     font=ctk.CTkFont(family=FONT_MONO, size=10),
-                     text_color=BRAND["text_muted"]).pack(anchor="w", pady=(0, 4))
-        xp_bar = ctk.CTkProgressBar(parent, height=5, corner_radius=3,
-                                     progress_color=BRAND["accent"],
-                                     fg_color=BRAND["bg_hover"])
+
+        stat_row = ctk.CTkFrame(parent, fg_color="transparent")
+        stat_row.pack(fill="x", pady=(2, 6))
+
+        def _stat(col_parent, label: str, value: str):
+            cell = ctk.CTkFrame(col_parent, fg_color="transparent")
+            cell.pack(side="left", padx=(0, 18))
+            ctk.CTkLabel(cell, text=label.upper(),
+                         font=ctk.CTkFont(family=FONT_MONO, size=9,
+                                          weight="bold"),
+                         text_color=BRAND["text_muted"]).pack(anchor="w")
+            ctk.CTkLabel(cell, text=value,
+                         font=ctk.CTkFont(family=FONT_MONO, size=12,
+                                          weight="bold"),
+                         text_color=BRAND["text"]).pack(anchor="w")
+
+        _stat(stat_row, "Rank",   rank)
+        _stat(stat_row, "Region", reg)
+        _stat(stat_row, "XP",     f"{auth.xp:,} / {xp_to_next:,}")
+
+        xp_bar = ctk.CTkProgressBar(parent, height=4, corner_radius=0,
+                                     progress_color=BRAND["cyan"],
+                                     fg_color=BRAND["hud_panel_2"])
         xp_bar.set(xp_ratio)
         xp_bar.pack(fill="x", pady=(0, 10))
 
@@ -2000,10 +2049,12 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     # ── Match Lobby Card — hidden until monitor.current_match_id is set ───────
     # Always exists in layout (between game_card and mon_card); shown/hidden via pack.
-    lobby_container = ctk.CTkFrame(ov_left, fg_color="transparent")
+    # Match Lobby moved to right column — fills the dead space under Monitoring
+    # and makes the left column not need scrolling.
+    lobby_container = ctk.CTkFrame(ov_right, fg_color="transparent")
     lobby_container.pack(fill="x")
 
-    lobby_outer = _card(lobby_container, "Match Lobby")
+    lobby_outer = _chamfer_panel(lobby_container, "Match Lobby", width_shrink=80, min_height=90)
 
     lobby_body_ref: list = []
     _lobby_result_cache: list[dict | None] = [None]
@@ -2051,87 +2102,181 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             except Exception: pass
         lobby_body_ref.clear()
 
+        lobby_holder = lobby_outer._chamfer_holder  # type: ignore[attr-defined]
         if data is None:
             _cancel_completed_clear_timer()
-            lobby_outer.pack_forget()
+            lobby_holder.pack_forget()
             return
 
-        if not lobby_outer.winfo_ismapped():
-            lobby_outer.pack(fill="x", padx=14, pady=(8, 0))
+        if not lobby_holder.winfo_ismapped():
+            lobby_holder.pack(fill="x", padx=(14, 14 + 80), pady=(10, 0))
 
         code      = data.get("code") or "—"
         game_name = data.get("game") or "—"
         mode      = data.get("mode") or "—"
-        your_team = (data.get("your_team") or "—").capitalize()
+        your_team = (data.get("your_team") or "").lower()
         status    = data.get("status") or ""
+        stake     = data.get("stake") or data.get("entry_fee") or ""
 
-        # Info row
-        info_row = ctk.CTkFrame(lobby_outer, fg_color="transparent")
-        info_row.pack(fill="x", padx=14, pady=(0, 4))
-        lobby_body_ref.append(info_row)
-
-        ctk.CTkLabel(info_row,
-                     text=f"CODE: {code}  ·  {game_name}  ·  {mode}",
-                     font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
-                     text_color=BRAND["text"]).pack(side="left")
-        ctk.CTkLabel(info_row,
-                     text=f"TEAM: {your_team}",
-                     font=ctk.CTkFont(family=FONT_MONO, size=10),
-                     text_color=BRAND["warning"]).pack(side="right")
-
-        # Status chip
         status_colors = {
-            "waiting":     BRAND["text_muted"],
+            "waiting":     BRAND["cyan"],
             "starting":    BRAND["warning"],
             "in_progress": BRAND["accent"],
             "completed":   BRAND["text_muted"],
         }
-        status_lbl = ctk.CTkLabel(lobby_outer,
-                                   text=status.replace("_", " ").upper(),
-                                   font=ctk.CTkFont(family=FONT_MONO, size=9),
-                                   text_color=status_colors.get(status, BRAND["text_muted"]))
-        status_lbl.pack(anchor="w", padx=14, pady=(0, 6))
-        lobby_body_ref.append(status_lbl)
+        status_color = status_colors.get(status, BRAND["text_muted"])
+        status_text  = status.replace("_", " ").upper() + "  ·  PLAYERS"
 
-        # Human-readable state (match lifecycle — keep in sync with GET /match/active + heartbeat)
+        # ── Header row: "YOU'RE IN THE ROOM" + status chip ───────────────────
+        hdr_row = ctk.CTkFrame(lobby_outer, fg_color="transparent")
+        hdr_row.pack(fill="x", padx=0, pady=(0, 6))
+        lobby_body_ref.append(hdr_row)
         ctx_map = {
-            "waiting":     "Waiting for opponent",
-            "starting":    "Waiting for opponent",
-            "in_progress": "Match in progress — Arena is watching",
+            "waiting":     "YOU'RE IN THE ROOM",
+            "starting":    "YOU'RE IN THE ROOM",
+            "in_progress": "MATCH IN PROGRESS",
+            "completed":   "MATCH ENDED",
         }
-        ctx = ctx_map.get(status, "")
-        if ctx:
-            ctx_lbl = ctk.CTkLabel(
-                lobby_outer, text=ctx,
-                font=ctk.CTkFont(size=11),
-                text_color=BRAND["text"],
-            )
-            ctx_lbl.pack(anchor="w", padx=14, pady=(0, 6))
-            lobby_body_ref.append(ctx_lbl)
+        ctk.CTkLabel(
+            hdr_row, text=ctx_map.get(status, "MATCH_SESSION · LIVE"),
+            font=ctk.CTkFont(family=FONT_DISPLAY, size=15, weight="bold"),
+            text_color=BRAND["text"],
+        ).pack(side="left")
+        # Status chip (right) — small chamfered pill with cyan border
+        chip = tk.Canvas(hdr_row, bg=BRAND["hud_panel"], highlightthickness=0,
+                         bd=0, height=22, width=160)
+        chip.pack(side="right")
+        def _draw_chip(_e=None):
+            w = chip.winfo_width() or 160
+            h = 22; cut = 5
+            chip.delete("all")
+            pts = [cut, 0, w - 1, 0, w - 1, h - cut,
+                   w - 1 - cut, h - 1, 0, h - 1, 0, cut]
+            chip.create_polygon(pts, fill=BRAND["hud_panel"],
+                                outline=status_color, width=1)
+            chip.create_text(w // 2, h // 2, text=status_text,
+                             fill=status_color,
+                             font=(FONT_MONO, 9, "bold"))
+        chip.bind("<Configure>", lambda e: chip.after(5, _draw_chip))
+        chip.after(20, _draw_chip)
+        lobby_body_ref.append(chip)
 
-        # Players split by team
+        # ── Tag row: game · mode · stake · room code ─────────────────────────
+        tag_row = ctk.CTkFrame(lobby_outer, fg_color="transparent")
+        tag_row.pack(fill="x", padx=0, pady=(0, 10))
+        lobby_body_ref.append(tag_row)
+
+        def _mk_tag(parent, text: str, *, border_color: str, text_color: str,
+                    fill: str | None = None, width: int = 0):
+            t_len = max(width, len(text) * 8 + 14)
+            c = tk.Canvas(parent, bg=BRAND["hud_panel"], highlightthickness=0,
+                          bd=0, height=22, width=t_len)
+            c.pack(side="left", padx=(0, 6))
+            def _d(_e=None):
+                w = c.winfo_width() or t_len
+                h = 22; cut = 5
+                c.delete("all")
+                pts = [cut, 0, w - 1, 0, w - 1, h - cut,
+                       w - 1 - cut, h - 1, 0, h - 1, 0, cut]
+                c.create_polygon(pts, fill=fill or BRAND["hud_panel"],
+                                 outline=border_color, width=1)
+                c.create_text(w // 2, h // 2, text=text,
+                              fill=text_color,
+                              font=(FONT_MONO, 9, "bold"))
+            c.bind("<Configure>", lambda e: c.after(5, _d))
+            c.after(20, _d)
+            return c
+
+        _mk_tag(tag_row, game_name.upper(),
+                border_color=BRAND["hud_border"], text_color=BRAND["text"])
+        _mk_tag(tag_row, mode.upper(),
+                border_color=BRAND["hud_border"], text_color=BRAND["text"])
+        if stake:
+            _mk_tag(tag_row, f"STK: {stake}",
+                    border_color=BRAND["warning"],
+                    text_color=BRAND["warning"])
+        _mk_tag(tag_row, f"ARENA-{code}",
+                border_color=BRAND["accent"], text_color=BRAND["accent"])
+
+        # ── Teams grid: TEAM A | VS | TEAM B ─────────────────────────────────
         players = data.get("players") or []
-        teams: dict[str, list[str]] = {}
+        teams: dict[str, list[str]] = {"a": [], "b": []}
         for p in players:
-            t = (p.get("team") or "none").capitalize()
-            teams.setdefault(t, []).append(
-                p.get("username") or (p.get("user_id") or "?")[:8])
+            t = (p.get("team") or "").lower()
+            if t in teams:
+                teams[t].append(p.get("username")
+                                or (p.get("user_id") or "?")[:8])
+        slot_cap = 5 if (mode or "").lower().startswith("5v5") else \
+                   (3 if (mode or "").lower().startswith("3v3") else \
+                    (2 if (mode or "").lower().startswith("2v2") else 1))
 
-        if teams:
-            teams_row = ctk.CTkFrame(lobby_outer, fg_color="transparent")
-            teams_row.pack(fill="x", padx=14, pady=(0, 8))
-            lobby_body_ref.append(teams_row)
-            for team_name, members in teams.items():
-                col = ctk.CTkFrame(teams_row, fg_color=BRAND["bg_hover"], corner_radius=4)
-                col.pack(side="left", fill="x", expand=True, padx=(0, 4))
-                ctk.CTkLabel(col, text=team_name,
-                             font=ctk.CTkFont(size=10, weight="bold"),
-                             text_color=BRAND["text_muted"]).pack(anchor="w", padx=8, pady=(4, 2))
-                for m in members:
-                    ctk.CTkLabel(col, text=f"· {m}",
-                                 font=ctk.CTkFont(size=11),
-                                 text_color=BRAND["text"]).pack(anchor="w", padx=8, pady=(0, 2))
-                ctk.CTkLabel(col, text="").pack(pady=(0, 4))
+        teams_grid = ctk.CTkFrame(lobby_outer, fg_color="transparent")
+        teams_grid.pack(fill="x", padx=0, pady=(0, 8))
+        lobby_body_ref.append(teams_grid)
+
+        def _team_col(parent, label: str, members: list[str], *,
+                       highlight_me: bool, side: str):
+            col = ctk.CTkFrame(parent, fg_color="transparent")
+            col.pack(side=side, fill="both", expand=True,
+                      padx=(0, 4) if side == "left" else (4, 0))
+            head = ctk.CTkLabel(
+                col, text=f"○ {label.upper()} ({len(members)}/{slot_cap})",
+                font=ctk.CTkFont(family=FONT_MONO, size=10, weight="bold"),
+                text_color=BRAND["accent"])
+            head.pack(anchor="w", pady=(0, 4))
+            for i in range(slot_cap):
+                name = members[i] if i < len(members) else None
+                is_me = (highlight_me and name and
+                         name == (auth.username or ""))
+                row = tk.Canvas(col, bg=BRAND["hud_panel"],
+                                 highlightthickness=0, bd=0, height=26)
+                row.pack(fill="x", pady=(0, 3))
+                _text = name or f"Slot {i+1}"
+                _tc   = "#FFFFFF" if name else BRAND["text_muted"]
+                _fill = BRAND["accent_dark"] if is_me else BRAND["hud_panel_2"]
+                _bc   = BRAND["accent"] if is_me else BRAND["hud_border"]
+                def _mk_draw(cvs, text=_text, tc=_tc, fill=_fill, bc=_bc,
+                             has_name=bool(name), glow_me=is_me):
+                    def _d(_e=None):
+                        w = cvs.winfo_width() or 100
+                        h = 26; cut = 4
+                        cvs.delete("all")
+                        # Red neon bloom for the active player's slot.
+                        if glow_me:
+                            gi = make_neon_glow(cvs, w, h, cut,
+                                                BRAND["accent"],
+                                                glow=10, alpha=160,
+                                                inner_alpha=240)
+                            if gi is not None:
+                                cvs.create_image(0, 0, anchor="nw", image=gi)
+                                cvs._glow_ref = gi
+                        pts = [cut, 0, w - 1, 0, w - 1, h - cut,
+                               w - 1 - cut, h - 1, 0, h - 1, 0, cut]
+                        cvs.create_polygon(pts, fill=fill,
+                                           outline=bc, width=1)
+                        icon = "●" if has_name else "○"
+                        cvs.create_text(10, h // 2, text=icon,
+                                        fill=tc, font=(FONT_MONO, 9),
+                                        anchor="w")
+                        cvs.create_text(22, h // 2, text=text,
+                                        fill=tc,
+                                        font=(FONT_BODY, 11,
+                                              "bold" if has_name else "normal"),
+                                        anchor="w")
+                    return _d
+                drawer = _mk_draw(row)
+                row.bind("<Configure>", lambda e, d=drawer: e.widget.after(5, d))
+                row.after(20, drawer)
+
+        _team_col(teams_grid, "Team A", teams["a"],
+                   highlight_me=(your_team == "a"), side="left")
+        vs_lbl = ctk.CTkLabel(
+            teams_grid, text="V S", width=40,
+            font=ctk.CTkFont(family=FONT_DISPLAY, size=14, weight="bold"),
+            text_color=BRAND["accent"])
+        vs_lbl.pack(side="left", padx=4)
+        _team_col(teams_grid, "Team B", teams["b"],
+                   highlight_me=(your_team == "b"), side="left")
 
         # Result banner — shown when match completed and result was fetched
         # TODO(Claude): confirm GET /match/{id}/status response shape.
@@ -2146,19 +2291,20 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             res_banner = ctk.CTkLabel(lobby_outer, text=res_text,
                                       font=ctk.CTkFont(family=FONT_MONO, size=12, weight="bold"),
                                       text_color=res_color)
-            res_banner.pack(anchor="w", padx=14, pady=(0, 10))
+            res_banner.pack(anchor="w", padx=0, pady=(0, 10))
             lobby_body_ref.append(res_banner)
         elif status == "completed":
             wait_lbl = ctk.CTkLabel(lobby_outer, text="Match ended — fetching result…",
                                      font=ctk.CTkFont(size=11),
                                      text_color=BRAND["text_muted"])
-            wait_lbl.pack(anchor="w", padx=14, pady=(0, 10))
+            wait_lbl.pack(anchor="w", padx=0, pady=(0, 10))
             lobby_body_ref.append(wait_lbl)
 
-    # Monitoring toggle card
-    mon_card = _card(ov_right, "Monitoring")
+    # Monitoring toggle card — chamfered tactical panel (admin-dialog style),
+    # same 80px right-shrink as Identity/Engine so the column ends aligned.
+    mon_card = _chamfer_panel(ov_right, "Monitoring", width_shrink=80, min_height=70)
     mon_row  = ctk.CTkFrame(mon_card, fg_color="transparent")
-    mon_row.pack(fill="x", padx=14, pady=(0, 6))
+    mon_row.pack(fill="x", padx=0, pady=(0, 6))
 
     mon_var = ctk.BooleanVar(value=monitor.running)
     mon_lbl = ctk.CTkLabel(mon_row,
@@ -2200,7 +2346,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     # Screenshot thumbnail row
     thumb_row = ctk.CTkFrame(mon_card, fg_color="transparent")
-    thumb_row.pack(fill="x", padx=14, pady=(0, 12))
+    thumb_row.pack(fill="x", padx=0, pady=(4, 0))
     thumb_img_lbl = ctk.CTkLabel(thumb_row, text="No screenshot yet",
                                   font=ctk.CTkFont(size=10),
                                   text_color=BRAND["text_muted"])
@@ -2312,17 +2458,50 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     def _check_engine_btn():
         threading.Thread(target=_do_engine_check, daemon=True).start()
 
-    for text, cmd, fg, hv, tc, bc in [
-        ("CHECK ENGINE", _check_engine_btn, BRAND["hud_panel_2"], BRAND["hud_border"], BRAND["text"],    BRAND["hud_border"]),
-        ("WEBSITE",      _open_website,     BRAND["hud_panel_2"], BRAND["hud_border"], BRAND["text"],    BRAND["hud_border"]),
-        ("QUIT",         _quit_app,         BRAND["accent"],       BRAND["accent_dark"], "#FFFFFF",       BRAND["accent"]),
-    ]:
-        ctk.CTkButton(btn_row, text=text, height=36, corner_radius=4,
-                       fg_color=fg, hover_color=hv,
-                       border_width=1, border_color=bc,
-                       text_color=tc,
-                       font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
-                       command=cmd).pack(side="left", padx=6, pady=10)
+    # Chamfered footer buttons (Support-ticket style): CANCEL-look for the
+    # neutral actions, CONFIRM-look (solid red) for QUIT.
+    def _footer_btn(parent, text: str, command, *, primary: bool,
+                    width: int = 150, height: int = 38):
+        fg  = BRAND["accent"]      if primary else BRAND["hud_panel_2"]
+        hov = BRAND["accent_dark"] if primary else BRAND["hud_border"]
+        tc  = "#FFFFFF"            if primary else BRAND["text"]
+        bc  = BRAND["accent"]      if primary else BRAND["hud_border"]
+        holder = ctk.CTkFrame(parent, fg_color="transparent",
+                              width=width, height=height)
+        holder.pack(side="left", padx=6, pady=10)
+        holder.pack_propagate(False)
+        cvs = tk.Canvas(holder, bg=BRAND["hud_panel"], highlightthickness=0,
+                        bd=0, width=width, height=height)
+        cvs.pack(fill="both", expand=True)
+        btn = ctk.CTkButton(
+            cvs, text=text, height=height - 4, corner_radius=0,
+            fg_color=fg, hover_color=hov, text_color=tc,
+            border_width=0,
+            font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
+            command=command,
+        )
+        btn_win = [None]
+        def _draw(_e=None):
+            w = max(60, cvs.winfo_width())
+            h = cvs.winfo_height() or height
+            cut = 7
+            cvs.delete("deco")
+            pts = [cut, 0, w - 1, 0, w - 1, h - cut,
+                   w - 1 - cut, h - 1, 0, h - 1, 0, cut]
+            cvs.create_polygon(pts, fill=fg, outline=bc, width=1, tags="deco")
+            if btn_win[0] is None:
+                btn_win[0] = cvs.create_window(
+                    2, 2, window=btn, anchor="nw",
+                    width=w - 4, height=h - 4)
+            else:
+                cvs.itemconfig(btn_win[0], width=w - 4, height=h - 4)
+        cvs.bind("<Configure>", lambda e: cvs.after(10, _draw))
+        cvs.after(30, _draw)
+        return btn
+
+    _footer_btn(btn_row, "CHECK ENGINE", _check_engine_btn, primary=False, width=160)
+    _footer_btn(btn_row, "WEBSITE",      _open_website,     primary=False, width=130)
+    _footer_btn(btn_row, "QUIT",         _quit_app,         primary=True,  width=120)
 
     # ── Thread-safe polls — all via win.after() ────────────────────────────────
 
@@ -2602,7 +2781,7 @@ class ArenaTray:
 
     def _on_messages(self, icon, item):
         import webbrowser
-        base = (self.config.get("frontend_url") or "http://localhost:3000").rstrip("/")
+        base = (self.config.get("frontend_url") or "https://project-arena.com").rstrip("/")
         webbrowser.open(f"{base}/messages")
         self._tray_unread_count = 0
         self._apply_tray_icon()

@@ -39,6 +39,28 @@ Unblock-File -Path $exePath -ErrorAction SilentlyContinue
 if (Test-Path $hudExePath) { Unblock-File -Path $hudExePath -ErrorAction SilentlyContinue }
 Write-Host "  [2/4] Zone identifier cleared: OK" -ForegroundColor Green
 
+# SmartScreen / Defender reputation check fires on every new EXE hash. Adding
+# the dist folder to Defender exclusions makes future rebuilds launch silently
+# (requires Admin). If not elevated we just print a hint.
+try {
+    $isAdmin = ([Security.Principal.WindowsPrincipal] `
+        [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)
+    if ($isAdmin) {
+        Add-MpPreference -ExclusionPath $PSScriptRoot -ErrorAction SilentlyContinue
+        Add-MpPreference -ExclusionProcess $exePath -ErrorAction SilentlyContinue
+        if (Test-Path $hudExePath) {
+            Add-MpPreference -ExclusionProcess $hudExePath -ErrorAction SilentlyContinue
+        }
+        Write-Host "  [2b/4] Defender exclusion added (no more SmartScreen prompts): OK" -ForegroundColor Green
+    } else {
+        Write-Host "  [2b/4] Not elevated - SmartScreen prompt may appear on first launch." -ForegroundColor Yellow
+        Write-Host "         To silence: right-click setup.ps1 -> 'Run as administrator' once." -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "  [2b/4] Defender exclusion skipped: $_" -ForegroundColor Yellow
+}
+
 try {
     $sig = Get-AuthenticodeSignature -FilePath $exePath
     Write-Host ("  [3/4] Signature status: " + $sig.Status) -ForegroundColor Cyan
