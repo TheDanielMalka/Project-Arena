@@ -26,7 +26,8 @@ class SocialMediaAutomator:
     
     def load_templates(self):
         """Load content templates from JSON file"""
-        with open('content_templates.json', 'r') as f:
+        template_path = os.path.join(os.path.dirname(__file__), 'content_templates.json')
+        with open(template_path, 'r') as f:
             self.templates = json.load(f)
     
     def setup_apis(self):

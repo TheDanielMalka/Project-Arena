@@ -89,6 +89,12 @@ client/ArenaClient.zip
 client/_*.ps1
 
 # -----------------------------
+# Cascade agents / configuration
+# -----------------------------
+CASCADE.md
+.cascade/
+
+# -----------------------------
 # Testing / reports
 # -----------------------------
 .coverage
