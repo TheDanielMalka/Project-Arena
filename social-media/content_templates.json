@@ -1,0 +1,72 @@
+{
+  "push_update": {
+    "discord": "## Code Update Alert! \n\n**{commit_count} new commits** pushed to `{branch}` branch\n\n**Latest:** {latest_commit}\n\n**Time:** {timestamp}\n\nCheck out the latest updates on Arena.gg! :rocket:",
+    "twitter": "Arena Platform Update: {commit_count} new features and fixes just deployed! Latest: {latest_commit} #gaming #eSports #Arena",
+    "facebook": "We've just pushed {commit_count} updates to Arena Platform! Including improvements to our automated match system and user experience. Learn more at Arena.gg",
+    "instagram": "Platform update! {commit_count} new improvements just deployed to Arena. Better gaming experience incoming! :crossed_swords: #gaming #eSports",
+    "reddit": "Hey r/ArenaGaming - just pushed {commit_count} commits to main branch! \n\n**Latest changes:** {latest_commit}\n\n**Branch:** {branch}\n\n**Time:** {timestamp}\n\nFull changelog available on our GitHub. What features are you most excited about?",
+    "youtube": "Arena Platform Update: {commit_count} new commits deployed! Check out what's new in our competitive gaming platform."
+  },
+  "release_announcement": {
+    "discord": "## NEW RELEASE! :tada: \n\n**Arena {version}** is now LIVE! \n\n**What's new:** {release_notes}\n\n**Download now:** {download_url}\n\nUpdate now and get back to competing! :crossed_swords:",
+    "twitter": "Arena {version} is now available! Major updates including {release_notes[:100]}... Download now: {download_url} #gaming #eSports #Arena",
+    "facebook": "Exciting news! Arena {version} is now available with major improvements! {release_notes[:200]}... Download now and start competing: {download_url}",
+    "instagram": "NEW VERSION! Arena {version} is here! :fire: Download now and experience the future of competitive gaming! Link in bio! #gaming #eSports #Arena",
+    "reddit": "Arena {version} RELEASED! \n\n**Release Notes:** {release_notes}\n\n**Download:** {download_url}\n\n**Release Date:** {timestamp}\n\nLet us know what you think! Report any bugs and share your feedback!",
+    "youtube": "Arena {version} - Major Update Released! New features, improved performance, and enhanced security. Download now and dominate the competition!"
+  },
+  "feature_update": {
+    "discord": "## New Feature Alert! :sparkles: \n\n**{feature_title}** has been added to Arena!\n\n**Details:** {feature_description}\n\n**PR #{pr_number}** merged successfully!\n\nTry it out and let us know what you think! :thumbsup:",
+    "twitter": "New Feature: {feature_title} just added to Arena! {feature_description[:80]}... #gaming #eSports #Arena",
+    "facebook": "We're excited to announce {feature_title} is now live on Arena! {feature_description} Try it out and let us know your feedback!",
+    "reddit": "New Feature Alert: {feature_title}\n\n**Description:** {feature_description}\n\n**PR #{pr_number}** has been merged and is now live!\n\nWhat do you think of this new feature? Share your thoughts and suggestions!",
+    "youtube": "New Feature Alert: {feature_title} - See what's new in Arena Platform!"
+  },
+  "tournament_announcement": {
+    "discord": "## TOURNAMENT ALERT! :trophy: \n\n**{name}** starting in {time}!\n\n**Prize Pool:** {prize}\n**Game:** {game}\n**Format:** {format}\n\nJoin #match-lobby to participate! :crossed_swords:",
+    "twitter": "Arena Tournament: {name} | Prize: {prize} | Game: {game} | Starts {time} #eSports #Arena #gaming",
+    "facebook": "Join our {name} tournament! Prize pool: {prize}. Game: {game}. Starts {time}. Register now on Arena.gg and compete to win!",
+    "instagram": "Tournament time! {name} with {prize} prize pool! {game} competition starts {time}. Link in bio to register! :trophy: #gaming #eSports #Arena",
+    "reddit": "Tournament Announcement: {name}\n\n**Prize Pool:** {prize}\n**Game:** {game}\n**Format:** {format}\n**Start Time:** {time}\n\nRegister on Arena.gg and show off your skills! Who's competing?",
+    "youtube": "LIVE TOURNAMENT: {name} - {prize} Prize Pool! {game} Competition starts {time} - Don't miss out!"
+  },
+  "platform_update": {
+    "discord": "## Platform Update :gear: \n\n**{feature}** is now live on Arena!\n\n**What it does:** {description}\n\nTry it out and share your feedback in #suggestions! :bulb:",
+    "twitter": "Just launched: {feature} on Arena! {description} #gaming #eSports #Arena",
+    "facebook": "We're excited to announce {feature} is now live! {description} Learn more about this new feature on Arena.gg",
+    "instagram": "NEW FEATURE ALERT! {feature} is now live on Arena! {description} Try it now! :sparkles: #gaming #eSports #Arena",
+    "reddit": "Hey r/ArenaGaming - we just launched {feature}!\n\n**What it does:** {description}\n\nTry it out and let us know what you think! We'd love to hear your feedback and suggestions for improvements.",
+    "youtube": "New Feature Deep Dive: {feature} - See how it works and why it matters for competitive gaming!"
+  },
+  "security_update": {
+    "discord": "## Security Update :shield: \n\n**Important:** We've deployed critical security updates to Arena!\n\n**What was fixed:** {fixes}\n\n**Action required:** Please update your client immediately!\n\nDownload: {download_url}\n\nYour security is our priority! :lock:",
+    "twitter": "Security Update: Critical fixes deployed to Arena. Please update immediately! Download: {download_url} #security #gaming #Arena",
+    "facebook": "Important security update deployed to Arena Platform! {fixes} Please update your client immediately to ensure account security. Download at Arena.gg",
+    "reddit": "SECURITY UPDATE - Critical fixes deployed\n\n**Fixed Issues:** {fixes}\n\n**Action Required:** Update your client immediately!\n\n**Download:** {download_url}\n\nThis update addresses important security vulnerabilities. Please update as soon as possible.",
+    "youtube": "URGENT: Security Update for Arena Platform - Critical fixes deployed. Update immediately!"
+  },
+  "maintenance_notice": {
+    "discord": "## Maintenance Notice :wrench: \n\n**Scheduled Maintenance** - {time}\n\n**Duration:** {duration}\n\n**Affected Services:** {services}\n\n**Expected Impact:** {impact}\n\nWe'll be back online shortly! Thanks for your patience! :clock:",
+    "twitter": "Scheduled Maintenance: {time} for {duration}. Some services may be temporarily unavailable. We'll be back soon! #Arena #gaming",
+    "facebook": "Scheduled maintenance on {time} for {duration}. Some Arena services may be temporarily unavailable. We appreciate your patience and will be back online shortly!",
+    "instagram": "Maintenance Alert! We'll be down {time} for {duration} to improve your gaming experience. Back soon! :wrench: #gaming #Arena",
+    "reddit": "Maintenance Notice: {time} for {duration}\n\n**Affected Services:** {services}\n\n**Expected Impact:** {impact}\n\nWe'll be working to improve Arena Platform during this time. Thanks for your patience!",
+    "youtube": "Maintenance Notice: Arena Platform scheduled maintenance {time} for {duration} - Service improvements incoming!"
+  },
+  "community_highlight": {
+    "discord": "## Community Spotlight! :star: \n\n**Player:** {player_name}\n**Achievement:** {achievement}\n**Stats:** {stats}\n\nCongratulations! Join us in celebrating this amazing performance! :tada:",
+    "twitter": "Community Spotlight: {player_name} achieved {achievement}! Amazing performance! {stats} #gaming #eSports #Arena",
+    "facebook": "Community Spotlight! Congratulations to {player_name} for achieving {achievement}! {stats} Join us in celebrating this incredible performance!",
+    "instagram": "PLAYER SPOTLIGHT! {player_name} :fire:\n\n{achievement}\n\n{stats}\n\nAmazing performance! :trophy: #gaming #eSports #Arena",
+    "reddit": "Community Spotlight: {player_name}\n\n**Achievement:** {achievement}\n\n**Stats:** {stats}\n\nCongratulations on this incredible performance! Who else has achieved something amazing on Arena? Share your stories!",
+    "youtube": "Player Spotlight: {player_name} - {achievement} - Incredible performance on Arena Platform!"
+  },
+  "bug_fix_announcement": {
+    "discord": "## Bug Fixes! :bug: \n\n**Fixed Issues:** {fixes}\n\n**Update:** {version}\n\n**Improvements:** {improvements}\n\nArena is now more stable than ever! :crossed_swords:",
+    "twitter": "Bug fixes deployed! {fixes} Arena {version} is now more stable. #gaming #eSports #Arena",
+    "facebook": "We've fixed several issues in Arena {version}! {fixes} The platform is now more stable and reliable. Update now!",
+    "instagram": "Bug fixes! :bug: {fixes} Arena {version} is now more stable. Update now! :gear: #gaming #Arena",
+    "reddit": "Bug Fix Update: {version}\n\n**Fixed Issues:** {fixes}\n\n**Improvements:** {improvements}\n\nThanks for your bug reports! Keep them coming to help us improve Arena.",
+    "youtube": "Bug Fix Update: Arena {version} - Major stability improvements and bug fixes deployed!"
+  }
+}

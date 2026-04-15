@@ -76,9 +76,17 @@ __pycache__/
 # -----------------------------
 .env
 .env.local
+.env.production
 .secret
 # SSH keys / certs (e.g. ARENA.V01.pem) — never commit
 *.pem
+
+# -----------------------------
+# Client build files / scripts
+# -----------------------------
+client/dist_ship/
+client/ArenaClient.zip
+client/_*.ps1
 
 # -----------------------------
 # Testing / reports
