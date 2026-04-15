@@ -35,7 +35,7 @@ python main.py
 
 | Field                  | Description                          | Default                |
 |------------------------|--------------------------------------|------------------------|
-| `engine_url`           | Engine API base URL                  | `http://localhost:8000` |
+| `engine_url`           | Engine API base URL                  | `https://project-arena.com/api` |
 | `auth_token`           | Authentication token (JWT)           | `""`                   |
 | `screenshot_interval`  | Capture interval in seconds          | `5`                    |
 | `monitor`              | Display index to capture             | `1`                    |
