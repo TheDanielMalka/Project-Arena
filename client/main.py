@@ -1378,19 +1378,320 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     ov_right = ctk.CTkScrollableFrame(ov_root, fg_color=BRAND["bg"], corner_radius=0)
     ov_right.grid(row=0, column=1, sticky="nsew", padx=(6, 0), pady=0)
 
-    # Engine card
-    eng_card = _card(ov_left, "Engine")
-    eng_row  = ctk.CTkFrame(eng_card, fg_color="transparent")
-    eng_row.pack(fill="x", padx=14, pady=(0, 12))
-    eng_dot  = _status_dot(eng_row)
-    eng_dot.pack(side="left")
-    eng_lbl  = ctk.CTkLabel(eng_row, text="Checking…",
-                              font=ctk.CTkFont(family=FONT_MONO, size=12),
-                              text_color=BRAND["text"])
-    eng_lbl.pack(side="left", padx=(6, 0))
+    # ── Compact chamfered status card helper (matches website tactical frame).
+    # Draws: chamfered polygon background + cyan L-brackets (top-left and
+    # bottom-right) + red left accent strip + text items. The dot + label
+    # are canvas items wrapped in a small proxy so existing call sites like
+    # `x_dot.configure(text_color=...)` / `x_lbl.configure(text=..., text_color=...)`
+    # keep working unchanged. Height is ~40% of the old CTkFrame card and
+    # width ~85% of the parent column (via asymmetric right padding).
+    class _CanvasItemProxy:
+        __slots__ = ("_c", "_id")
+        def __init__(self, canvas, item_id):
+            self._c, self._id = canvas, item_id
+        def configure(self, **kw):
+            m = {}
+            if "text" in kw:        m["text"] = kw["text"]
+            if "text_color" in kw:  m["fill"] = kw["text_color"]
+            if m:
+                try: self._c.itemconfig(self._id, **m)
+                except Exception: pass
 
-    # Identity card
-    id_card     = _card(ov_left, "Identity")
+    def _make_chamfer_status(parent, title: str, initial_status: str = "Checking…",
+                             width_shrink: int = 80, with_extra: bool = False):
+        """
+        Compact chamfered status card. Returns (dot_proxy, status_proxy[, extra_proxy]).
+        `width_shrink` is the extra right padding (px) — ~80 gives the -15% look.
+        `with_extra` adds a third text slot after the status (e.g. match id).
+        """
+        wrap = ctk.CTkFrame(parent, fg_color="transparent")
+        wrap.pack(fill="x", padx=(14, 14 + width_shrink), pady=(10, 0))
+
+        cvs = tk.Canvas(wrap, height=40, bg=BRAND["bg"],
+                        highlightthickness=0, bd=0, relief="flat")
+        cvs.pack(fill="x")
+
+        ids: dict = {"frame": None, "strip": None,
+                     "tl1": None, "tl2": None, "br1": None, "br2": None,
+                     "dot": None, "title": None, "sep": None, "status": None,
+                     "extra": None, "slash": None}
+
+        def _redraw(_event=None):
+            w = max(120, cvs.winfo_width())
+            h = 40
+            cut = 9
+            panel  = BRAND["hud_panel"]
+            rim    = BRAND["cyan"]
+            red    = BRAND["accent"]
+            border = BRAND["hud_border"]
+
+            pts = [
+                cut, 0,
+                w - 1, 0,
+                w - 1, h - cut,
+                w - 1 - cut, h - 1,
+                0, h - 1,
+                0, cut,
+            ]
+            if ids["frame"] is None:
+                ids["frame"] = cvs.create_polygon(pts, fill=panel, outline=border, width=1)
+            else:
+                cvs.coords(ids["frame"], *pts)
+
+            if ids["strip"] is None:
+                ids["strip"] = cvs.create_rectangle(0, cut, 3, h - 1, fill=red, outline="")
+            else:
+                cvs.coords(ids["strip"], 0, cut, 3, h - 1)
+
+            if ids["tl1"] is None:
+                ids["tl1"] = cvs.create_line(0, cut, cut, 0, fill=rim, width=2)
+                ids["tl2"] = cvs.create_line(cut, 0, cut + 14, 0, fill=rim, width=2)
+            else:
+                cvs.coords(ids["tl1"], 0, cut, cut, 0)
+                cvs.coords(ids["tl2"], cut, 0, cut + 14, 0)
+
+            if ids["br1"] is None:
+                ids["br1"] = cvs.create_line(w - 1, h - cut, w - 1 - cut, h - 1, fill=rim, width=2)
+                ids["br2"] = cvs.create_line(w - 1 - cut, h - 1, w - 1 - cut - 14, h - 1, fill=rim, width=2)
+            else:
+                cvs.coords(ids["br1"], w - 1, h - cut, w - 1 - cut, h - 1)
+                cvs.coords(ids["br2"], w - 1 - cut, h - 1, w - 1 - cut - 14, h - 1)
+
+            title_text = title.upper()
+
+            if ids["dot"] is None:
+                ids["dot"] = cvs.create_text(
+                    16, h // 2, text="●", fill=BRAND["text_muted"],
+                    font=(FONT_MONO, 12, "bold"), anchor="w",
+                )
+                ids["title"] = cvs.create_text(
+                    32, h // 2, text=title_text, fill=BRAND["text"],
+                    font=(FONT_DISPLAY, 11, "bold"), anchor="w",
+                )
+                # measure actual rendered title width → place sep+status past it
+                try:
+                    bb = cvs.bbox(ids["title"])
+                    title_right = bb[2] if bb else 32 + 8 * len(title_text)
+                except Exception:
+                    title_right = 32 + 8 * len(title_text)
+                sep_x  = title_right + 10
+                stat_x = sep_x + 18
+                ids["sep"] = cvs.create_text(
+                    sep_x, h // 2, text="//", fill=BRAND["hud_border"],
+                    font=(FONT_MONO, 11, "bold"), anchor="w",
+                )
+                ids["status"] = cvs.create_text(
+                    stat_x, h // 2, text=initial_status, fill=BRAND["text"],
+                    font=(FONT_MONO, 11), anchor="w",
+                )
+                if with_extra:
+                    ids["extra"] = cvs.create_text(
+                        w - 32, h // 2, text="", fill=BRAND["warning"],
+                        font=(FONT_MONO, 10), anchor="e",
+                    )
+                ids["slash"] = cvs.create_text(
+                    w - 14, h // 2 + 14, text="///", fill=BRAND["hud_border"],
+                    font=(FONT_MONO, 9), anchor="e",
+                )
+            else:
+                if with_extra and ids["extra"] is not None:
+                    cvs.coords(ids["extra"], w - 32, h // 2)
+                cvs.coords(ids["slash"], w - 14, h // 2 + 14)
+
+        cvs.bind("<Configure>", _redraw)
+        cvs.after(0, _redraw)
+        cvs.update_idletasks()
+        _redraw()
+
+        dot_proxy    = _CanvasItemProxy(cvs, ids["dot"])
+        status_proxy = _CanvasItemProxy(cvs, ids["status"])
+        if with_extra:
+            extra_proxy = _CanvasItemProxy(cvs, ids["extra"])
+            return dot_proxy, status_proxy, extra_proxy
+        return dot_proxy, status_proxy
+
+    # ENGINE card — compact chamfered tactical frame
+    eng_dot, eng_lbl = _make_chamfer_status(ov_left, "Engine", "Checking…")
+
+    # ── Large chamfered panel (Identity/Monitoring etc.) ──────────────────────
+    # Unlike `_make_chamfer_status` which is a one-line compact strip, this
+    # helper gives you an inner frame you can pack arbitrary widgets into.
+    # Title is drawn at the very top edge of the chamfered frame (no extra
+    # padding), matching the admin-support / match-room card style from the
+    # website. Returns the inner content `ctk.CTkFrame`.
+    def _chamfer_panel(parent, title: str, width_shrink: int = 40,
+                       min_height: int = 70):
+        holder = ctk.CTkFrame(parent, fg_color="transparent")
+        holder.pack(fill="x", padx=(14, 14 + width_shrink), pady=(10, 0))
+
+        cvs = tk.Canvas(holder, bg=BRAND["bg"], highlightthickness=0,
+                        bd=0, height=min_height)
+        cvs.pack(fill="x")
+
+        inner = ctk.CTkFrame(cvs, fg_color=BRAND["hud_panel"], corner_radius=0)
+
+        PAD_L, PAD_T, PAD_R, PAD_B = 10, 26, 6, 12
+        state = {"h": min_height, "win": None}
+
+        def _redraw():
+            w = max(200, cvs.winfo_width())
+            inner.update_idletasks()
+            ch = max(1, inner.winfo_reqheight())
+            total_h = max(min_height, ch + PAD_T + PAD_B)
+
+            if total_h != state["h"]:
+                cvs.config(height=total_h)
+                state["h"] = total_h
+            h = total_h
+            cut = 10
+            cvs.delete("deco")
+
+            pts = [cut, 0, w - 1, 0, w - 1, h - cut,
+                   w - 1 - cut, h - 1, 0, h - 1, 0, cut]
+            cvs.create_polygon(pts, fill=BRAND["hud_panel"],
+                               outline=BRAND["hud_border"], width=1, tags="deco")
+
+            # Red left accent stripe
+            cvs.create_rectangle(0, cut, 3, h - 1, fill=BRAND["accent"],
+                                 outline="", tags="deco")
+
+            # Cyan L-brackets top-left + bottom-right
+            cvs.create_line(0, cut, cut, 0, fill=BRAND["cyan"], width=2, tags="deco")
+            cvs.create_line(cut, 0, cut + 22, 0, fill=BRAND["cyan"], width=2, tags="deco")
+            cvs.create_line(w - 1, h - cut, w - 1 - cut, h - 1,
+                            fill=BRAND["cyan"], width=2, tags="deco")
+            cvs.create_line(w - 1 - cut, h - 1, w - 1 - cut - 22, h - 1,
+                            fill=BRAND["cyan"], width=2, tags="deco")
+
+            # Title at very top (dot + title + ///)
+            cvs.create_text(16, 10, text="●", fill=BRAND["cyan"],
+                            font=(FONT_MONO, 10, "bold"), anchor="w", tags="deco")
+            cvs.create_text(28, 10, text=title.upper(), fill=BRAND["text"],
+                            font=(FONT_DISPLAY, 11, "bold"), anchor="w", tags="deco")
+            cvs.create_text(w - 14, 10, text="///", fill=BRAND["hud_border"],
+                            font=(FONT_MONO, 9), anchor="e", tags="deco")
+
+            # Place / resize inner content window
+            iw = max(100, w - PAD_L - PAD_R)
+            if state["win"] is None:
+                state["win"] = cvs.create_window(PAD_L, PAD_T, window=inner,
+                                                 anchor="nw", width=iw)
+            else:
+                cvs.itemconfig(state["win"], width=iw)
+                cvs.coords(state["win"], PAD_L, PAD_T)
+
+        def _on_cfg(_e=None):
+            cvs.after(15, _redraw)
+
+        cvs.bind("<Configure>", _on_cfg)
+        inner.bind("<Configure>", _on_cfg)
+        cvs.after(50, _redraw)
+        return inner
+
+    # ── Chamfered entry field (admin-support-dialog style) ────────────────────
+    # Uppercase Share Tech Mono label above a bordered CTkEntry sitting inside
+    # a small canvas that draws corner chamfers around the entry. Returns the
+    # underlying CTkEntry so get/set/bind still work.
+    def _hud_entry(parent, label: str, placeholder: str = "", show: str | None = None,
+                   height: int = 38):
+        box = ctk.CTkFrame(parent, fg_color="transparent")
+        box.pack(fill="x", pady=(0, 8))
+
+        ctk.CTkLabel(
+            box, text=label.upper(),
+            font=ctk.CTkFont(family=FONT_MONO, size=9, weight="bold"),
+            text_color=BRAND["text_muted"],
+        ).pack(anchor="w", pady=(0, 4))
+
+        frame_cvs = tk.Canvas(box, bg=BRAND["hud_panel"], highlightthickness=0,
+                              bd=0, height=height)
+        frame_cvs.pack(fill="x")
+
+        entry = ctk.CTkEntry(
+            frame_cvs, placeholder_text=placeholder, show=show,
+            height=height - 4, corner_radius=0,
+            fg_color=BRAND["hud_panel_2"],
+            border_color=BRAND["hud_border"],
+            border_width=1,
+            text_color=BRAND["text"],
+            placeholder_text_color=BRAND["text_muted"],
+            font=ctk.CTkFont(family=FONT_BODY, size=12),
+        )
+
+        entry_win = [None]
+        def _redraw_entry(_e=None):
+            w = max(80, frame_cvs.winfo_width())
+            h = height
+            cut = 6
+            frame_cvs.delete("deco")
+            # corner cuts only (top-left + bottom-right)
+            frame_cvs.create_line(0, cut, cut, 0, fill=BRAND["cyan"],
+                                  width=2, tags="deco")
+            frame_cvs.create_line(cut, 0, cut + 10, 0, fill=BRAND["cyan"],
+                                  width=2, tags="deco")
+            frame_cvs.create_line(w - 1, h - cut, w - 1 - cut, h - 1,
+                                  fill=BRAND["cyan"], width=2, tags="deco")
+            frame_cvs.create_line(w - 1 - cut, h - 1, w - 1 - cut - 10, h - 1,
+                                  fill=BRAND["cyan"], width=2, tags="deco")
+            if entry_win[0] is None:
+                entry_win[0] = frame_cvs.create_window(
+                    2, 2, window=entry, anchor="nw",
+                    width=w - 4, height=h - 4,
+                )
+            else:
+                frame_cvs.itemconfig(entry_win[0], width=w - 4, height=h - 4)
+        frame_cvs.bind("<Configure>", lambda e: frame_cvs.after(10, _redraw_entry))
+        frame_cvs.after(30, _redraw_entry)
+        return entry
+
+    # ── Chamfered HUD button — red/primary or ghost/secondary ─────────────────
+    def _hud_button(parent, text: str, command=None, kind: str = "primary",
+                    height: int = 44):
+        fg  = BRAND["accent"]     if kind == "primary" else BRAND["hud_panel_2"]
+        hov = BRAND["accent_dark"] if kind == "primary" else BRAND["hud_border"]
+        tc  = "#FFFFFF"           if kind == "primary" else BRAND["text"]
+        bc  = BRAND["accent"]     if kind == "primary" else BRAND["hud_border"]
+
+        box = ctk.CTkFrame(parent, fg_color="transparent", height=height)
+        box.pack(fill="x", pady=(0, 10))
+        box.pack_propagate(False)
+
+        cvs = tk.Canvas(box, bg=BRAND["hud_panel"], highlightthickness=0,
+                        bd=0, height=height)
+        cvs.pack(fill="both", expand=True)
+
+        btn = ctk.CTkButton(
+            cvs, text=text, height=height - 4, corner_radius=0,
+            fg_color=fg, hover_color=hov, text_color=tc,
+            border_width=1, border_color=bc,
+            font=ctk.CTkFont(family=FONT_DISPLAY, size=13, weight="bold"),
+            command=command,
+        )
+        btn_win = [None]
+        def _redraw_btn(_e=None):
+            w = max(80, cvs.winfo_width())
+            h = height
+            cut = 7
+            cyan = BRAND["cyan"]
+            cvs.delete("deco")
+            cvs.create_line(0, cut, cut, 0, fill=cyan, width=2, tags="deco")
+            cvs.create_line(cut, 0, cut + 14, 0, fill=cyan, width=2, tags="deco")
+            cvs.create_line(w - 1, h - cut, w - 1 - cut, h - 1,
+                            fill=cyan, width=2, tags="deco")
+            cvs.create_line(w - 1 - cut, h - 1, w - 1 - cut - 14, h - 1,
+                            fill=cyan, width=2, tags="deco")
+            if btn_win[0] is None:
+                btn_win[0] = cvs.create_window(2, 2, window=btn, anchor="nw",
+                                               width=w - 4, height=h - 4)
+            else:
+                cvs.itemconfig(btn_win[0], width=w - 4, height=h - 4)
+        cvs.bind("<Configure>", lambda e: cvs.after(10, _redraw_btn))
+        cvs.after(30, _redraw_btn)
+        return btn
+
+    # Identity card — compact chamfered tactical panel (admin-dialog style).
+    # Width shrunk ~15% (40px right pad), title sits at the very top edge.
+    id_card = _chamfer_panel(ov_left, "Identity", width_shrink=40, min_height=70)
     id_inner_ref: list = []
 
     def _rebuild_identity():
@@ -1398,8 +1699,9 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             try: w.destroy()
             except Exception: pass
         id_inner_ref.clear()
+        # No extra padding row — the chamfer helper already insets content.
         inner = ctk.CTkFrame(id_card, fg_color="transparent")
-        inner.pack(fill="x", padx=14, pady=(0, 12))
+        inner.pack(fill="x", padx=0, pady=(0, 2))
         id_inner_ref.append(inner)
         if auth.is_authenticated:
             _build_profile(inner)
@@ -1412,44 +1714,19 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         DB-ready: /auth/login validates identifier against users.email.
                   Email is used because username is changeable in profile.
         """
+        # Heading sits immediately under the IDENTITY title (no top padding).
         ctk.CTkLabel(parent, text="ENTER ARENA",
-                     font=ctk.CTkFont(family=FONT_DISPLAY, size=18, weight="bold"),
-                     text_color=BRAND["accent"]).pack(anchor="w", pady=(4, 6))
-        ctk.CTkLabel(parent, text="Secure access  ·  2FA supported",
-                     font=ctk.CTkFont(size=11),
-                     text_color=BRAND["hud_glow"]).pack(anchor="w", pady=(0, 14))
+                     font=ctk.CTkFont(family=FONT_DISPLAY, size=15, weight="bold"),
+                     text_color=BRAND["accent"]).pack(anchor="w", pady=(0, 1))
+        ctk.CTkLabel(parent, text="Secure access · 2FA supported",
+                     font=ctk.CTkFont(family=FONT_MONO, size=9, weight="bold"),
+                     text_color=BRAND["hud_glow"]).pack(anchor="w", pady=(0, 10))
 
-        entry_h = 46
-        entry_r = 10
-        entry_border = BRAND["hud_border"]
-        entry_bg = BRAND["hud_panel_2"]
-
-        id_entry = ctk.CTkEntry(
-            parent, placeholder_text="Email",
-            height=entry_h, corner_radius=entry_r,
-            fg_color=entry_bg,
-            border_color=entry_border,
-            border_width=1,
-            text_color=BRAND["text"],
-            placeholder_text_color=BRAND["text_muted"],
-            font=ctk.CTkFont(size=14),
-        )
-        id_entry.pack(fill="x", pady=(0, 10))
-
-        pw_entry = ctk.CTkEntry(
-            parent, placeholder_text="Password", show="*",
-            height=entry_h, corner_radius=entry_r,
-            fg_color=entry_bg,
-            border_color=entry_border,
-            border_width=1,
-            text_color=BRAND["text"],
-            placeholder_text_color=BRAND["text_muted"],
-            font=ctk.CTkFont(size=14),
-        )
-        pw_entry.pack(fill="x", pady=(0, 12))
+        id_entry = _hud_entry(parent, label="Email",    placeholder="you@domain.com")
+        pw_entry = _hud_entry(parent, label="Password", placeholder="••••••••", show="*")
 
         err_lbl = ctk.CTkLabel(parent, text="",
-                                font=ctk.CTkFont(size=11),
+                                font=ctk.CTkFont(family=FONT_MONO, size=10),
                                 text_color=BRAND["error"])
         err_lbl.pack(anchor="w", pady=(0, 4))
 
@@ -1569,38 +1846,24 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 win.after(0, _after)
             threading.Thread(target=_thread, daemon=True).start()
 
-        login_btn = ctk.CTkButton(
-            parent, text="ENTER ARENA", height=48, corner_radius=4,
-            fg_color=BRAND["accent"], hover_color=BRAND["accent_dark"],
-            text_color="#FFFFFF",
-            font=ctk.CTkFont(family=FONT_DISPLAY, size=14, weight="bold"),
-            border_width=1, border_color=BRAND["accent"],
-            command=_do_login,
-        )
-        login_btn.pack(fill="x", pady=(0, 14))
+        login_btn = _hud_button(parent, text="ENTER ARENA",
+                                command=_do_login, kind="primary", height=44)
         pw_entry.bind("<Return>", lambda e: _do_login())
         id_entry.bind("<Return>",  lambda e: pw_entry.focus())
 
         # Divider
         div_row = ctk.CTkFrame(parent, fg_color="transparent")
-        div_row.pack(fill="x", pady=(0, 6))
+        div_row.pack(fill="x", pady=(2, 4))
         ctk.CTkFrame(div_row, height=1, fg_color=BRAND["border"]).pack(
             side="left", fill="x", expand=True, pady=6)
-        ctk.CTkLabel(div_row, text="  or  ",
-                     font=ctk.CTkFont(size=10),
+        ctk.CTkLabel(div_row, text="  OR  ",
+                     font=ctk.CTkFont(family=FONT_MONO, size=9, weight="bold"),
                      text_color=BRAND["text_muted"]).pack(side="left")
         ctk.CTkFrame(div_row, height=1, fg_color=BRAND["border"]).pack(
             side="left", fill="x", expand=True, pady=6)
 
-        # TODO[GOOGLE]: wire Google sign-in to POST /auth/google when Client ID is set
-        ctk.CTkButton(
-            parent, text="OPEN WEBSITE", height=40, corner_radius=4,
-            fg_color=BRAND["hud_panel_2"], hover_color=BRAND["hud_border"],
-            border_width=1, border_color=BRAND["hud_border"],
-            text_color=BRAND["text_muted"],
-            font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
-            command=_open_website,
-        ).pack(fill="x")
+        _hud_button(parent, text="OPEN WEBSITE",
+                    command=_open_website, kind="ghost", height=36)
 
     def _build_profile(parent: ctk.CTkFrame):
         """Profile card shown after successful auth."""
@@ -1729,20 +1992,11 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     monitor.engine.set_on_unauthorized(lambda: win.after(0, _handle_session_expired))
 
-    # Game status card
-    game_card  = _card(ov_right, "Game Status")
-    game_row   = ctk.CTkFrame(game_card, fg_color="transparent")
-    game_row.pack(fill="x", padx=14, pady=(0, 4))
-    game_dot   = _status_dot(game_row)
-    game_dot.pack(side="left")
-    game_lbl   = ctk.CTkLabel(game_row, text="No game detected",
-                               font=ctk.CTkFont(family=FONT_MONO, size=12),
-                               text_color=BRAND["text"])
-    game_lbl.pack(side="left", padx=(6, 0))
-    match_lbl  = ctk.CTkLabel(game_card, text="",
-                               font=ctk.CTkFont(family=FONT_MONO, size=10),
-                               text_color=BRAND["warning"])
-    match_lbl.pack(anchor="w", padx=14, pady=(0, 10))
+    # Game status card — compact chamfered tactical frame (match id in the
+    # right slot so the old `match_lbl` stays visible without a second row).
+    game_dot, game_lbl, match_lbl = _make_chamfer_status(
+        ov_right, "Game Status", "No game detected", with_extra=True,
+    )
 
     # ── Match Lobby Card — hidden until monitor.current_match_id is set ───────
     # Always exists in layout (between game_card and mon_card); shown/hidden via pack.
