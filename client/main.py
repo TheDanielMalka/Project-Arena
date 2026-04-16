@@ -2111,7 +2111,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
             if not friends:
                 lbl = ctk.CTkLabel(
-                    hub_card, text="No friends online",
+                    hub_card, text="No friends yet",
                     font=ctk.CTkFont(family=FONT_MONO, size=10),
                     text_color=BRAND["text_muted"],
                 )
@@ -2120,9 +2120,10 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 return
 
             for f in friends:
-                uid        = f.get("user_id", "")
-                disp_name  = (f.get("username") or "Player").upper()
-                game_label = f.get("game") or ""
+                uid           = f.get("user_id", "")
+                disp_name     = (f.get("username") or "Player").upper()
+                game_label    = f.get("game") or ""
+                client_online = bool(f.get("client_online", False))
 
                 row = ctk.CTkFrame(hub_card, fg_color="transparent")
                 row.pack(fill="x", pady=(0, 5))
@@ -2131,10 +2132,12 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 left = ctk.CTkFrame(row, fg_color="transparent")
                 left.pack(side="left", fill="x", expand=True)
 
+                # Green = client running; gray = website only
+                dot_color = "#22c55e" if client_online else BRAND["text_muted"]
                 ctk.CTkLabel(
                     left, text="●",
                     font=ctk.CTkFont(size=10),
-                    text_color="#22c55e",
+                    text_color=dot_color,
                 ).pack(side="left", padx=(0, 5))
 
                 ctk.CTkLabel(
@@ -2149,13 +2152,31 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                         font=ctk.CTkFont(family=FONT_MONO, size=9),
                         text_color=BRAND["text_muted"],
                     ).pack(side="left")
+                elif not client_online:
+                    ctk.CTkLabel(
+                        left, text="  website",
+                        font=ctk.CTkFont(family=FONT_MONO, size=9),
+                        text_color=BRAND["text_muted"],
+                    ).pack(side="left")
 
-                inv_btn = ctk.CTkButton(
-                    row, text="INVITE", width=62, height=24, corner_radius=3,
-                    fg_color=BRAND["accent"], hover_color=BRAND["accent_dark"],
-                    text_color="#FFFFFF",
-                    font=ctk.CTkFont(family=FONT_MONO, size=9, weight="bold"),
-                )
+                # INVITE button only for friends who have the client running —
+                # they'll get the pop-up modal. Website-only friends are shown
+                # greyed out (they can still be invited via the website notification bell).
+                if client_online:
+                    inv_btn = ctk.CTkButton(
+                        row, text="INVITE", width=62, height=24, corner_radius=3,
+                        fg_color=BRAND["accent"], hover_color=BRAND["accent_dark"],
+                        text_color="#FFFFFF",
+                        font=ctk.CTkFont(family=FONT_MONO, size=9, weight="bold"),
+                    )
+                else:
+                    inv_btn = ctk.CTkButton(
+                        row, text="INVITE", width=62, height=24, corner_radius=3,
+                        fg_color=BRAND["hud_panel_2"], hover_color=BRAND["hud_panel_2"],
+                        text_color=BRAND["text_muted"],
+                        font=ctk.CTkFont(family=FONT_MONO, size=9, weight="bold"),
+                        state="disabled",
+                    )
                 inv_btn.pack(side="right")
 
                 def _make_invite_cmd(target_uid=uid, target_name=disp_name, btn=inv_btn):

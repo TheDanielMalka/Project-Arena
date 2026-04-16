@@ -5471,11 +5471,13 @@ async def block_user(user_id: str, payload: dict = Depends(verify_token)):
 @app.get("/friends/online")
 async def list_online_friends(payload: dict = Depends(verify_token)):
     """
-    GET /friends/online — accepted friends with an active desktop client session.
+    GET /friends/online — all accepted friends, with a client_online flag.
 
-    A session is "active" when disconnected_at IS NULL and
-    last_heartbeat > NOW() - 60 seconds (matches _CLIENT_TIMEOUT_SECONDS).
-    Used by the HUB panel in the desktop client to show who is online.
+    Returns every accepted friend regardless of whether they have the desktop
+    client running. The client_online / client_game fields are populated only
+    when the friend has an active client_sessions row (heartbeat within 60s).
+    This way friends logged into the website (no desktop client) still appear
+    and can be invited — they'll see the invite via the website notification bell.
     """
     me: str = payload["sub"]
     try:
@@ -5484,16 +5486,22 @@ async def list_online_friends(payload: dict = Depends(verify_token)):
                 text(
                     "SELECT DISTINCT ON (u.id) "
                     "       u.id, u.username, u.arena_id, u.avatar, "
-                    "       u.equipped_badge_icon, cs.game, cs.status "
+                    "       u.equipped_badge_icon, "
+                    "       cs.game, cs.status, "
+                    "       (cs.id IS NOT NULL "
+                    "        AND cs.disconnected_at IS NULL "
+                    "        AND cs.last_heartbeat > NOW() - INTERVAL '60 seconds'"
+                    "       ) AS client_online "
                     "FROM friendships f "
                     "JOIN users u ON u.id = CASE "
                     "  WHEN f.initiator_id = :me THEN f.receiver_id "
                     "  ELSE f.initiator_id END "
-                    "JOIN client_sessions cs ON cs.user_id = u.id "
-                    "WHERE (f.initiator_id = :me OR f.receiver_id = :me) "
-                    "  AND f.status = 'accepted' "
+                    "LEFT JOIN client_sessions cs "
+                    "  ON cs.user_id = u.id "
                     "  AND cs.disconnected_at IS NULL "
                     "  AND cs.last_heartbeat > NOW() - INTERVAL '60 seconds' "
+                    "WHERE (f.initiator_id = :me OR f.receiver_id = :me) "
+                    "  AND f.status = 'accepted' "
                     "ORDER BY u.id, u.username ASC"
                 ),
                 {"me": me},
@@ -5510,8 +5518,9 @@ async def list_online_friends(payload: dict = Depends(verify_token)):
                 "arena_id":            r[2],
                 "avatar":              r[3],
                 "equipped_badge_icon": r[4],
-                "game":                r[5],
-                "status":              r[6],
+                "game":                r[5] if r[7] else None,
+                "status":              r[6] if r[7] else None,
+                "client_online":       bool(r[7]),
             }
             for r in rows
         ]
