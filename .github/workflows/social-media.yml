@@ -1,0 +1,64 @@
+name: Social Media Automation
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  pull_request:
+    types: [closed]
+
+jobs:
+  social-media:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true) || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          pip install -r social-media/requirements.txt
+          
+      - name: Determine event type and data
+        id: event_data
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "event_type=release" >> $GITHUB_OUTPUT
+            echo 'event_data={"release":{"tag_name":"${{ github.event.release.tag_name }}","body":"${{ github.event.release.body }}"}}' >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "pull_request" && "${{ github.event.pull_request.merged }}" == "true" ]]; then
+            echo "event_type=pull_request" >> $GITHUB_OUTPUT
+            echo 'event_data={"pull_request":{"title":"${{ github.event.pull_request.title }}","body":"${{ github.event.pull_request.body }}","number":"${{ github.event.pull_request.number }}"}}' >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "event_type=push" >> $GITHUB_OUTPUT
+            echo "event_data={\"ref\":\"${{ github.ref }}\",\"commits\":[{\"message\":\"${{ github.event.head_commit.message }}\"}]}" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Post to Social Media
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          FACEBOOK_ACCESS_TOKEN: ${{ secrets.FACEBOOK_ACCESS_TOKEN }}
+          FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
+          TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
+          TWITTER_API_SECRET: ${{ secrets.TWITTER_API_SECRET }}
+          TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
+          TWITTER_ACCESS_SECRET: ${{ secrets.TWITTER_ACCESS_SECRET }}
+          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+        run: |
+          python social-media/auto_post.py --event ${{ steps.event_data.outputs.event_type }} --data ${{ steps.event_data.outputs.event_data }}
+          
+      - name: Test Run (for debugging)
+        if: failure()
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+        run: |
+          python social-media/auto_post.py --event ${{ steps.event_data.outputs.event_type }} --test

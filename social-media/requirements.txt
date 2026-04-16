@@ -1,0 +1,18 @@
+# Discord
+discord.py==2.3.2
+
+# Facebook
+facebook-sdk==3.1.0
+
+# Twitter/X
+tweepy==4.14.0
+
+# Reddit
+praw==7.7.1
+
+# Instagram (via Facebook)
+requests==2.31.0
+
+# General
+python-dotenv==1.0.0
+pillow==10.0.0
