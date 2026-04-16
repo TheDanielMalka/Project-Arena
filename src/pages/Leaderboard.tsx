@@ -24,7 +24,7 @@ import { useReportStore }       from "@/stores/reportStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { getRankTier, RANK_TIERS } from "@/lib/rankTiers";
 import type { LeaderboardPlayerRow, TicketReason } from "@/types";
-import { apiGetLeaderboard } from "@/lib/engine-api";
+import { apiGetLeaderboard, apiSubmitSupportTicket } from "@/lib/engine-api";
 import { getAvatarImageUrlFromStorage, identityPortraitCropClassName } from "@/lib/avatarPresets";
 import { renderForgeShopIcon } from "@/lib/forgeItemIcon";
 import { cn } from "@/lib/utils";
@@ -222,19 +222,32 @@ function PlayerActionPopover({ player, children }: PlayerActionPopoverProps) {
   };
 
   // ── Report ──────────────────────────────────────────────────
-  const handleReport = () => {
+  const handleReport = async () => {
     if (!currentUser || !reason || reportDesc.trim().length < 10) return;
     setReportSubmitting(true);
-    setTimeout(() => {
+    const token = useUserStore.getState().token ?? "";
+    const result = await apiSubmitSupportTicket(token, {
+      reason: reason as TicketReason,
+      description: reportDesc.trim(),
+      category: "player_report",
+      reported_id: player.id,
+    });
+    if (result.ok) {
       submitReport({
         reporterId: currentUser.id, reporterName: currentUser.username,
         reportedId: player.id, reportedUsername: player.username,
         reason: reason as TicketReason, description: reportDesc.trim(),
       });
-      addNotif({ type: "system", title: "🚩 Report Submitted", message: `Report against ${player.username} sent to moderation.` });
-      setReportSubmitting(false);
-      setReportDone(true);
-    }, 700);
+    }
+    addNotif({
+      type: "system",
+      title: result.ok ? "🚩 Report Submitted" : "Report Failed",
+      message: result.ok
+        ? `Report against ${player.username} sent to moderation.`
+        : ("detail" in result ? result.detail : "Could not submit report."),
+    });
+    setReportSubmitting(false);
+    setReportDone(true);
   };
 
   // ─────────────────────────────────────────────────────────────
@@ -538,7 +551,7 @@ function PlayerActionPopover({ player, children }: PlayerActionPopoverProps) {
                       size="sm"
                       className="flex-1 h-7 text-xs bg-destructive hover:bg-destructive/90"
                       disabled={!reason || reportDesc.trim().length < 10 || reportSubmitting}
-                      onClick={handleReport}
+                      onClick={() => void handleReport()}
                     >
                       {reportSubmitting ? "Sending…" : "Submit"}
                     </Button>

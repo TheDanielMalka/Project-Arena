@@ -17,6 +17,7 @@ import {
 import { getRankTier } from "@/lib/rankTiers";
 import { usePlayerStore } from "@/stores/playerStore";
 import { useReportStore } from "@/stores/reportStore";
+import { apiSubmitSupportTicket } from "@/lib/engine-api";
 import { useUserStore } from "@/stores/userStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { ignoredRefMatchesContext, useFriendStore } from "@/stores/friendStore";
@@ -77,12 +78,17 @@ function ReportModal({ open, onClose, reportedId, reportedUsername }: ReportModa
 
   const canSubmit = reason !== "" && description.trim().length >= 10;
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!user || !canSubmit) return;
     setSubmitting(true);
-    // DB-ready: replace with POST /api/reports
-    if (submitTidRef.current !== null) window.clearTimeout(submitTidRef.current);
-    submitTidRef.current = window.setTimeout(() => {
+    const token = useUserStore.getState().token ?? "";
+    const result = await apiSubmitSupportTicket(token, {
+      reason: reason as TicketReason,
+      description: description.trim(),
+      category: "player_report",
+      reported_id: reportedId,
+    });
+    if (result.ok) {
       submitReport({
         reporterId:        user.id,
         reporterName:      user.username,
@@ -98,8 +104,14 @@ function ReportModal({ open, onClose, reportedId, reportedUsername }: ReportModa
       });
       setSubmitting(false);
       setStep("success");
-      submitTidRef.current = null;
-    }, 800);
+    } else {
+      addNotif({
+        type: "system",
+        title: "Report Failed",
+        message: "detail" in result ? result.detail : "Could not submit report. Try again.",
+      });
+      setSubmitting(false);
+    }
   };
 
   const handleClose = () => {
@@ -186,7 +198,7 @@ function ReportModal({ open, onClose, reportedId, reportedUsername }: ReportModa
               </Button>
               <Button
                 className="flex-1 bg-destructive hover:bg-destructive/90 text-destructive-foreground"
-                onClick={handleSubmit}
+                onClick={() => void handleSubmit()}
                 disabled={!canSubmit || submitting}
               >
                 {submitting ? "Submitting…" : "Submit Report"}

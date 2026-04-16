@@ -15,6 +15,7 @@ import { useNotificationStore } from "@/stores/notificationStore";
 import { useUserStore } from "@/stores/userStore";
 import { ignoredRefMatchesContext, useFriendStore } from "@/stores/friendStore";
 import { useReportStore } from "@/stores/reportStore";
+import { apiSubmitSupportTicket } from "@/lib/engine-api";
 import { usePlayerStore } from "@/stores/playerStore";
 import { useMessageStore } from "@/stores/messageStore";
 import type { TicketReason } from "@/types";
@@ -129,20 +130,31 @@ export function PlayerCardPopover({
     onClose();
   };
 
-  const handleReport = () => {
+  const handleReport = async () => {
     if (!user) return;
-    submitReport({
-      reporterId: user.id,
-      reporterName: user.username,
-      reportedId: targetId,
-      reportedUsername: username,
+    const tkn = useUserStore.getState().token ?? "";
+    const result = await apiSubmitSupportTicket(tkn, {
       reason: reportReason,
-      description: reportDesc,
+      description: reportDesc.trim() || reportReason,
+      category: "player_report",
+      reported_id: targetId,
     });
+    if (result.ok) {
+      submitReport({
+        reporterId: user.id,
+        reporterName: user.username,
+        reportedId: targetId,
+        reportedUsername: username,
+        reason: reportReason,
+        description: reportDesc,
+      });
+    }
     useNotificationStore.getState().addNotification({
       type: "system",
-      title: "Report Submitted",
-      message: `Your report on ${username} has been sent to the moderation team. We'll review it shortly.`,
+      title: result.ok ? "Report Submitted" : "Report Failed",
+      message: result.ok
+        ? `Your report on ${username} has been sent to the moderation team.`
+        : ("detail" in result ? result.detail : "Could not submit report."),
     });
     setReportStep("done");
     setTimeout(onClose, 1200);
@@ -419,7 +431,7 @@ export function PlayerCardPopover({
                   <button
                     type="button"
                     disabled={!reportDesc.trim()}
-                    onClick={handleReport}
+                    onClick={() => void handleReport()}
                     className="flex-1 text-[10px] bg-destructive text-destructive-foreground rounded-md py-1 disabled:opacity-40"
                   >
                     Submit
