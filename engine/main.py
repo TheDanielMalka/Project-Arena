@@ -5556,8 +5556,7 @@ async def get_pending_hub_invites(payload: dict = Depends(verify_token)):
                 "inviter_id":       _meta(r[1], "inviter_id"),
                 "inviter_username": _meta(r[1], "inviter_username", "A player"),
                 "game":             _meta(r[1], "game"),
-                "stake":            _meta(r[1], "stake"),
-                "currency":         _meta(r[1], "currency"),
+                "code":             _meta(r[1], "code"),
                 "created_at":       r[2].isoformat() if r[2] else None,
             }
             for r in rows
@@ -5573,19 +5572,14 @@ class HubQuickInviteRequest(BaseModel):
 @app.post("/hub/quick-invite", status_code=201)
 async def hub_quick_invite(req: HubQuickInviteRequest, payload: dict = Depends(verify_token)):
     """
-    POST /hub/quick-invite — send a game invite to an accepted friend from the desktop HUB.
+    POST /hub/quick-invite — invite an accepted friend to the caller's current open room.
 
-    Flow:
-      1. Verify accepted friendship and no suspension.
-      2. Reuse caller's existing waiting room if one exists; otherwise create a
-         minimal 1v1 custom room (0.01 AT, no password, game auto-detected from
-         the caller's linked Steam/Riot account).
-      3. Duplicate guard: 409 if an unread invite from this caller to this friend
-         for the same match already exists.
-      4. Insert a match_invite notification for to_user_id.
+    The caller MUST have a 'waiting' match already open (created on the website).
+    No match is created here; no balance check on the invitee — they handle that
+    themselves on the website when they click JOIN.
 
     Returns { match_id, code, invite_url } so the desktop client can open the
-    browser directly to the lobby page on accept.
+    browser directly to the custom-matches lobby on accept.
     """
     me: str = payload["sub"]
     to_uid  = req.to_user_id.strip()
@@ -5612,71 +5606,28 @@ async def hub_quick_invite(req: HubQuickInviteRequest, payload: dict = Depends(v
             if not friendship:
                 raise HTTPException(403, "You are not friends with this user")
 
-            # 2. Suspension / ban check
-            _assert_not_suspended(session, me)
-
-            # 3. Look up caller's profile
-            user_row = session.execute(
-                text("SELECT steam_id, riot_id, wallet_address FROM users WHERE id = :uid"),
-                {"uid": me},
-            ).fetchone()
-            if not user_row:
-                raise HTTPException(404, "User not found")
-            steam_id, riot_id, wallet_address = user_row
-
-            # 4. Reuse existing waiting room or create a new one
-            existing_room = session.execute(
+            # 2. Caller must have an open waiting room (created on the website)
+            room = session.execute(
                 text(
-                    "SELECT m.id, m.code, m.game FROM matches m "
+                    "SELECT m.id, m.code, m.game "
+                    "FROM matches m "
                     "JOIN match_players mp ON mp.match_id = m.id "
                     "WHERE mp.user_id = :uid AND m.status = 'waiting' "
                     "LIMIT 1"
                 ),
                 {"uid": me},
             ).fetchone()
-
-            if existing_room:
-                match_id  = str(existing_room[0])
-                room_code = existing_room[1]
-                game      = existing_room[2]
-            else:
-                if steam_id:
-                    game = "CS2"
-                elif riot_id:
-                    game = "Valorant"
-                else:
-                    raise HTTPException(
-                        400,
-                        "Link a game account (Steam or Riot) on project-arena.com before sending invites"
-                    )
-
-                import secrets as _secrets
-                import string as _string
-                _chars = _string.ascii_uppercase + _string.digits
-                room_code = "ARENA-" + "".join(_secrets.choice(_chars) for _ in range(5))
-
-                new_match = session.execute(
-                    text(
-                        "INSERT INTO matches "
-                        "  (type, game, host_id, mode, bet_amount, stake_currency, "
-                        "   code, password, max_players, max_per_team) "
-                        "VALUES ('custom', :g, :host, '1v1', 0.01, 'AT', "
-                        "        :code, NULL, 2, 1) "
-                        "RETURNING id"
-                    ),
-                    {"g": game, "host": me, "code": room_code},
-                ).fetchone()
-                match_id = str(new_match[0])
-
-                session.execute(
-                    text(
-                        "INSERT INTO match_players (match_id, user_id, wallet_address, team) "
-                        "VALUES (:mid, :uid, :w, 'A')"
-                    ),
-                    {"mid": match_id, "uid": me, "w": wallet_address},
+            if not room:
+                raise HTTPException(
+                    404,
+                    "Open a match room on the website first, then invite from the client"
                 )
 
-            # 5. Duplicate invite guard
+            match_id  = str(room[0])
+            room_code = room[1]
+            game      = room[2] or "—"
+
+            # 3. Duplicate invite guard
             dup = session.execute(
                 text(
                     "SELECT id FROM notifications "
@@ -5692,17 +5643,17 @@ async def hub_quick_invite(req: HubQuickInviteRequest, payload: dict = Depends(v
             if dup:
                 raise HTTPException(
                     409,
-                    "You already have a pending invite to this friend for this room"
+                    "You already sent an invite to this friend for this room"
                 )
 
-            # 6. Caller's display name
+            # 4. Caller's display name
             inviter = session.execute(
                 text("SELECT username FROM users WHERE id = :uid"),
                 {"uid": me},
             ).fetchone()
             inviter_name = inviter[0] if inviter else "A player"
 
-            # 7. Send match_invite notification
+            # 5. Send match_invite notification — no balance check (friend decides on website)
             session.execute(
                 text(
                     "INSERT INTO notifications "
@@ -5712,14 +5663,13 @@ async def hub_quick_invite(req: HubQuickInviteRequest, payload: dict = Depends(v
                 {
                     "uid":   to_uid,
                     "title": f"{inviter_name} invited you to a match",
-                    "msg":   f"{inviter_name} wants to play with you. Room: {room_code}",
+                    "msg":   f"{inviter_name} wants to play {game} with you. Room: {room_code}",
                     "meta":  _json.dumps({
                         "inviter_id":       me,
                         "inviter_username": inviter_name,
                         "match_id":         match_id,
                         "game":             game,
-                        "stake":            "0.01",
-                        "currency":         "AT",
+                        "code":             room_code,
                     }),
                 },
             )
@@ -5735,7 +5685,7 @@ async def hub_quick_invite(req: HubQuickInviteRequest, payload: dict = Depends(v
     return {
         "match_id":   match_id,
         "code":       room_code,
-        "invite_url": f"{frontend_url}/lobby",
+        "invite_url": f"{frontend_url}/lobby?tab=custom",
     }
 
 

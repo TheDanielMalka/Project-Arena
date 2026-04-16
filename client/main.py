@@ -2173,12 +2173,27 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                                         try: notify_fn("Network error — invite not sent")
                                         except Exception: pass
                                 elif "detail" in result:
-                                    if notify_fn:
-                                        try: notify_fn(f"Invite: {result['detail']}")
-                                        except Exception: pass
+                                    detail = result["detail"]
+                                    # 404 = no open room; show a clear actionable message
+                                    if "website" in detail.lower() or "open" in detail.lower():
+                                        if notify_fn:
+                                            try: notify_fn("Open a room on project-arena.com first, then invite")
+                                            except Exception: pass
+                                    elif "already" in detail.lower():
+                                        if notify_fn:
+                                            try: notify_fn(f"Already invited {target_name} to this room")
+                                            except Exception: pass
+                                    else:
+                                        if notify_fn:
+                                            try: notify_fn(f"Invite failed: {detail}")
+                                            except Exception: pass
                                 else:
+                                    code = result.get("code", "")
+                                    msg  = f"Invite sent to {target_name}"
+                                    if code:
+                                        msg += f"  ·  Room: {code}"
                                     if notify_fn:
-                                        try: notify_fn(f"Invite sent to {target_name}")
+                                        try: notify_fn(msg)
                                         except Exception: pass
 
                             win.after(0, _after)
@@ -2195,13 +2210,13 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             _hub_invite_modal_open[0] = True
 
             notif_id     = invite.get("notification_id", "")
-            match_id     = invite.get("match_id") or ""
             inviter_name = invite.get("inviter_username") or "A player"
-            game_name    = invite.get("game") or "a match"
+            game_name    = invite.get("game") or "—"
+            room_code    = invite.get("code") or ""
 
             modal = ctk.CTkToplevel(win)
             modal.title("Game Invite")
-            modal.geometry("420x230")
+            modal.geometry("420x260")
             modal.resizable(False, False)
             modal.configure(fg_color=BRAND["bg"])
             modal.transient(win)
@@ -2222,14 +2237,33 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 modal, text="GAME INVITE",
                 font=ctk.CTkFont(family=FONT_DISPLAY, size=16, weight="bold"),
                 text_color=BRAND["text"],
-            ).pack(pady=(18, 4))
+            ).pack(pady=(16, 2))
 
             ctk.CTkLabel(
                 modal,
-                text=f"{inviter_name.upper()} wants to play {game_name} with you",
+                text=f"{inviter_name.upper()} invited you to play {game_name}",
                 font=ctk.CTkFont(family=FONT_MONO, size=11),
                 text_color=BRAND["hud_glow"],
-            ).pack(pady=(0, 14))
+            ).pack(pady=(0, 6))
+
+            if room_code:
+                code_row = ctk.CTkFrame(modal, fg_color=BRAND["hud_panel_2"],
+                                        corner_radius=4)
+                code_row.pack(padx=22, fill="x", pady=(0, 10))
+                ctk.CTkLabel(
+                    code_row,
+                    text=f"ROOM  {room_code}",
+                    font=ctk.CTkFont(family=FONT_MONO, size=13, weight="bold"),
+                    text_color=BRAND["cyan"],
+                ).pack(pady=8)
+
+            ctk.CTkLabel(
+                modal,
+                text="ACCEPT opens the match lobby in your browser.\nChoose your side, enter the room password, sign contract.",
+                font=ctk.CTkFont(family=FONT_MONO, size=9),
+                text_color=BRAND["text_muted"],
+                justify="center",
+            ).pack(pady=(0, 10))
 
             btn_row = ctk.CTkFrame(modal, fg_color="transparent")
             btn_row.pack(fill="x", padx=22)
@@ -2257,12 +2291,14 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                     def _after():
                         _on_modal_close()
                         if result and "detail" not in result:
+                            # Navigate to custom matches tab — user finds room by code,
+                            # chooses side, enters password, signs contract on the website.
                             frontend = config.get("frontend_url", "https://project-arena.com")
                             import webbrowser
-                            webbrowser.open(f"{frontend}/lobby")
+                            webbrowser.open(f"{frontend}/lobby?tab=custom")
                         elif result and result.get("detail"):
                             if notify_fn:
-                                try: notify_fn(f"Could not join: {result['detail']}")
+                                try: notify_fn(f"Room no longer available: {result['detail']}")
                                 except Exception: pass
 
                     win.after(0, _after)
