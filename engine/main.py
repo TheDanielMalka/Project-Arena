@@ -5465,6 +5465,239 @@ async def block_user(user_id: str, payload: dict = Depends(verify_token)):
     return {"blocked": True, "user_id": user_id}
 
 
+# ── Hub: Friends Online + Quick Invite ─────────────────────────────────────────
+
+
+@app.get("/friends/online")
+async def list_online_friends(payload: dict = Depends(verify_token)):
+    """
+    GET /friends/online — all accepted friends, with a client_online flag.
+
+    Returns every accepted friend regardless of whether they have the desktop
+    client running. The client_online / client_game fields are populated only
+    when the friend has an active client_sessions row (heartbeat within 60s).
+    This way friends logged into the website (no desktop client) still appear
+    and can be invited — they'll see the invite via the website notification bell.
+    """
+    me: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(
+                text(
+                    "SELECT DISTINCT ON (u.id) "
+                    "       u.id, u.username, u.arena_id, u.avatar, "
+                    "       u.equipped_badge_icon, "
+                    "       cs.game, cs.status, "
+                    "       (cs.id IS NOT NULL "
+                    "        AND cs.disconnected_at IS NULL "
+                    "        AND cs.last_heartbeat > NOW() - INTERVAL '60 seconds'"
+                    "       ) AS client_online "
+                    "FROM friendships f "
+                    "JOIN users u ON u.id = CASE "
+                    "  WHEN f.initiator_id = :me THEN f.receiver_id "
+                    "  ELSE f.initiator_id END "
+                    "LEFT JOIN client_sessions cs "
+                    "  ON cs.user_id = u.id "
+                    "  AND cs.disconnected_at IS NULL "
+                    "  AND cs.last_heartbeat > NOW() - INTERVAL '60 seconds' "
+                    "WHERE (f.initiator_id = :me OR f.receiver_id = :me) "
+                    "  AND f.status = 'accepted' "
+                    "ORDER BY u.id, u.username ASC"
+                ),
+                {"me": me},
+            ).fetchall()
+    except Exception as exc:
+        logger.error("list_online_friends error: %s", exc)
+        raise HTTPException(500, "Failed to load online friends")
+
+    return {
+        "friends": [
+            {
+                "user_id":             str(r[0]),
+                "username":            r[1],
+                "arena_id":            r[2],
+                "avatar":              r[3],
+                "equipped_badge_icon": r[4],
+                "game":                r[5] if r[7] else None,
+                "status":              r[6] if r[7] else None,
+                "client_online":       bool(r[7]),
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.get("/hub/invites/pending")
+async def get_pending_hub_invites(payload: dict = Depends(verify_token)):
+    """
+    GET /hub/invites/pending — unread match_invite notifications for the caller.
+
+    Polled by the desktop client every 5 seconds to detect incoming game invites
+    from friends. Returns up to 10 most-recent unread match_invite notifications.
+    """
+    me: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(
+                text(
+                    "SELECT id, metadata, created_at "
+                    "FROM notifications "
+                    "WHERE user_id = :me "
+                    "  AND type = 'match_invite' "
+                    "  AND read = FALSE "
+                    "ORDER BY created_at DESC "
+                    "LIMIT 10"
+                ),
+                {"me": me},
+            ).fetchall()
+    except Exception as exc:
+        logger.error("get_pending_hub_invites error: %s", exc)
+        raise HTTPException(500, "Failed to load pending invites")
+
+    def _meta(m, key, default=None):
+        return (m or {}).get(key, default) if isinstance(m, dict) else default
+
+    return {
+        "invites": [
+            {
+                "notification_id":  str(r[0]),
+                "match_id":         _meta(r[1], "match_id"),
+                "inviter_id":       _meta(r[1], "inviter_id"),
+                "inviter_username": _meta(r[1], "inviter_username", "A player"),
+                "game":             _meta(r[1], "game"),
+                "code":             _meta(r[1], "code"),
+                "created_at":       r[2].isoformat() if r[2] else None,
+            }
+            for r in rows
+        ]
+    }
+
+
+class HubQuickInviteRequest(BaseModel):
+    """POST /hub/quick-invite body."""
+    to_user_id: str
+
+
+@app.post("/hub/quick-invite", status_code=201)
+async def hub_quick_invite(req: HubQuickInviteRequest, payload: dict = Depends(verify_token)):
+    """
+    POST /hub/quick-invite — invite an accepted friend to the caller's current open room.
+
+    The caller MUST have a 'waiting' match already open (created on the website).
+    No match is created here; no balance check on the invitee — they handle that
+    themselves on the website when they click JOIN.
+
+    Returns { match_id, code, invite_url } so the desktop client can open the
+    browser directly to the custom-matches lobby on accept.
+    """
+    me: str = payload["sub"]
+    to_uid  = req.to_user_id.strip()
+
+    if me == to_uid:
+        raise HTTPException(400, "Cannot invite yourself")
+
+    _check_rate_limit(f"hub_invite:{me}", max_calls=10, window_secs=60)
+
+    import json as _json
+
+    try:
+        with SessionLocal() as session:
+            # 1. Verified friendship
+            friendship = session.execute(
+                text(
+                    "SELECT id FROM friendships "
+                    "WHERE ((initiator_id = :me AND receiver_id = :them) "
+                    "    OR (initiator_id = :them AND receiver_id = :me)) "
+                    "  AND status = 'accepted'"
+                ),
+                {"me": me, "them": to_uid},
+            ).fetchone()
+            if not friendship:
+                raise HTTPException(403, "You are not friends with this user")
+
+            # 2. Caller must have an open waiting room (created on the website)
+            room = session.execute(
+                text(
+                    "SELECT m.id, m.code, m.game "
+                    "FROM matches m "
+                    "JOIN match_players mp ON mp.match_id = m.id "
+                    "WHERE mp.user_id = :uid AND m.status = 'waiting' "
+                    "LIMIT 1"
+                ),
+                {"uid": me},
+            ).fetchone()
+            if not room:
+                raise HTTPException(
+                    404,
+                    "Open a match room on the website first, then invite from the client"
+                )
+
+            match_id  = str(room[0])
+            room_code = room[1]
+            game      = room[2] or "—"
+
+            # 3. Duplicate invite guard
+            dup = session.execute(
+                text(
+                    "SELECT id FROM notifications "
+                    "WHERE user_id = :to "
+                    "  AND type = 'match_invite' "
+                    "  AND read = FALSE "
+                    "  AND (metadata->>'inviter_id') = :me "
+                    "  AND (metadata->>'match_id') = :mid "
+                    "LIMIT 1"
+                ),
+                {"to": to_uid, "me": me, "mid": match_id},
+            ).fetchone()
+            if dup:
+                raise HTTPException(
+                    409,
+                    "You already sent an invite to this friend for this room"
+                )
+
+            # 4. Caller's display name
+            inviter = session.execute(
+                text("SELECT username FROM users WHERE id = :uid"),
+                {"uid": me},
+            ).fetchone()
+            inviter_name = inviter[0] if inviter else "A player"
+
+            # 5. Send match_invite notification — no balance check (friend decides on website)
+            session.execute(
+                text(
+                    "INSERT INTO notifications "
+                    "  (user_id, type, title, message, metadata) "
+                    "VALUES (:uid, 'match_invite', :title, :msg, :meta::jsonb)"
+                ),
+                {
+                    "uid":   to_uid,
+                    "title": f"{inviter_name} invited you to a match",
+                    "msg":   f"{inviter_name} wants to play {game} with you. Room: {room_code}",
+                    "meta":  _json.dumps({
+                        "inviter_id":       me,
+                        "inviter_username": inviter_name,
+                        "match_id":         match_id,
+                        "game":             game,
+                        "code":             room_code,
+                    }),
+                },
+            )
+            session.commit()
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("hub_quick_invite error: %s", exc)
+        raise HTTPException(500, "Failed to send invite")
+
+    frontend_url = os.environ.get("FRONTEND_URL", "https://project-arena.com")
+    return {
+        "match_id":   match_id,
+        "code":       room_code,
+        "invite_url": f"{frontend_url}/lobby?tab=custom",
+    }
+
+
 # ── Direct Messages ────────────────────────────────────────────────────────────
 
 class SendMessageRequest(BaseModel):
