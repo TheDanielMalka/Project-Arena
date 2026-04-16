@@ -20,6 +20,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useUserStore } from "@/stores/userStore";
 import { useReportStore } from "@/stores/reportStore";
+import { apiSubmitSupportTicket } from "@/lib/engine-api";
 import type { SupportTopic, TicketReason } from "@/types";
 import { getOpponentSlotForUser } from "@/lib/matchOpponentSlot";
 import type { Match } from "@/types";
@@ -75,6 +76,8 @@ export function SupportTicketDialog({
   const [description, setDescription] = useState("");
   const [attachmentPreview, setAttachmentPreview] = useState<string | null>(null);
   const [attachmentName, setAttachmentName] = useState<string | null>(null);
+  const [descError, setDescError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   const reset = () => {
     setReason("fake_screenshot");
@@ -82,6 +85,8 @@ export function SupportTicketDialog({
     setDescription("");
     setAttachmentPreview(null);
     setAttachmentName(null);
+    setDescError("");
+    setSubmitting(false);
   };
 
   useEffect(() => {
@@ -120,67 +125,87 @@ export function SupportTicketDialog({
     reader.readAsDataURL(file);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!user) {
       toast({ title: "Sign in required", variant: "destructive" });
       return;
     }
     const trimmed = description.trim();
     if (trimmed.length < 12) {
-      toast({
-        title: "Add more detail",
-        description: "Please describe what happened (at least a few words).",
-        variant: "destructive",
-      });
+      setDescError("Please add more detail (at least a few words).");
       return;
     }
+    setDescError("");
+    setSubmitting(true);
+
+    const token = useUserStore.getState().token ?? "";
 
     if (mode === "general_support") {
-      const body = `[${TOPIC_LABELS[topic]}]\n\n${trimmed}`;
-      submitReport({
-        reporterId: user.id,
-        reporterName: user.username,
-        reportedId: PLATFORM_REPORTED_ID,
-        reportedUsername: PLATFORM_REPORTED_USERNAME,
+      const result = await apiSubmitSupportTicket(token, {
         reason: "other",
-        description: body,
-        ticketCategory: "general_support",
-        supportTopic: topic,
-        attachmentDataUrl: attachmentPreview ?? undefined,
+        description: `[${TOPIC_LABELS[topic]}]\n\n${trimmed}`,
+        category: "general_support",
+        topic,
+        reported_id: PLATFORM_REPORTED_ID,
       });
-      toast({
-        title: "Ticket sent",
-        description: "Support will review your message. You’ll see updates in notifications when the backend is live.",
-      });
+      if (result.ok) {
+        submitReport({
+          reporterId: user.id,
+          reporterName: user.username,
+          reportedId: PLATFORM_REPORTED_ID,
+          reportedUsername: PLATFORM_REPORTED_USERNAME,
+          reason: "other",
+          description: `[${TOPIC_LABELS[topic]}]\n\n${trimmed}`,
+          ticketCategory: "general_support",
+          supportTopic: topic,
+          attachmentDataUrl: attachmentPreview ?? undefined,
+        });
+        toast({ title: "Ticket sent", description: "Support will review your message shortly." });
+        reset();
+        onOpenChange(false);
+        onSubmitted?.();
+      } else {
+        toast({ title: "Failed to send", description: "detail" in result ? result.detail : "Unknown error", variant: "destructive" });
+        setSubmitting(false);
+      }
     } else {
       if (!match) {
         toast({ title: "No match selected", variant: "destructive" });
+        setSubmitting(false);
         return;
       }
       const myId = user.id;
       const oppSlot = getOpponentSlotForUser(match, myId);
       const oppDisplay = slotToProfileUsername(oppSlot, user.id, user.username);
       const header = `Match ${match.id} · ${match.game} ${match.mode} · vs ${oppDisplay}\n\n`;
-      submitReport({
-        reporterId: user.id,
-        reporterName: user.username,
-        reportedId: oppSlot,
-        reportedUsername: oppDisplay,
+      const result = await apiSubmitSupportTicket(token, {
         reason,
         description: header + trimmed,
-        ticketCategory: "match_dispute",
-        matchId: match.id,
-        attachmentDataUrl: attachmentPreview ?? undefined,
+        category: "match_dispute",
+        match_id: match.id,
+        reported_id: oppSlot,
       });
-      toast({
-        title: "Appeal submitted",
-        description: "An admin will see this under Reports. Keep any extra proof handy.",
-      });
+      if (result.ok) {
+        submitReport({
+          reporterId: user.id,
+          reporterName: user.username,
+          reportedId: oppSlot,
+          reportedUsername: oppDisplay,
+          reason,
+          description: header + trimmed,
+          ticketCategory: "match_dispute",
+          matchId: match.id,
+          attachmentDataUrl: attachmentPreview ?? undefined,
+        });
+        toast({ title: "Appeal submitted", description: "An admin will review this under Reports." });
+        reset();
+        onOpenChange(false);
+        onSubmitted?.();
+      } else {
+        toast({ title: "Failed to submit", description: "detail" in result ? result.detail : "Unknown error", variant: "destructive" });
+        setSubmitting(false);
+      }
     }
-
-    reset();
-    onOpenChange(false);
-    onSubmitted?.();
   };
 
   return (
@@ -244,14 +269,15 @@ export function SupportTicketDialog({
             <Label className="text-xs">Details</Label>
             <Textarea
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => { setDescription(e.target.value); if (descError) setDescError(""); }}
               placeholder={
                 mode === "match_dispute"
                   ? "What went wrong with this match?"
                   : "What do you need help with?"
               }
-              className="min-h-[100px] bg-secondary border-border text-sm resize-y"
+              className={`min-h-[100px] bg-secondary border-border text-sm resize-y ${descError ? "border-destructive" : ""}`}
             />
+            {descError && <p className="text-xs text-destructive">{descError}</p>}
           </div>
 
           <div className="space-y-1.5">
@@ -289,8 +315,8 @@ export function SupportTicketDialog({
           <Button type="button" variant="outline" onClick={() => handleClose(false)}>
             Cancel
           </Button>
-          <Button type="button" className="glow-green font-display" onClick={handleSubmit}>
-            Confirm & send ticket
+          <Button type="button" className="glow-green font-display" onClick={() => void handleSubmit()} disabled={submitting}>
+            {submitting ? "Sending…" : "Confirm & send ticket"}
           </Button>
         </DialogFooter>
       </DialogContent>

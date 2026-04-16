@@ -3171,6 +3171,33 @@ export async function apiAdminFraudExport(token: string): Promise<
   }
 }
 
+// ── POST /support/tickets ─────────────────────────────────────────────────────
+export async function apiSubmitSupportTicket(
+  token: string,
+  params: {
+    reason: string;
+    description: string;
+    category: string;
+    topic?: string;
+    reported_id?: string;
+    match_id?: string;
+    attachment_url?: string;
+  },
+): Promise<{ ok: true; id: string } | { ok: false; detail: string }> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/support/tickets`, token, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false, detail: parseFastApiDetail(raw.detail) ?? "Failed" };
+    return { ok: true, id: String(raw.id ?? "") };
+  } catch {
+    return { ok: false, detail: "Network error" };
+  }
+}
+
 // ── POST /admin/match/{id}/declare-winner ────────────────────────────────────
 export async function apiAdminDeclareWinner(
   token: string,
