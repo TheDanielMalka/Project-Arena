@@ -849,9 +849,12 @@ class EngineClient:
                 timeout=5,
             )
             if r.status_code == 200:
-                return r.json().get("friends", [])
+                friends = r.json().get("friends", [])
+                logger.info(f"get_online_friends: {len(friends)} accepted friend(s)")
+                return friends
+            logger.warning(f"get_online_friends: HTTP {r.status_code} — {r.text[:200]}")
         except Exception as e:
-            logger.debug(f"get_online_friends: {e}")
+            logger.warning(f"get_online_friends error: {e}")
         return []
 
     def get_pending_hub_invites(self, token: str) -> list[dict]:
