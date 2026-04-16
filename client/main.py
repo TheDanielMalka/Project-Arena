@@ -838,6 +838,74 @@ class EngineClient:
         """Phase 6: GET /version. Stub."""
         return None
 
+    # ── HUB — Friends Online + Quick Invite ───────────────────────────────────
+
+    def get_online_friends(self, token: str) -> list[dict]:
+        """GET /friends/online → [{user_id, username, arena_id, avatar, game, status}]"""
+        try:
+            r = self.client.get(
+                f"{self.base_url}/friends/online",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=5,
+            )
+            if r.status_code == 200:
+                return r.json().get("friends", [])
+        except Exception as e:
+            logger.debug(f"get_online_friends: {e}")
+        return []
+
+    def get_pending_hub_invites(self, token: str) -> list[dict]:
+        """GET /hub/invites/pending → [{notification_id, match_id, inviter_username, ...}]"""
+        try:
+            r = self.client.get(
+                f"{self.base_url}/hub/invites/pending",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=5,
+            )
+            if r.status_code == 200:
+                return r.json().get("invites", [])
+        except Exception as e:
+            logger.debug(f"get_pending_hub_invites: {e}")
+        return []
+
+    def hub_quick_invite(self, token: str, to_user_id: str) -> dict | None:
+        """POST /hub/quick-invite → {match_id, code, invite_url} or {detail} on error."""
+        try:
+            r = self.client.post(
+                f"{self.base_url}/hub/quick-invite",
+                json={"to_user_id": to_user_id},
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10,
+            )
+            if r.status_code == 201:
+                return r.json()
+            try:
+                return {"detail": r.json().get("detail", f"Error {r.status_code}")}
+            except Exception:
+                return {"detail": f"Error {r.status_code}"}
+        except Exception as e:
+            logger.debug(f"hub_quick_invite: {e}")
+            return None
+
+    def respond_to_notification(self, token: str, notification_id: str, action: str) -> dict | None:
+        """POST /notifications/{id}/respond {action: accept|decline} → match details or {action: decline}."""
+        try:
+            r = self.client.post(
+                f"{self.base_url}/notifications/{notification_id}/respond",
+                json={"action": action},
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10,
+            )
+            if r.status_code == 200:
+                return r.json()
+            try:
+                return {"detail": r.json().get("detail", f"Error {r.status_code}")}
+            except Exception:
+                return {"detail": f"Error {r.status_code}"}
+        except Exception as e:
+            logger.debug(f"respond_to_notification: {e}")
+            return None
+
 
 # ── Match Monitor ──────────────────────────────────────────────────────────────
 class MatchMonitor:
@@ -2019,6 +2087,251 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         ).pack(anchor="w")
 
     _rebuild_identity()
+
+    # ── HUB Panel — Friends Online + Game Invites ─────────────────────────────
+    # Feature flag: set ARENA_HUB_ENABLED=0 to skip the entire block at runtime.
+    _hub_enabled = os.environ.get("ARENA_HUB_ENABLED", "1").lower() not in ("0", "false", "no")
+
+    if _hub_enabled:
+        hub_card = _chamfer_panel(ov_left, "Hub", width_shrink=80, min_height=60)
+        _hub_body_refs: list = []
+        _hub_invite_modal_open: list[bool] = [False]
+        _hub_seen_invite_ids: set = set()
+
+        def _hub_clear_body():
+            for w in _hub_body_refs:
+                try: w.destroy()
+                except Exception: pass
+            _hub_body_refs.clear()
+
+        def _hub_rebuild(friends: list):
+            _hub_clear_body()
+            if not auth.is_authenticated:
+                return
+
+            if not friends:
+                lbl = ctk.CTkLabel(
+                    hub_card, text="No friends online",
+                    font=ctk.CTkFont(family=FONT_MONO, size=10),
+                    text_color=BRAND["text_muted"],
+                )
+                lbl.pack(anchor="w", pady=(0, 4))
+                _hub_body_refs.append(lbl)
+                return
+
+            for f in friends:
+                uid        = f.get("user_id", "")
+                disp_name  = (f.get("username") or "Player").upper()
+                game_label = f.get("game") or ""
+
+                row = ctk.CTkFrame(hub_card, fg_color="transparent")
+                row.pack(fill="x", pady=(0, 5))
+                _hub_body_refs.append(row)
+
+                left = ctk.CTkFrame(row, fg_color="transparent")
+                left.pack(side="left", fill="x", expand=True)
+
+                ctk.CTkLabel(
+                    left, text="●",
+                    font=ctk.CTkFont(size=10),
+                    text_color="#22c55e",
+                ).pack(side="left", padx=(0, 5))
+
+                ctk.CTkLabel(
+                    left, text=disp_name,
+                    font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
+                    text_color=BRAND["text"],
+                ).pack(side="left")
+
+                if game_label:
+                    ctk.CTkLabel(
+                        left, text=f"  {game_label}",
+                        font=ctk.CTkFont(family=FONT_MONO, size=9),
+                        text_color=BRAND["text_muted"],
+                    ).pack(side="left")
+
+                inv_btn = ctk.CTkButton(
+                    row, text="INVITE", width=62, height=24, corner_radius=3,
+                    fg_color=BRAND["accent"], hover_color=BRAND["accent_dark"],
+                    text_color="#FFFFFF",
+                    font=ctk.CTkFont(family=FONT_MONO, size=9, weight="bold"),
+                )
+                inv_btn.pack(side="right")
+
+                def _make_invite_cmd(target_uid=uid, target_name=disp_name, btn=inv_btn):
+                    def _on_invite():
+                        btn.configure(state="disabled", text="…")
+                        token = auth.access_token or ""
+
+                        def _t():
+                            result = monitor.engine.hub_quick_invite(token, target_uid)
+
+                            def _after():
+                                btn.configure(state="normal", text="INVITE")
+                                if result is None:
+                                    if notify_fn:
+                                        try: notify_fn("Network error — invite not sent")
+                                        except Exception: pass
+                                elif "detail" in result:
+                                    if notify_fn:
+                                        try: notify_fn(f"Invite: {result['detail']}")
+                                        except Exception: pass
+                                else:
+                                    if notify_fn:
+                                        try: notify_fn(f"Invite sent to {target_name}")
+                                        except Exception: pass
+
+                            win.after(0, _after)
+
+                        threading.Thread(target=_t, daemon=True).start()
+
+                    return _on_invite
+
+                inv_btn.configure(command=_make_invite_cmd())
+
+        def _show_invite_modal(invite: dict):
+            if _hub_invite_modal_open[0]:
+                return
+            _hub_invite_modal_open[0] = True
+
+            notif_id     = invite.get("notification_id", "")
+            match_id     = invite.get("match_id") or ""
+            inviter_name = invite.get("inviter_username") or "A player"
+            game_name    = invite.get("game") or "a match"
+
+            modal = ctk.CTkToplevel(win)
+            modal.title("Game Invite")
+            modal.geometry("420x230")
+            modal.resizable(False, False)
+            modal.configure(fg_color=BRAND["bg"])
+            modal.transient(win)
+            modal.grab_set()
+            modal.lift()
+            modal.focus()
+
+            def _on_modal_close():
+                _hub_invite_modal_open[0] = False
+                try: modal.grab_release()
+                except Exception: pass
+                try: modal.destroy()
+                except Exception: pass
+
+            modal.protocol("WM_DELETE_WINDOW", _on_modal_close)
+
+            ctk.CTkLabel(
+                modal, text="GAME INVITE",
+                font=ctk.CTkFont(family=FONT_DISPLAY, size=16, weight="bold"),
+                text_color=BRAND["text"],
+            ).pack(pady=(18, 4))
+
+            ctk.CTkLabel(
+                modal,
+                text=f"{inviter_name.upper()} wants to play {game_name} with you",
+                font=ctk.CTkFont(family=FONT_MONO, size=11),
+                text_color=BRAND["hud_glow"],
+            ).pack(pady=(0, 14))
+
+            btn_row = ctk.CTkFrame(modal, fg_color="transparent")
+            btn_row.pack(fill="x", padx=22)
+
+            accept_btn  = ctk.CTkButton(btn_row, text="ACCEPT",  height=40, corner_radius=4,
+                                         fg_color=BRAND["accent"], hover_color=BRAND["accent_dark"],
+                                         text_color="#FFFFFF",
+                                         font=ctk.CTkFont(family=FONT_MONO, size=13, weight="bold"))
+            decline_btn = ctk.CTkButton(btn_row, text="DECLINE", height=40, corner_radius=4,
+                                         fg_color=BRAND["hud_panel_2"], hover_color=BRAND["hud_border"],
+                                         border_width=1, border_color=BRAND["hud_border"],
+                                         text_color=BRAND["text_muted"],
+                                         font=ctk.CTkFont(family=FONT_MONO, size=13, weight="bold"))
+            accept_btn.pack(side="left",  fill="x", expand=True, padx=(0, 5))
+            decline_btn.pack(side="right", fill="x", expand=True, padx=(5, 0))
+
+            def _accept():
+                accept_btn.configure(state="disabled", text="…")
+                decline_btn.configure(state="disabled")
+                token = auth.access_token or ""
+
+                def _t():
+                    result = monitor.engine.respond_to_notification(token, notif_id, "accept")
+
+                    def _after():
+                        _on_modal_close()
+                        if result and "detail" not in result:
+                            frontend = config.get("frontend_url", "https://project-arena.com")
+                            import webbrowser
+                            webbrowser.open(f"{frontend}/lobby")
+                        elif result and result.get("detail"):
+                            if notify_fn:
+                                try: notify_fn(f"Could not join: {result['detail']}")
+                                except Exception: pass
+
+                    win.after(0, _after)
+
+                threading.Thread(target=_t, daemon=True).start()
+
+            def _decline():
+                accept_btn.configure(state="disabled")
+                decline_btn.configure(state="disabled", text="…")
+                token = auth.access_token or ""
+
+                def _t():
+                    monitor.engine.respond_to_notification(token, notif_id, "decline")
+                    win.after(0, _on_modal_close)
+
+                threading.Thread(target=_t, daemon=True).start()
+
+            accept_btn.configure(command=_accept)
+            decline_btn.configure(command=_decline)
+
+        # ── Poll loops ────────────────────────────────────────────────────────
+        _HUB_FRIENDS_MS = 30_000
+        _HUB_INVITES_MS =  5_000
+
+        def _hub_friends_cycle():
+            def _bg():
+                if auth.is_authenticated:
+                    token   = auth.access_token or ""
+                    friends = monitor.engine.get_online_friends(token)
+                    win.after(0, lambda f=friends: _hub_rebuild(f))
+            threading.Thread(target=_bg, daemon=True).start()
+            win.after(_HUB_FRIENDS_MS, _hub_friends_cycle)
+
+        def _hub_invites_cycle():
+            def _bg():
+                if auth.is_authenticated:
+                    token   = auth.access_token or ""
+                    invites = monitor.engine.get_pending_hub_invites(token)
+                    for inv in invites:
+                        nid = inv.get("notification_id", "")
+                        if nid and nid not in _hub_seen_invite_ids:
+                            _hub_seen_invite_ids.add(nid)
+                            win.after(0, lambda i=inv: _show_invite_modal(i))
+                            break
+            threading.Thread(target=_bg, daemon=True).start()
+            win.after(_HUB_INVITES_MS, _hub_invites_cycle)
+
+        # Trigger an immediate friends refresh after login/logout events
+        # by wrapping _rebuild_identity with a hub refresh hook.
+        _orig_rebuild_identity = _rebuild_identity
+
+        def _rebuild_identity():
+            _orig_rebuild_identity()
+            # Kick a friends refresh 600ms later so identity renders first
+            def _hub_after_auth():
+                def _bg():
+                    if auth.is_authenticated:
+                        token   = auth.access_token or ""
+                        friends = monitor.engine.get_online_friends(token)
+                        win.after(0, lambda f=friends: _hub_rebuild(f))
+                    else:
+                        win.after(0, lambda: _hub_rebuild([]))
+                threading.Thread(target=_bg, daemon=True).start()
+            win.after(600, _hub_after_auth)
+
+        # Delayed start so window is fully rendered
+        win.after(1_500, _hub_friends_cycle)
+        win.after(2_000, _hub_invites_cycle)
+        _hub_rebuild([])   # empty placeholder until first poll
 
     def _handle_session_expired():
         """Any Bearer API returned 401 — clear local session and return to login."""
