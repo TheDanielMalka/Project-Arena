@@ -281,9 +281,16 @@ const History = () => {
   const completedMatches = rangedMatches.filter((m) => m.status === "completed");
   const wins = completedMatches.filter((m) => m.winnerId === myId).length;
   const losses = completedMatches.filter((m) => m.winnerId && m.winnerId !== myId).length;
-  const totalEarned = completedMatches
-    .filter((m) => m.winnerId === myId)
-    .reduce((sum, m) => sum + m.betAmount, 0);
+  const wonMatches = completedMatches.filter((m) => m.winnerId === myId);
+  const totalEarnedCrypto = wonMatches.filter((m) => m.stakeCurrency !== "AT").reduce((s, m) => s + m.betAmount, 0);
+  const totalEarnedAT     = wonMatches.filter((m) => m.stakeCurrency === "AT").reduce((s, m) => s + m.betAmount, 0);
+  const totalEarned = totalEarnedCrypto; // kept for winRate/other calcs
+  const earnedDisplay =
+    totalEarnedCrypto > 0 && totalEarnedAT > 0
+      ? `$${totalEarnedCrypto} + ${totalEarnedAT} AT`
+      : totalEarnedAT > 0
+      ? `${totalEarnedAT} AT`
+      : `$${totalEarnedCrypto}`;
   const winRate = completedMatches.length > 0 ? Math.round((wins / completedMatches.length) * 100) : 0;
   const last10 = completedMatches.slice(-10).map((m) => m.winnerId === myId);
 
@@ -300,6 +307,9 @@ const History = () => {
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / ITEMS_PER_PAGE));
   const paged = filtered.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
+
+  const fmtBet = (m: Match) =>
+  m.stakeCurrency === "AT" ? `${m.betAmount} AT` : `$${m.betAmount}`;
 
   const countForStatus = (s: MatchStatus | "all") =>
     s === "all" ? rangedMatches.length : rangedMatches.filter((m) => m.status === s).length;
@@ -376,7 +386,7 @@ const History = () => {
           </div>
           <div>
             <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Earned</p>
-            <p className="font-display text-xl font-bold text-arena-cyan">${totalEarned}</p>
+            <p className="font-display text-xl font-bold text-arena-cyan">{earnedDisplay}</p>
           </div>
         </div>
       </div>
@@ -584,7 +594,7 @@ const History = () => {
                     <div className="text-right flex items-center gap-2 shrink-0">
                       <div>
                         <p className={`font-display text-lg font-bold ${isWin ? "text-primary" : isLoss ? "text-destructive" : "text-arena-gold"}`}>
-                          ${m.betAmount}
+                          {fmtBet(m)}
                         </p>
                         <p className="text-[10px] text-muted-foreground font-mono">{m.id.slice(0, 8)}</p>
                       </div>
@@ -685,7 +695,7 @@ const History = () => {
                               : slotToProfileUsername(m.winnerId, user?.id, user?.username)}
                           </button>
                           <span>·</span>
-                          <span className="text-arena-gold font-medium">+${m.betAmount}</span>
+                          <span className="text-arena-gold font-medium">+{fmtBet(m)}</span>
                         </div>
                       )}
 
