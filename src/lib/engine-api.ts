@@ -1823,7 +1823,9 @@ export function mapApiMatchRowToMatch(row: Record<string, unknown>): Match | nul
   const lockCountdownStart = asStr(row.lock_countdown_start ?? row.lockCountdownStart) ?? undefined;
   const expiresAt = asStr(row.expires_at ?? row.expiresAt) ?? undefined;
 
-  const mPlayers = parseMatchPlayerRows(row.match_players ?? row.matchPlayers);
+  const mPlayers = parseMatchPlayerRows(
+    row.match_players ?? row.matchPlayers ?? row.players
+  );
   let teamA: string[] | undefined;
   let teamB: string[] | undefined;
   if (mPlayers.length > 0) {
@@ -1851,7 +1853,11 @@ export function mapApiMatchRowToMatch(row: Record<string, unknown>): Match | nul
   if (Array.isArray(row.players)) {
     players = (row.players as unknown[]).map((x) => {
       if (x && typeof x === "object") {
-        const uid = asStr((x as Record<string, unknown>).user_id ?? (x as Record<string, unknown>).userId);
+        const o = x as Record<string, unknown>;
+        // Prefer username for display; fall back to user_id only if username is absent
+        const name = asStr(o.username ?? o.display_name);
+        if (name) return name;
+        const uid = asStr(o.user_id ?? o.userId);
         if (uid) return uid;
       }
       return String(x);

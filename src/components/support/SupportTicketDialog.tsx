@@ -146,7 +146,6 @@ export function SupportTicketDialog({
         description: `[${TOPIC_LABELS[topic]}]\n\n${trimmed}`,
         category: "general_support",
         topic,
-        reported_id: PLATFORM_REPORTED_ID,
       });
       if (result.ok) {
         submitReport({
