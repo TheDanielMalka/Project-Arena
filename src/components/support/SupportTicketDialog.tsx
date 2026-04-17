@@ -177,12 +177,13 @@ export function SupportTicketDialog({
       const oppSlot = getOpponentSlotForUser(match, myId);
       const oppDisplay = slotToProfileUsername(oppSlot, user.id, user.username);
       const header = `Match ${match.id} · ${match.game} ${match.mode} · vs ${oppDisplay}\n\n`;
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       const result = await apiSubmitSupportTicket(token, {
         reason,
         description: header + trimmed,
         category: "match_dispute",
         match_id: match.id,
-        reported_id: oppSlot,
+        ...(UUID_RE.test(oppSlot) ? { reported_id: oppSlot } : {}),
       });
       if (result.ok) {
         submitReport({
