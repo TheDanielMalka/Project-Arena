@@ -84,14 +84,12 @@ interface UserState {
   clearLoginGreeting: () => void;
 }
 
-const ADMIN_EMAILS = new Set(["admin@arena.gg"]);
-
-/** Prefer GET /auth/me `role` (from user_roles); fallback for legacy engine or dev allowlist. */
-function roleFromApi(apiRole: string | undefined, email: string): UserRole {
+/** Role comes exclusively from GET /auth/me; server is the source of truth. */
+function roleFromApi(apiRole: string | undefined): UserRole {
   if (apiRole === "admin" || apiRole === "moderator" || apiRole === "user") {
     return apiRole;
   }
-  return ADMIN_EMAILS.has(email.trim().toLowerCase()) ? "admin" : "user";
+  return "user";
 }
 
 function extendVipExpiresAt(currentIso: string | undefined, days: number): string {
@@ -147,7 +145,7 @@ function userProfileFromMe(profile: MeProfile): UserProfile {
   const losses = profile.losses ?? 0;
   return {
     id: profile.user_id,
-    role: roleFromApi(profile.role, normalizedEmail),
+    role: roleFromApi(profile.role),
     username: profile.username,
     email: normalizedEmail,
     steamId: profile.steam_id?.trim() || null,
@@ -353,7 +351,7 @@ export const useUserStore = create<UserState>((set, get) => ({
     const w = profile.wallet_address ?? null;
     const next: UserProfile = {
       ...user,
-      role: roleFromApi(profile.role, user.email),
+      role: roleFromApi(profile.role),
       username: profile.username,
       steamId: profile.steam_id?.trim() || null,
       riotId: profile.riot_id?.trim() || null,
