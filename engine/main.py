@@ -3745,6 +3745,25 @@ def _credit_at(session, user_id: str, amount: int, match_id: str, tx_type: str =
     )
 
 
+def _at_payout_already_happened(session, match_id: str) -> bool:
+    """
+    True if this match already has a match_win or refund AT transaction.
+    Shared idempotency guard for both _settle_at_match and _refund_at_match:
+      - blocks double-settle (same winner paid twice)
+      - blocks double-refund (same stake returned twice)
+      - blocks settle-after-refund and refund-after-settle
+    Caller must hold a FOR UPDATE lock on matches.id = match_id.
+    """
+    row = session.execute(
+        text(
+            "SELECT 1 FROM transactions "
+            "WHERE match_id = :mid AND type IN ('match_win', 'refund') LIMIT 1"
+        ),
+        {"mid": match_id},
+    ).fetchone()
+    return row is not None
+
+
 def _settle_at_match(match_id: str, winner_id: str) -> None:
     """
     Distribute AT for a completed AT-currency match.
@@ -3755,19 +3774,29 @@ def _settle_at_match(match_id: str, winner_id: str) -> None:
       3. Deduct 5% fee → winner receives 95% of pot.
       4. Credit winner, log fee transaction, commit.
 
+    Idempotent: re-invocation for the same match_id is a no-op. The match
+    row is locked FOR UPDATE so concurrent callers serialize, and a single
+    match_win/refund transaction for that match aborts any later payout.
+
     DB-ready: uses users.at_balance + transactions table.
     """
     try:
         with SessionLocal() as session:
+            # FOR UPDATE serializes concurrent settle/refund calls for this match.
             match_row = session.execute(
                 text(
-                    "SELECT stake_currency, bet_amount FROM matches WHERE id = :mid"
+                    "SELECT stake_currency, bet_amount FROM matches "
+                    "WHERE id = :mid FOR UPDATE"
                 ),
                 {"mid": match_id},
             ).fetchone()
 
             if not match_row or match_row[0] != "AT":
                 return  # not an AT match — nothing to do
+
+            if _at_payout_already_happened(session, match_id):
+                logger.info("_settle_at_match: match=%s already paid — skipping", match_id)
+                return
 
             stake_per_player = int(match_row[1])
             player_rows = session.execute(
@@ -3806,16 +3835,27 @@ def _refund_at_match(match_id: str) -> None:
     """
     Refund all AT stakes for a cancelled AT-currency match.
     Returns stake_per_player AT to every player in match_players.
+
+    Idempotent: re-invocation for the same match_id is a no-op. Shares the
+    same FOR UPDATE + match_win/refund guard used by _settle_at_match.
+
     DB-ready: uses users.at_balance + transactions table.
     """
     try:
         with SessionLocal() as session:
             match_row = session.execute(
-                text("SELECT stake_currency, bet_amount FROM matches WHERE id = :mid"),
+                text(
+                    "SELECT stake_currency, bet_amount FROM matches "
+                    "WHERE id = :mid FOR UPDATE"
+                ),
                 {"mid": match_id},
             ).fetchone()
 
             if not match_row or match_row[0] != "AT":
+                return
+
+            if _at_payout_already_happened(session, match_id):
+                logger.info("_refund_at_match: match=%s already paid — skipping", match_id)
                 return
 
             stake_per_player = int(match_row[1])
