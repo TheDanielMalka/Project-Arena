@@ -14,7 +14,7 @@ from collections import defaultdict as _defaultdict
 from fastapi import FastAPI, HTTPException, Depends, Header, Query, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
@@ -732,9 +732,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_DEFAULT_CORS_ORIGINS = "https://project-arena.com,http://localhost:3000,http://localhost"
+_cors_origins = [
+    o.strip()
+    for o in (os.getenv("CORS_ALLOWED_ORIGINS") or _DEFAULT_CORS_ORIGINS).split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -2632,6 +2638,7 @@ class PatchUserRequest(BaseModel):
     All fields optional; only provided fields are written to DB.
     DB-ready: maps to users table columns.
     """
+    model_config = ConfigDict(extra="forbid")
     avatar: str | None = None
     avatar_bg: str | None = None
     equipped_badge_icon: str | None = None
