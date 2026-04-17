@@ -6,7 +6,7 @@ import { apiListMatchesHistory } from "@/lib/engine-api";
 import { PlayerPopoverLayer } from "@/components/players/PlayerCardPopover";
 import { slotToProfileUsername } from "@/lib/matchPlayerDisplay";
 import { MatchRosterAvatar } from "@/components/match/MatchRosterAvatar";
-import { Swords, Inbox, Gamepad2, Clock, Scale } from "lucide-react";
+import { Swords, Inbox, Gamepad2, Scale } from "lucide-react";
 import type { Match } from "@/types";
 import { SupportTicketDialog } from "@/components/support/SupportTicketDialog";
 
@@ -72,6 +72,7 @@ export function RecentMatches({ showViewAll = true, limit = 5 }: RecentMatchesPr
     .filter(m =>
       myId &&
       m.status !== "waiting" &&
+      m.status !== "in_progress" &&
       (m.players.includes(myId) ||
        m.hostId === myId ||
        (m.teamA ?? []).includes(myId) ||
@@ -123,22 +124,21 @@ export function RecentMatches({ showViewAll = true, limit = 5 }: RecentMatchesPr
       ) : (
         <div className="divide-y divide-border/40">
           {recentMatches.map((m) => {
-            const isLive = m.status === "in_progress";
             const isWin  = m.status === "completed" && m.winnerId === myId;
             const isLoss = m.status === "completed" && !!m.winnerId && m.winnerId !== myId;
             const cfg = GAME_CONFIG[m.game];
 
-            const borderColor = isWin ? "#22C55E" : isLoss ? "#EF4444" : isLive ? "#38BDF8" : "#6B7280";
+            const borderColor = isWin ? "#22C55E" : isLoss ? "#EF4444" : "#6B7280";
             const badgeClass  = isWin
               ? "bg-primary/15 text-primary border-primary/30"
               : isLoss
               ? "bg-destructive/15 text-destructive border-destructive/30"
-              : isLive
-              ? "bg-arena-cyan/15 text-arena-cyan border-arena-cyan/30"
               : "bg-muted text-muted-foreground border-border";
-            const badgeLabel  = isWin ? "Win" : isLoss ? "Loss" : isLive ? "Live" : m.status.replace("_", " ");
-            const amountColor = isWin ? "text-primary" : isLoss ? "text-destructive" : isLive ? "text-arena-cyan" : "text-arena-gold";
-            const amountLabel = isWin ? `+$${m.betAmount}` : isLoss ? `-$${m.betAmount}` : `$${m.betAmount}`;
+            const badgeLabel  = isWin ? "Win" : isLoss ? "Loss" : m.status.replace("_", " ");
+            const amountColor = isWin ? "text-primary" : isLoss ? "text-destructive" : "text-arena-gold";
+            const unit = m.stakeCurrency === "AT" ? " AT" : "";
+            const sym  = m.stakeCurrency === "AT" ? "" : "$";
+            const amountLabel = isWin ? `+${sym}${m.betAmount}${unit}` : isLoss ? `-${sym}${m.betAmount}${unit}` : `${sym}${m.betAmount}${unit}`;
             const oppSlot =
               m.type === "custom"
                 ? m.host
@@ -155,7 +155,6 @@ export function RecentMatches({ showViewAll = true, limit = 5 }: RecentMatchesPr
                 className="relative flex items-center gap-3 px-4 py-3 hover:bg-secondary/20 transition-colors cursor-pointer"
                 style={{ borderLeft: `3px solid ${borderColor}` }}
                 onClick={() => navigate("/history")}>
-                {isLive && <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-arena-cyan/40 to-transparent" />}
 
                 <MatchRosterAvatar slotValue={oppSlot} size={36} className="border-2 border-card" />
 
@@ -215,11 +214,7 @@ export function RecentMatches({ showViewAll = true, limit = 5 }: RecentMatchesPr
                 {/* Amount + appeal */}
                 <div className="text-right shrink-0 flex flex-col items-end gap-1">
                   <p className={`font-display text-sm font-bold ${amountColor}`}>{amountLabel}</p>
-                  {isLive && m.timeLeft && (
-                    <p className="text-[10px] text-arena-cyan flex items-center gap-1 justify-end mt-0.5">
-                      <Clock className="h-2.5 w-2.5" />{m.timeLeft}
-                    </p>
-                  )}
+
                   {canAppeal(m) && (
                     <button
                       type="button"

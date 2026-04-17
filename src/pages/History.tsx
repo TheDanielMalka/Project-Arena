@@ -261,7 +261,7 @@ const History = () => {
 
   // ── Only user's matches, no waiting ───────────────────────────────────
   const userMatches = matches.filter((m) => {
-    if (m.status === "waiting" || !myId) return false;
+    if (m.status === "waiting" || m.status === "in_progress" || !myId) return false;
     return (
       m.players.includes(myId) ||
       m.hostId === myId ||
@@ -315,7 +315,7 @@ const History = () => {
     s === "all" ? rangedMatches.length : rangedMatches.filter((m) => m.status === s).length;
 
   // No "waiting" in history status filters
-  const STATUSES: (MatchStatus | "all")[] = ["all", "in_progress", "completed", "cancelled", "disputed"];
+  const STATUSES: (MatchStatus | "all")[] = ["all", "completed", "cancelled", "disputed"];
 
   const openPlayerPopover = (e: React.MouseEvent, slotValue: string) => {
     e.stopPropagation();
