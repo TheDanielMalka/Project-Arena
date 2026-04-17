@@ -240,8 +240,17 @@ export const useMatchStore = create<MatchState>((set, get) => ({
     const serverList = [...byId.values()];
     set((s) => {
       const serverIds = new Set(serverList.map((m) => m.id));
-      // Keep local-only matches (created but not yet on server, or filtered out)
-      const locals = s.matches.filter((m) => !serverIds.has(m.id));
+      const now = Date.now();
+      // Keep local-only matches, but drop stale active matches the server no longer reports
+      // (i.e. auto-cancelled by the server CRON before they were in history)
+      const locals = s.matches.filter((m) => {
+        if (serverIds.has(m.id)) return false;
+        if (m.status === "waiting" || m.status === "in_progress") {
+          const age = now - new Date(m.createdAt).getTime();
+          if (age > 3 * 60 * 1000) return false; // drop stale active match
+        }
+        return true;
+      });
       // Merge: list payload may include player_count without roster arrays — then drop stale local roster.
       const merged = serverList.map((srv) => {
         const existing = s.matches.find((m) => m.id === srv.id);
