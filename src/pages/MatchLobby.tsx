@@ -562,7 +562,7 @@ const MatchLobby = () => {
     if (!guardCanPlay()) return;
     const bumpList = () => void useMatchStore.getState().refreshMatchesFromServer(token ?? null);
     if (token && looksLikeServerMatchId(match.id)) {
-      const jr = await apiJoinMatch(token, match.id, { password });
+      const jr = await apiJoinMatch(token, match.id, { password, team });
       if (jr.ok === false) {
         if (jr.status === 403) {
           setPasswordPrompt({ matchId: match.id, bet: match.betAmount, team });
