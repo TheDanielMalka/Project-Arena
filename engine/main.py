@@ -313,7 +313,7 @@ def _get_inprogress_client_timeout_seconds() -> int:
     before the match is force-cancelled.  Default: 1800 (30 min).
     Config key: platform_config.inprogress_client_timeout_sec
     """
-    default = 1800
+    default = 600
     lo, hi = 300, 14400
     try:
         with SessionLocal() as s:
