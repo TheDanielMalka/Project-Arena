@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import {
   LogOut,
@@ -503,7 +504,7 @@ export function PlayerPopoverLayer({
 
   const left = Math.max(gutter, Math.min(rect.left, vw - POPOVER_W - gutter));
 
-  return (
+  return createPortal(
     <>
       <div className="fixed inset-0 z-[70]" onClick={onClose} aria-hidden />
       <div className="fixed z-[71]" style={{ top, left }}>
@@ -514,6 +515,7 @@ export function PlayerPopoverLayer({
           enableLeaveRoom={enableLeaveRoom}
         />
       </div>
-    </>
+    </>,
+    document.body,
   );
 }
