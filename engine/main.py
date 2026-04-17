@@ -305,6 +305,169 @@ async def _expired_match_cleanup_loop(interval: int = 300) -> None:
             logger.error("_expired_match_cleanup_loop error: %s", exc)
 
 
+# ── In-progress match timeout ──────────────────────────────────────────────────
+
+def _get_inprogress_client_timeout_seconds() -> int:
+    """
+    How long (seconds) a host's client can be silent while a match is in_progress
+    before the match is force-cancelled.  Default: 1800 (30 min).
+    Config key: platform_config.inprogress_client_timeout_sec
+    """
+    default = 600
+    lo, hi = 300, 14400
+    try:
+        with SessionLocal() as s:
+            row = s.execute(
+                text("SELECT value FROM platform_config WHERE key = 'inprogress_client_timeout_sec'")
+            ).fetchone()
+            if row and row[0] is not None and str(row[0]).strip() != "":
+                return max(lo, min(hi, int(float(row[0]))))
+    except Exception:
+        pass
+    return default
+
+
+def _get_inprogress_absolute_timeout_seconds() -> int:
+    """
+    Hard cap: cancel an in_progress match if it has been running longer than this,
+    regardless of heartbeat.  Default: 14400 (4 hours).
+    Config key: platform_config.inprogress_absolute_timeout_sec
+    """
+    default = 14400
+    lo, hi = 3600, 86400
+    try:
+        with SessionLocal() as s:
+            row = s.execute(
+                text("SELECT value FROM platform_config WHERE key = 'inprogress_absolute_timeout_sec'")
+            ).fetchone()
+            if row and row[0] is not None and str(row[0]).strip() != "":
+                return max(lo, min(hi, int(float(row[0]))))
+    except Exception:
+        pass
+    return default
+
+
+def _find_stale_inprogress_matches(
+    heartbeat_cutoff: "datetime",
+    absolute_cutoff: "datetime",
+) -> list[tuple[str, str]]:
+    """
+    Return (match_id, stake_currency) for in_progress matches that should be
+    force-cancelled because either:
+      a) The host has an active client session whose last_heartbeat < heartbeat_cutoff
+      b) The host has NO active client session AND started_at < heartbeat_cutoff
+      c) started_at < absolute_cutoff  (hard cap, regardless of heartbeat)
+    """
+    try:
+        with SessionLocal() as s:
+            rows = s.execute(
+                text(
+                    "SELECT m.id::text, m.stake_currency "
+                    "FROM matches m "
+                    "WHERE m.status = 'in_progress' "
+                    "AND ( "
+                    # Hard cap: match has been running too long
+                    "  m.started_at < :abs_cutoff "
+                    "  OR EXISTS ( "
+                    # Host has an active client session but it went silent
+                    "    SELECT 1 FROM client_sessions cs "
+                    "    WHERE cs.user_id = m.host_id "
+                    "      AND cs.disconnected_at IS NULL "
+                    "      AND cs.last_heartbeat < :hb_cutoff "
+                    "  ) "
+                    "  OR ( "
+                    # Host has never opened the client (or all sessions disconnected)
+                    # and the match started more than heartbeat_cutoff ago
+                    "    NOT EXISTS ( "
+                    "      SELECT 1 FROM client_sessions cs2 "
+                    "      WHERE cs2.user_id = m.host_id "
+                    "        AND cs2.disconnected_at IS NULL "
+                    "    ) "
+                    "    AND m.started_at < :hb_cutoff "
+                    "  ) "
+                    ")"
+                ),
+                {"hb_cutoff": heartbeat_cutoff, "abs_cutoff": absolute_cutoff},
+            ).fetchall()
+        return [(str(r[0]), str(r[1] or "")) for r in rows if r[0]]
+    except Exception as exc:
+        logger.error("_find_stale_inprogress_matches: %s", exc)
+        return []
+
+
+def _try_cancel_inprogress_match_timeout(match_id: str, stake_currency: str) -> bool:
+    """
+    Force-terminate a stale in_progress match.
+      AT     → cancelled + _refund_at_match (funds tracked in DB)
+      CRYPTO → disputed  (funds locked in contract; admin resolves on-chain)
+
+    Uses UPDATE … WHERE status='in_progress' to guard against double-execution.
+    Returns True if this call performed the status transition.
+    """
+    try:
+        new_status = "cancelled" if stake_currency == "AT" else "disputed"
+        with SessionLocal() as s:
+            row = s.execute(
+                text(
+                    "UPDATE matches "
+                    "SET status = :new_status, ended_at = NOW() "
+                    "WHERE id = CAST(:mid AS uuid) AND status = 'in_progress' "
+                    "RETURNING id"
+                ),
+                {"new_status": new_status, "mid": match_id},
+            ).fetchone()
+            if not row:
+                return False
+            s.commit()
+
+        if stake_currency == "AT":
+            _refund_at_match(match_id)
+            logger.info(
+                "inprogress_timeout: cancelled AT match=%s, refund issued", match_id
+            )
+        else:
+            logger.warning(
+                "inprogress_timeout: CRYPTO match=%s marked disputed — admin action required",
+                match_id,
+            )
+        return True
+    except Exception as exc:
+        logger.error(
+            "inprogress_timeout: failed match=%s error=%s", match_id, exc
+        )
+        return False
+
+
+async def _inprogress_match_timeout_loop(interval: int = 60) -> None:
+    """
+    Background task: every `interval` seconds, detect and terminate in_progress
+    matches whose host client has been silent too long or that exceeded the
+    absolute duration cap.
+
+    Configurable via platform_config rows:
+      inprogress_client_timeout_sec   — heartbeat silence threshold (default 1800 = 30 min)
+      inprogress_absolute_timeout_sec — max match duration regardless (default 14400 = 4 h)
+
+    AT matches  → status='cancelled'  + AT refund to all players
+    CRYPTO matches → status='disputed' + Slack warning; admin resolves on-chain
+    """
+    import asyncio as _asyncio
+
+    while True:
+        try:
+            await _asyncio.sleep(interval)
+            hb_secs = _get_inprogress_client_timeout_seconds()
+            abs_secs = _get_inprogress_absolute_timeout_seconds()
+            now_utc = datetime.now(timezone.utc)
+            hb_cutoff = now_utc - timedelta(seconds=hb_secs)
+            abs_cutoff = now_utc - timedelta(seconds=abs_secs)
+            stale = _find_stale_inprogress_matches(hb_cutoff, abs_cutoff)
+            for (mid, currency) in stale:
+                _try_cancel_inprogress_match_timeout(mid, currency)
+        except Exception as exc:
+            logger.error("_inprogress_match_timeout_loop error: %s", exc)
+
+
 async def _oracle_slack_watch_loop(interval: int = 90) -> None:
     """
     Periodic check: when EscrowClient is enabled, alert Slack if the listener task
@@ -522,6 +685,13 @@ async def lifespan(app: FastAPI):
     _host_client_timeout_task = asyncio.create_task(_host_client_lobby_timeout_loop())
     logger.info("✅ Host client lobby timeout task started")
 
+    # In-progress match timeout — runs every 60 seconds.
+    # Cancels (AT) or disputes (CRYPTO) in_progress matches whose host client
+    # has been silent > inprogress_client_timeout_sec (default 30 min),
+    # or that exceeded inprogress_absolute_timeout_sec (default 4 h).
+    _inprogress_timeout_task = asyncio.create_task(_inprogress_match_timeout_loop())
+    logger.info("✅ In-progress match timeout task started")
+
     # Slack alerts for oracle/RPC health — only when escrow is on and webhook URL is set.
     global _slack_oracle_task
     if _escrow_client and (os.getenv("SLACK_ALERTS_WEBHOOK_URL") or "").strip():
@@ -535,10 +705,12 @@ async def lifespan(app: FastAPI):
     _cleanup_task.cancel()
     _stale_task.cancel()
     _host_client_timeout_task.cancel()
-    try:
-        await _host_client_timeout_task
-    except asyncio.CancelledError:
-        pass
+    _inprogress_timeout_task.cancel()
+    for _t in (_host_client_timeout_task, _inprogress_timeout_task):
+        try:
+            await _t
+        except asyncio.CancelledError:
+            pass
     if _slack_oracle_task:
         _slack_oracle_task.cancel()
         try:
