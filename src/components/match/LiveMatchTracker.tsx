@@ -3,12 +3,12 @@ import { Link } from "react-router-dom";
 import { Radio, Clock, Users, Zap, ChevronDown, ChevronUp, Shield, Gamepad2 } from "lucide-react";
 import { useMatchStore } from "@/stores/matchStore";
 import { useUserStore } from "@/stores/userStore";
+import { usePlayerStore } from "@/stores/playerStore";
 import { PlayerPopoverLayer } from "@/components/players/PlayerCardPopover";
 import type { Match } from "@/types";
 import { MatchRosterAvatar } from "@/components/match/MatchRosterAvatar";
-import { slotToProfileUsername } from "@/lib/matchPlayerDisplay";
+import { rosterDisplayUsername } from "@/lib/matchPlayerDisplay";
 
-// Game logos — mirrors Profile.tsx / History.tsx
 const GAME_CONFIG: Record<string, { logo: string; color: string }> = {
   "CS2":          { logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/730/capsule_sm_120.jpg",     color: "#F97316" },
   "Valorant":     { logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/2181130/capsule_sm_120.jpg", color: "#FF4655" },
@@ -16,9 +16,21 @@ const GAME_CONFIG: Record<string, { logo: string; color: string }> = {
   "Apex Legends": { logo: "https://cdn.cloudflare.steamstatic.com/steam/apps/1172470/capsule_sm_120.jpg", color: "#FC4B08" },
 };
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const fmtBet = (m: Match) =>
+  m.stakeCurrency === "AT" ? `${m.betAmount} AT` : `$${m.betAmount}`;
+
+const fmtPot = (m: Match) => {
+  const count = m.filledPlayerCount ?? m.players.length ?? m.maxPlayers;
+  const pot = m.betAmount * Math.max(count, 2);
+  return m.stakeCurrency === "AT" ? `${pot} AT` : `$${pot}`;
+};
+
 const LiveMatchTracker = () => {
   const { matches } = useMatchStore();
-  const { user } = useUserStore();
+  const { user, token } = useUserStore();
+  const { players: catalog, fetchPublicPlayerById } = usePlayerStore();
   const liveMatches = matches.filter(m => m.status === "in_progress");
   const [now, setNow] = useState(Date.now());
   const [expandedMatchId, setExpandedMatchId] = useState<string | null>(null);
@@ -37,6 +49,23 @@ const LiveMatchTracker = () => {
     return () => clearInterval(interval);
   }, []);
 
+  // Auto-fetch profiles for any UUID slots not yet in catalog
+  useEffect(() => {
+    if (!token) return;
+    const catalogIds = new Set(catalog.map(p => p.id));
+    const allSlots = liveMatches.flatMap(m => [
+      ...m.players,
+      ...(m.teamA ?? []),
+      ...(m.teamB ?? []),
+    ]);
+    const missing = [...new Set(allSlots)].filter(
+      s => UUID_RE.test(s) && !catalogIds.has(s) && s !== user?.id,
+    );
+    for (const id of missing) {
+      void fetchPublicPlayerById(id, token);
+    }
+  }, [liveMatches, catalog, token, user?.id, fetchPublicPlayerById]);
+
   const getElapsed = (match: Match) => {
     if (!match.startedAt) return match.timeLeft ?? "--:--";
     const diff = Math.floor((now - new Date(match.startedAt).getTime()) / 1000);
@@ -45,20 +74,8 @@ const LiveMatchTracker = () => {
     return `${mins}:${secs}`;
   };
 
-  const getMapForMatch = (match: Match) => {
-    const mapPools: Record<string, string[]> = {
-      CS2: ["Mirage", "Inferno", "Nuke", "Ancient", "Anubis"],
-      Valorant: ["Ascent", "Haven", "Bind", "Split", "Lotus"],
-      Fortnite: ["Olympus", "Classy Courts", "Pleasant Piazza"],
-      "Apex Legends": ["World's Edge", "Storm Point", "Olympus"],
-    };
-    const pool = mapPools[match.game] ?? ["Arena Core"];
-    const seed = match.id.split("").reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
-    return pool[seed % pool.length];
-  };
-
-  const getEstimatedPrize = (match: Match) =>
-    match.betAmount * Math.max(match.maxPlayers, 2);
+  const displayName = (slot: string) =>
+    rosterDisplayUsername(slot, user?.id, user?.username, catalog);
 
   if (liveMatches.length === 0) {
     return (
@@ -88,6 +105,9 @@ const LiveMatchTracker = () => {
       {liveMatches.map((match) => {
         const isExpanded = expandedMatchId === match.id;
         const cfg = GAME_CONFIG[match.game];
+        const allPlayers = match.players.length > 0
+          ? match.players
+          : [...(match.teamA ?? []), ...(match.teamB ?? [])];
 
         return (
           <div key={match.id}
@@ -95,13 +115,10 @@ const LiveMatchTracker = () => {
             style={{ borderLeftWidth: "3px", borderLeftColor: cfg?.color ?? "#38BDF8" }}
             onClick={() => setExpandedMatchId(prev => prev === match.id ? null : match.id)}>
 
-            {/* Live pulse bar */}
             <div className="h-px w-full bg-gradient-to-r from-transparent via-arena-cyan/50 to-transparent animate-pulse" />
 
             <div className="p-4">
-              {/* Row */}
               <div className="flex items-center gap-3">
-                {/* Game logo */}
                 {cfg ? (
                   <img src={cfg.logo} alt={match.game} className="w-9 h-9 rounded-lg object-cover shrink-0"
                     onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
@@ -120,7 +137,7 @@ const LiveMatchTracker = () => {
                         onClick={(e) => openPlayer(e, match.host)}
                         className="truncate min-w-0 text-left hover:text-primary hover:underline underline-offset-2"
                       >
-                        {match.host}
+                        {displayName(match.host)}
                       </button>
                       <span className="shrink-0">'s Match</span>
                     </p>
@@ -128,14 +145,13 @@ const LiveMatchTracker = () => {
                   <p className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
                     <span style={{ color: cfg?.color }}>{match.game}</span>
                     <span>·</span>
-                    <Users className="h-3 w-3" /> {match.players.length}/{match.maxPlayers}
+                    <Users className="h-3 w-3" /> {allPlayers.length}/{match.maxPlayers}
                     <span>·</span>
                     <span>{match.mode}</span>
                   </p>
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
-                  {/* Timer */}
                   <div className="text-right">
                     <div className="flex items-center gap-1 text-arena-cyan font-mono text-sm font-bold">
                       <Clock className="h-3.5 w-3.5" />
@@ -143,7 +159,7 @@ const LiveMatchTracker = () => {
                     </div>
                     <div className="flex items-center gap-1 justify-end mt-0.5">
                       <Zap className="h-3 w-3 text-arena-gold" />
-                      <span className="text-xs font-display font-bold text-arena-gold">${match.betAmount}</span>
+                      <span className="text-xs font-display font-bold text-arena-gold">{fmtBet(match)}</span>
                     </div>
                   </div>
                   {isExpanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
@@ -151,17 +167,17 @@ const LiveMatchTracker = () => {
               </div>
 
               {/* 1v1 progress bar */}
-              {match.mode === "1v1" && match.players.length === 2 && (
+              {match.mode === "1v1" && allPlayers.length === 2 && (
                 <div className="mt-3 flex items-center gap-2">
                   <div className="flex items-center gap-1.5 min-w-0">
                     <button
                       type="button"
-                      onClick={(e) => openPlayer(e, match.players[0])}
+                      onClick={(e) => openPlayer(e, allPlayers[0])}
                       className="flex items-center gap-1.5 min-w-0 rounded-lg hover:bg-secondary/40 -mx-0.5 px-0.5 py-0.5"
                     >
-                      <MatchRosterAvatar slotValue={match.players[0]} size={20} className="border-2 border-card" />
+                      <MatchRosterAvatar slotValue={allPlayers[0]} size={20} className="border-2 border-card" />
                       <span className="text-xs font-display font-medium text-primary truncate max-w-[80px]">
-                        {slotToProfileUsername(match.players[0], user?.id, user?.username)}
+                        {displayName(allPlayers[0])}
                       </span>
                     </button>
                   </div>
@@ -171,13 +187,13 @@ const LiveMatchTracker = () => {
                   <div className="flex items-center gap-1.5 min-w-0 justify-end">
                     <button
                       type="button"
-                      onClick={(e) => openPlayer(e, match.players[1])}
+                      onClick={(e) => openPlayer(e, allPlayers[1])}
                       className="flex items-center gap-1.5 min-w-0 rounded-lg hover:bg-secondary/40 -mx-0.5 px-0.5 py-0.5"
                     >
                       <span className="text-xs font-display font-medium text-arena-orange truncate max-w-[80px] text-right">
-                        {slotToProfileUsername(match.players[1], user?.id, user?.username)}
+                        {displayName(allPlayers[1])}
                       </span>
-                      <MatchRosterAvatar slotValue={match.players[1]} size={20} className="border-2 border-card" />
+                      <MatchRosterAvatar slotValue={allPlayers[1]} size={20} className="border-2 border-card" />
                     </button>
                   </div>
                 </div>
@@ -188,14 +204,16 @@ const LiveMatchTracker = () => {
                 <div className="mt-4 rounded-xl border border-border bg-secondary/20 p-3 space-y-3">
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                     {[
-                      { label: "Map",          value: getMapForMatch(match) },
-                      { label: "Match ID",     value: match.id, mono: true },
-                      { label: "Type",         value: `${match.type} · ${match.mode}` },
-                      { label: "Pot",          value: `$${getEstimatedPrize(match)}`, gold: true },
+                      { label: "Map",      value: "Pending" },
+                      { label: "Match ID", value: match.id, mono: true },
+                      { label: "Type",     value: `${match.type} · ${match.mode}` },
+                      { label: "Pot",      value: fmtPot(match), gold: true },
                     ].map(({ label, value, mono, gold }) => (
                       <div key={label} className="rounded-lg bg-background/60 p-2">
                         <p className="text-muted-foreground mb-0.5">{label}</p>
-                        <p className={`font-medium truncate ${gold ? "text-arena-gold" : ""} ${mono ? "font-mono" : ""}`}>{value}</p>
+                        <p className={`font-medium truncate ${gold ? "text-arena-gold" : ""} ${mono ? "font-mono" : ""} ${label === "Map" ? "text-muted-foreground/50 italic" : ""}`}>
+                          {value}
+                        </p>
                       </div>
                     ))}
                   </div>
@@ -204,7 +222,7 @@ const LiveMatchTracker = () => {
                       <Shield className="h-3 w-3" /> Players in lobby
                     </p>
                     <div className="flex flex-wrap gap-2">
-                      {match.players.length > 0 ? match.players.map(player => (
+                      {allPlayers.length > 0 ? allPlayers.map(player => (
                         <button
                           key={`${match.id}-${player}`}
                           type="button"
@@ -212,7 +230,7 @@ const LiveMatchTracker = () => {
                           className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-border bg-secondary/40 text-xs hover:border-primary/40 hover:bg-secondary/60 transition-colors"
                         >
                           <MatchRosterAvatar slotValue={player} size={16} className="border border-card" />
-                          {slotToProfileUsername(player, user?.id, user?.username)}
+                          {displayName(player)}
                         </button>
                       )) : (
                         <span className="text-xs text-muted-foreground">No players listed yet</span>
