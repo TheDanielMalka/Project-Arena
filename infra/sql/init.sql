@@ -71,9 +71,11 @@ CREATE TABLE user_stats (
 -- ── User Balances ────────────────────────────────────────────
 CREATE TABLE user_balances (
     user_id   UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    total     NUMERIC(12,2) DEFAULT 0,
-    available NUMERIC(12,2) DEFAULT 0,
-    in_escrow NUMERIC(12,2) DEFAULT 0
+    total     NUMERIC(12,2) NOT NULL DEFAULT 0,
+    available NUMERIC(12,2) NOT NULL DEFAULT 0,
+    in_escrow NUMERIC(12,2) NOT NULL DEFAULT 0,
+    CONSTRAINT user_balances_nonneg_chk
+        CHECK (total >= 0 AND available >= 0 AND in_escrow >= 0)
 );
 
 -- ── Matches ──────────────────────────────────────────────────
