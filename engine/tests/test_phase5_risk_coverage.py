@@ -22,7 +22,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from main import app, _auto_flag_consensus, _refund_at_match
+from main import app, _auto_flag_consensus, _refund_at_match, _settle_at_match
 from main import require_admin as _require_admin
 import src.auth as auth
 
@@ -410,6 +410,8 @@ class TestMatchPlayersNull:
             sql = str(args[0])
             if "SELECT stake_currency, bet_amount" in sql:
                 m.fetchone.return_value = ("AT", 10)
+            elif "type IN ('match_win', 'refund')" in sql:
+                m.fetchone.return_value = None  # idempotency: not yet paid
             elif "SELECT user_id FROM match_players" in sql:
                 m.fetchall.return_value = [(None,), (real_uid,)]
             return m
@@ -439,6 +441,8 @@ class TestMatchPlayersNull:
             sql = str(args[0])
             if "SELECT stake_currency, bet_amount" in sql:
                 m.fetchone.return_value = ("AT", 10)
+            elif "type IN ('match_win', 'refund')" in sql:
+                m.fetchone.return_value = None  # idempotency: not yet paid
             elif "SELECT user_id FROM match_players" in sql:
                 m.fetchall.return_value = [(None,), (None,)]
             return m
@@ -504,6 +508,136 @@ class TestMatchPlayersNull:
         # The UID passed must be the real winner, not "None"
         params_used = update_stat_calls[0].args[1]
         assert params_used.get("uid") == real_winner
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TestAtPayoutIdempotency — _settle_at_match / _refund_at_match double-spend guard
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestAtPayoutIdempotency:
+    """
+    Guards against the double-payout CRITICAL bug (C6/C7 from 2026-04 audit):
+
+      1. _settle_at_match called twice for the same match → second call skipped.
+      2. _refund_at_match called twice for the same match → second call skipped.
+      3. _settle after _refund (or reverse) → second call skipped (cross-order).
+
+    All tests mock SessionLocal + _credit_at; no real DB.
+    """
+
+    @staticmethod
+    def _session_with_existing_payout(payout_exists: bool):
+        """
+        Build a mocked session whose idempotency SELECT returns a row
+        (payout_exists=True) or None (payout_exists=False).
+        """
+        session = MagicMock()
+
+        def ex_side(*args, **kw):
+            m = MagicMock()
+            sql = str(args[0])
+            if "SELECT stake_currency, bet_amount" in sql:
+                m.fetchone.return_value = ("AT", 10)
+            elif "type IN ('match_win', 'refund')" in sql:
+                m.fetchone.return_value = ("exists",) if payout_exists else None
+            elif "SELECT user_id FROM match_players" in sql:
+                m.fetchall.return_value = [(str(uuid.uuid4()),), (str(uuid.uuid4()),)]
+            return m
+
+        session.execute.side_effect = ex_side
+        return session
+
+    def test_settle_is_noop_when_payout_already_exists(self):
+        """Second _settle_at_match call must NOT credit anyone."""
+        session = self._session_with_existing_payout(payout_exists=True)
+        ctx = _ctx(session)
+        credit_mock = MagicMock()
+
+        with patch("main.SessionLocal", return_value=ctx), \
+             patch("main._credit_at", credit_mock):
+            _settle_at_match(_MATCH_ID, str(uuid.uuid4()))
+
+        credit_mock.assert_not_called()
+
+    def test_refund_is_noop_when_payout_already_exists(self):
+        """Second _refund_at_match call must NOT credit anyone."""
+        session = self._session_with_existing_payout(payout_exists=True)
+        ctx = _ctx(session)
+        credit_mock = MagicMock()
+
+        with patch("main.SessionLocal", return_value=ctx), \
+             patch("main._credit_at", credit_mock):
+            _refund_at_match(_MATCH_ID)
+
+        credit_mock.assert_not_called()
+
+    def test_settle_proceeds_when_no_prior_payout(self):
+        """First _settle_at_match call must credit the winner exactly once."""
+        session = self._session_with_existing_payout(payout_exists=False)
+        ctx = _ctx(session)
+        winner = str(uuid.uuid4())
+        credit_calls: list[tuple] = []
+
+        def credit_side(sess, uid, amount, mid, tx_type):
+            credit_calls.append((uid, tx_type))
+
+        with patch("main.SessionLocal", return_value=ctx), \
+             patch("main._credit_at", side_effect=credit_side):
+            _settle_at_match(_MATCH_ID, winner)
+
+        match_win_calls = [c for c in credit_calls if c[1] == "match_win"]
+        assert len(match_win_calls) == 1
+        assert match_win_calls[0][0] == winner
+
+    def test_refund_proceeds_when_no_prior_payout(self):
+        """First _refund_at_match call must refund all non-null players."""
+        session = self._session_with_existing_payout(payout_exists=False)
+        ctx = _ctx(session)
+        credit_calls: list[tuple] = []
+
+        def credit_side(sess, uid, amount, mid, tx_type):
+            credit_calls.append((uid, tx_type))
+
+        with patch("main.SessionLocal", return_value=ctx), \
+             patch("main._credit_at", side_effect=credit_side):
+            _refund_at_match(_MATCH_ID)
+
+        refund_calls = [c for c in credit_calls if c[1] == "refund"]
+        assert len(refund_calls) == 2  # two non-null players from the fixture
+
+    def test_settle_uses_for_update_lock(self):
+        """The match row lookup must use SELECT ... FOR UPDATE for serialization."""
+        session = self._session_with_existing_payout(payout_exists=False)
+        ctx = _ctx(session)
+
+        with patch("main.SessionLocal", return_value=ctx), \
+             patch("main._credit_at"):
+            _settle_at_match(_MATCH_ID, str(uuid.uuid4()))
+
+        locked_match_selects = [
+            c for c in session.execute.call_args_list
+            if "SELECT stake_currency, bet_amount" in str(c.args[0])
+            and "FOR UPDATE" in str(c.args[0])
+        ]
+        assert len(locked_match_selects) == 1, \
+            "settle must lock the matches row FOR UPDATE to serialize concurrent callers"
+
+    def test_refund_uses_for_update_lock(self):
+        """Same FOR UPDATE requirement on the refund path."""
+        session = self._session_with_existing_payout(payout_exists=False)
+        ctx = _ctx(session)
+
+        with patch("main.SessionLocal", return_value=ctx), \
+             patch("main._credit_at"):
+            _refund_at_match(_MATCH_ID)
+
+        locked_match_selects = [
+            c for c in session.execute.call_args_list
+            if "SELECT stake_currency, bet_amount" in str(c.args[0])
+            and "FOR UPDATE" in str(c.args[0])
+        ]
+        assert len(locked_match_selects) == 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
