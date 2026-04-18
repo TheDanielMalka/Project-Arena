@@ -1,4 +1,5 @@
 import hashlib
+import hmac as _hmac
 import os
 import re
 import secrets
@@ -3164,8 +3165,7 @@ class CreateMatchRequest(BaseModel):
       stake_amount → matches.bet_amount  (NUMERIC, must be > 0; CHECK enforced by DB)
       mode         → matches.mode  (match_mode enum: '1v1' | '2v2' | '4v4' | '5v5')
       match_type   → matches.type  (match_type enum: 'public' | 'custom')
-      password     → matches.password  (optional; plain text for MVP —
-                                        TODO: bcrypt hash before public beta)
+      password     → matches.password  (optional; stored bcrypt-hashed)
 
     DB-ready: writes to matches + match_players tables.
     CONTRACT-ready: stake_amount → ArenaEscrow.lockStake() once wallet is linked.
@@ -3193,6 +3193,25 @@ class JoinMatchRequest(BaseModel):
 
 _VALID_CURRENCIES = {"CRYPTO", "AT"}
 _AT_FEE_PCT = 0.05  # 5% platform fee on AT match winnings — mirrors ArenaEscrow fee
+
+
+def _verify_room_password(submitted: str | None, stored: str | None) -> bool:
+    """Constant-time room password check. Supports bcrypt (H1) + legacy plaintext.
+
+    Returns True when:
+      - stored is empty/NULL (no password required), or
+      - submitted matches stored (bcrypt.checkpw when hashed, hmac.compare_digest
+        for legacy plaintext still in DB before the cycle-out completes).
+    """
+    if not stored:
+        return True
+    submitted_s = submitted or ""
+    if stored.startswith("$2"):
+        try:
+            return auth.verify_password(submitted_s, stored)
+        except Exception:
+            return False
+    return _hmac.compare_digest(submitted_s, stored)
 
 # ── M8 Kill Switch ─────────────────────────────────────────────────────────────
 # When True: all payout disbursement is suspended (AT credit + CRYPTO on-chain).
@@ -3998,7 +4017,7 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
                     "bet":   bet_amount,
                     "sc":    stake_currency,
                     "code":  room_code,
-                    "pw":    req.password or None,
+                    "pw":    (auth.hash_password(req.password) if req.password else None),
                     "maxp":  max_players,
                     "mpt":   team_size,
                 },
@@ -4082,8 +4101,8 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
             if status != "waiting":
                 raise HTTPException(409, f"Match is not open for joining (status: {status})")
 
-            # ── Password check ────────────────────────────────────────────────
-            if match_password and (req.password or "") != match_password:
+            # ── Password check (H1/H2: constant-time, bcrypt w/ legacy fallback) ─
+            if match_password and not _verify_room_password(req.password, match_password):
                 raise HTTPException(403, "Incorrect room password")
 
             # ── Check joiner's game account ───────────────────────────────────
