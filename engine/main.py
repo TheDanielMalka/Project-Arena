@@ -12,7 +12,7 @@ from datetime import datetime, timezone, timedelta
 import time as _time
 from collections import defaultdict as _defaultdict
 
-from fastapi import FastAPI, HTTPException, Depends, Header, Query, UploadFile, File, Request
+from fastapi import FastAPI, HTTPException, Depends, Header, Query, UploadFile, File, Request, Response, Cookie
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -758,12 +758,44 @@ async def add_process_time_header(request: Request, call_next):
     return response
 
 
+# ── Auth cookie (F1: httpOnly Secure SameSite=Strict) ─────────────────────────
+# Web uses an httpOnly cookie so XSS can't exfiltrate the JWT; desktop client
+# keeps using Authorization: Bearer. verify_token accepts either.
+AUTH_COOKIE_NAME = "arena_access_token"
+_AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 days — mirrors JWT exp in src/auth.py
+
+
+def _set_auth_cookie(response: Response, token: str) -> None:
+    is_prod = ENVIRONMENT == "production"
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        max_age=_AUTH_COOKIE_MAX_AGE,
+        httponly=True,
+        secure=is_prod,
+        samesite="strict" if is_prod else "lax",
+        path="/",
+    )
+
+
+def _clear_auth_cookie(response: Response) -> None:
+    response.delete_cookie(AUTH_COOKIE_NAME, path="/")
+
+
 # ── Auth dependency ───────────────────────────────────────────────────────────
-async def verify_token(authorization: str = Header(...)) -> dict:
-    """Decode and validate a JWT Bearer token. Returns the decoded payload."""
-    if not authorization.startswith("Bearer "):
+async def verify_token(
+    authorization: str | None = Header(default=None),
+    access_cookie: str | None = Cookie(default=None, alias=AUTH_COOKIE_NAME),
+) -> dict:
+    """Decode and validate a JWT. Accepts either httpOnly cookie (web) or
+    Authorization: Bearer header (desktop client)."""
+    token: str | None = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.removeprefix("Bearer ")
+    elif access_cookie:
+        token = access_cookie
+    if not token:
         raise HTTPException(401, "Invalid token format")
-    token = authorization.removeprefix("Bearer ")
     try:
         payload = auth.decode_token(token)
     except _jwt.ExpiredSignatureError:
@@ -791,13 +823,18 @@ async def require_admin(payload: dict = Depends(verify_token)) -> dict:
     return payload
 
 
-async def optional_token(authorization: str | None = Header(default=None)) -> dict | None:
-    """Like verify_token but returns None instead of 401 when header is absent."""
-    if not authorization:
+async def optional_token(
+    authorization: str | None = Header(default=None),
+    access_cookie: str | None = Cookie(default=None, alias=AUTH_COOKIE_NAME),
+) -> dict | None:
+    """Like verify_token but returns None instead of 401 when no credential present."""
+    token: str | None = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.removeprefix("Bearer ")
+    elif access_cookie:
+        token = access_cookie
+    if not token:
         return None
-    if not authorization.startswith("Bearer "):
-        return None
-    token = authorization.removeprefix("Bearer ")
     try:
         return auth.decode_token(token)
     except (_jwt.ExpiredSignatureError, _jwt.InvalidTokenError):
@@ -2207,7 +2244,7 @@ async def match_consensus_state(
 # ── Auth routes ───────────────────────────────────────────────────────────────
 
 @app.post("/auth/register", response_model=AuthResponse, status_code=201)
-async def register(req: RegisterRequest, request: Request):
+async def register(req: RegisterRequest, request: Request, response: Response):
     """
     Register a new Arena user.
 
@@ -2305,6 +2342,7 @@ async def register(req: RegisterRequest, request: Request):
         raise HTTPException(500, "Registration failed")
 
     token = auth.issue_token(user_id, email, username)
+    _set_auth_cookie(response, token)
     return AuthResponse(
         access_token=token,
         user_id=user_id,
@@ -2316,7 +2354,7 @@ async def register(req: RegisterRequest, request: Request):
 
 
 @app.post("/auth/login", response_model=AuthResponse)
-async def login(req: LoginRequest, request: Request):
+async def login(req: LoginRequest, request: Request, response: Response):
     """
     Login with email OR username + password.
 
@@ -2354,6 +2392,7 @@ async def login(req: LoginRequest, request: Request):
         return AuthResponse(requires_2fa=True, temp_token=temp)
 
     token = auth.issue_token(user_id, row[2], row[1])
+    _set_auth_cookie(response, token)
     return AuthResponse(
         access_token=token,
         user_id=user_id,
@@ -2389,6 +2428,7 @@ def _allocate_unique_username_from_google(session, email: str, display_name: str
 
 def _auth_response_from_google_row(
     row: tuple,
+    response: Response | None = None,
 ) -> AuthResponse:
     """
     Build AuthResponse from SELECT id, username, email, arena_id, wallet_address, totp_enabled.
@@ -2400,6 +2440,8 @@ def _auth_response_from_google_row(
         temp = auth.issue_2fa_pending_token(user_id)
         return AuthResponse(requires_2fa=True, temp_token=temp)
     tok = auth.issue_token(user_id, email, username)
+    if response is not None:
+        _set_auth_cookie(response, tok)
     return AuthResponse(
         access_token=tok,
         user_id=user_id,
@@ -2412,7 +2454,7 @@ def _auth_response_from_google_row(
 
 
 @app.post("/auth/google", response_model=AuthResponse)
-async def auth_google(req: GoogleAuthRequest, request: Request):
+async def auth_google(req: GoogleAuthRequest, request: Request, response: Response):
     """
     Sign in or register with a Google ID token (verified server-side).
 
@@ -2463,7 +2505,7 @@ async def auth_google(req: GoogleAuthRequest, request: Request):
                 {"g": str(sub)},
             ).fetchone()
             if row:
-                return _auth_response_from_google_row(row)
+                return _auth_response_from_google_row(row, response)
 
             row_em = session.execute(
                 text(sel + "WHERE lower(email) = :e"),
@@ -2489,7 +2531,7 @@ async def auth_google(req: GoogleAuthRequest, request: Request):
                     {"id": str(row_em[0])},
                 ).fetchone()
                 if row2:
-                    return _auth_response_from_google_row(row2)
+                    return _auth_response_from_google_row(row2, response)
                 raise HTTPException(500, "Google link failed")
 
             username = _allocate_unique_username_from_google(session, email, display_name)
@@ -2528,6 +2570,7 @@ async def auth_google(req: GoogleAuthRequest, request: Request):
             session.commit()
 
             tok = auth.issue_token(user_id, str(ins[2]), str(ins[1]))
+            _set_auth_cookie(response, tok)
             return AuthResponse(
                 access_token=tok,
                 user_id=user_id,
@@ -2932,7 +2975,7 @@ async def twofa_disable(req: TwoFADisableBody, payload: dict = Depends(verify_to
 
 
 @app.post("/auth/2fa/confirm", response_model=AuthResponse)
-async def twofa_confirm(req: TwoFAConfirmBody, request: Request):
+async def twofa_confirm(req: TwoFAConfirmBody, request: Request, response: Response):
     """Exchange temp_token (from login) + TOTP for a full access JWT."""
     _check_rate_limit(f"2fa_confirm:{request.client.host}", max_calls=20, window_secs=60)
     try:
@@ -2967,6 +3010,7 @@ async def twofa_confirm(req: TwoFAConfirmBody, request: Request):
         raise HTTPException(500, "2FA confirmation failed")
 
     token = auth.issue_token(uid, row[1], row[0])
+    _set_auth_cookie(response, token)
     return AuthResponse(
         access_token=token,
         user_id=uid,
@@ -2982,14 +3026,16 @@ async def twofa_confirm(req: TwoFAConfirmBody, request: Request):
 # (Phase 0 plan). Do NOT implement until Client ID + DB columns google_id / auth_provider exist.
 
 @app.post("/auth/logout", status_code=200)
-async def logout(payload: dict = Depends(verify_token)):
+async def logout(response: Response, payload: dict = Depends(verify_token)):
     """
     Logout — invalidates the client session for the authenticated user.
 
     JWTs are stateless, so true invalidation requires a blocklist (Phase 6).
-    For now: marks all active client_sessions for this user as disconnected.
-    The client should discard its stored token on receipt of 200.
+    For now: marks all active client_sessions for this user as disconnected,
+    AND clears the httpOnly auth cookie so the browser can't re-use it.
+    The desktop client should also discard its stored token on receipt of 200.
     """
+    _clear_auth_cookie(response)
     user_id: str = payload["sub"]
     try:
         with SessionLocal() as session:

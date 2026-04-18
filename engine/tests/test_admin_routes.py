@@ -114,7 +114,7 @@ class TestAdminOracleStatus:
     def test_requires_auth(self):
         """No Authorization header → 422."""
         resp = client.get("/admin/oracle/status")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -190,7 +190,7 @@ class TestAdminOracleSync:
     def test_requires_auth(self):
         """No token → 422."""
         resp = client.post("/admin/oracle/sync")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -373,7 +373,7 @@ class TestAdminDeclareWinner:
             f"/admin/match/{_MATCH_ID}/declare-winner",
             json={"winner_id": _WINNER_ID},
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     def test_non_admin_cannot_declare(self):
         """Non-admin user (no admin role in DB) → 403."""
