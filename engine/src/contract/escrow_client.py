@@ -562,6 +562,13 @@ class EscrowClient:
 
             # Update in_escrow balance
             # DB-ready: user_balances.in_escrow += stakePerPlayer
+            # FOR UPDATE locks the row for the remainder of this transaction,
+            # serializing concurrent event handlers / API writers that touch
+            # the same user_balances row (C12).
+            session.execute(
+                text("SELECT 1 FROM user_balances WHERE user_id = :uid FOR UPDATE"),
+                {"uid": user_id},
+            )
             session.execute(
                 text(
                     "UPDATE user_balances SET in_escrow = in_escrow + :stake WHERE user_id = :uid"
@@ -651,6 +658,11 @@ class EscrowClient:
                     "id": str(uuid.uuid4()), "uid": user_id,
                     "amount": stake, "mid": db_match_id,
                 },
+            )
+            # FOR UPDATE — lock user_balances row before mutating (C12).
+            session.execute(
+                text("SELECT 1 FROM user_balances WHERE user_id = :uid FOR UPDATE"),
+                {"uid": user_id},
             )
             session.execute(
                 text(
@@ -751,6 +763,11 @@ class EscrowClient:
                         """),
                         {"payout": payout_eth, "uid": player_id},
                     )
+                    # FOR UPDATE — lock winner's user_balances row (C12).
+                    session.execute(
+                        text("SELECT 1 FROM user_balances WHERE user_id = :uid FOR UPDATE"),
+                        {"uid": player_id},
+                    )
                     session.execute(
                         text("""
                             UPDATE user_balances
@@ -763,6 +780,11 @@ class EscrowClient:
                 else:
                     session.execute(
                         text("UPDATE user_stats SET losses = losses + 1 WHERE user_id = :uid"),
+                        {"uid": player_id},
+                    )
+                    # FOR UPDATE — lock loser's user_balances row (C12).
+                    session.execute(
+                        text("SELECT 1 FROM user_balances WHERE user_id = :uid FOR UPDATE"),
                         {"uid": player_id},
                     )
                     session.execute(
@@ -871,6 +893,11 @@ class EscrowClient:
                         "id": str(uuid.uuid4()), "uid": player_id,
                         "amount": stake, "mid": db_match_id,
                     },
+                )
+                # FOR UPDATE — lock user_balances row before refund mutation (C12).
+                session.execute(
+                    text("SELECT 1 FROM user_balances WHERE user_id = :uid FOR UPDATE"),
+                    {"uid": player_id},
                 )
                 session.execute(
                     text("""
