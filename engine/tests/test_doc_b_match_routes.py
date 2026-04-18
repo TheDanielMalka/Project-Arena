@@ -192,6 +192,26 @@ class TestJoinMatchPassword:
         assert resp.status_code == 403
 
 
+class TestCreateMatchStakeValidation:
+    """H3: stake_amount must be > 0 — no silent clamp to 0.01."""
+
+    def test_zero_stake_rejected(self):
+        resp = client.post(
+            "/matches",
+            json={"game": "CS2", "stake_amount": 0, "stake_currency": "AT"},
+            headers=_AUTH_HEADERS,
+        )
+        assert resp.status_code == 422  # pydantic gt=0
+
+    def test_negative_stake_rejected(self):
+        resp = client.post(
+            "/matches",
+            json={"game": "CS2", "stake_amount": -5, "stake_currency": "AT"},
+            headers=_AUTH_HEADERS,
+        )
+        assert resp.status_code == 422
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Doc B §3.2 — Auto-start when room fills
 # ═══════════════════════════════════════════════════════════════════════════════
