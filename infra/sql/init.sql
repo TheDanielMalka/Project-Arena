@@ -266,11 +266,12 @@ CREATE INDEX idx_transactions_user_created_at
 CREATE INDEX idx_transactions_match_id
     ON transactions(match_id)
     WHERE match_id IS NOT NULL;
--- Partial UNIQUE: single-row money-in/out rows must have globally unique tx_hash.
+-- Partial UNIQUE: at_purchase rows must have globally unique tx_hash so
+-- an attacker cannot replay another user's receipt against their own uid.
 CREATE UNIQUE INDEX uq_transactions_single_tx_hash
     ON transactions(tx_hash)
  WHERE tx_hash IS NOT NULL
-   AND type IN ('at_purchase', 'at_withdrawal', 'deposit', 'withdrawal');
+   AND type = 'at_purchase';
 -- Partial UNIQUE: chain events may emit N rows from one tx_hash (winners +
 -- fee), so uniqueness is scoped (tx_hash, user_id, type, match_id).
 CREATE UNIQUE INDEX uq_transactions_chain_event_dedup

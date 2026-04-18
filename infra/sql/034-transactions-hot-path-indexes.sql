@@ -12,8 +12,8 @@
 
 -- 1. transactions(match_id) — used by _at_payout_already_happened()
 --    ("SELECT 1 FROM transactions WHERE match_id = :mid AND type IN ...")
---    Partial: the vast majority of rows (at_purchase / at_spend / at_withdrawal)
---    have match_id = NULL and never need the index, keeping it small.
+--    Partial: the vast majority of rows (at_purchase / at_spend / non-match
+--    refunds) have match_id = NULL and never need the index, keeping it small.
 CREATE INDEX IF NOT EXISTS idx_transactions_match_id
     ON transactions(match_id)
     WHERE match_id IS NOT NULL;

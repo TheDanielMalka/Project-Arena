@@ -9,9 +9,10 @@
 -- ║  can double-credit match_win / escrow_lock / refund / fee.              ║
 -- ║                                                                         ║
 -- ║  Fix:                                                                   ║
--- ║  1. Keep global uniqueness for single-row TX types (at_purchase,        ║
--- ║     at_withdrawal, deposit, withdrawal) — an attacker must not be able  ║
--- ║     to replay another user's deposit tx_hash against their own user_id. ║
+-- ║  1. Keep global uniqueness for single-row TX types (at_purchase —       ║
+-- ║     the only type currently populating tx_hash for off-chain receipts). ║
+-- ║     An attacker must not be able to replay another user's purchase      ║
+-- ║     tx_hash against their own user_id.                                  ║
 -- ║  2. Add a scoped UNIQUE for chain-event TX types (escrow_lock,          ║
 -- ║     escrow_release, match_win, match_loss, refund, fee) keyed by        ║
 -- ║     (tx_hash, user_id, type, match_id) with NULLS NOT DISTINCT so       ║
@@ -37,7 +38,7 @@ DROP INDEX IF EXISTS idx_transactions_tx_hash_unique;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_transactions_single_tx_hash
     ON transactions(tx_hash)
  WHERE tx_hash IS NOT NULL
-   AND type IN ('at_purchase', 'at_withdrawal', 'deposit', 'withdrawal');
+   AND type = 'at_purchase';
 
 -- Step 3: scoped UNIQUE for multi-row chain-event rows.
 -- NULLS NOT DISTINCT so the fee row (user_id IS NULL for platform fee)
