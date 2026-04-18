@@ -155,6 +155,62 @@ class TestJoinMatchPassword:
             )
         assert resp.status_code == 403
 
+    def test_join_bcrypt_hashed_password_succeeds(self):
+        """H1/H2: room password stored as bcrypt hash → submit plaintext → 200."""
+        ctx, session = _make_session()
+        stored_hash = auth.hash_password("secret")
+        session.execute.return_value.fetchone.side_effect = [
+            _mock_match_row(password=stored_hash, currency="CRYPTO"),
+            _steam_user(),
+            (0.0,),
+            None,
+            None,
+            (1, 0),
+            (2,),
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{_MATCH_ID}/join",
+                json={"password": "secret"},
+                headers=_AUTH_HEADERS,
+            )
+        assert resp.status_code == 200
+
+    def test_join_bcrypt_wrong_password_returns_403(self):
+        """H1/H2: bcrypt-hashed room password — wrong plaintext → 403."""
+        ctx, session = _make_session()
+        stored_hash = auth.hash_password("secret")
+        session.execute.return_value.fetchone.side_effect = [
+            _mock_match_row(password=stored_hash),
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                f"/matches/{_MATCH_ID}/join",
+                json={"password": "wrong"},
+                headers=_AUTH_HEADERS,
+            )
+        assert resp.status_code == 403
+
+
+class TestCreateMatchStakeValidation:
+    """H3: stake_amount must be > 0 — no silent clamp to 0.01."""
+
+    def test_zero_stake_rejected(self):
+        resp = client.post(
+            "/matches",
+            json={"game": "CS2", "stake_amount": 0, "stake_currency": "AT"},
+            headers=_AUTH_HEADERS,
+        )
+        assert resp.status_code == 422  # pydantic gt=0
+
+    def test_negative_stake_rejected(self):
+        resp = client.post(
+            "/matches",
+            json={"game": "CS2", "stake_amount": -5, "stake_currency": "AT"},
+            headers=_AUTH_HEADERS,
+        )
+        assert resp.status_code == 422
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Doc B §3.2 — Auto-start when room fills

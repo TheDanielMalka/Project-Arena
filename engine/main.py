@@ -1,4 +1,5 @@
 import hashlib
+import hmac as _hmac
 import os
 import re
 import secrets
@@ -14,7 +15,7 @@ from collections import defaultdict as _defaultdict
 from fastapi import FastAPI, HTTPException, Depends, Header, Query, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
@@ -3164,14 +3165,14 @@ class CreateMatchRequest(BaseModel):
       stake_amount → matches.bet_amount  (NUMERIC, must be > 0; CHECK enforced by DB)
       mode         → matches.mode  (match_mode enum: '1v1' | '2v2' | '4v4' | '5v5')
       match_type   → matches.type  (match_type enum: 'public' | 'custom')
-      password     → matches.password  (optional; plain text for MVP —
-                                        TODO: bcrypt hash before public beta)
+      password     → matches.password  (optional; stored bcrypt-hashed)
 
     DB-ready: writes to matches + match_players tables.
     CONTRACT-ready: stake_amount → ArenaEscrow.lockStake() once wallet is linked.
     """
     game: str = "CS2"                # "CS2" | "Valorant"
-    stake_amount: float = 1.0        # stake per player (USDT for CRYPTO, AT tokens for AT)
+    # H3: reject non-positive stakes at the edge (was silently clamped to 0.01).
+    stake_amount: float = Field(default=1.0, gt=0)
     mode: str = "1v1"                # "1v1" | "2v2" | "4v4" | "5v5"
     match_type: str = "custom"       # "public" | "custom"
     stake_currency: str = "CRYPTO"   # "CRYPTO" (ETH/BNB via escrow) | "AT" (Arena Tokens)
@@ -3193,6 +3194,25 @@ class JoinMatchRequest(BaseModel):
 
 _VALID_CURRENCIES = {"CRYPTO", "AT"}
 _AT_FEE_PCT = 0.05  # 5% platform fee on AT match winnings — mirrors ArenaEscrow fee
+
+
+def _verify_room_password(submitted: str | None, stored: str | None) -> bool:
+    """Constant-time room password check. Supports bcrypt (H1) + legacy plaintext.
+
+    Returns True when:
+      - stored is empty/NULL (no password required), or
+      - submitted matches stored (bcrypt.checkpw when hashed, hmac.compare_digest
+        for legacy plaintext still in DB before the cycle-out completes).
+    """
+    if not stored:
+        return True
+    submitted_s = submitted or ""
+    if stored.startswith("$2"):
+        try:
+            return auth.verify_password(submitted_s, stored)
+        except Exception:
+            return False
+    return _hmac.compare_digest(submitted_s, stored)
 
 # ── M8 Kill Switch ─────────────────────────────────────────────────────────────
 # When True: all payout disbursement is suspended (AT credit + CRYPTO on-chain).
@@ -3921,8 +3941,10 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
     if stake_currency not in _VALID_CURRENCIES:
         raise HTTPException(400, "stake_currency must be 'CRYPTO' or 'AT'")
 
-    # bet_amount has CHECK > 0 in DB; clamp to minimum to prevent constraint error
-    bet_amount = max(float(req.stake_amount), 0.01)
+    # H3: Pydantic enforces gt=0; defend-in-depth reject if coercion got past it.
+    bet_amount = float(req.stake_amount)
+    if bet_amount <= 0:
+        raise HTTPException(400, "stake_amount must be greater than 0")
     at_stake = int(bet_amount) if stake_currency == "AT" else 0
 
     # Derive max_players and max_per_team from mode
@@ -3981,8 +4003,7 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
             room_code = "ARENA-" + "".join(_secrets.choice(_chars) for _ in range(5))
 
             # ── Create match ──────────────────────────────────────────────────
-            # password stored as plain text for MVP.
-            # TODO: replace with bcrypt hash before public beta.
+            # H1: password stored as bcrypt hash (see auth.hash_password).
             match_row = session.execute(
                 text(
                     "INSERT INTO matches "
@@ -3998,7 +4019,7 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
                     "bet":   bet_amount,
                     "sc":    stake_currency,
                     "code":  room_code,
-                    "pw":    req.password or None,
+                    "pw":    (auth.hash_password(req.password) if req.password else None),
                     "maxp":  max_players,
                     "mpt":   team_size,
                 },
@@ -4059,6 +4080,8 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
     CONTRACT-ready: triggers escrow lock once both players have joined.
     """
     user_id: str = payload["sub"]
+    # H4: cap join-spam — abusers can't brute-force room passwords.
+    _check_rate_limit(f"join_match:{user_id}", max_calls=20, window_secs=60)
 
     try:
         with SessionLocal() as session:
@@ -4082,8 +4105,8 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
             if status != "waiting":
                 raise HTTPException(409, f"Match is not open for joining (status: {status})")
 
-            # ── Password check ────────────────────────────────────────────────
-            if match_password and (req.password or "") != match_password:
+            # ── Password check (H1/H2: constant-time, bcrypt w/ legacy fallback) ─
+            if match_password and not _verify_room_password(req.password, match_password):
                 raise HTTPException(403, "Incorrect room password")
 
             # ── Check joiner's game account ───────────────────────────────────
@@ -4889,6 +4912,8 @@ async def withdraw_arena_tokens(req: WithdrawAtRequest, payload: dict = Depends(
     from datetime import timezone
 
     user_id: str = payload["sub"]
+    # H4: cap withdrawal-request spam — limits denial/abuse + probing attempts.
+    _check_rate_limit(f"withdraw_at:{user_id}", max_calls=5, window_secs=60)
     at_amount = req.at_amount
 
     if at_amount <= 0:
@@ -7280,6 +7305,8 @@ async def create_dispute(req: CreateDisputeRequest, payload: dict = Depends(veri
     DB-ready: INSERT into disputes; UPDATE matches SET status = 'disputed'.
     """
     me: str = payload["sub"]
+    # H4: cap dispute submissions so one user can't flood the admin queue.
+    _check_rate_limit(f"create_dispute:{me}", max_calls=5, window_secs=60)
 
     reason = req.reason.strip()
     if not reason:
@@ -7507,6 +7534,8 @@ async def create_support_ticket(
     DB-ready: INSERT into support_tickets (all DB enum values validated here).
     """
     me: str = payload["sub"]
+    # H4: cap ticket submissions — prevents spamming the support queue.
+    _check_rate_limit(f"support_ticket:{me}", max_calls=10, window_secs=60)
 
     _valid_reasons    = {"cheating", "harassment", "fake_screenshot", "disconnect_abuse", "other"}
     _valid_categories = {"player_report", "match_dispute", "general_support"}
