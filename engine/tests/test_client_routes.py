@@ -414,9 +414,9 @@ class TestClientBind:
         assert record is not None
         assert record["user_id"] == _TEST_USER_ID
 
-    def test_bind_without_token_returns_422(self):
+    def test_bind_without_token_returns_401(self):
         resp = client.post("/client/bind", json={"session_id": self.FAKE_SESSION_ID})
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     def test_bind_invalid_token_returns_401(self):
         resp = client.post(
@@ -511,9 +511,9 @@ class TestAuthLogout:
         with _client_store_lock:
             assert "0xLOGOUT" not in _client_statuses
 
-    def test_logout_without_token_returns_422(self):
+    def test_logout_without_token_returns_401(self):
         resp = client.post("/auth/logout")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     def test_logout_invalid_token_returns_401(self):
         resp = client.post(

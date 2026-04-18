@@ -306,13 +306,13 @@ class TestNotificationRespond:
         assert resp.json()["action"] == "accept"
         assert "match_id" not in resp.json()
 
-    def test_requires_auth_returns_422(self):
+    def test_requires_auth_returns_401(self):
         """No token → 422."""
         resp = client.post(
             f"/notifications/{_NOTIF_ID}/respond",
             json={"action": "decline"},
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

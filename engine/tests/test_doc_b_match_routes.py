@@ -600,7 +600,7 @@ class TestInvitePreValidation:
             f"/matches/{_MATCH_ID}/invite",
             json={"friend_id": _FRIEND_ID},
         )
-        assert resp.status_code == 422  # missing Authorization header → 422
+        assert resp.status_code == 401  # missing Authorization header → 422
 
     def test_friend_already_in_match_returns_409(self):
         """Friend joined the room themselves → 409 before friendship/balance checks."""
@@ -720,7 +720,7 @@ class TestMatchHeartbeat:
 
     def test_heartbeat_requires_auth(self):
         resp = client.post(f"/matches/{_MATCH_ID}/heartbeat")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     def test_heartbeat_returns_match_status(self):
         """Response includes current match status."""
@@ -906,7 +906,7 @@ class TestKickPlayer:
             f"/matches/{_MATCH_ID}/kick",
             json={"user_id": _GUEST_ID},
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
