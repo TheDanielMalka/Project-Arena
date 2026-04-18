@@ -266,6 +266,23 @@ CREATE INDEX idx_transactions_user_created_at
 CREATE INDEX idx_transactions_match_id
     ON transactions(match_id)
     WHERE match_id IS NOT NULL;
+-- Partial UNIQUE: single-row money-in/out rows must have globally unique tx_hash.
+CREATE UNIQUE INDEX uq_transactions_single_tx_hash
+    ON transactions(tx_hash)
+ WHERE tx_hash IS NOT NULL
+   AND type IN ('at_purchase', 'at_withdrawal', 'deposit', 'withdrawal');
+-- Partial UNIQUE: chain events may emit N rows from one tx_hash (winners +
+-- fee), so uniqueness is scoped (tx_hash, user_id, type, match_id).
+CREATE UNIQUE INDEX uq_transactions_chain_event_dedup
+    ON transactions(tx_hash, user_id, type, match_id)
+    NULLS NOT DISTINCT
+ WHERE tx_hash IS NOT NULL
+   AND type IN ('escrow_lock', 'escrow_release', 'match_win',
+                'match_loss', 'refund', 'fee');
+-- Defense-in-depth: on-chain (BNB) rows must carry a tx_hash.
+ALTER TABLE transactions
+    ADD CONSTRAINT transactions_bnb_requires_tx_hash
+    CHECK (token <> 'BNB' OR tx_hash IS NOT NULL);
 CREATE INDEX idx_disputes_match     ON disputes(match_id);
 CREATE INDEX idx_notifications_user ON notifications(user_id, read);
 CREATE INDEX idx_audit_admin        ON audit_logs(admin_id);
