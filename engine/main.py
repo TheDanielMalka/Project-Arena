@@ -4003,8 +4003,7 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
             room_code = "ARENA-" + "".join(_secrets.choice(_chars) for _ in range(5))
 
             # ── Create match ──────────────────────────────────────────────────
-            # password stored as plain text for MVP.
-            # TODO: replace with bcrypt hash before public beta.
+            # H1: password stored as bcrypt hash (see auth.hash_password).
             match_row = session.execute(
                 text(
                     "INSERT INTO matches "
@@ -4081,6 +4080,8 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
     CONTRACT-ready: triggers escrow lock once both players have joined.
     """
     user_id: str = payload["sub"]
+    # H4: cap join-spam — abusers can't brute-force room passwords.
+    _check_rate_limit(f"join_match:{user_id}", max_calls=20, window_secs=60)
 
     try:
         with SessionLocal() as session:
@@ -4911,6 +4912,8 @@ async def withdraw_arena_tokens(req: WithdrawAtRequest, payload: dict = Depends(
     from datetime import timezone
 
     user_id: str = payload["sub"]
+    # H4: cap withdrawal-request spam — limits denial/abuse + probing attempts.
+    _check_rate_limit(f"withdraw_at:{user_id}", max_calls=5, window_secs=60)
     at_amount = req.at_amount
 
     if at_amount <= 0:
@@ -7302,6 +7305,8 @@ async def create_dispute(req: CreateDisputeRequest, payload: dict = Depends(veri
     DB-ready: INSERT into disputes; UPDATE matches SET status = 'disputed'.
     """
     me: str = payload["sub"]
+    # H4: cap dispute submissions so one user can't flood the admin queue.
+    _check_rate_limit(f"create_dispute:{me}", max_calls=5, window_secs=60)
 
     reason = req.reason.strip()
     if not reason:
@@ -7529,6 +7534,8 @@ async def create_support_ticket(
     DB-ready: INSERT into support_tickets (all DB enum values validated here).
     """
     me: str = payload["sub"]
+    # H4: cap ticket submissions — prevents spamming the support queue.
+    _check_rate_limit(f"support_ticket:{me}", max_calls=10, window_secs=60)
 
     _valid_reasons    = {"cheating", "harassment", "fake_screenshot", "disconnect_abuse", "other"}
     _valid_categories = {"player_report", "match_dispute", "general_support"}
