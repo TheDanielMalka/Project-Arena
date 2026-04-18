@@ -71,9 +71,11 @@ CREATE TABLE user_stats (
 -- ── User Balances ────────────────────────────────────────────
 CREATE TABLE user_balances (
     user_id   UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    total     NUMERIC(12,2) DEFAULT 0,
-    available NUMERIC(12,2) DEFAULT 0,
-    in_escrow NUMERIC(12,2) DEFAULT 0
+    total     NUMERIC(12,2) NOT NULL DEFAULT 0,
+    available NUMERIC(12,2) NOT NULL DEFAULT 0,
+    in_escrow NUMERIC(12,2) NOT NULL DEFAULT 0,
+    CONSTRAINT user_balances_nonneg_chk
+        CHECK (total >= 0 AND available >= 0 AND in_escrow >= 0)
 );
 
 -- ── Matches ──────────────────────────────────────────────────
@@ -90,7 +92,7 @@ CREATE TABLE matches (
     password     VARCHAR(50),
     max_per_team INT,
     winner_id         UUID REFERENCES users(id),
-    on_chain_match_id BIGINT,           -- ArenaEscrow.sol matchId (uint256), set on MatchCreated event
+    on_chain_match_id BIGINT UNIQUE,    -- ArenaEscrow.sol matchId (uint256), set on MatchCreated event — UNIQUE blocks duplicate-event double-link (C15)
     deposits_received INT DEFAULT 0,    -- how many players locked funds on-chain (set on PlayerDeposited events)
     stake_per_player  NUMERIC(12,2),    -- bet_amount per player (redundant but explicit for contract alignment)
     created_at        TIMESTAMPTZ DEFAULT NOW(),

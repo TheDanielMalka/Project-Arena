@@ -3525,9 +3525,16 @@ def _assert_not_suspended(session, user_id: str) -> None:
 
 
 def _assert_at_balance(session, user_id: str, required: int) -> None:
-    """Raise 402 if user's at_balance < required AT."""
+    """
+    Raise 402 if user's at_balance < required AT.
+
+    Uses SELECT ... FOR UPDATE to lock the users row for the remainder of the
+    caller's transaction, so the subsequent _deduct_at cannot be raced by a
+    concurrent withdrawal / join / challenge that reads the same balance and
+    bypasses the check (C12).
+    """
     row = session.execute(
-        text("SELECT at_balance FROM users WHERE id = :uid"),
+        text("SELECT at_balance FROM users WHERE id = :uid FOR UPDATE"),
         {"uid": user_id},
     ).fetchone()
     if not row:
@@ -4907,10 +4914,13 @@ async def withdraw_arena_tokens(req: WithdrawAtRequest, payload: dict = Depends(
     try:
         with SessionLocal() as session:
             # ── Fetch user ────────────────────────────────────────────────────
+            # FOR UPDATE — locks the user row for the remainder of this
+            # transaction so two concurrent withdraw-at calls cannot both
+            # pass the balance check and drain the account (C12).
             row = session.execute(
                 text(
                     "SELECT at_balance, wallet_address, at_daily_withdrawn, at_withdrawal_reset_at "
-                    "FROM users WHERE id = :uid"
+                    "FROM users WHERE id = :uid FOR UPDATE"
                 ),
                 {"uid": user_id},
             ).fetchone()
