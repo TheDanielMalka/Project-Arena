@@ -261,6 +261,11 @@ CREATE INDEX idx_matches_status        ON matches(status);
 CREATE INDEX idx_matches_host          ON matches(host_id);
 CREATE INDEX idx_matches_on_chain      ON matches(on_chain_match_id);
 CREATE INDEX idx_transactions_user  ON transactions(user_id);
+CREATE INDEX idx_transactions_user_created_at
+    ON transactions(user_id, created_at DESC);
+CREATE INDEX idx_transactions_match_id
+    ON transactions(match_id)
+    WHERE match_id IS NOT NULL;
 CREATE INDEX idx_disputes_match     ON disputes(match_id);
 CREATE INDEX idx_notifications_user ON notifications(user_id, read);
 CREATE INDEX idx_audit_admin        ON audit_logs(admin_id);
