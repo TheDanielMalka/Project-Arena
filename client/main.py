@@ -12,6 +12,7 @@ The client only captures screenshots and uploads them.
 
 import sys
 import os
+import re
 import time
 import json
 import uuid
@@ -250,13 +251,71 @@ config = load_config()
 os.makedirs(config["log_dir"], exist_ok=True)
 os.makedirs(config["screenshot_dir"], exist_ok=True)
 
+# ── PII redaction for logs ────────────────────────────────────────────────────
+# Audit finding: logs persisted user_id / wallet_address / session_id / tokens
+# to client.log in plaintext.  A stolen laptop or a support-bundle upload
+# would leak identifiers that directly map a machine to a user account.
+# The filter runs on every LogRecord before any handler formats it, so the
+# redaction applies to both the rotating file and the console stream.
+_UUID_RE = re.compile(
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+    re.IGNORECASE,
+)
+_WALLET_RE = re.compile(r"\b0x[0-9a-fA-F]{40}\b")
+_BEARER_RE = re.compile(r"(Bearer\s+)[A-Za-z0-9_\-\.]+", re.IGNORECASE)
+_JWT_RE    = re.compile(r"\beyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\b")
+_EMAIL_RE  = re.compile(r"\b([A-Za-z0-9._%+\-])[A-Za-z0-9._%+\-]*@([A-Za-z0-9.\-]+\.[A-Za-z]{2,})\b")
+
+
+def _redact(text: str) -> str:
+    if not text:
+        return text
+    # JWT first — matches a looser pattern than Bearer and should not leak
+    # through as a plain UUID/base64 chunk.
+    text = _JWT_RE.sub("<redacted:jwt>", text)
+    text = _BEARER_RE.sub(r"\1<redacted>", text)
+    text = _WALLET_RE.sub(
+        lambda m: f"{m.group(0)[:6]}…{m.group(0)[-4:]}", text
+    )
+    text = _UUID_RE.sub(lambda m: f"{m.group(0)[:8]}…", text)
+    text = _EMAIL_RE.sub(r"\1***@\2", text)
+    return text
+
+
+class _RedactingFilter(logging.Filter):
+    """Rewrites record.msg / record.args so PII never reaches any handler."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            if isinstance(record.msg, str):
+                record.msg = _redact(record.msg)
+            if record.args:
+                if isinstance(record.args, dict):
+                    record.args = {
+                        k: _redact(v) if isinstance(v, str) else v
+                        for k, v in record.args.items()
+                    }
+                elif isinstance(record.args, tuple):
+                    record.args = tuple(
+                        _redact(a) if isinstance(a, str) else a
+                        for a in record.args
+                    )
+        except Exception:
+            # A filter must not raise — drop quietly rather than lose the log.
+            pass
+        return True
+
+
 logger = logging.getLogger("arena.client")
 logger.setLevel(logging.DEBUG)
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
+_redacting_filter = _RedactingFilter()
+
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(formatter)
+console_handler.addFilter(_redacting_filter)
 
 file_handler = RotatingFileHandler(
     os.path.join(config["log_dir"], "client.log"),
@@ -264,6 +323,7 @@ file_handler = RotatingFileHandler(
 )
 file_handler.setLevel(logging.DEBUG)
 file_handler.setFormatter(formatter)
+file_handler.addFilter(_redacting_filter)
 
 logger.addHandler(console_handler)
 logger.addHandler(file_handler)

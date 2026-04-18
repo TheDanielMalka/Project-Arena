@@ -527,3 +527,94 @@ class TestAuthManagerPhase5:
         auth.logout()  # no engine arg
 
         assert auth._config["auth_token"] == ""
+
+
+# ══════════════════════════════════════════════════════════════
+# 6. Log redaction (PII hardening — audit finding on client/main.py:262)
+# ══════════════════════════════════════════════════════════════
+
+class TestLogRedaction:
+    """The RotatingFileHandler used to persist wallet_address / user_id /
+    session_id / bearer tokens / email addresses in plaintext. These tests
+    pin the _redact() helper so regressions surface immediately."""
+
+    def test_uuid_truncated(self):
+        from main import _redact
+        uid = "11111111-2222-3333-4444-555555555555"
+        out = _redact(f"user={uid}")
+        assert uid not in out
+        assert "11111111…" in out
+
+    def test_wallet_masked_middle(self):
+        from main import _redact
+        wallet = "0xABCDEF0123456789abcdef0123456789ABCDEF01"
+        out = _redact(f"wallet={wallet}")
+        assert wallet not in out
+        assert "0xABCD" in out and "EF01" in out  # prefix + suffix kept
+
+    def test_bearer_token_stripped(self):
+        from main import _redact
+        # Non-JWT-looking bearer — Bearer pattern catches it rather than JWT.
+        tok = "Bearer abc123xyz456"
+        out = _redact(f"Authorization: {tok}")
+        assert "abc123xyz456" not in out
+        assert "Bearer <redacted>" in out
+
+    def test_jwt_standalone_stripped(self):
+        from main import _redact
+        jwt = "eyJhbGciOi.eyJzdWIi.signaturePart"
+        out = _redact(f"token={jwt}")
+        assert "signaturePart" not in out
+        assert "<redacted:jwt>" in out
+
+    def test_email_partial_mask(self):
+        from main import _redact
+        out = _redact("login user=daniel@arena.gg ok")
+        assert "daniel@arena.gg" not in out
+        assert "d***@arena.gg" in out
+
+    def test_plain_message_unchanged(self):
+        from main import _redact
+        msg = "Monitor started, match in progress"
+        assert _redact(msg) == msg
+
+    def test_filter_rewrites_record_msg(self):
+        """_RedactingFilter must mutate record.msg before the handler sees it."""
+        import logging as _logging
+        from main import _RedactingFilter
+        flt = _RedactingFilter()
+        record = _logging.LogRecord(
+            name="t", level=_logging.INFO, pathname="", lineno=0,
+            msg="Logged in: 11111111-2222-3333-4444-555555555555",
+            args=(), exc_info=None,
+        )
+        assert flt.filter(record) is True
+        assert "11111111-2222-3333-4444-555555555555" not in record.msg
+        assert "11111111…" in record.msg
+
+    def test_filter_rewrites_args_tuple(self):
+        """logger.info('user=%s', uid) — args must be redacted too."""
+        import logging as _logging
+        from main import _RedactingFilter
+        flt = _RedactingFilter()
+        wallet = "0x1234567890abcdef1234567890abcdef12345678"
+        record = _logging.LogRecord(
+            name="t", level=_logging.INFO, pathname="", lineno=0,
+            msg="wallet=%s", args=(wallet,), exc_info=None,
+        )
+        flt.filter(record)
+        assert wallet not in record.args[0]
+        assert "0x1234" in record.args[0]
+
+    def test_filter_survives_bad_args(self):
+        """Non-string args must pass through untouched."""
+        import logging as _logging
+        from main import _RedactingFilter
+        flt = _RedactingFilter()
+        record = _logging.LogRecord(
+            name="t", level=_logging.INFO, pathname="", lineno=0,
+            msg="count=%d items=%s", args=(5, ["a", "b"]), exc_info=None,
+        )
+        assert flt.filter(record) is True
+        assert record.args[0] == 5
+        assert record.args[1] == ["a", "b"]
