@@ -153,6 +153,24 @@ _GAS_CANCEL_MATCH   = 200_000
 _GAS_ADMIN          =  80_000   # pause() / unpause() — simple state flip
 
 
+def _event_tx_hash(event) -> Optional[str]:
+    """
+    Extract the originating transactionHash from a web3 event as a 0x-prefixed
+    hex string. Used to fill transactions.tx_hash on every row we insert from
+    an on-chain event so uq_transactions_chain_event_dedup can block replays
+    when the same event is delivered twice (chain re-org, listener restart).
+    Returns None only if the event object is malformed — callers should let
+    that propagate so the NOT NULL guardrail (migration 035) catches it.
+    """
+    raw = event.get("transactionHash") if hasattr(event, "get") else event["transactionHash"]
+    if raw is None:
+        return None
+    if isinstance(raw, (bytes, bytearray)):
+        return "0x" + raw.hex()
+    s = str(raw)
+    return s if s.startswith("0x") else "0x" + s
+
+
 class EscrowClient:
     """
     Web3.py wrapper for ArenaEscrow.sol.
@@ -493,6 +511,7 @@ class EscrowClient:
         team_size      = args["teamSize"]
         stake_wei      = args["stakePerPlayer"]
         stake_eth      = Web3.from_wei(stake_wei, "ether")
+        tx_hash        = _event_tx_hash(event)
 
         with self._session_factory() as session:
             # Idempotency (C15): if this on_chain_match_id is already linked,
@@ -561,17 +580,20 @@ class EscrowClient:
                 },
             )
 
-            # Record escrow_lock transaction
-            # DB-ready: transactions.tx_type = 'escrow_lock'
+            # Record escrow_lock transaction.
+            # tx_hash scopes the uq_transactions_chain_event_dedup index so a
+            # re-fired MatchCreated (re-org / listener restart) fails the
+            # second insert instead of double-crediting escrow.
             session.execute(
                 text("""
-                    INSERT INTO transactions (id, user_id, type, amount, token, status, match_id)
-                    VALUES (:id, :uid, 'escrow_lock', :amount, 'BNB', 'completed', :mid)
+                    INSERT INTO transactions (id, user_id, type, amount, token, status, match_id, tx_hash)
+                    VALUES (:id, :uid, 'escrow_lock', :amount, 'BNB', 'completed', :mid, :tx)
                     ON CONFLICT DO NOTHING
                 """),
                 {
                     "id": str(uuid.uuid4()), "uid": user_id,
                     "amount": float(stake_eth), "mid": db_match_id,
+                    "tx": tx_hash,
                 },
             )
 
@@ -619,6 +641,7 @@ class EscrowClient:
         # Use stakePerPlayer from event args — on-chain source of truth (wei → ether)
         stake_wei   = args["stakePerPlayer"]
         stake_eth   = float(Web3.from_wei(stake_wei, "ether"))
+        tx_hash     = _event_tx_hash(event)
 
         with self._session_factory() as session:
             user = session.execute(
@@ -665,13 +688,14 @@ class EscrowClient:
             )
             session.execute(
                 text("""
-                    INSERT INTO transactions (id, user_id, type, amount, token, status, match_id)
-                    VALUES (:id, :uid, 'escrow_lock', :amount, 'BNB', 'completed', :mid)
+                    INSERT INTO transactions (id, user_id, type, amount, token, status, match_id, tx_hash)
+                    VALUES (:id, :uid, 'escrow_lock', :amount, 'BNB', 'completed', :mid, :tx)
                     ON CONFLICT DO NOTHING
                 """),
                 {
                     "id": str(uuid.uuid4()), "uid": user_id,
                     "amount": stake, "mid": db_match_id,
+                    "tx": tx_hash,
                 },
             )
             # FOR UPDATE — lock user_balances row before mutating (C12).
@@ -731,6 +755,7 @@ class EscrowClient:
         fee_eth        = float(Web3.from_wei(fee_wei,    "ether"))
         winning_letter = _INT_TO_TEAM[winning_team]
         losing_letter  = _INT_TO_TEAM[1 - winning_team]
+        tx_hash        = _event_tx_hash(event)
 
         with self._session_factory() as session:
             match_row = session.execute(
@@ -760,13 +785,14 @@ class EscrowClient:
                     session.execute(
                         text("""
                             INSERT INTO transactions
-                                (id, user_id, type, amount, token, status, match_id)
-                            VALUES (:id, :uid, 'match_win', :amount, 'BNB', 'completed', :mid)
+                                (id, user_id, type, amount, token, status, match_id, tx_hash)
+                            VALUES (:id, :uid, 'match_win', :amount, 'BNB', 'completed', :mid, :tx)
                             ON CONFLICT DO NOTHING
                         """),
                         {
                             "id": str(uuid.uuid4()), "uid": player_id,
                             "amount": payout_eth, "mid": db_match_id,
+                            "tx": tx_hash,
                         },
                     )
                     session.execute(
@@ -815,11 +841,14 @@ class EscrowClient:
             session.execute(
                 text("""
                     INSERT INTO transactions
-                        (id, type, amount, token, status, match_id)
-                    VALUES (:id, 'fee', :amount, 'BNB', 'completed', :mid)
+                        (id, type, amount, token, status, match_id, tx_hash)
+                    VALUES (:id, 'fee', :amount, 'BNB', 'completed', :mid, :tx)
                     ON CONFLICT DO NOTHING
                 """),
-                {"id": str(uuid.uuid4()), "amount": fee_eth, "mid": db_match_id},
+                {
+                    "id": str(uuid.uuid4()), "amount": fee_eth,
+                    "mid": db_match_id, "tx": tx_hash,
+                },
             )
 
             # Update match record
@@ -846,7 +875,9 @@ class EscrowClient:
         DB-ready: UPDATE matches SET status='cancelled' + refund txs for all players
         """
         on_chain_id = event["args"]["matchId"]
-        self._refund_all_players(on_chain_id, reason="refund_timeout")
+        self._refund_all_players(
+            on_chain_id, reason="refund_timeout", tx_hash=_event_tx_hash(event)
+        )
 
     def _handle_match_cancelled(self, event) -> None:
         """
@@ -856,13 +887,19 @@ class EscrowClient:
         DB-ready: UPDATE matches SET status='cancelled' + refund txs for depositors
         """
         on_chain_id = event["args"]["matchId"]
-        self._refund_all_players(on_chain_id, reason="refund_cancel", depositors_only=True)
+        self._refund_all_players(
+            on_chain_id,
+            reason="refund_cancel",
+            depositors_only=True,
+            tx_hash=_event_tx_hash(event),
+        )
 
     def _refund_all_players(
         self,
         on_chain_id: int,
         reason: str,
         depositors_only: bool = False,
+        tx_hash: str | None = None,
     ) -> None:
         """
         Shared refund logic for MatchRefunded / MatchCancelled.
@@ -900,13 +937,14 @@ class EscrowClient:
                 session.execute(
                     text("""
                         INSERT INTO transactions
-                            (id, user_id, type, amount, token, status, match_id)
-                        VALUES (:id, :uid, 'refund', :amount, 'BNB', 'completed', :mid)
+                            (id, user_id, type, amount, token, status, match_id, tx_hash)
+                        VALUES (:id, :uid, 'refund', :amount, 'BNB', 'completed', :mid, :tx)
                         ON CONFLICT DO NOTHING
                     """),
                     {
                         "id": str(uuid.uuid4()), "uid": player_id,
                         "amount": stake, "mid": db_match_id,
+                        "tx": tx_hash,
                     },
                 )
                 # FOR UPDATE — lock user_balances row before refund mutation (C12).
