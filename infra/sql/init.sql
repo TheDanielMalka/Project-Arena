@@ -92,7 +92,7 @@ CREATE TABLE matches (
     password     VARCHAR(50),
     max_per_team INT,
     winner_id         UUID REFERENCES users(id),
-    on_chain_match_id BIGINT,           -- ArenaEscrow.sol matchId (uint256), set on MatchCreated event
+    on_chain_match_id BIGINT UNIQUE,    -- ArenaEscrow.sol matchId (uint256), set on MatchCreated event — UNIQUE blocks duplicate-event double-link (C15)
     deposits_received INT DEFAULT 0,    -- how many players locked funds on-chain (set on PlayerDeposited events)
     stake_per_player  NUMERIC(12,2),    -- bet_amount per player (redundant but explicit for contract alignment)
     created_at        TIMESTAMPTZ DEFAULT NOW(),

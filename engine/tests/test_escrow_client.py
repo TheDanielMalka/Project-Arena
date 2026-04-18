@@ -229,17 +229,23 @@ class TestHandleMatchCreated:
                          "teamSize": 1, "stakePerPlayer": 10**17}}
 
     def test_skip_unknown_wallet(self):
-        c, _, _, s = _client(fns=[None])
+        # First fetchone: C15 idempotency check (None = not yet linked).
+        c, _, _, s = _client(fns=[None, None])
         c._handle_match_created(self._ev()); s.commit.assert_not_called()
 
     def test_skip_no_waiting_match(self):
-        c, _, _, s = _client(fns=[(str(uuid.uuid4()),), None])
+        c, _, _, s = _client(fns=[None, (str(uuid.uuid4()),), None])
         c._handle_match_created(self._ev()); s.commit.assert_not_called()
 
     def test_commits_on_success(self):
         uid = str(uuid.uuid4()); mid = str(uuid.uuid4())
-        c, _, _, s = _client(fns=[(uid,), (mid,)])
+        c, _, _, s = _client(fns=[None, (uid,), (mid,)])
         c._handle_match_created(self._ev()); s.commit.assert_called_once()
+
+    def test_skip_duplicate_on_chain_id(self):
+        """C15: second MatchCreated for same on_chain_id is a no-op."""
+        c, _, _, s = _client(fns=[(str(uuid.uuid4()),)])  # idempotency returns existing match
+        c._handle_match_created(self._ev()); s.commit.assert_not_called()
 
 
 class TestHandleWinnerDeclared:

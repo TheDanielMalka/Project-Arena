@@ -495,6 +495,21 @@ class EscrowClient:
         stake_eth      = Web3.from_wei(stake_wei, "ether")
 
         with self._session_factory() as session:
+            # Idempotency (C15): if this on_chain_match_id is already linked,
+            # a duplicate event was delivered (re-org, listener restart).
+            # Skip instead of linking a second DB match, which would cause
+            # later WinnerDeclared / Refund events to pay the wrong row.
+            existing = session.execute(
+                text("SELECT id FROM matches WHERE on_chain_match_id = :oid"),
+                {"oid": on_chain_id},
+            ).fetchone()
+            if existing:
+                logger.info(
+                    "MatchCreated: on_chain_id=%s already linked to match=%s — skipping",
+                    on_chain_id, existing[0],
+                )
+                return
+
             # Find user by wallet address
             user = session.execute(
                 text("SELECT id FROM users WHERE LOWER(wallet_address) = :wallet"),
