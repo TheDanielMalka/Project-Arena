@@ -414,6 +414,24 @@ class TestLogin:
             })
         assert resp.status_code == 401
 
+    def test_login_sets_httponly_cookie(self):
+        """F1: successful login issues Set-Cookie with HttpOnly + SameSite."""
+        from main import AUTH_COOKIE_NAME
+        ctx, _ = _make_session_mock(fetchone_return=self._db_user_row())
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post("/auth/login", json={
+                "identifier": "daniel@arena.gg",
+                "password": "password123",
+            })
+        assert resp.status_code == 200
+        # Cookie is set on the TestClient jar…
+        assert resp.cookies.get(AUTH_COOKIE_NAME), "auth cookie not set"
+        # …and the Set-Cookie header carries the hardening flags.
+        set_cookie = resp.headers.get("set-cookie", "")
+        assert "HttpOnly" in set_cookie
+        assert "SameSite" in set_cookie
+        assert "Path=/" in set_cookie
+
 
 # ─── GET /auth/me ─────────────────────────────────────────────────────────────
 
@@ -455,9 +473,20 @@ class TestMe:
         assert resp.status_code == 200
         assert resp.json()["role"] == "admin"
 
-    def test_me_no_token_returns_422(self):
+    def test_me_no_token_returns_401(self):
+        # F1: verify_token now accepts cookie OR header; missing both → 401.
         resp = client.get("/auth/me")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
+
+    def test_me_via_auth_cookie(self):
+        """F1: httpOnly cookie works for auth (same as Bearer header)."""
+        from main import AUTH_COOKIE_NAME
+        token = auth.issue_token(FAKE_UUID, "daniel@arena.gg")
+        ctx, _ = _make_session_mock(fetchone_return=self._db_profile_row())
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.get("/auth/me", cookies={AUTH_COOKIE_NAME: token})
+        assert resp.status_code == 200
+        assert resp.json()["username"] == "daniel"
 
     def test_me_invalid_token_returns_401(self):
         resp = client.get("/auth/me", headers={"Authorization": "Bearer badtoken"})
@@ -544,9 +573,9 @@ class TestPatchUserMe:
             resp = client.patch("/users/me", json={}, headers=self._auth_header())
         assert resp.status_code == 200
 
-    def test_patch_no_token_returns_422(self):
+    def test_patch_no_token_returns_401(self):
         resp = client.patch("/users/me", json={"avatar": "preset:ninja"})
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
 
 # ─── POST /match/result ───────────────────────────────────────────────────────
@@ -594,9 +623,9 @@ class TestSubmitResult:
         assert resp.status_code == 200
         assert resp.json()["accepted"] is True
 
-    def test_submit_result_no_token_returns_422(self):
+    def test_submit_result_no_token_returns_401(self):
         resp = client.post("/match/result", json=self._result_payload())
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
 
 # ─── POST /matches  &  POST /matches/{id}/join ────────────────────────────────
@@ -686,9 +715,9 @@ class TestMatchGating:
             )
         assert resp.status_code == 400
 
-    def test_create_match_no_token_returns_422(self):
+    def test_create_match_no_token_returns_401(self):
         resp = client.post("/matches", json={"game": "CS2"})
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     # ── POST /matches/{match_id}/join ─────────────────────────────────────────
 
@@ -804,9 +833,9 @@ class TestMatchGating:
             )
         assert resp.status_code == 409
 
-    def test_join_match_no_token_returns_422(self):
+    def test_join_match_no_token_returns_401(self):
         resp = client.post(f"/matches/{uuid.uuid4()}/join", json={})
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     def test_join_without_wallet_returns_400(self):
         """Server rejects join when the user has no linked wallet_address."""
@@ -881,9 +910,9 @@ class TestMatchGating:
             )
         assert resp.status_code == 409
 
-    def test_cancel_match_no_token_returns_422(self):
+    def test_cancel_match_no_token_returns_401(self):
         resp = client.delete(f"/matches/{uuid.uuid4()}")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     # ── POST /matches/{match_id}/leave ────────────────────────────────────────
 
@@ -959,9 +988,9 @@ class TestMatchGating:
             )
         assert resp.status_code == 400
 
-    def test_leave_match_no_token_returns_422(self):
+    def test_leave_match_no_token_returns_401(self):
         resp = client.post(f"/matches/{uuid.uuid4()}/leave")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
 # ─── POST /wallet/buy-at ──────────────────────────────────────────────────────
 
@@ -1029,12 +1058,12 @@ class TestBuyArenaTokens:
         )
         assert resp.status_code == 400
 
-    def test_buy_at_no_token_returns_422(self):
+    def test_buy_at_no_token_returns_401(self):
         resp = client.post(
             "/wallet/buy-at",
             json={"tx_hash": "0xabc", "usdt_amount": 10.0},
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
 
 # ─── POST /wallet/withdraw-at ────────────────────────────────────────────────
@@ -1160,12 +1189,12 @@ class TestWithdrawArenaTokens:
         assert resp.status_code == 429
         assert "limit" in resp.json()["detail"].lower()
 
-    def test_withdraw_no_token_returns_422(self):
+    def test_withdraw_no_token_returns_401(self):
         resp = client.post(
             "/wallet/withdraw-at",
             json={"at_amount": 1100, "use_discount": False},
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
 
 # ─── POST /forge/purchase ─────────────────────────────────────────────────────
@@ -1237,9 +1266,9 @@ class TestForgePurchase:
         assert resp.status_code == 400
         assert "insufficient" in resp.json()["detail"].lower()
 
-    def test_purchase_no_token_returns_422(self):
+    def test_purchase_no_token_returns_401(self):
         resp = client.post("/forge/purchase", json={"item_slug": "avatar-dragon"})
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
 
 # ─── POST /auth/change-password ───────────────────────────────────────────────
@@ -1302,12 +1331,12 @@ class TestChangePassword:
             )
         assert resp.status_code == 404
 
-    def test_change_password_no_token_returns_422(self):
+    def test_change_password_no_token_returns_401(self):
         resp = client.post(
             "/auth/change-password",
             json={"current_password": "a", "new_password": "b"},
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
 
 # ─── Friendships ──────────────────────────────────────────────────────────────
@@ -1383,9 +1412,9 @@ class TestFriendships:
             )
         assert resp.status_code == 403
 
-    def test_send_request_no_token_returns_422(self):
+    def test_send_request_no_token_returns_401(self):
         resp = client.post("/friends/request", json={"user_id": OTHER_UUID})
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     # ── GET /friends ─────────────────────────────────────────────────────────
 
@@ -1409,9 +1438,9 @@ class TestFriendships:
         assert resp.status_code == 200
         assert resp.json()["friends"] == []
 
-    def test_list_friends_no_token_returns_422(self):
+    def test_list_friends_no_token_returns_401(self):
         resp = client.get("/friends")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     # ── GET /friends/requests ────────────────────────────────────────────────
 
@@ -1432,9 +1461,9 @@ class TestFriendships:
         assert len(data["incoming"]) == 1
         assert data["incoming"][0]["username"] == "Sender"
 
-    def test_list_requests_no_token_returns_422(self):
+    def test_list_requests_no_token_returns_401(self):
         resp = client.get("/friends/requests")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     # ── POST /friends/{user_id}/accept ────────────────────────────────────────
 
@@ -1458,9 +1487,9 @@ class TestFriendships:
             )
         assert resp.status_code == 404
 
-    def test_accept_no_token_returns_422(self):
+    def test_accept_no_token_returns_401(self):
         resp = client.post(f"/friends/{OTHER_UUID}/accept")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     # ── POST /friends/{user_id}/reject ────────────────────────────────────────
 
@@ -1506,9 +1535,9 @@ class TestFriendships:
             )
         assert resp.status_code == 404
 
-    def test_remove_friend_no_token_returns_422(self):
+    def test_remove_friend_no_token_returns_401(self):
         resp = client.delete(f"/friends/{OTHER_UUID}")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     # ── POST /friends/{user_id}/block ─────────────────────────────────────────
 
@@ -1544,9 +1573,9 @@ class TestFriendships:
         )
         assert resp.status_code == 400
 
-    def test_block_no_token_returns_422(self):
+    def test_block_no_token_returns_401(self):
         resp = client.post(f"/friends/{OTHER_UUID}/block")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
 
 # ─── Direct Messages ──────────────────────────────────────────────────────────
@@ -1614,12 +1643,12 @@ class TestDirectMessages:
             )
         assert resp.status_code == 404
 
-    def test_send_message_no_token_returns_422(self):
+    def test_send_message_no_token_returns_401(self):
         resp = client.post(
             "/messages",
             json={"receiver_id": OTHER_UUID, "content": "hi"},
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     # ── GET /messages/{friend_id} ─────────────────────────────────────────────
 
@@ -1670,9 +1699,9 @@ class TestDirectMessages:
         )
         assert resp.status_code == 422
 
-    def test_get_conversation_no_token_returns_422(self):
+    def test_get_conversation_no_token_returns_401(self):
         resp = client.get(f"/messages/{OTHER_UUID}")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     # ── POST /messages/{friend_id}/read ───────────────────────────────────────
 
@@ -1687,9 +1716,9 @@ class TestDirectMessages:
         assert resp.status_code == 200
         assert resp.json()["marked_read"] is True
 
-    def test_mark_messages_read_no_token_returns_422(self):
+    def test_mark_messages_read_no_token_returns_401(self):
         resp = client.post(f"/messages/{OTHER_UUID}/read")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
 
 # ─── POST /match/result — stats update ────────────────────────────────────────
@@ -1802,9 +1831,9 @@ class TestMatchHistory:
             resp = client.get("/matches/history", headers=self._auth_header())
         assert resp.json()["matches"][0]["result"] == "draw"
 
-    def test_match_history_no_token_returns_422(self):
+    def test_match_history_no_token_returns_401(self):
         resp = client.get("/matches/history")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     def test_match_history_limit_out_of_range_returns_422(self):
         resp = client.get("/matches/history?limit=200", headers=self._auth_header())
@@ -2141,12 +2170,12 @@ class TestInbox:
             )
         assert resp.status_code == 404
 
-    def test_send_inbox_no_token_returns_422(self):
+    def test_send_inbox_no_token_returns_401(self):
         resp = client.post(
             "/inbox",
             json={"receiver_id": OTHER_UUID, "subject": "hi", "content": "test"},
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     # ── GET /inbox ────────────────────────────────────────────────────────────
 
@@ -2176,9 +2205,9 @@ class TestInbox:
             resp = client.get("/inbox?unread_only=true", headers=self._auth_header())
         assert resp.status_code == 200
 
-    def test_get_inbox_no_token_returns_422(self):
+    def test_get_inbox_no_token_returns_401(self):
         resp = client.get("/inbox")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     # ── GET /inbox/unread-count ───────────────────────────────────────────────
 
@@ -2189,9 +2218,9 @@ class TestInbox:
         assert resp.status_code == 200
         assert resp.json()["unread_count"] == 5
 
-    def test_unread_count_no_token_returns_422(self):
+    def test_unread_count_no_token_returns_401(self):
         resp = client.get("/inbox/unread-count")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     # ── PATCH /inbox/{id}/read ────────────────────────────────────────────────
 
@@ -2215,9 +2244,9 @@ class TestInbox:
             )
         assert resp.status_code == 404
 
-    def test_mark_inbox_read_no_token_returns_422(self):
+    def test_mark_inbox_read_no_token_returns_401(self):
         resp = client.patch(f"/inbox/{uuid.uuid4()}/read")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     # ── PATCH /inbox/read-all ─────────────────────────────────────────────────
 
@@ -2229,9 +2258,9 @@ class TestInbox:
         assert resp.status_code == 200
         assert "marked_read" in resp.json()
 
-    def test_mark_all_inbox_read_no_token_returns_422(self):
+    def test_mark_all_inbox_read_no_token_returns_401(self):
         resp = client.patch("/inbox/read-all")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     # ── DELETE /inbox/{id} ────────────────────────────────────────────────────
 
@@ -2255,9 +2284,9 @@ class TestInbox:
             )
         assert resp.status_code == 404
 
-    def test_delete_inbox_no_token_returns_422(self):
+    def test_delete_inbox_no_token_returns_401(self):
         resp = client.delete(f"/inbox/{uuid.uuid4()}")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
 
 # ─── Rate limiter unit tests ──────────────────────────────────────────────────
