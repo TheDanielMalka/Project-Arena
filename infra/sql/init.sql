@@ -288,11 +288,56 @@ CREATE INDEX idx_disputes_match     ON disputes(match_id);
 CREATE INDEX idx_notifications_user ON notifications(user_id, read);
 CREATE INDEX idx_audit_admin        ON audit_logs(admin_id);
 
--- ── Helper: check role (security definer) ────────────────────
+-- ── Helper: check role (SECURITY DEFINER template) ───────────
+-- ─────────────────────────────────────────────────────────────────────────────
+-- SECURITY DEFINER template — READ THIS BEFORE ADDING NEW FUNCTIONS.
+--
+-- Every function marked SECURITY DEFINER runs with the privileges of the
+-- user who *created* the function (usually the DB owner), not the caller.
+-- That is essential for helpers like has_role() which must read
+-- `user_roles` even when RLS or grants would block the caller — BUT it is
+-- also a privilege-escalation vector if written carelessly.
+--
+-- Required boilerplate for EVERY SECURITY DEFINER function in this file:
+--
+--   1. LANGUAGE sql|plpgsql STABLE|VOLATILE SECURITY DEFINER
+--   2. SET search_path = public            ← non-negotiable
+--      Without this, an attacker can create a table in their own schema
+--      (e.g. evil.user_roles) that shadows ours, and the DEFINER will read
+--      the attacker's table with OWNER privileges. Pinning search_path
+--      forces name resolution to go through `public` only.
+--   3. Reference every table with a schema-qualified name when in doubt
+--      (public.user_roles), or rely on the pinned search_path.
+--   4. Grant EXECUTE only to the principals that actually need it —
+--      never grant to PUBLIC without a specific reason.
+--   5. REVOKE EXECUTE ON FUNCTION ... FROM PUBLIC whenever introduced on
+--      a publicly-accessible role.
+--   6. Keep the function STABLE unless it writes. STABLE lets the planner
+--      cache the result within a statement (cheaper, and it also makes
+--      the function eligible for use inside indexes and RLS policies).
+--   7. Parameters should use an underscore prefix (_user_id) so they do
+--      not collide with column names inside the function body.
+--
+-- Example minimum skeleton:
+--
+--   CREATE OR REPLACE FUNCTION <name>(<args>)
+--   RETURNS <type>
+--   LANGUAGE sql STABLE SECURITY DEFINER
+--   SET search_path = public
+--   AS $$ ... $$;
+--   REVOKE EXECUTE ON FUNCTION <name>(<arg_types>) FROM PUBLIC;
+--   GRANT  EXECUTE ON FUNCTION <name>(<arg_types>) TO <specific_role>;
+--
+-- Existing SECURITY DEFINER functions in this codebase:
+--   - has_role(_user_id UUID, _role app_role)     → below
+--   - run_pii_retention_purge(_triggered_by TEXT) → migration 036
+--
+-- Adding a new one? Follow the rules above and add it to this list.
+-- ─────────────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION has_role(_user_id UUID, _role app_role)
 RETURNS BOOLEAN
 LANGUAGE sql STABLE SECURITY DEFINER
-SET search_path = public
+SET search_path = public                       -- see template above
 AS $$
     SELECT EXISTS (
         SELECT 1 FROM user_roles
