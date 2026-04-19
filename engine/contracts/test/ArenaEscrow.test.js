@@ -625,56 +625,177 @@ describe("ArenaEscrow", function () {
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  // 8. setOracle
+  // 8. Oracle rotation (2-step with timelock — audit 2026-04-19)
+  //
+  //    Immediate setOracle was removed. Rotation is now:
+  //      proposeOracle(new)  →  wait ORACLE_ROTATION_DELAY (24h)  →  acceptOracle()
+  //    cancelProposedOracle() can abort a hostile proposal before the delay.
   // ══════════════════════════════════════════════════════════════════════════
-  describe("setOracle", function () {
+  describe("Oracle rotation (2-step)", function () {
 
-    it("owner updates oracle — emits OracleUpdated", async function () {
+    const ORACLE_ROTATION_DELAY = 24 * 60 * 60; // mirrors contract constant
+
+    it("proposeOracle emits OracleProposed and sets pending slot", async function () {
       const { escrow, owner, oracle, players } = await loadFixture(deployFixture);
       const newOracle = players[0];
 
+      const tx = escrow.connect(owner).proposeOracle(newOracle.address);
+      await expect(tx)
+        .to.emit(escrow, "OracleProposed"); // withArgs checked below with readyAt
+
+      expect(await escrow.pendingOracle()).to.equal(newOracle.address);
+      const readyAt = await escrow.pendingOracleAcceptAt();
+      expect(readyAt).to.be.gt(0n);
+    });
+
+    it("acceptOracle reverts before timelock elapses", async function () {
+      const { escrow, owner, players } = await loadFixture(deployFixture);
+      await escrow.connect(owner).proposeOracle(players[0].address);
+      await time.increase(ORACLE_ROTATION_DELAY - 60); // 1 min short
+
       await expect(
-        escrow.connect(owner).setOracle(newOracle.address)
-      )
+        escrow.connect(owner).acceptOracle()
+      ).to.be.revertedWith("Oracle rotation timelock not elapsed");
+    });
+
+    it("acceptOracle succeeds after delay — emits OracleUpdated, clears pending", async function () {
+      const { escrow, owner, oracle, players } = await loadFixture(deployFixture);
+      const newOracle = players[0];
+      await escrow.connect(owner).proposeOracle(newOracle.address);
+      await time.increase(ORACLE_ROTATION_DELAY + 1);
+
+      await expect(escrow.connect(owner).acceptOracle())
         .to.emit(escrow, "OracleUpdated")
         .withArgs(oracle.address, newOracle.address);
 
       expect(await escrow.oracle()).to.equal(newOracle.address);
+      expect(await escrow.pendingOracle()).to.equal(ethers.ZeroAddress);
+      expect(await escrow.pendingOracleAcceptAt()).to.equal(0n);
     });
 
-    it("new oracle can immediately declare winners", async function () {
+    it("acceptOracle is permissionless after delay (anyone may finalize)", async function () {
+      const { escrow, owner, oracle, players } = await loadFixture(deployFixture);
+      const newOracle = players[0];
+      await escrow.connect(owner).proposeOracle(newOracle.address);
+      await time.increase(ORACLE_ROTATION_DELAY + 1);
+
+      // players[3] — random bystander — finalizes; should still work
+      await expect(escrow.connect(players[3]).acceptOracle())
+        .to.emit(escrow, "OracleUpdated")
+        .withArgs(oracle.address, newOracle.address);
+    });
+
+    it("new oracle can declare winners AFTER acceptOracle", async function () {
       const { escrow, owner, players } = await loadFixture(active1v1Fixture);
       const newOracle = players[5];
-      await escrow.connect(owner).setOracle(newOracle.address);
+      await escrow.connect(owner).proposeOracle(newOracle.address);
+      await time.increase(ORACLE_ROTATION_DELAY + 1);
+      await escrow.connect(owner).acceptOracle();
 
       await expect(
         escrow.connect(newOracle).declareWinner(0, 0)
       ).to.emit(escrow, "WinnerDeclared");
     });
 
-    it("old oracle can no longer declare winners after rotation", async function () {
+    it("old oracle cannot declare winners after rotation", async function () {
       const { escrow, oracle, owner, players } = await loadFixture(active1v1Fixture);
-      await escrow.connect(owner).setOracle(players[5].address);
+      await escrow.connect(owner).proposeOracle(players[5].address);
+      await time.increase(ORACLE_ROTATION_DELAY + 1);
+      await escrow.connect(owner).acceptOracle();
 
       await expect(
         escrow.connect(oracle).declareWinner(0, 0)
       ).to.be.revertedWith("Only oracle");
     });
 
-    it("reverts if non-owner calls setOracle", async function () {
+    it("old oracle STILL works while rotation is pending (pre-accept)", async function () {
+      // Critical: proposing a rotation must not brick the existing oracle
+      // — otherwise a stolen owner key could grief live matches.
+      const { escrow, oracle, owner, players } = await loadFixture(active1v1Fixture);
+      await escrow.connect(owner).proposeOracle(players[5].address);
+      // Do NOT advance time / do NOT acceptOracle
+      await expect(
+        escrow.connect(oracle).declareWinner(0, 0)
+      ).to.emit(escrow, "WinnerDeclared");
+    });
+
+    it("cancelProposedOracle aborts a hostile proposal", async function () {
+      const { escrow, owner, oracle, players } = await loadFixture(deployFixture);
+      await escrow.connect(owner).proposeOracle(players[0].address);
+
+      await expect(escrow.connect(owner).cancelProposedOracle())
+        .to.emit(escrow, "OracleProposalCancelled")
+        .withArgs(players[0].address);
+
+      expect(await escrow.pendingOracle()).to.equal(ethers.ZeroAddress);
+      expect(await escrow.oracle()).to.equal(oracle.address); // unchanged
+
+      // After cancel, acceptOracle() must revert
+      await time.increase(ORACLE_ROTATION_DELAY + 1);
+      await expect(
+        escrow.connect(owner).acceptOracle()
+      ).to.be.revertedWith("No pending oracle");
+    });
+
+    it("acceptOracle reverts if no proposal pending", async function () {
+      const { escrow, owner } = await loadFixture(deployFixture);
+      await expect(
+        escrow.connect(owner).acceptOracle()
+      ).to.be.revertedWith("No pending oracle");
+    });
+
+    it("cancelProposedOracle reverts if nothing pending", async function () {
+      const { escrow, owner } = await loadFixture(deployFixture);
+      await expect(
+        escrow.connect(owner).cancelProposedOracle()
+      ).to.be.revertedWith("No pending oracle");
+    });
+
+    it("proposeOracle reverts if non-owner", async function () {
       const { escrow, players } = await loadFixture(deployFixture);
       await expect(
-        escrow.connect(players[0]).setOracle(players[1].address)
+        escrow.connect(players[0]).proposeOracle(players[1].address)
       )
         .to.be.revertedWithCustomError(escrow, "OwnableUnauthorizedAccount")
         .withArgs(players[0].address);
     });
 
-    it("reverts if new oracle is zero address", async function () {
+    it("cancelProposedOracle reverts if non-owner", async function () {
+      const { escrow, owner, players } = await loadFixture(deployFixture);
+      await escrow.connect(owner).proposeOracle(players[0].address);
+      await expect(
+        escrow.connect(players[1]).cancelProposedOracle()
+      )
+        .to.be.revertedWithCustomError(escrow, "OwnableUnauthorizedAccount")
+        .withArgs(players[1].address);
+    });
+
+    it("proposeOracle reverts if new oracle is zero address", async function () {
       const { escrow, owner } = await loadFixture(deployFixture);
       await expect(
-        escrow.connect(owner).setOracle(ethers.ZeroAddress)
+        escrow.connect(owner).proposeOracle(ethers.ZeroAddress)
       ).to.be.revertedWith("Oracle cannot be zero address");
+    });
+
+    it("proposeOracle reverts if new oracle equals current (no-op guard)", async function () {
+      const { escrow, owner, oracle } = await loadFixture(deployFixture);
+      await expect(
+        escrow.connect(owner).proposeOracle(oracle.address)
+      ).to.be.revertedWith("New oracle equals current");
+    });
+
+    it("proposeOracle overwrites a prior pending proposal (resets timer)", async function () {
+      const { escrow, owner, players } = await loadFixture(deployFixture);
+      await escrow.connect(owner).proposeOracle(players[0].address);
+      await time.increase(ORACLE_ROTATION_DELAY / 2);
+      await escrow.connect(owner).proposeOracle(players[1].address);
+
+      expect(await escrow.pendingOracle()).to.equal(players[1].address);
+      // Timer reset: cannot accept just from the original elapsed half
+      await time.increase(ORACLE_ROTATION_DELAY / 2 + 1); // total ~1x delay from first propose
+      await expect(
+        escrow.connect(owner).acceptOracle()
+      ).to.be.revertedWith("Oracle rotation timelock not elapsed");
     });
 
   });

@@ -82,10 +82,18 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
 
     // ── Constants ────────────────────────────────────────────────────────────
 
-    uint256 public constant TIMEOUT         = 2 hours;   // ACTIVE match timeout (rage-quit guard)
-    uint256 public constant WAITING_TIMEOUT = 1 hours;   // WAITING match timeout (creator no-show guard)
-    uint256 public constant FEE_PERCENT     = 5;         // matches platform_settings.fee_percent
-    uint8   public constant MAX_TEAM        = 5;         // maximum players per team (5v5)
+    uint256 public constant TIMEOUT                 = 2 hours;   // ACTIVE match timeout (rage-quit guard)
+    uint256 public constant WAITING_TIMEOUT         = 1 hours;   // WAITING match timeout (creator no-show guard)
+    uint256 public constant FEE_PERCENT             = 5;         // matches platform_settings.fee_percent
+    uint8   public constant MAX_TEAM                = 5;         // maximum players per team (5v5)
+
+    // Oracle-rotation timelock (audit 2026-04-19).
+    // Rotations are 2-step: proposeOracle(new) → wait ORACLE_ROTATION_DELAY →
+    // acceptOracle(). This bounds the blast radius of a stolen owner key: an
+    // attacker who compromises the owner cannot instantly swap the oracle
+    // and mint a fake winner — legitimate ops have 24h to notice and call
+    // cancelProposedOracle() or pause() (which blocks declareWinner).
+    uint256 public constant ORACLE_ROTATION_DELAY   = 24 hours;
 
     // Gas cap for per-recipient payout in loops (cancelMatch/cancelWaiting/
     // claimRefund/declareWinner). Large enough for a Gnosis Safe / ERC-4337
@@ -125,6 +133,14 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
     // Ownable: deployer is owner() — platform wallet (receives fee on declareWinner)
     address public oracle;           // Vision Engine wallet (declares winners) — onlyOracle
 
+    // Oracle rotation timelock (2-step): see ORACLE_ROTATION_DELAY.
+    //   pendingOracle           = candidate address queued by proposeOracle()
+    //   pendingOracleAcceptAt   = earliest block.timestamp at which
+    //                             acceptOracle() may finalize the rotation.
+    //   Both cleared on cancelProposedOracle() or on successful acceptOracle().
+    address public pendingOracle;
+    uint256 public pendingOracleAcceptAt;
+
     uint256 public matchCount;
     mapping(uint256 => Match) public matches;
     // matchCount-1 == on_chain_match_id stored in DB matches.on_chain_match_id
@@ -153,6 +169,10 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
     event MatchRefunded  (uint256 indexed matchId);
     event MatchCancelled (uint256 indexed matchId, address indexed cancelledBy);
     event OracleUpdated  (address indexed oldOracle, address indexed newOracle);
+    // Oracle rotation (2-step). Listener: platform ops dashboard should
+    // alert on any OracleProposed that it did not itself initiate.
+    event OracleProposed          (address indexed currentOracle, address indexed pendingOracle, uint256 acceptAt);
+    event OracleProposalCancelled (address indexed pendingOracle);
     // Pull-payment fallback: recipient's receive() failed or out-of-gased
     // under PAYOUT_CALL_GAS — amount credited to pendingWithdrawals[recipient].
     event PayoutCredited (address indexed recipient, uint256 amount);
@@ -517,15 +537,66 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
         _unpause();
     }
 
+    // ── Oracle rotation (2-step with timelock) ───────────────────────────────
+    //
+    // Immediate setOracle was removed (audit 2026-04-19): a stolen owner key
+    // could instantly swap the oracle and mint a fake winner. The 2-step
+    // flow forces a visible ORACLE_ROTATION_DELAY window during which
+    // legitimate ops can:
+    //   a) call cancelProposedOracle() from the real owner wallet, or
+    //   b) call pause() to block declareWinner until the key is rotated.
+    //
+    // Emergency note: pause() still takes effect immediately — it is the
+    // right tool for "stop bleeding now", while oracle rotation is always
+    // delayed.
+
     /**
-     * @notice Replace the oracle (e.g. Vision Engine wallet rotation).
-     *         Maps to: UPDATE env SET ORACLE_WALLET = newOracle (Vision Engine)
+     * @notice Queue a pending oracle rotation. Does NOT take effect until
+     *         acceptOracle() is called after ORACLE_ROTATION_DELAY elapses.
+     *         Overwrites any previous pending proposal (one-at-a-time).
+     *
+     *         Maps to: (ops runbook) after proposeOracle, wait 24h, then
+     *         UPDATE env SET ORACLE_WALLET = newOracle on the Vision Engine
+     *         and call acceptOracle() from the contract side.
      */
-    function setOracle(address newOracle) external onlyOwner {
+    function proposeOracle(address newOracle) external onlyOwner {
         require(newOracle != address(0), "Oracle cannot be zero address");
-        address old = oracle;
-        oracle = newOracle;
-        emit OracleUpdated(old, newOracle);
+        require(newOracle != oracle,      "New oracle equals current");
+        pendingOracle         = newOracle;
+        pendingOracleAcceptAt = block.timestamp + ORACLE_ROTATION_DELAY;
+        emit OracleProposed(oracle, newOracle, pendingOracleAcceptAt);
+    }
+
+    /**
+     * @notice Finalize a previously proposed oracle rotation. Permissionless
+     *         by design — after the timelock the rotation is predetermined
+     *         and anyone may trigger it (bots / keeper / the new oracle).
+     *         Emits OracleUpdated (unchanged event signature for backwards
+     *         compatibility with the backend listener).
+     */
+    function acceptOracle() external {
+        address candidate = pendingOracle;
+        require(candidate != address(0),                    "No pending oracle");
+        require(block.timestamp >= pendingOracleAcceptAt,   "Oracle rotation timelock not elapsed");
+
+        address old            = oracle;
+        oracle                 = candidate;
+        pendingOracle          = address(0);
+        pendingOracleAcceptAt  = 0;
+        emit OracleUpdated(old, candidate);
+    }
+
+    /**
+     * @notice Abort a pending oracle rotation (owner-only). Used when the
+     *         owner detects a hostile proposeOracle (e.g. from a stolen
+     *         key) and needs to cancel before the timelock elapses.
+     */
+    function cancelProposedOracle() external onlyOwner {
+        address cancelled = pendingOracle;
+        require(cancelled != address(0), "No pending oracle");
+        pendingOracle         = address(0);
+        pendingOracleAcceptAt = 0;
+        emit OracleProposalCancelled(cancelled);
     }
 
     // ── View helpers ─────────────────────────────────────────────────────────
