@@ -89,7 +89,7 @@ CREATE TABLE matches (
     max_players  INT DEFAULT 2,
     status       match_status DEFAULT 'waiting',
     code         VARCHAR(20),
-    password     VARCHAR(50),
+    password     TEXT,                           -- bcrypt hash (60 chars) since H1 (commit a1a91bf); was VARCHAR(50) — migration 037
     max_per_team INT,
     winner_id         UUID REFERENCES users(id),
     on_chain_match_id BIGINT UNIQUE,    -- ArenaEscrow.sol matchId (uint256), set on MatchCreated event — UNIQUE blocks duplicate-event double-link (C15)
