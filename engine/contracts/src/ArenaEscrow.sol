@@ -74,8 +74,10 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
  *   MatchActive     event → matches.deposits_received = teamSize * 2
  *
  * ── Platform settings alignment ────────────────────────────────────────────────
- *   FEE_PERCENT     ↔  platform_settings.fee_percent        (5)
- *                     Payout math: (100 - FEE_PERCENT)% to winners split equally; FEE_PERCENT% to owner (not 90/10 unless fee_pct=10).
+ *   feePercent      ↔  platform_settings.fee_percent        (default 5, bounded by MAX_FEE_PERCENT=10)
+ *                     Settable via setFeePercent(); emits FeePercentUpdated so the
+ *                     backend can mirror the new value. Payout math:
+ *                     (100 - feePercent)% to winners split equally; feePercent% to owner.
  *   Pausable.paused ↔  platform_settings.kill_switch_active (TRUE) — sync via owner calling pause()/unpause()
  */
 contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
@@ -84,8 +86,11 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
 
     uint256 public constant TIMEOUT                 = 2 hours;   // ACTIVE match timeout (rage-quit guard)
     uint256 public constant WAITING_TIMEOUT         = 1 hours;   // WAITING match timeout (creator no-show guard)
-    uint256 public constant FEE_PERCENT             = 5;         // matches platform_settings.fee_percent
     uint8   public constant MAX_TEAM                = 5;         // maximum players per team (5v5)
+    // Upper bound on the settable platform fee. Hardcoded so no admin
+    // action can set the fee above 10%. Sync contract: anything above this
+    // value must be rejected by platform_settings before it hits the chain.
+    uint8   public constant MAX_FEE_PERCENT         = 10;
 
     // Oracle-rotation timelock (audit 2026-04-19).
     // Rotations are 2-step: proposeOracle(new) → wait ORACLE_ROTATION_DELAY →
@@ -133,6 +138,16 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
     // Ownable: deployer is owner() — platform wallet (receives fee on declareWinner)
     address public oracle;           // Vision Engine wallet (declares winners) — onlyOracle
 
+    // Platform fee percent applied to each declareWinner payout.
+    // Replaces the old FEE_PERCENT constant (audit 2026-04-19) so ops can
+    // sync with platform_settings.fee_percent without a redeploy. Bounded
+    // by MAX_FEE_PERCENT. Mutable only by the owner via setFeePercent().
+    // Backend sync: FeePercentUpdated event fires on every change; the
+    // backend's platform_settings.fee_percent row is the source of truth
+    // for UI display, and setFeePercent must be called to keep the chain
+    // aligned. New matches use whatever feePercent is at declareWinner time.
+    uint8 public feePercent = 5;
+
     // Oracle rotation timelock (2-step): see ORACLE_ROTATION_DELAY.
     //   pendingOracle           = candidate address queued by proposeOracle()
     //   pendingOracleAcceptAt   = earliest block.timestamp at which
@@ -173,6 +188,10 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
     // alert on any OracleProposed that it did not itself initiate.
     event OracleProposed          (address indexed currentOracle, address indexed pendingOracle, uint256 acceptAt);
     event OracleProposalCancelled (address indexed pendingOracle);
+    // Fee governance. Backend listener should mirror newFeePercent into
+    // platform_settings.fee_percent (or alert if a chain-side change was
+    // not initiated by the platform).
+    event FeePercentUpdated       (uint8 oldFeePercent, uint8 newFeePercent);
     // Pull-payment fallback: recipient's receive() failed or out-of-gased
     // under PAYOUT_CALL_GAS — amount credited to pendingWithdrawals[recipient].
     event PayoutCredited (address indexed recipient, uint256 amount);
@@ -409,7 +428,7 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
 
     /**
      * @notice Vision Engine declares the winning team after match result is confirmed.
-     *         Distributes (totalPot - 5% fee) equally among all winners.
+     *         Distributes (totalPot - feePercent% fee) equally among all winners.
      *         Integer dust (from division) goes to the first winner.
      *
      * DB side (Vision Engine handles on WinnerDeclared event):
@@ -436,7 +455,9 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
         require(winningTeam == 0 || winningTeam == 1, "Winning team must be 0 (A) or 1 (B)");
 
         uint256 totalPot        = m.stakePerPlayer * m.teamSize * 2;
-        uint256 fee             = (totalPot * FEE_PERCENT) / 100;
+        // feePercent is settable (audit 2026-04-19) — read once, locked for
+        // this payout. No mid-match fee drift possible.
+        uint256 fee             = (totalPot * feePercent) / 100;
         uint256 totalPayout     = totalPot - fee;
         uint256 payoutPerWinner = totalPayout / m.teamSize;
         // Dust from integer division goes to first winner — avoids locked funds
@@ -535,6 +556,26 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
      */
     function unpause() external onlyOwner {
         _unpause();
+    }
+
+    // ── Fee governance (audit 2026-04-19) ────────────────────────────────────
+
+    /**
+     * @notice Update the platform fee percent applied to each declareWinner
+     *         payout. Bounded by MAX_FEE_PERCENT (10). Owner-only.
+     *         Emits FeePercentUpdated so the backend can mirror the new
+     *         value into platform_settings.fee_percent.
+     *
+     *         Idempotent: reverts if newFee equals the current value to
+     *         avoid spurious events. Newly declared winners immediately
+     *         pay the new rate; already-FINISHED matches are untouched.
+     */
+    function setFeePercent(uint8 newFee) external onlyOwner {
+        require(newFee <= MAX_FEE_PERCENT, "Fee exceeds MAX_FEE_PERCENT");
+        uint8 old = feePercent;
+        require(newFee != old, "Fee unchanged");
+        feePercent = newFee;
+        emit FeePercentUpdated(old, newFee);
     }
 
     // ── Oracle rotation (2-step with timelock) ───────────────────────────────

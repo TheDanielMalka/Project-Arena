@@ -15,7 +15,7 @@
  *   11. View helpers (getMatch, isDeposited, isPaused)
  *
  * Sync contract:
- *   FEE_PERCENT = 5     ↔ platform_settings.fee_percent
+ *   feePercent  = 5     ↔ platform_settings.fee_percent (settable via setFeePercent; bounded by MAX_FEE_PERCENT=10)
  *   TIMEOUT = 7200 s    ↔ rage-quit threshold (Issue #56)
  *   MatchState enum     ↔ matches.status ('waiting','in_progress','completed','cancelled')
  *   winningTeam 0/1     ↔ match_players.team ('A' / 'B')
@@ -1054,7 +1054,85 @@ describe("ArenaEscrow", function () {
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  // 13. Pull-payment fallback (audit 2026-04-19)
+  // 13. Fee governance — setFeePercent (audit 2026-04-19)
+  //
+  //     Converts the old FEE_PERCENT constant into a settable state var so
+  //     platform_settings.fee_percent can be synced without a redeploy.
+  //     Bounded by MAX_FEE_PERCENT=10.
+  // ══════════════════════════════════════════════════════════════════════════
+  describe("Fee governance (setFeePercent)", function () {
+
+    it("initial feePercent is 5 (matches legacy FEE_PERCENT)", async function () {
+      const { escrow } = await loadFixture(deployFixture);
+      expect(await escrow.feePercent()).to.equal(5);
+    });
+
+    it("owner can change feePercent within bounds + emits event", async function () {
+      const { escrow, owner } = await loadFixture(deployFixture);
+      await expect(escrow.connect(owner).setFeePercent(7))
+        .to.emit(escrow, "FeePercentUpdated")
+        .withArgs(5, 7);
+      expect(await escrow.feePercent()).to.equal(7);
+    });
+
+    it("setFeePercent reverts above MAX_FEE_PERCENT (10)", async function () {
+      const { escrow, owner } = await loadFixture(deployFixture);
+      await expect(escrow.connect(owner).setFeePercent(11))
+        .to.be.revertedWith("Fee exceeds MAX_FEE_PERCENT");
+    });
+
+    it("setFeePercent accepts exactly MAX_FEE_PERCENT (10)", async function () {
+      const { escrow, owner } = await loadFixture(deployFixture);
+      await escrow.connect(owner).setFeePercent(10);
+      expect(await escrow.feePercent()).to.equal(10);
+    });
+
+    it("setFeePercent accepts 0 (fee-free operation)", async function () {
+      const { escrow, owner } = await loadFixture(deployFixture);
+      await escrow.connect(owner).setFeePercent(0);
+      expect(await escrow.feePercent()).to.equal(0);
+    });
+
+    it("setFeePercent reverts if value unchanged (no spurious events)", async function () {
+      const { escrow, owner } = await loadFixture(deployFixture);
+      await expect(escrow.connect(owner).setFeePercent(5))
+        .to.be.revertedWith("Fee unchanged");
+    });
+
+    it("setFeePercent reverts if called by non-owner", async function () {
+      const { escrow, players } = await loadFixture(deployFixture);
+      await expect(escrow.connect(players[0]).setFeePercent(7))
+        .to.be.revertedWithCustomError(escrow, "OwnableUnauthorizedAccount")
+        .withArgs(players[0].address);
+    });
+
+    it("declareWinner uses the current feePercent at payout time (not at match creation)", async function () {
+      // Create a match at fee=5, change fee to 10 mid-match, declareWinner
+      // should apply fee=10.
+      const { escrow, owner, oracle, players } = await loadFixture(active1v1Fixture);
+      await escrow.connect(owner).setFeePercent(10);
+
+      const totalPot  = STAKE * 2n;              // 1v1 → 0.2 ETH
+      const fee       = totalPot * 10n / 100n;   // 0.02 ETH
+      const perWinner = (totalPot - fee);         // 0.18 ETH (1 winner in 1v1)
+
+      await expect(escrow.connect(oracle).declareWinner(0, 0))
+        .to.changeEtherBalances([players[0], owner], [perWinner, fee]);
+    });
+
+    it("declareWinner with fee=0 pays entire pot to winners", async function () {
+      const { escrow, owner, oracle, players } = await loadFixture(active1v1Fixture);
+      await escrow.connect(owner).setFeePercent(0);
+
+      const totalPot  = STAKE * 2n;
+      await expect(escrow.connect(oracle).declareWinner(0, 0))
+        .to.changeEtherBalances([players[0], owner], [totalPot, 0n]);
+    });
+
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 14. Pull-payment fallback (audit 2026-04-19)
   //
   //     A single malicious contract recipient that reverts in receive() must
   //     NOT be able to block payouts for everyone else in a loop.
