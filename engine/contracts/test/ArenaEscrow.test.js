@@ -932,4 +932,166 @@ describe("ArenaEscrow", function () {
 
   });
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // 13. Pull-payment fallback (audit 2026-04-19)
+  //
+  //     A single malicious contract recipient that reverts in receive() must
+  //     NOT be able to block payouts for everyone else in a loop.
+  //     _payOrCredit tries a bounded .call; on failure credits
+  //     pendingWithdrawals and emits PayoutCredited. The recipient can later
+  //     pull via withdraw() after fixing their receive().
+  // ══════════════════════════════════════════════════════════════════════════
+  describe("Pull-payment fallback (DoS guard)", function () {
+
+    async function deployRevertingReceiver(escrow) {
+      const Factory = await ethers.getContractFactory("RevertingReceiver");
+      const rr = await Factory.deploy(await escrow.getAddress());
+      await rr.waitForDeployment();
+      // acceptIncoming defaults to false → receive() reverts
+      return rr;
+    }
+
+    it("cancelMatch: reverting receiver credited, other depositors paid directly", async function () {
+      const { escrow, players } = await loadFixture(deployFixture);
+      const rr = await deployRevertingReceiver(escrow);
+
+      // rr creates a 2v2 (so it can cancel), players[2] joins teamB
+      await rr.createMatch(2, { value: STAKE });
+      await escrow.connect(players[2]).joinMatch(0, 1, { value: STAKE });
+
+      // rr cancels — teamA[0]=rr (revert on receive → credit), teamB[0]=players[2] (paid directly)
+      await expect(rr.cancelMatch(0))
+        .to.emit(escrow, "PayoutCredited")
+        .withArgs(await rr.getAddress(), STAKE);
+
+      expect(await escrow.pendingWithdrawals(await rr.getAddress())).to.equal(STAKE);
+      // players[2] received their stake directly (balance delta tested via separate path below)
+    });
+
+    it("claimRefund: one reverting winner does not block the other 9", async function () {
+      // 5v5 active: put a RevertingReceiver as teamA[2]. Timeout refund.
+      const { escrow, players } = await loadFixture(deployFixture);
+      const rr = await deployRevertingReceiver(escrow);
+      const teamSize = 5;
+
+      await escrow.connect(players[0]).createMatch(teamSize, { value: STAKE });
+      await escrow.connect(players[1]).joinMatch(0, 0, { value: STAKE });
+      // rr is teamA[2] — the critical iteration that would previously DoS
+      await rr.joinMatch(0, 0, { value: STAKE });
+      await escrow.connect(players[2]).joinMatch(0, 0, { value: STAKE });
+      await escrow.connect(players[3]).joinMatch(0, 0, { value: STAKE });
+      for (let i = 4; i < 9; i++)
+        await escrow.connect(players[i]).joinMatch(0, 1, { value: STAKE });
+
+      await time.increase(TIMEOUT + 1);
+
+      // claimRefund must succeed for everyone else even though rr reverts
+      const before = await Promise.all(
+        [players[0], players[1], players[2], players[3],
+         players[4], players[5], players[6], players[7], players[8]]
+          .map(p => ethers.provider.getBalance(p.address))
+      );
+      await escrow.connect(players[0]).claimRefund(0); // gas paid by p0
+      const after = await Promise.all(
+        [players[0], players[1], players[2], players[3],
+         players[4], players[5], players[6], players[7], players[8]]
+          .map(p => ethers.provider.getBalance(p.address))
+      );
+
+      // p0 spent gas, others gained exactly STAKE
+      for (let i = 1; i < 9; i++) {
+        expect(after[i] - before[i]).to.equal(STAKE, `player ${i} not refunded`);
+      }
+      // rr has STAKE credited but not received
+      expect(await escrow.pendingWithdrawals(await rr.getAddress())).to.equal(STAKE);
+    });
+
+    it("declareWinner: reverting winner credited, fee still reaches owner", async function () {
+      const { escrow, owner, oracle, players } = await loadFixture(deployFixture);
+      const rr = await deployRevertingReceiver(escrow);
+      const teamSize = 2;
+
+      await escrow.connect(players[0]).createMatch(teamSize, { value: STAKE });
+      await rr.joinMatch(0, 0, { value: STAKE });   // rr is teamA[1]
+      await escrow.connect(players[2]).joinMatch(0, 1, { value: STAKE });
+      await escrow.connect(players[3]).joinMatch(0, 1, { value: STAKE });
+
+      const totalPot  = STAKE * BigInt(teamSize) * 2n;
+      const fee       = totalPot * 5n / 100n;
+      const perWinner = (totalPot - fee) / BigInt(teamSize);
+
+      const ownerBefore = await ethers.provider.getBalance(owner.address);
+      const p0Before    = await ethers.provider.getBalance(players[0].address);
+
+      await expect(
+        escrow.connect(oracle).declareWinner(0, 0) // teamA wins
+      ).to.emit(escrow, "PayoutCredited")
+       .withArgs(await rr.getAddress(), perWinner);
+
+      // players[0] got their payout directly
+      expect(await ethers.provider.getBalance(players[0].address) - p0Before)
+        .to.equal(perWinner);
+      // owner got their fee directly
+      expect(await ethers.provider.getBalance(owner.address) - ownerBefore)
+        .to.equal(fee);
+      // rr has their winnings in pending
+      expect(await escrow.pendingWithdrawals(await rr.getAddress()))
+        .to.equal(perWinner);
+    });
+
+    it("withdraw: pulls credited funds once receive() is re-enabled", async function () {
+      const { escrow, players } = await loadFixture(deployFixture);
+      const rr = await deployRevertingReceiver(escrow);
+
+      await rr.createMatch(1, { value: STAKE });
+      await rr.cancelMatch(0); // credits STAKE to rr
+
+      // Flip receiver on
+      await rr.setAcceptIncoming(true);
+
+      const rrAddr   = await rr.getAddress();
+      const before   = await ethers.provider.getBalance(rrAddr);
+      await expect(rr.withdraw())
+        .to.emit(escrow, "Withdrawn")
+        .withArgs(rrAddr, STAKE);
+
+      expect(await ethers.provider.getBalance(rrAddr) - before).to.equal(STAKE);
+      expect(await escrow.pendingWithdrawals(rrAddr)).to.equal(0n);
+    });
+
+    it("withdraw reverts if nothing pending", async function () {
+      const { escrow, players } = await loadFixture(deployFixture);
+      await expect(
+        escrow.connect(players[0]).withdraw()
+      ).to.be.revertedWith("No pending withdrawal");
+    });
+
+    it("withdraw: second call reverts (balance zeroed by CEI)", async function () {
+      const { escrow, players } = await loadFixture(deployFixture);
+      const rr = await deployRevertingReceiver(escrow);
+
+      await rr.createMatch(1, { value: STAKE });
+      await rr.cancelMatch(0);
+      await rr.setAcceptIncoming(true);
+      await rr.withdraw();
+
+      await expect(rr.withdraw()).to.be.revertedWith("No pending withdrawal");
+    });
+
+    it("withdraw reverts if recipient's receive still fails — credit preserved", async function () {
+      // Receiver stays broken: withdraw() reverts and pending balance remains.
+      const { escrow } = await loadFixture(deployFixture);
+      const rr = await deployRevertingReceiver(escrow);
+
+      await rr.createMatch(1, { value: STAKE });
+      await rr.cancelMatch(0);
+
+      // acceptIncoming still false → receive reverts
+      await expect(rr.withdraw()).to.be.reverted;
+      // Credit must still be there (state reverted by require(success))
+      expect(await escrow.pendingWithdrawals(await rr.getAddress())).to.equal(STAKE);
+    });
+
+  });
+
 });

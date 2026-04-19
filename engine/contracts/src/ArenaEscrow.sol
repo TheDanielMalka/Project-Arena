@@ -26,7 +26,7 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
  *   - Players can always recover funds via refund or cancel
  *   - All logic is public and verifiable on-chain
  *
- * Security notes (audit 2026-04-11):
+ * Security notes (audit 2026-04-11, hardened 2026-04-19):
  *   - Reentrancy: OpenZeppelin ReentrancyGuard (nonReentrant) on all state-changing externals
  *   - Emergency pause (M8): OpenZeppelin Pausable — createMatch, joinMatch, declareWinner use whenNotPaused.
  *     Mirrors backend kill switch (POST /admin/freeze / _PAYOUTS_FROZEN): platform should call pause() in tandem.
@@ -34,6 +34,13 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
  *   - CEI: state updated before all external calls; events emitted before transfers
  *   - Transfer: .call() used instead of .transfer() — removes hard 2300-gas limit
  *     that could DoS payouts if any player/owner is a contract with an expensive fallback
+ *   - Pull-payment DoS guard (audit 2026-04-19): loops in declareWinner / cancelMatch /
+ *     cancelWaiting / claimRefund call _payOrCredit() which tries a bounded .call
+ *     (PAYOUT_CALL_GAS) and, on failure, credits pendingWithdrawals[recipient]
+ *     + emits PayoutCredited so a single malicious/contract recipient that reverts
+ *     in its fallback cannot block payouts for everyone else in the loop.
+ *     Recipients pull via withdraw() — single-recipient CEI, reverts on fail so
+ *     msg.sender can retry without losing the credit.
  *   - WAITING escape hatch: cancelWaiting() added — any depositor can cancel after
  *     WAITING_TIMEOUT if creator disappears and not all slots are filled
  *   - teamSize validated to {1,2,4,5} only; 3 is rejected
@@ -80,6 +87,14 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
     uint256 public constant FEE_PERCENT     = 5;         // matches platform_settings.fee_percent
     uint8   public constant MAX_TEAM        = 5;         // maximum players per team (5v5)
 
+    // Gas cap for per-recipient payout in loops (cancelMatch/cancelWaiting/
+    // claimRefund/declareWinner). Large enough for a Gnosis Safe / ERC-4337
+    // receive (~25k gas), small enough that a malicious contract recipient
+    // cannot burn the whole block in a single iteration. If the recipient's
+    // fallback reverts or out-of-gases, _payOrCredit credits the amount to
+    // pendingWithdrawals so everyone else in the loop still gets paid.
+    uint256 public constant PAYOUT_CALL_GAS = 100_000;
+
     // ── Match states ─────────────────────────────────────────────────────────
 
     enum MatchState {
@@ -118,6 +133,14 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
     // DB-ready: enforced on-chain, double-checked by match_players UNIQUE (match_id, user_id)
     mapping(uint256 => mapping(address => bool)) public hasDeposited;
 
+    // Pull-payment ledger — credits set when a direct payout call fails
+    // (malicious contract recipient / gas griefing / out-of-gas receive).
+    // Recipients call withdraw() to claim. Uses wei units — matches msg.value.
+    // Backend sync: PayoutCredited event mirrors a successful _sendEth in
+    // accounting terms (user's in_escrow still released; just sitting in
+    // contract balance instead of recipient's wallet until withdraw()).
+    mapping(address => uint256) public pendingWithdrawals;
+
     // ── Events ───────────────────────────────────────────────────────────────
     // Vision Engine listens to these to sync Postgres + user balances
 
@@ -130,6 +153,11 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
     event MatchRefunded  (uint256 indexed matchId);
     event MatchCancelled (uint256 indexed matchId, address indexed cancelledBy);
     event OracleUpdated  (address indexed oldOracle, address indexed newOracle);
+    // Pull-payment fallback: recipient's receive() failed or out-of-gased
+    // under PAYOUT_CALL_GAS — amount credited to pendingWithdrawals[recipient].
+    event PayoutCredited (address indexed recipient, uint256 amount);
+    // Recipient pulled their pending credit via withdraw().
+    event Withdrawn      (address indexed recipient, uint256 amount);
     // Paused / Unpaused: emitted by OpenZeppelin Pausable — do not redeclare here.
 
     // ── Modifiers ────────────────────────────────────────────────────────────
@@ -154,15 +182,24 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
     // ── Internal helpers ─────────────────────────────────────────────────────
 
     /**
-     * @dev Sends `amount` wei to `recipient` using .call() instead of .transfer().
-     *      .transfer() forwards only 2300 gas which can fail if recipient is a contract
-     *      with a fallback that needs more gas (e.g. a multisig wallet or any ERC-4337
-     *      account abstraction). Using .call() removes this hard limit.
-     *      The nonReentrant guard on every caller prevents reentrancy.
+     * @dev Tries to send `amount` wei to `recipient` under a bounded gas cap.
+     *      On success: ETH leaves the contract immediately (hot path for EOAs
+     *      and well-behaved contract wallets).
+     *      On failure: credits pendingWithdrawals[recipient] and emits
+     *      PayoutCredited so the DoS vector from a single reverting recipient
+     *      inside a payout loop (cancelMatch / cancelWaiting / declareWinner
+     *      / claimRefund) is removed — everyone else in the loop still gets
+     *      paid, and the stuck recipient can pull via withdraw() later.
+     *      nonReentrant on every caller prevents reentrancy; the per-call
+     *      PAYOUT_CALL_GAS cap prevents gas griefing across the loop.
      */
-    function _sendEth(address recipient, uint256 amount) internal {
-        (bool success, ) = payable(recipient).call{value: amount}("");
-        require(success, "ETH transfer failed");
+    function _payOrCredit(address recipient, uint256 amount) internal {
+        if (amount == 0) return;
+        (bool success, ) = payable(recipient).call{value: amount, gas: PAYOUT_CALL_GAS}("");
+        if (!success) {
+            pendingWithdrawals[recipient] += amount;
+            emit PayoutCredited(recipient, amount);
+        }
     }
 
     /**
@@ -301,11 +338,11 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
 
         // Refund all teamA depositors
         for (uint8 i = 0; i < m.depositsTeamA; i++) {
-            _sendEth(m.teamA[i], m.stakePerPlayer);
+            _payOrCredit(m.teamA[i], m.stakePerPlayer);
         }
         // Refund all teamB depositors (if any joined)
         for (uint8 i = 0; i < m.depositsTeamB; i++) {
-            _sendEth(m.teamB[i], m.stakePerPlayer);
+            _payOrCredit(m.teamB[i], m.stakePerPlayer);
         }
     }
 
@@ -340,11 +377,11 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
 
         // Refund all teamA depositors
         for (uint8 i = 0; i < m.depositsTeamA; i++) {
-            _sendEth(m.teamA[i], m.stakePerPlayer);
+            _payOrCredit(m.teamA[i], m.stakePerPlayer);
         }
         // Refund all teamB depositors (if any joined)
         for (uint8 i = 0; i < m.depositsTeamB; i++) {
-            _sendEth(m.teamB[i], m.stakePerPlayer);
+            _payOrCredit(m.teamB[i], m.stakePerPlayer);
         }
     }
 
@@ -393,9 +430,9 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
         address[] storage winners = winningTeam == 0 ? m.teamA : m.teamB;
         for (uint8 i = 0; i < m.teamSize; i++) {
             uint256 amount = (i == 0) ? payoutPerWinner + dust : payoutPerWinner;
-            _sendEth(winners[i], amount);
+            _payOrCredit(winners[i], amount);
         }
-        _sendEth(owner(), fee);
+        _payOrCredit(owner(), fee);
     }
 
     // ── Timeout refund ───────────────────────────────────────────────────────
@@ -428,9 +465,36 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
         emit MatchRefunded(matchId);
 
         for (uint8 i = 0; i < m.teamSize; i++) {
-            _sendEth(m.teamA[i], m.stakePerPlayer);
-            _sendEth(m.teamB[i], m.stakePerPlayer);
+            _payOrCredit(m.teamA[i], m.stakePerPlayer);
+            _payOrCredit(m.teamB[i], m.stakePerPlayer);
         }
+    }
+
+    // ── Pull-payment withdrawal ──────────────────────────────────────────────
+
+    /**
+     * @notice Claim any funds that were credited to your pendingWithdrawals
+     *         balance because a direct payout (cancelMatch / cancelWaiting /
+     *         declareWinner / claimRefund) could not be delivered under the
+     *         PAYOUT_CALL_GAS cap — for example, a contract recipient with a
+     *         heavy receive() function. Reverts if the caller's credit is 0.
+     *
+     * CEI: pendingWithdrawals zeroed before the external call; revert-on-fail
+     * keeps state + funds aligned so the caller can try again from a
+     * different wallet / after fixing their receive().
+     *
+     * DB side (no event-driven DB sync needed — PayoutCredited already
+     *   flagged the balance; Withdrawn is observational only).
+     *   Optional backend: listen to Withdrawn to update a "pending withdrawals"
+     *   UI badge if one is added later.
+     */
+    function withdraw() external nonReentrant {
+        uint256 amount = pendingWithdrawals[msg.sender];
+        require(amount > 0, "No pending withdrawal");
+        pendingWithdrawals[msg.sender] = 0;
+        emit Withdrawn(msg.sender, amount);
+        (bool success, ) = payable(msg.sender).call{value: amount}("");
+        require(success, "Withdrawal failed");
     }
 
     // ── Admin ────────────────────────────────────────────────────────────────
