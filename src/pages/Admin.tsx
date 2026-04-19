@@ -315,9 +315,47 @@ const Admin = () => {
   const { toast } = useToast();
   const addNotification = useNotificationStore((s) => s.addNotification);
   const token = useUserStore((s) => s.token);
+  const role = useUserStore((s) => s.user?.role);
+  const refreshProfileFromServer = useUserStore((s) => s.refreshProfileFromServer);
   const navigate = useNavigate();
 
   const [section, setSection] = useState<NavId>("disputes");
+
+  // ── Role re-check (audit 2026-04-19, defense-in-depth) ─────────────────
+  //
+  // <AdminRoute> in App.tsx gates entry on user.role === "admin", but the
+  // admin privilege can be revoked mid-session:
+  //   - Another admin demotes this user on another device
+  //   - Backend session rotation expires the admin grant
+  //   - User manually rotates their role via a separate API call
+  //
+  // Once the server considers the user non-admin, any mutation button
+  // still rendered here would fail 403 server-side — but we should not
+  // rely on the server to be the only gate. Pull GET /auth/me on mount
+  // and every 60s, redirect immediately on downgrade, and short-circuit
+  // the render so no half-rendered mutation element can fire.
+  useEffect(() => {
+    void refreshProfileFromServer().catch(() => {
+      /* silent — periodic refresh will retry */
+    });
+    const iv = window.setInterval(() => {
+      void refreshProfileFromServer().catch(() => {
+        /* silent */
+      });
+    }, 60_000);
+    return () => window.clearInterval(iv);
+  }, [refreshProfileFromServer]);
+
+  useEffect(() => {
+    if (role !== undefined && role !== "admin") {
+      toast({
+        title: "Access revoked",
+        description: "Your admin role is no longer active. Redirecting to home.",
+        variant: "destructive",
+      });
+      navigate("/", { replace: true });
+    }
+  }, [role, navigate, toast]);
 
   // ── Live data ──
   const [disputes,     setDisputes]     = useState<Dispute[]>([]);
@@ -755,6 +793,16 @@ const Admin = () => {
     <ArrowDown className="h-3 w-3 ml-1 text-primary inline" />;
 
   // ─────────────────────────────────────────────────────────────
+
+  // Final defense-in-depth guard (audit 2026-04-19): after all hooks
+  // have been committed for this render, if the role is no longer
+  // "admin" we render nothing. The useEffect above handles the
+  // navigate, this just ensures no mutation buttons are paintable
+  // between the role flip and the navigate commit.
+  if (role !== undefined && role !== "admin") {
+    return null;
+  }
+
   return (
     <ArenaPageShell variant="admin" contentClassName="space-y-4">
 
