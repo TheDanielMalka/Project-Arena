@@ -15,7 +15,12 @@ services:
       POSTGRES_USER: arena_admin
       POSTGRES_PASSWORD: ${DB_PASSWORD:-arena_secret_change_me}
     ports:
-      - "5432:5432"
+      # Bind to loopback only — the engine reaches Postgres over the internal
+      # `arena-net` Docker bridge (service name `arena-db`), so no external
+      # publication is needed. Prior `"5432:5432"` exposed the DB on every
+      # host interface (audit 2026-04-20: remote brute-force / leaked creds).
+      # Host-side tooling (psql, pg_dump) still works via 127.0.0.1.
+      - "127.0.0.1:5432:5432"
     volumes:
       - arena-pgdata:/var/lib/postgresql/data
       - ./infra/sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
