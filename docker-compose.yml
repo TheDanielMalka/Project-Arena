@@ -13,9 +13,19 @@ services:
     environment:
       POSTGRES_DB: arena
       POSTGRES_USER: arena_admin
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-arena_secret_change_me}
+      # DB_PASSWORD is REQUIRED — no fallback. The previous
+      # `${DB_PASSWORD:-arena_secret_change_me}` meant a .env misconfig booted
+      # Postgres with a public, well-known password (audit 2026-04-20). Using
+      # `${VAR:?message}` makes `docker compose up` fail fast with a readable
+      # error instead of silently degrading security.
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required — set it in .env before `docker compose up`}
     ports:
-      - "5432:5432"
+      # Bind to loopback only — the engine reaches Postgres over the internal
+      # `arena-net` Docker bridge (service name `arena-db`), so no external
+      # publication is needed. Prior `"5432:5432"` exposed the DB on every
+      # host interface (audit 2026-04-20: remote brute-force / leaked creds).
+      # Host-side tooling (psql, pg_dump) still works via 127.0.0.1.
+      - "127.0.0.1:5432:5432"
     volumes:
       - arena-pgdata:/var/lib/postgresql/data
       - ./infra/sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
@@ -74,7 +84,8 @@ services:
       POSTGRES_HOST: arena-db
       POSTGRES_PORT: "5432"
       POSTGRES_USER: arena_admin
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-arena_secret_change_me}
+      # Same reason as the arena-db service — fail fast, no insecure default.
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required — set it in .env before `docker compose up`}
       POSTGRES_DB: arena
       API_SECRET: ${API_SECRET:-change_me_in_production}
       ENVIRONMENT: ${ENVIRONMENT:-development}
