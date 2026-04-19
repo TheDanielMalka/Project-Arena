@@ -94,6 +94,56 @@ const ENGINE_BASE =
 const ENGINE_TOKEN =
   (import.meta.env.VITE_ENGINE_API_TOKEN as string | undefined)?.trim();
 
+// ── Network error telemetry ───────────────────────────────────────────────────
+/**
+ * Surface fetch/network errors caught by engine-api wrappers.
+ *
+ * Historically every catch in this file was empty (`} catch { return null; }`)
+ * which made real network outages indistinguishable from deliberate "not ok"
+ * API responses. That hid production issues behind a silent `null`.
+ *
+ * This helper keeps the stable return-type contract every caller depends on
+ * (we still return the fallback value), but also:
+ *   1. Logs the error in dev (dev console only — never in production bundles).
+ *   2. Dispatches a `engine-api-network-error` CustomEvent on `window` in any
+ *      environment, so a top-level listener (e.g. the ConnectionBanner / toast
+ *      manager) can inform the user without every caller needing try/catch.
+ *
+ * The helper is wrapped in its own try/catch — telemetry must never throw
+ * back into the API call site.
+ */
+export type EngineApiNetworkErrorDetail = {
+  error: unknown;
+  at: number;
+};
+
+function reportEngineApiError(err: unknown): void {
+  try {
+    // Don't report user-triggered cancellations.
+    if (err instanceof DOMException && err.name === "AbortError") return;
+    // Don't spam the console in the vitest test environment.
+    const isTest =
+      typeof import.meta !== "undefined" &&
+      (import.meta as { env?: { MODE?: string } }).env?.MODE === "test";
+    if (!isTest) {
+      const isDev =
+        typeof import.meta !== "undefined" &&
+        (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true;
+      if (isDev) {
+        // eslint-disable-next-line no-console
+        console.warn("[engine-api] network error:", err);
+      }
+    }
+    if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+      const detail: EngineApiNetworkErrorDetail = { error: err, at: Date.now() };
+      window.dispatchEvent(new CustomEvent("engine-api-network-error", { detail }));
+    }
+  } catch (err) {
+    reportEngineApiError(err);
+    /* telemetry must never throw */
+  }
+}
+
 // ── Internal fetch helper ─────────────────────────────────────────────────────
 async function safeFetch<T>(path: string, timeoutMs = 5000): Promise<T | null> {
   try {
@@ -109,7 +159,8 @@ async function safeFetch<T>(path: string, timeoutMs = 5000): Promise<T | null> {
     clearTimeout(tid);
     if (!res.ok) return null;
     return (await res.json()) as T;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -182,7 +233,8 @@ export async function getClientStatus(
     clearTimeout(tid);
     if (!res.ok) return null;
     return (await res.json()) as ClientStatusResponse;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -238,7 +290,8 @@ export async function apiGetMatchStatus(
     clearTimeout(tid);
     if (!res.ok) return null;
     return (await res.json()) as MatchStatusApiResponse;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -285,7 +338,8 @@ export async function apiGetActiveMatch(
     const res = await arenaUserFetch(`${ENGINE_BASE}/match/active`, token, {});
     if (!res.ok) return null;
     return (await res.json()) as ActiveMatchResponse;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -313,7 +367,8 @@ export async function apiCancelMatch(
       return { ok: false, detail: parseFastApiDetail(raw.detail) ?? "Cancel failed" };
     }
     return { ok: true };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, detail: "Network error" };
   }
 }
@@ -341,7 +396,8 @@ export async function apiLeaveMatch(
       return { ok: false, detail: parseFastApiDetail(raw.detail) ?? "Leave failed" };
     }
     return { ok: true };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, detail: "Network error" };
   }
 }
@@ -373,7 +429,8 @@ export async function apiInviteToMatch(
       return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
     }
     return { ok: true };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, status: 0, detail: null };
   }
 }
@@ -443,7 +500,8 @@ export async function apiAuthGoogle(idToken: string): Promise<ApiLoginResult> {
       return raw as ApiLoginSuccess;
     }
     return null;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -467,7 +525,8 @@ export async function apiLogin(identifier: string, password: string): Promise<Ap
       return raw as ApiLoginSuccess;
     }
     return null;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -552,7 +611,8 @@ export async function apiRegister(
       };
     }
     return { ok: true as const, data: raw as ApiRegisterSuccess };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, status: 0, detail: null, field: null };
   }
 }
@@ -619,7 +679,8 @@ export async function apiGetMe(token: string): Promise<{
       two_factor_enabled?: boolean;
       auth_provider?: string | null;
     };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -647,7 +708,8 @@ export async function apiAuth2faConfirm(
     const raw = (await res.json()) as Record<string, unknown>;
     if (typeof raw.access_token !== "string") return null;
     return raw as ApiLoginSuccess;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -668,7 +730,8 @@ export async function apiDeleteMyAccount(
       return { ok: false, detail: parseFastApiDetail(raw.detail) };
     }
     return { ok: true };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, detail: "Network error" };
   }
 }
@@ -690,7 +753,8 @@ export async function apiPatchUserSettings(
     }
     const nr = normalizeUserSettingsRegion(raw.region ?? region);
     return { ok: true, region: nr ?? region };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, detail: "Network error" };
   }
 }
@@ -716,7 +780,8 @@ export async function apiAuth2faSetup(
     const qr_uri = typeof raw.qr_uri === "string" ? raw.qr_uri : "";
     if (!secret || !qr_uri) return { ok: false, detail: "Invalid setup response" };
     return { ok: true, secret, qr_uri };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, detail: "Network error" };
   }
 }
@@ -737,7 +802,8 @@ export async function apiAuth2faVerify(
       return { ok: false, detail: parseFastApiDetail(raw.detail) };
     }
     return { ok: true };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, detail: "Network error" };
   }
 }
@@ -759,7 +825,8 @@ export async function apiAuth2faDisable(
       return { ok: false, detail: parseFastApiDetail(raw.detail) };
     }
     return { ok: true };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, detail: "Network error" };
   }
 }
@@ -772,7 +839,8 @@ export async function apiGetUnreadCount(token: string): Promise<{ count: number 
     const raw = (await res.json()) as { count?: unknown };
     const c = raw.count;
     return { count: typeof c === "number" ? c : Number(c) || 0 };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -790,7 +858,8 @@ export async function apiVerifySteam(steamId: string): Promise<VerifyPlatformRes
     const res = await fetch(`${ENGINE_BASE}/verify/steam?steam_id=${q}`);
     if (!res.ok) return { valid: false, unique: true };
     return (await res.json()) as VerifyPlatformResult;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { valid: false };
   }
 }
@@ -802,7 +871,8 @@ export async function apiVerifyRiot(riotId: string): Promise<VerifyPlatformResul
     const res = await fetch(`${ENGINE_BASE}/verify/riot?riot_id=${q}`);
     if (!res.ok) return { valid: false, unique: true };
     return (await res.json()) as VerifyPlatformResult;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { valid: false };
   }
 }
@@ -814,7 +884,8 @@ export async function apiVerifyDiscord(discordId: string): Promise<VerifyPlatfor
     const res = await fetch(`${ENGINE_BASE}/verify/discord?discord_id=${q}`);
     if (!res.ok) return { valid: false, unique: true };
     return (await res.json()) as VerifyPlatformResult;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { valid: false };
   }
 }
@@ -854,7 +925,8 @@ export async function apiAdminListSupportTicketAttachments(
         };
       })
       .filter((x): x is AdminTicketAttachmentMeta => x !== null);
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return [];
   }
 }
@@ -869,7 +941,8 @@ export async function apiGetAttachmentBlob(token: string, attachmentId: string):
     );
     if (!res.ok) return null;
     return await res.blob();
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -883,7 +956,8 @@ export async function apiDeleteAttachment(token: string, attachmentId: string): 
       { method: "DELETE" },
     );
     return res.ok;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return false;
   }
 }
@@ -922,7 +996,8 @@ export async function apiPostSupportTicketAttachment(
       content_type: String(raw.content_type ?? file.type ?? "application/octet-stream"),
       file_size: typeof raw.file_size === "number" ? raw.file_size : file.size,
     };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, status: 0, detail: "Network error" };
   }
 }
@@ -961,7 +1036,8 @@ export async function apiForgePurchase(
         item_slug: String(raw.item_slug ?? item_slug),
       },
     };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, status: 0, detail: "Network error" };
   }
 }
@@ -1055,7 +1131,8 @@ export async function apiCreateMatch(
         match_type:   raw.match_type   ?? body.match_type   ?? null,
       },
     };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, status: 0, detail: null };
   }
 }
@@ -1084,7 +1161,8 @@ export async function apiGetAtPackages(): Promise<{ packages: AtPackageRow[] } |
       }))
       .filter((p) => p.at_amount > 0);
     return { packages };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -1124,7 +1202,8 @@ export async function apiBuyAtPackage(
       usdt_spent: asNum(raw.usdt_spent) ?? 0,
       discount_pct: asNum(raw.discount_pct) ?? 0,
     };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, status: 0, detail: "Network error" };
   }
 }
@@ -1165,7 +1244,8 @@ export async function apiWithdrawAT(
       daily_remaining: asNum(raw.daily_remaining)  ?? 0,
       rate:            String(raw.rate             ?? ""),
     };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, status: 0, detail: "Network error" };
   }
 }
@@ -1238,7 +1318,8 @@ export async function apiJoinMatch(
         started: !!raw.started,
       },
     };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, status: 0, detail: null };
   }
 }
@@ -1307,7 +1388,8 @@ export async function apiMatchHeartbeat(
         team: normaliseTeam(p.team),
       })),
     };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -1343,7 +1425,8 @@ export async function apiKickPlayer(
       return { ok: false as const, status: res.status, detail: String(parseFastApiDetail(raw.detail) ?? "Kick failed") };
     }
     return { ok: true as const };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, status: 0, detail: "Network error" };
   }
 }
@@ -1389,7 +1472,8 @@ export async function apiRespondToNotification(
       your_team: rawTeam === "A" ? "A" : rawTeam === "B" ? "B" : null,
       inviter_username: raw.inviter_username ? String(raw.inviter_username) : null,
     };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -1416,7 +1500,8 @@ export async function apiPatchMe(
       body: JSON.stringify(patch),
     });
     return res.ok;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return false;
   }
 }
@@ -1433,7 +1518,8 @@ export async function apiPatchMeWalletAddress(token: string, wallet_address: str
       body: JSON.stringify({ wallet_address }),
     });
     return res.ok;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return false;
   }
 }
@@ -1450,7 +1536,8 @@ export async function apiUnlinkMeWalletAddress(token: string): Promise<boolean> 
       body: JSON.stringify({ wallet_address: "" }),
     });
     return res.ok;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return false;
   }
 }
@@ -1477,7 +1564,8 @@ export async function apiChangePassword(
       return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
     }
     return { ok: true as const };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, status: 0, detail: "Network error" };
   }
 }
@@ -1508,7 +1596,8 @@ export async function apiListFriends(token: string): Promise<ApiFriendRow[] | nu
     if (!res.ok) return null;
     const raw = (await res.json()) as { friends?: ApiFriendRow[] };
     return Array.isArray(raw.friends) ? raw.friends : [];
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -1528,7 +1617,8 @@ export async function apiListFriendRequests(token: string): Promise<{
       incoming: Array.isArray(raw.incoming) ? raw.incoming : [],
       outgoing: Array.isArray(raw.outgoing) ? raw.outgoing : [],
     };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -1553,7 +1643,8 @@ export async function apiSendFriendRequest(
       return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
     }
     return { ok: true as const };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, status: 0, detail: "Network error" };
   }
 }
@@ -1570,7 +1661,8 @@ export async function apiAcceptFriendRequest(token: string, from_user_id: string
       return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
     }
     return { ok: true as const };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, status: 0, detail: "Network error" };
   }
 }
@@ -1587,7 +1679,8 @@ export async function apiRejectFriendRequest(token: string, from_user_id: string
       return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
     }
     return { ok: true as const };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, status: 0, detail: "Network error" };
   }
 }
@@ -1604,7 +1697,8 @@ export async function apiRemoveFriend(token: string, user_id: string): Promise<A
       return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
     }
     return { ok: true as const };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, status: 0, detail: "Network error" };
   }
 }
@@ -1621,7 +1715,8 @@ export async function apiBlockUser(token: string, user_id: string): Promise<ApiF
       return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
     }
     return { ok: true as const };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, status: 0, detail: "Network error" };
   }
 }
@@ -1652,7 +1747,8 @@ export async function apiGetMessages(
     if (!res.ok) return null;
     const raw = (await res.json()) as { messages?: ApiDmRow[] };
     return Array.isArray(raw.messages) ? raw.messages : [];
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -1685,7 +1781,8 @@ export async function apiSendMessage(
       id: String(raw.id ?? ""),
       created_at: raw.created_at ?? null,
     };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, status: 0, detail: "Network error" };
   }
 }
@@ -1698,7 +1795,8 @@ export async function apiMarkMessagesRead(token: string, friend_id: string): Pro
       { method: "POST" },
     );
     return res.ok;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return false;
   }
 }
@@ -1922,7 +2020,8 @@ async function fetchJsonMatches(path: string, token?: string | null): Promise<Ma
       }
     }
     return matches;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -2043,7 +2142,8 @@ export async function apiSearchPlayers(
       }
     }
     return out;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return [];
   }
 }
@@ -2065,7 +2165,8 @@ export async function apiGetPublicPlayer(
     if (!res.ok) return null;
     const raw = (await res.json()) as Record<string, unknown>;
     return mapApiPlayerRowToPublic(raw);
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -2131,7 +2232,8 @@ export async function apiGetLeaderboard(opts?: ApiLeaderboardOpts): Promise<Lead
         ? mapLeaderboardApiRow(r as Record<string, unknown>, i, gameFb)
         : mapLeaderboardApiRow({}, i, gameFb),
     );
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -2185,7 +2287,8 @@ export async function apiListInbox(opts: ApiListInboxOpts): Promise<InboxMessage
         ? mapInboxApiRow(r as Record<string, unknown>, opts.receiverId)
         : mapInboxApiRow({}, opts.receiverId),
     );
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -2204,7 +2307,8 @@ export async function apiGetInboxUnreadCount(token: string | null | undefined): 
     const raw = (await res.json()) as { unread_count?: unknown };
     const n = asNum(raw.unread_count);
     return n ?? 0;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -2247,7 +2351,8 @@ export async function apiPostInbox(
       subject: asStr(raw.subject) ?? "",
       created_at: asStr(raw.created_at) ?? null,
     };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, error: "Network error", status: 0 };
   }
 }
@@ -2264,7 +2369,8 @@ export async function apiPatchInboxRead(token: string, messageId: string): Promi
     );
     clearTimeout(tid);
     return res.ok;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return false;
   }
 }
@@ -2280,7 +2386,8 @@ export async function apiPatchInboxReadAll(token: string): Promise<boolean> {
     });
     clearTimeout(tid);
     return res.ok;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return false;
   }
 }
@@ -2297,7 +2404,8 @@ export async function apiDeleteInbox(token: string, messageId: string): Promise<
     );
     clearTimeout(tid);
     return res.ok;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return false;
   }
 }
@@ -2337,7 +2445,8 @@ export async function apiGetNotifications(
     if (!res.ok) return null;
     const raw = (await res.json()) as { notifications?: ApiNotificationRow[] };
     return Array.isArray(raw.notifications) ? raw.notifications : [];
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -2354,7 +2463,8 @@ export async function apiMarkNotificationRead(token: string, notificationId: str
     );
     clearTimeout(tid);
     return res.ok;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return false;
   }
 }
@@ -2370,7 +2480,8 @@ export async function apiMarkAllNotificationsRead(token: string): Promise<boolea
     });
     clearTimeout(tid);
     return res.ok;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return false;
   }
 }
@@ -2387,7 +2498,8 @@ export async function apiDeleteNotification(token: string, notificationId: strin
     );
     clearTimeout(tid);
     return res.ok;
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return false;
   }
 }
@@ -2438,7 +2550,8 @@ export async function apiCreateDispute(
       return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
     }
     return { ok: true as const, id: String(raw.id ?? "") };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, status: 0, detail: "Network error" };
   }
 }
@@ -2458,7 +2571,8 @@ export async function apiGetDisputes(token: string): Promise<ApiDisputeRow[] | n
     if (!res.ok) return null;
     const raw = (await res.json()) as { disputes?: ApiDisputeRow[] };
     return Array.isArray(raw.disputes) ? raw.disputes : [];
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -2512,7 +2626,8 @@ export async function apiCreateSupportTicket(
       return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
     }
     return { ok: true as const, id: String(raw.id ?? "") };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, status: 0, detail: "Network error" };
   }
 }
@@ -2537,7 +2652,8 @@ export async function apiGetSupportTickets(
     if (!res.ok) return null;
     const raw = (await res.json()) as { tickets?: ApiSupportTicketRow[] };
     return Array.isArray(raw.tickets) ? raw.tickets : [];
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -2567,7 +2683,8 @@ export async function apiAdminListSupportTickets(
       return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
     }
     return { ok: true as const, tickets: Array.isArray(raw.tickets) ? raw.tickets : [] };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, status: 0, detail: "Network error" };
   }
 }
@@ -2593,7 +2710,8 @@ export async function apiAdminPatchSupportTicket(
       return { ok: false as const, status: res.status, detail: parseFastApiDetail(raw.detail) };
     }
     return { ok: true as const };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, status: 0, detail: "Network error" };
   }
 }
@@ -2630,7 +2748,8 @@ export async function apiGetForgeChallenges(token: string): Promise<ApiForgeChal
     if (!res.ok) return null;
     const raw = (await res.json()) as { challenges?: ApiForgeChallengeRow[] };
     return Array.isArray(raw.challenges) ? raw.challenges : [];
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return null;
   }
 }
@@ -2665,7 +2784,8 @@ export async function apiClaimForgeChallenge(
       reward_xp:  asNum(raw.reward_xp)  ?? 0,
       at_balance: asNum(raw.at_balance) ?? 0,
     };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false as const, status: 0, detail: "Network error" };
   }
 }
@@ -2697,7 +2817,8 @@ export async function apiAdminOracleStatus(token: string): Promise<
       last_block:      (raw.last_block  as number) ?? 0,
       last_sync_at:    raw.last_sync_at as string | null ?? null,
     };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, status: 0, detail: "Network error" };
   }
 }
@@ -2721,7 +2842,8 @@ export async function apiAdminOracleSync(token: string, fromBlock?: number): Pro
       to_block:         (raw.to_block         as number) ?? 0,
       events_processed: (raw.events_processed as number) ?? 0,
     };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, status: 0, detail: "Network error" };
   }
 }
@@ -2742,7 +2864,8 @@ export async function apiAdminTestSlack(token: string): Promise<
       return { ok: true, sent: true };
     }
     return { ok: false, status: res.status, detail: "Invalid response" };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, status: 0, detail: "Network error" };
   }
 }
@@ -2757,7 +2880,8 @@ export async function apiAdminFreezeStatus(token: string): Promise<
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
     return { ok: true, frozen: raw.frozen === true };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, status: 0, detail: "Network error" };
   }
 }
@@ -2776,7 +2900,8 @@ export async function apiAdminFreeze(token: string, freeze: boolean): Promise<
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
     return { ok: true, frozen: raw.frozen === true, message: String(raw.message ?? "") };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, status: 0, detail: "Network error" };
   }
 }
@@ -2819,7 +2944,8 @@ export async function apiAdminGetUsers(
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
     return { ok: true, users: (raw.users as AdminUser[]) ?? [], total: (raw.total as number) ?? 0 };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, status: 0, detail: "Network error" };
   }
 }
@@ -2858,7 +2984,8 @@ export async function apiAdminGetDisputes(
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
     return { ok: true, disputes: (raw.disputes as AdminDispute[]) ?? [], total: (raw.total as number) ?? 0 };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, status: 0, detail: "Network error" };
   }
 }
@@ -2899,7 +3026,8 @@ export async function apiAdminIssuePenalty(
       suspended_until: raw.suspended_until as string | null,
       banned_at:       raw.banned_at as string | null,
     };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, status: 0, detail: "Network error" };
   }
 }
@@ -2949,7 +3077,8 @@ export async function apiGetPlatformConfig(token: string): Promise<
       fraud_intentional_loss_min_count: String(raw.fraud_intentional_loss_min_count ?? "5"),
       fraud_intentional_loss_days:      String(raw.fraud_intentional_loss_days      ?? "7"),
     };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, status: 0, detail: "Network error" };
   }
 }
@@ -2971,7 +3100,8 @@ export async function apiUpdatePlatformConfig(
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
     return { ok: true, updated: raw.updated === true, fields: (raw.fields as string[]) ?? [] };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, status: 0, detail: "Network error" };
   }
 }
@@ -3003,7 +3133,8 @@ export async function apiAdminGetAuditLog(
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
     return { ok: true, entries: (raw.entries as AuditEntry[]) ?? [], total: (raw.total as number) ?? 0 };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, status: 0, detail: "Network error" };
   }
 }
@@ -3114,7 +3245,8 @@ export async function apiAdminGetFraudSummary(token: string): Promise<
       recently_banned:    Number(s.recently_banned)    || 0,
       intentional_losing: Number(s.intentional_losing) || 0,
     };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, status: 0, detail: "Network error" };
   }
 }
@@ -3129,7 +3261,8 @@ export async function apiAdminGetFraudReport(token: string): Promise<
     if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
     const parsed = parseFraudReportPayload(raw);
     return { ok: true, ...parsed };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, status: 0, detail: "Network error" };
   }
 }
@@ -3145,7 +3278,8 @@ export async function apiAdminPostFraudExportReport(token: string): Promise<
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) return { ok: false, status: res.status, detail: parseFastApiDetail(raw.detail) };
     return { ok: true, ...parseFraudReportPayload(raw) };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, status: 0, detail: "Network error" };
   }
 }
@@ -3172,7 +3306,8 @@ export async function apiAdminFraudExport(token: string): Promise<
     a.click();
     URL.revokeObjectURL(url);
     return { ok: true };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, status: 0, detail: "Network error" };
   }
 }
@@ -3199,7 +3334,8 @@ export async function apiSubmitSupportTicket(
     const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) return { ok: false, detail: parseFastApiDetail(raw.detail) ?? "Failed" };
     return { ok: true, id: String(raw.id ?? "") };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, detail: "Network error" };
   }
 }
@@ -3229,7 +3365,8 @@ export async function apiAdminDeclareWinner(
       winner_id:      String(raw.winner_id      ?? ""),
       stake_currency: String(raw.stake_currency ?? "AT"),
     };
-  } catch {
+  } catch (err) {
+    reportEngineApiError(err);
     return { ok: false, status: 0, detail: "Network error" };
   }
 }
