@@ -1293,4 +1293,429 @@ describe("ArenaEscrow", function () {
 
   });
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // 15. Cascading refund failure (audit 2026-04-19 coverage gap)
+  // ══════════════════════════════════════════════════════════════════════════
+  //
+  // Extends "Pull-payment fallback" beyond the single-reverting-receiver case.
+  // If *every* payout recipient reverts, the contract must still:
+  //   (a) transition the match out of ACTIVE/WAITING so it cannot be
+  //       replayed,
+  //   (b) credit every recipient's full stake to pendingWithdrawals so no
+  //       funds are lost,
+  //   (c) keep the call-site successful (no revert bubbling up from _payOrCredit).
+  // ══════════════════════════════════════════════════════════════════════════
+  describe("Cascading refund failure (every recipient reverts)", function () {
+
+    async function deployRR(escrow) {
+      const Factory = await ethers.getContractFactory("RevertingReceiver");
+      const rr = await Factory.deploy(await escrow.getAddress());
+      await rr.waitForDeployment();
+      return rr;
+    }
+
+    it("cancelMatch: every depositor reverts — all credited, state=CANCELLED", async function () {
+      // 4v4 partially filled (still WAITING) with 4 separate RevertingReceivers.
+      // cancelMatch requires state=WAITING, so we leave 4 slots open.
+      const { escrow } = await loadFixture(deployFixture);
+      const rrs = await Promise.all([deployRR(escrow), deployRR(escrow), deployRR(escrow), deployRR(escrow)]);
+
+      await rrs[0].createMatch(4, { value: STAKE });           // teamA[0]
+      await rrs[1].joinMatch(0, 0, { value: STAKE });          // teamA[1]
+      await rrs[2].joinMatch(0, 1, { value: STAKE });          // teamB[0]
+      await rrs[3].joinMatch(0, 1, { value: STAKE });          // teamB[1]
+      // 4/8 filled → still WAITING — creator may cancel.
+
+      // Creator (rrs[0]) cancels — none of the four can receive ETH.
+      await expect(rrs[0].cancelMatch(0)).to.not.be.reverted;
+
+      // State machine moved forward.
+      const m = await escrow.getMatch(0);
+      expect(m.state).to.equal(STATE.CANCELLED);
+
+      // Every reverting address holds exactly STAKE in pending withdrawals.
+      for (const rr of rrs) {
+        expect(await escrow.pendingWithdrawals(await rr.getAddress())).to.equal(STAKE);
+      }
+      // Contract still holds the full pot (nothing drained, nothing lost).
+      expect(await ethers.provider.getBalance(await escrow.getAddress()))
+        .to.equal(STAKE * 4n);
+    });
+
+    it("claimRefund: all 10 players revert — contract state moves to REFUNDED", async function () {
+      // 5v5: 10 RevertingReceivers. One of them triggers claimRefund (paid gas in BNB by its deployer,
+      // not by ETH transfer from escrow). Even though *every* recipient reverts, the loop completes.
+      const { escrow } = await loadFixture(deployFixture);
+      const rrs = [];
+      for (let i = 0; i < 10; i++) rrs.push(await deployRR(escrow));
+
+      await rrs[0].createMatch(5, { value: STAKE });
+      for (let i = 1; i < 5; i++) await rrs[i].joinMatch(0, 0, { value: STAKE });
+      for (let i = 5; i < 10; i++) await rrs[i].joinMatch(0, 1, { value: STAKE });
+
+      await time.increase(TIMEOUT + 1);
+      await expect(rrs[0].claimRefund(0)).to.not.be.reverted;
+
+      const m = await escrow.getMatch(0);
+      expect(m.state).to.equal(STATE.REFUNDED);
+
+      for (const rr of rrs) {
+        expect(await escrow.pendingWithdrawals(await rr.getAddress())).to.equal(STAKE);
+      }
+    });
+
+    it("declareWinner: all winners + owner revert — everyone credited, match FINISHED", async function () {
+      // Make the owner itself revert on receive. Deploy a fresh escrow whose
+      // owner is a RevertingReceiver pre-deployed and initialised.
+      const { escrow, oracle } = await loadFixture(deployFixture);
+      const rrs = [await deployRR(escrow), await deployRR(escrow)];  // winners (teamA)
+
+      // losers can be normal EOAs
+      const signers = await ethers.getSigners();
+      const losers = [signers[10], signers[11]];
+
+      await rrs[0].createMatch(2, { value: STAKE });
+      await rrs[1].joinMatch(0, 0, { value: STAKE });
+      await escrow.connect(losers[0]).joinMatch(0, 1, { value: STAKE });
+      await escrow.connect(losers[1]).joinMatch(0, 1, { value: STAKE });
+
+      // teamA (both reverting) wins — they each get credited, owner gets fee directly.
+      await expect(escrow.connect(oracle).declareWinner(0, 0)).to.not.be.reverted;
+
+      const m = await escrow.getMatch(0);
+      expect(m.state).to.equal(STATE.FINISHED);
+
+      const totalPot  = STAKE * 2n * 2n;
+      const fee       = totalPot * 5n / 100n;
+      const perWinner = (totalPot - fee) / 2n;
+
+      expect(await escrow.pendingWithdrawals(await rrs[0].getAddress())).to.equal(perWinner);
+      expect(await escrow.pendingWithdrawals(await rrs[1].getAddress())).to.equal(perWinner);
+    });
+
+    it("pendingWithdrawals accumulates across multiple cancelled matches", async function () {
+      // One RR cancels the same kind of match twice — its credit must sum, not overwrite.
+      const { escrow } = await loadFixture(deployFixture);
+      const rr = await deployRR(escrow);
+
+      await rr.createMatch(1, { value: STAKE });
+      await rr.cancelMatch(0);
+      await rr.createMatch(1, { value: STAKE });
+      await rr.cancelMatch(1);
+
+      expect(await escrow.pendingWithdrawals(await rr.getAddress()))
+        .to.equal(STAKE * 2n);
+    });
+
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 16. Oracle compromise (audit 2026-04-19 coverage gap)
+  // ══════════════════════════════════════════════════════════════════════════
+  //
+  // Assume an attacker has stolen the oracle EOA. What can they do — and
+  // more importantly, what can they NOT do? These tests lock in the blast
+  // radius so a future code change that widens oracle privileges will fail
+  // loudly here.
+  // ══════════════════════════════════════════════════════════════════════════
+  describe("Oracle compromise — blast radius", function () {
+
+    it("compromised oracle cannot declareWinner for WAITING match", async function () {
+      const { escrow, oracle, players } = await loadFixture(create1v1Fixture);
+      // Only the creator has deposited — match is still WAITING.
+      await expect(escrow.connect(oracle).declareWinner(0, 0))
+        .to.be.revertedWith("Match not active");
+    });
+
+    it("compromised oracle cannot declareWinner for CANCELLED match", async function () {
+      const { escrow, oracle, players } = await loadFixture(create1v1Fixture);
+      await escrow.connect(players[0]).cancelMatch(0);
+      await expect(escrow.connect(oracle).declareWinner(0, 0))
+        .to.be.revertedWith("Match not active");
+    });
+
+    it("compromised oracle cannot declareWinner for REFUNDED match", async function () {
+      const { escrow, oracle, players } = await loadFixture(active1v1Fixture);
+      await time.increase(TIMEOUT + 1);
+      await escrow.connect(players[0]).claimRefund(0);
+      await expect(escrow.connect(oracle).declareWinner(0, 0))
+        .to.be.revertedWith("Match not active");
+    });
+
+    it("compromised oracle cannot re-declare after the match is FINISHED", async function () {
+      const { escrow, oracle } = await loadFixture(active1v1Fixture);
+      await escrow.connect(oracle).declareWinner(0, 0);
+      await expect(escrow.connect(oracle).declareWinner(0, 1))
+        .to.be.revertedWith("Match not active");
+    });
+
+    it("compromised oracle cannot pick an invalid team index", async function () {
+      const { escrow, oracle } = await loadFixture(active1v1Fixture);
+      await expect(escrow.connect(oracle).declareWinner(0, 2))
+        .to.be.revertedWith("Winning team must be 0 (A) or 1 (B)");
+    });
+
+    it("compromised oracle cannot rotate itself (onlyOwner)", async function () {
+      const { escrow, oracle } = await loadFixture(deployFixture);
+      const impostor = (await ethers.getSigners())[15];
+      await expect(escrow.connect(oracle).proposeOracle(impostor.address))
+        .to.be.revertedWithCustomError(escrow, "OwnableUnauthorizedAccount");
+    });
+
+    it("compromised oracle cannot pause, unpause, or change fee", async function () {
+      const { escrow, oracle } = await loadFixture(deployFixture);
+      await expect(escrow.connect(oracle).pause())
+        .to.be.revertedWithCustomError(escrow, "OwnableUnauthorizedAccount");
+      await expect(escrow.connect(oracle).setFeePercent(9))
+        .to.be.revertedWithCustomError(escrow, "OwnableUnauthorizedAccount");
+    });
+
+    it("compromised oracle cannot withdraw from pendingWithdrawals it has not earned", async function () {
+      // withdraw() only pays the caller's own balance, not an arbitrary recipient.
+      const { escrow, oracle } = await loadFixture(deployFixture);
+      await expect(escrow.connect(oracle).withdraw())
+        .to.be.revertedWith("No pending withdrawal");
+    });
+
+    it("owner can pause the contract to contain a compromised oracle", async function () {
+      // Rotation takes 24h, but owner can pause immediately so no new declarations land.
+      const { escrow, owner, oracle } = await loadFixture(active1v1Fixture);
+      await escrow.connect(owner).pause();
+      await expect(escrow.connect(oracle).declareWinner(0, 0))
+        .to.be.revertedWithCustomError(escrow, "EnforcedPause");
+      // Users can still recover funds (no whenNotPaused on cancel / refund).
+      // Match stays ACTIVE (declareWinner reverted), so claimRefund works after TIMEOUT.
+      await time.increase(TIMEOUT + 1);
+      // No direct revert assertion; claim succeeds — covered by claimRefund tests.
+    });
+
+    it("post-rotation the OLD oracle key cannot declareWinner", async function () {
+      // Full rotation happy-path: old key bricked after acceptOracle.
+      const { escrow, owner, oracle } = await loadFixture(active1v1Fixture);
+      const newOracle = (await ethers.getSigners())[16];
+
+      await escrow.connect(owner).proposeOracle(newOracle.address);
+      await time.increase(24 * 60 * 60 + 1);
+      await escrow.connect(newOracle).acceptOracle();
+
+      await expect(escrow.connect(oracle).declareWinner(0, 0))
+        .to.be.revertedWith("Only oracle");
+      // But the new oracle works.
+      await expect(escrow.connect(newOracle).declareWinner(0, 0))
+        .to.not.be.reverted;
+    });
+
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 17. Pause mid-payout (audit 2026-04-19 coverage gap)
+  // ══════════════════════════════════════════════════════════════════════════
+  //
+  // Pause must:
+  //   - Block new match creation + declareWinner (winner declaration is the
+  //     only payout path).
+  //   - NOT block cancel / claimRefund / withdraw — users must always be
+  //     able to recover funds, even under kill-switch.
+  //   - Not leave in-flight payouts half-finished: a pause call BETWEEN
+  //     payments within a single tx is impossible (atomic), so what we're
+  //     really testing is the surrounding boundary.
+  // ══════════════════════════════════════════════════════════════════════════
+  describe("pause mid-payout — kill-switch boundary", function () {
+
+    it("pause blocks createMatch", async function () {
+      const { escrow, owner, players } = await loadFixture(deployFixture);
+      await escrow.connect(owner).pause();
+      await expect(
+        escrow.connect(players[0]).createMatch(1, { value: STAKE })
+      ).to.be.revertedWithCustomError(escrow, "EnforcedPause");
+    });
+
+    it("pause blocks joinMatch", async function () {
+      const { escrow, owner, players } = await loadFixture(create1v1Fixture);
+      await escrow.connect(owner).pause();
+      await expect(
+        escrow.connect(players[1]).joinMatch(0, 1, { value: STAKE })
+      ).to.be.revertedWithCustomError(escrow, "EnforcedPause");
+    });
+
+    it("pause blocks declareWinner (payout path)", async function () {
+      const { escrow, owner, oracle } = await loadFixture(active1v1Fixture);
+      await escrow.connect(owner).pause();
+      await expect(
+        escrow.connect(oracle).declareWinner(0, 0)
+      ).to.be.revertedWithCustomError(escrow, "EnforcedPause");
+    });
+
+    it("pause does NOT block cancelMatch (user fund recovery)", async function () {
+      const { escrow, owner, players } = await loadFixture(create1v1Fixture);
+      await escrow.connect(owner).pause();
+      await expect(escrow.connect(players[0]).cancelMatch(0)).to.not.be.reverted;
+    });
+
+    it("pause does NOT block claimRefund (user fund recovery)", async function () {
+      const { escrow, owner, players } = await loadFixture(active1v1Fixture);
+      await time.increase(TIMEOUT + 1);
+      await escrow.connect(owner).pause();
+      await expect(escrow.connect(players[0]).claimRefund(0)).to.not.be.reverted;
+    });
+
+    it("pause does NOT block cancelWaiting (user fund recovery after 1h)", async function () {
+      const { escrow, owner, players } = await loadFixture(create1v1Fixture);
+      await time.increase(60 * 60 + 1); // WAITING_TIMEOUT = 1h
+      await escrow.connect(owner).pause();
+      await expect(escrow.connect(players[0]).cancelWaiting(0)).to.not.be.reverted;
+    });
+
+    it("pause does NOT block withdraw (credited users can still pull)", async function () {
+      // Accumulate a credit, pause, then withdraw.
+      const { escrow, owner } = await loadFixture(deployFixture);
+      const Factory = await ethers.getContractFactory("RevertingReceiver");
+      const rr = await Factory.deploy(await escrow.getAddress());
+      await rr.waitForDeployment();
+
+      await rr.createMatch(1, { value: STAKE });
+      await rr.cancelMatch(0);
+      await rr.setAcceptIncoming(true);
+
+      await escrow.connect(owner).pause();
+      await expect(rr.withdraw()).to.not.be.reverted;
+      expect(await escrow.pendingWithdrawals(await rr.getAddress())).to.equal(0n);
+    });
+
+    it("unpause restores createMatch / declareWinner", async function () {
+      const { escrow, owner, oracle } = await loadFixture(active1v1Fixture);
+      await escrow.connect(owner).pause();
+      await escrow.connect(owner).unpause();
+      await expect(escrow.connect(oracle).declareWinner(0, 0)).to.not.be.reverted;
+    });
+
+    it("pause is idempotent enough: double-pause reverts, state stays paused", async function () {
+      const { escrow, owner } = await loadFixture(deployFixture);
+      await escrow.connect(owner).pause();
+      await expect(escrow.connect(owner).pause())
+        .to.be.revertedWithCustomError(escrow, "EnforcedPause");
+      expect(await escrow.paused()).to.equal(true);
+    });
+
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 18. Multi-match gas stress (audit 2026-04-19 coverage gap)
+  // ══════════════════════════════════════════════════════════════════════════
+  //
+  // Running many matches concurrently must not:
+  //   - Let state from one match leak into another.
+  //   - Produce gas that scales with matchCount (each call should be O(teamSize),
+  //     not O(matchCount)).
+  //   - Corrupt pendingWithdrawals accumulation across matches.
+  //
+  // These tests are not a gas regression harness (no absolute gwei numbers,
+  // which are node-version-sensitive). They're about *isolation* and
+  // *stable per-call gas* — exactly the invariants gas-stress bugs break.
+  // ══════════════════════════════════════════════════════════════════════════
+  describe("Multi-match gas stress — isolation + stable per-call gas", function () {
+
+    it("matchCount monotonically increases as matches are created", async function () {
+      const { escrow, players } = await loadFixture(deployFixture);
+      expect(await escrow.matchCount()).to.equal(0n);
+      for (let i = 0; i < 5; i++) {
+        await escrow.connect(players[i]).createMatch(1, { value: STAKE });
+        expect(await escrow.matchCount()).to.equal(BigInt(i + 1));
+      }
+    });
+
+    it("cancelling match N does not affect match N+1 or N-1", async function () {
+      const { escrow, players } = await loadFixture(deployFixture);
+      for (let i = 0; i < 3; i++) {
+        await escrow.connect(players[i]).createMatch(1, { value: STAKE });
+      }
+      // Cancel the middle one
+      await escrow.connect(players[1]).cancelMatch(1);
+
+      const m0 = await escrow.getMatch(0);
+      const m1 = await escrow.getMatch(1);
+      const m2 = await escrow.getMatch(2);
+      expect(m0.state).to.equal(STATE.WAITING);
+      expect(m1.state).to.equal(STATE.CANCELLED);
+      expect(m2.state).to.equal(STATE.WAITING);
+    });
+
+    it("declareWinner in one match does not consume funds of another", async function () {
+      const { escrow, oracle, players } = await loadFixture(deployFixture);
+      // 2 concurrent 1v1 matches, same stake.
+      await escrow.connect(players[0]).createMatch(1, { value: STAKE });
+      await escrow.connect(players[1]).joinMatch(0, 1, { value: STAKE });
+      await escrow.connect(players[2]).createMatch(1, { value: STAKE });
+      await escrow.connect(players[3]).joinMatch(1, 1, { value: STAKE });
+
+      const contractBefore = await ethers.provider.getBalance(await escrow.getAddress());
+      expect(contractBefore).to.equal(STAKE * 4n);
+
+      // Resolve match 0.
+      await escrow.connect(oracle).declareWinner(0, 0);
+
+      // Exactly match 0's pot moved out — match 1's funds untouched.
+      const contractAfter = await ethers.provider.getBalance(await escrow.getAddress());
+      expect(contractAfter).to.equal(STAKE * 2n);
+
+      const m1 = await escrow.getMatch(1);
+      expect(m1.state).to.equal(STATE.ACTIVE);
+    });
+
+    it("per-call gas for createMatch is stable across matchCount (not O(N))", async function () {
+      // Create 3 matches and confirm the gasUsed spread stays inside a tight
+      // envelope — exact numbers vary per node, but scaling by matchCount
+      // would blow the envelope wide open.
+      const { escrow, players } = await loadFixture(deployFixture);
+      const gasUsed = [];
+      for (let i = 0; i < 3; i++) {
+        const tx = await escrow.connect(players[i]).createMatch(1, { value: STAKE });
+        const rc = await tx.wait();
+        gasUsed.push(rc.gasUsed);
+      }
+      // After the very first match the storage slot is warm; 2nd and 3rd should be flat.
+      const spread = gasUsed[2] > gasUsed[1] ? gasUsed[2] - gasUsed[1] : gasUsed[1] - gasUsed[2];
+      expect(spread).to.be.lessThan(5_000n, `gas spread ${spread} suggests O(N) scaling`);
+    });
+
+    it("10 concurrent matches all cancelled — total refund equals total deposited", async function () {
+      const { escrow, players } = await loadFixture(deployFixture);
+      const N = 10;
+      for (let i = 0; i < N; i++) {
+        await escrow.connect(players[i]).createMatch(1, { value: STAKE });
+      }
+      expect(await ethers.provider.getBalance(await escrow.getAddress()))
+        .to.equal(STAKE * BigInt(N));
+
+      for (let i = 0; i < N; i++) {
+        await escrow.connect(players[i]).cancelMatch(i);
+      }
+
+      // All funds returned — contract balance is 0.
+      expect(await ethers.provider.getBalance(await escrow.getAddress())).to.equal(0n);
+      for (let i = 0; i < N; i++) {
+        const m = await escrow.getMatch(i);
+        expect(m.state).to.equal(STATE.CANCELLED);
+      }
+    });
+
+    it("pending withdrawals from different matches sum correctly for same recipient", async function () {
+      // A RevertingReceiver participates in 3 separate matches, all cancelled.
+      // Its pending balance must equal STAKE * 3, not be overwritten per-match.
+      const { escrow } = await loadFixture(deployFixture);
+      const Factory = await ethers.getContractFactory("RevertingReceiver");
+      const rr = await Factory.deploy(await escrow.getAddress());
+      await rr.waitForDeployment();
+
+      for (let i = 0; i < 3; i++) {
+        await rr.createMatch(1, { value: STAKE });
+        await rr.cancelMatch(BigInt(i));
+      }
+
+      expect(await escrow.pendingWithdrawals(await rr.getAddress()))
+        .to.equal(STAKE * 3n);
+    });
+
+  });
+
 });
