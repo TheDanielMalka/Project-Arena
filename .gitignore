@@ -80,6 +80,9 @@ __pycache__/
 .secret
 # SSH keys / certs (e.g. ARENA.V01.pem) — never commit
 *.pem
+# Client runtime config — contains JWT, wallet, session_id (PII + auth token).
+# Written at runtime by the desktop client login flow; must stay out of VCS.
+client/config.json
 
 # -----------------------------
 # Client build files / scripts
