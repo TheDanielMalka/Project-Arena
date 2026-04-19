@@ -26,7 +26,7 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
  *   - Players can always recover funds via refund or cancel
  *   - All logic is public and verifiable on-chain
  *
- * Security notes (audit 2026-04-11):
+ * Security notes (audit 2026-04-11, hardened 2026-04-19):
  *   - Reentrancy: OpenZeppelin ReentrancyGuard (nonReentrant) on all state-changing externals
  *   - Emergency pause (M8): OpenZeppelin Pausable — createMatch, joinMatch, declareWinner use whenNotPaused.
  *     Mirrors backend kill switch (POST /admin/freeze / _PAYOUTS_FROZEN): platform should call pause() in tandem.
@@ -34,6 +34,13 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
  *   - CEI: state updated before all external calls; events emitted before transfers
  *   - Transfer: .call() used instead of .transfer() — removes hard 2300-gas limit
  *     that could DoS payouts if any player/owner is a contract with an expensive fallback
+ *   - Pull-payment DoS guard (audit 2026-04-19): loops in declareWinner / cancelMatch /
+ *     cancelWaiting / claimRefund call _payOrCredit() which tries a bounded .call
+ *     (PAYOUT_CALL_GAS) and, on failure, credits pendingWithdrawals[recipient]
+ *     + emits PayoutCredited so a single malicious/contract recipient that reverts
+ *     in its fallback cannot block payouts for everyone else in the loop.
+ *     Recipients pull via withdraw() — single-recipient CEI, reverts on fail so
+ *     msg.sender can retry without losing the credit.
  *   - WAITING escape hatch: cancelWaiting() added — any depositor can cancel after
  *     WAITING_TIMEOUT if creator disappears and not all slots are filled
  *   - teamSize validated to {1,2,4,5} only; 3 is rejected
@@ -67,18 +74,39 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
  *   MatchActive     event → matches.deposits_received = teamSize * 2
  *
  * ── Platform settings alignment ────────────────────────────────────────────────
- *   FEE_PERCENT     ↔  platform_settings.fee_percent        (5)
- *                     Payout math: (100 - FEE_PERCENT)% to winners split equally; FEE_PERCENT% to owner (not 90/10 unless fee_pct=10).
+ *   feePercent      ↔  platform_settings.fee_percent        (default 5, bounded by MAX_FEE_PERCENT=10)
+ *                     Settable via setFeePercent(); emits FeePercentUpdated so the
+ *                     backend can mirror the new value. Payout math:
+ *                     (100 - feePercent)% to winners split equally; feePercent% to owner.
  *   Pausable.paused ↔  platform_settings.kill_switch_active (TRUE) — sync via owner calling pause()/unpause()
  */
 contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
 
     // ── Constants ────────────────────────────────────────────────────────────
 
-    uint256 public constant TIMEOUT         = 2 hours;   // ACTIVE match timeout (rage-quit guard)
-    uint256 public constant WAITING_TIMEOUT = 1 hours;   // WAITING match timeout (creator no-show guard)
-    uint256 public constant FEE_PERCENT     = 5;         // matches platform_settings.fee_percent
-    uint8   public constant MAX_TEAM        = 5;         // maximum players per team (5v5)
+    uint256 public constant TIMEOUT                 = 2 hours;   // ACTIVE match timeout (rage-quit guard)
+    uint256 public constant WAITING_TIMEOUT         = 1 hours;   // WAITING match timeout (creator no-show guard)
+    uint8   public constant MAX_TEAM                = 5;         // maximum players per team (5v5)
+    // Upper bound on the settable platform fee. Hardcoded so no admin
+    // action can set the fee above 10%. Sync contract: anything above this
+    // value must be rejected by platform_settings before it hits the chain.
+    uint8   public constant MAX_FEE_PERCENT         = 10;
+
+    // Oracle-rotation timelock (audit 2026-04-19).
+    // Rotations are 2-step: proposeOracle(new) → wait ORACLE_ROTATION_DELAY →
+    // acceptOracle(). This bounds the blast radius of a stolen owner key: an
+    // attacker who compromises the owner cannot instantly swap the oracle
+    // and mint a fake winner — legitimate ops have 24h to notice and call
+    // cancelProposedOracle() or pause() (which blocks declareWinner).
+    uint256 public constant ORACLE_ROTATION_DELAY   = 24 hours;
+
+    // Gas cap for per-recipient payout in loops (cancelMatch/cancelWaiting/
+    // claimRefund/declareWinner). Large enough for a Gnosis Safe / ERC-4337
+    // receive (~25k gas), small enough that a malicious contract recipient
+    // cannot burn the whole block in a single iteration. If the recipient's
+    // fallback reverts or out-of-gases, _payOrCredit credits the amount to
+    // pendingWithdrawals so everyone else in the loop still gets paid.
+    uint256 public constant PAYOUT_CALL_GAS = 100_000;
 
     // ── Match states ─────────────────────────────────────────────────────────
 
@@ -110,6 +138,24 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
     // Ownable: deployer is owner() — platform wallet (receives fee on declareWinner)
     address public oracle;           // Vision Engine wallet (declares winners) — onlyOracle
 
+    // Platform fee percent applied to each declareWinner payout.
+    // Replaces the old FEE_PERCENT constant (audit 2026-04-19) so ops can
+    // sync with platform_settings.fee_percent without a redeploy. Bounded
+    // by MAX_FEE_PERCENT. Mutable only by the owner via setFeePercent().
+    // Backend sync: FeePercentUpdated event fires on every change; the
+    // backend's platform_settings.fee_percent row is the source of truth
+    // for UI display, and setFeePercent must be called to keep the chain
+    // aligned. New matches use whatever feePercent is at declareWinner time.
+    uint8 public feePercent = 5;
+
+    // Oracle rotation timelock (2-step): see ORACLE_ROTATION_DELAY.
+    //   pendingOracle           = candidate address queued by proposeOracle()
+    //   pendingOracleAcceptAt   = earliest block.timestamp at which
+    //                             acceptOracle() may finalize the rotation.
+    //   Both cleared on cancelProposedOracle() or on successful acceptOracle().
+    address public pendingOracle;
+    uint256 public pendingOracleAcceptAt;
+
     uint256 public matchCount;
     mapping(uint256 => Match) public matches;
     // matchCount-1 == on_chain_match_id stored in DB matches.on_chain_match_id
@@ -117,6 +163,14 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
     // Prevents a single address from depositing twice in the same match
     // DB-ready: enforced on-chain, double-checked by match_players UNIQUE (match_id, user_id)
     mapping(uint256 => mapping(address => bool)) public hasDeposited;
+
+    // Pull-payment ledger — credits set when a direct payout call fails
+    // (malicious contract recipient / gas griefing / out-of-gas receive).
+    // Recipients call withdraw() to claim. Uses wei units — matches msg.value.
+    // Backend sync: PayoutCredited event mirrors a successful _sendEth in
+    // accounting terms (user's in_escrow still released; just sitting in
+    // contract balance instead of recipient's wallet until withdraw()).
+    mapping(address => uint256) public pendingWithdrawals;
 
     // ── Events ───────────────────────────────────────────────────────────────
     // Vision Engine listens to these to sync Postgres + user balances
@@ -130,6 +184,19 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
     event MatchRefunded  (uint256 indexed matchId);
     event MatchCancelled (uint256 indexed matchId, address indexed cancelledBy);
     event OracleUpdated  (address indexed oldOracle, address indexed newOracle);
+    // Oracle rotation (2-step). Listener: platform ops dashboard should
+    // alert on any OracleProposed that it did not itself initiate.
+    event OracleProposed          (address indexed currentOracle, address indexed pendingOracle, uint256 acceptAt);
+    event OracleProposalCancelled (address indexed pendingOracle);
+    // Fee governance. Backend listener should mirror newFeePercent into
+    // platform_settings.fee_percent (or alert if a chain-side change was
+    // not initiated by the platform).
+    event FeePercentUpdated       (uint8 oldFeePercent, uint8 newFeePercent);
+    // Pull-payment fallback: recipient's receive() failed or out-of-gased
+    // under PAYOUT_CALL_GAS — amount credited to pendingWithdrawals[recipient].
+    event PayoutCredited (address indexed recipient, uint256 amount);
+    // Recipient pulled their pending credit via withdraw().
+    event Withdrawn      (address indexed recipient, uint256 amount);
     // Paused / Unpaused: emitted by OpenZeppelin Pausable — do not redeclare here.
 
     // ── Modifiers ────────────────────────────────────────────────────────────
@@ -154,15 +221,24 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
     // ── Internal helpers ─────────────────────────────────────────────────────
 
     /**
-     * @dev Sends `amount` wei to `recipient` using .call() instead of .transfer().
-     *      .transfer() forwards only 2300 gas which can fail if recipient is a contract
-     *      with a fallback that needs more gas (e.g. a multisig wallet or any ERC-4337
-     *      account abstraction). Using .call() removes this hard limit.
-     *      The nonReentrant guard on every caller prevents reentrancy.
+     * @dev Tries to send `amount` wei to `recipient` under a bounded gas cap.
+     *      On success: ETH leaves the contract immediately (hot path for EOAs
+     *      and well-behaved contract wallets).
+     *      On failure: credits pendingWithdrawals[recipient] and emits
+     *      PayoutCredited so the DoS vector from a single reverting recipient
+     *      inside a payout loop (cancelMatch / cancelWaiting / declareWinner
+     *      / claimRefund) is removed — everyone else in the loop still gets
+     *      paid, and the stuck recipient can pull via withdraw() later.
+     *      nonReentrant on every caller prevents reentrancy; the per-call
+     *      PAYOUT_CALL_GAS cap prevents gas griefing across the loop.
      */
-    function _sendEth(address recipient, uint256 amount) internal {
-        (bool success, ) = payable(recipient).call{value: amount}("");
-        require(success, "ETH transfer failed");
+    function _payOrCredit(address recipient, uint256 amount) internal {
+        if (amount == 0) return;
+        (bool success, ) = payable(recipient).call{value: amount, gas: PAYOUT_CALL_GAS}("");
+        if (!success) {
+            pendingWithdrawals[recipient] += amount;
+            emit PayoutCredited(recipient, amount);
+        }
     }
 
     /**
@@ -301,11 +377,11 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
 
         // Refund all teamA depositors
         for (uint8 i = 0; i < m.depositsTeamA; i++) {
-            _sendEth(m.teamA[i], m.stakePerPlayer);
+            _payOrCredit(m.teamA[i], m.stakePerPlayer);
         }
         // Refund all teamB depositors (if any joined)
         for (uint8 i = 0; i < m.depositsTeamB; i++) {
-            _sendEth(m.teamB[i], m.stakePerPlayer);
+            _payOrCredit(m.teamB[i], m.stakePerPlayer);
         }
     }
 
@@ -340,11 +416,11 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
 
         // Refund all teamA depositors
         for (uint8 i = 0; i < m.depositsTeamA; i++) {
-            _sendEth(m.teamA[i], m.stakePerPlayer);
+            _payOrCredit(m.teamA[i], m.stakePerPlayer);
         }
         // Refund all teamB depositors (if any joined)
         for (uint8 i = 0; i < m.depositsTeamB; i++) {
-            _sendEth(m.teamB[i], m.stakePerPlayer);
+            _payOrCredit(m.teamB[i], m.stakePerPlayer);
         }
     }
 
@@ -352,7 +428,7 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
 
     /**
      * @notice Vision Engine declares the winning team after match result is confirmed.
-     *         Distributes (totalPot - 5% fee) equally among all winners.
+     *         Distributes (totalPot - feePercent% fee) equally among all winners.
      *         Integer dust (from division) goes to the first winner.
      *
      * DB side (Vision Engine handles on WinnerDeclared event):
@@ -379,7 +455,9 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
         require(winningTeam == 0 || winningTeam == 1, "Winning team must be 0 (A) or 1 (B)");
 
         uint256 totalPot        = m.stakePerPlayer * m.teamSize * 2;
-        uint256 fee             = (totalPot * FEE_PERCENT) / 100;
+        // feePercent is settable (audit 2026-04-19) — read once, locked for
+        // this payout. No mid-match fee drift possible.
+        uint256 fee             = (totalPot * feePercent) / 100;
         uint256 totalPayout     = totalPot - fee;
         uint256 payoutPerWinner = totalPayout / m.teamSize;
         // Dust from integer division goes to first winner — avoids locked funds
@@ -393,9 +471,9 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
         address[] storage winners = winningTeam == 0 ? m.teamA : m.teamB;
         for (uint8 i = 0; i < m.teamSize; i++) {
             uint256 amount = (i == 0) ? payoutPerWinner + dust : payoutPerWinner;
-            _sendEth(winners[i], amount);
+            _payOrCredit(winners[i], amount);
         }
-        _sendEth(owner(), fee);
+        _payOrCredit(owner(), fee);
     }
 
     // ── Timeout refund ───────────────────────────────────────────────────────
@@ -428,9 +506,36 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
         emit MatchRefunded(matchId);
 
         for (uint8 i = 0; i < m.teamSize; i++) {
-            _sendEth(m.teamA[i], m.stakePerPlayer);
-            _sendEth(m.teamB[i], m.stakePerPlayer);
+            _payOrCredit(m.teamA[i], m.stakePerPlayer);
+            _payOrCredit(m.teamB[i], m.stakePerPlayer);
         }
+    }
+
+    // ── Pull-payment withdrawal ──────────────────────────────────────────────
+
+    /**
+     * @notice Claim any funds that were credited to your pendingWithdrawals
+     *         balance because a direct payout (cancelMatch / cancelWaiting /
+     *         declareWinner / claimRefund) could not be delivered under the
+     *         PAYOUT_CALL_GAS cap — for example, a contract recipient with a
+     *         heavy receive() function. Reverts if the caller's credit is 0.
+     *
+     * CEI: pendingWithdrawals zeroed before the external call; revert-on-fail
+     * keeps state + funds aligned so the caller can try again from a
+     * different wallet / after fixing their receive().
+     *
+     * DB side (no event-driven DB sync needed — PayoutCredited already
+     *   flagged the balance; Withdrawn is observational only).
+     *   Optional backend: listen to Withdrawn to update a "pending withdrawals"
+     *   UI badge if one is added later.
+     */
+    function withdraw() external nonReentrant {
+        uint256 amount = pendingWithdrawals[msg.sender];
+        require(amount > 0, "No pending withdrawal");
+        pendingWithdrawals[msg.sender] = 0;
+        emit Withdrawn(msg.sender, amount);
+        (bool success, ) = payable(msg.sender).call{value: amount}("");
+        require(success, "Withdrawal failed");
     }
 
     // ── Admin ────────────────────────────────────────────────────────────────
@@ -453,15 +558,86 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
         _unpause();
     }
 
+    // ── Fee governance (audit 2026-04-19) ────────────────────────────────────
+
     /**
-     * @notice Replace the oracle (e.g. Vision Engine wallet rotation).
-     *         Maps to: UPDATE env SET ORACLE_WALLET = newOracle (Vision Engine)
+     * @notice Update the platform fee percent applied to each declareWinner
+     *         payout. Bounded by MAX_FEE_PERCENT (10). Owner-only.
+     *         Emits FeePercentUpdated so the backend can mirror the new
+     *         value into platform_settings.fee_percent.
+     *
+     *         Idempotent: reverts if newFee equals the current value to
+     *         avoid spurious events. Newly declared winners immediately
+     *         pay the new rate; already-FINISHED matches are untouched.
      */
-    function setOracle(address newOracle) external onlyOwner {
+    function setFeePercent(uint8 newFee) external onlyOwner {
+        require(newFee <= MAX_FEE_PERCENT, "Fee exceeds MAX_FEE_PERCENT");
+        uint8 old = feePercent;
+        require(newFee != old, "Fee unchanged");
+        feePercent = newFee;
+        emit FeePercentUpdated(old, newFee);
+    }
+
+    // ── Oracle rotation (2-step with timelock) ───────────────────────────────
+    //
+    // Immediate setOracle was removed (audit 2026-04-19): a stolen owner key
+    // could instantly swap the oracle and mint a fake winner. The 2-step
+    // flow forces a visible ORACLE_ROTATION_DELAY window during which
+    // legitimate ops can:
+    //   a) call cancelProposedOracle() from the real owner wallet, or
+    //   b) call pause() to block declareWinner until the key is rotated.
+    //
+    // Emergency note: pause() still takes effect immediately — it is the
+    // right tool for "stop bleeding now", while oracle rotation is always
+    // delayed.
+
+    /**
+     * @notice Queue a pending oracle rotation. Does NOT take effect until
+     *         acceptOracle() is called after ORACLE_ROTATION_DELAY elapses.
+     *         Overwrites any previous pending proposal (one-at-a-time).
+     *
+     *         Maps to: (ops runbook) after proposeOracle, wait 24h, then
+     *         UPDATE env SET ORACLE_WALLET = newOracle on the Vision Engine
+     *         and call acceptOracle() from the contract side.
+     */
+    function proposeOracle(address newOracle) external onlyOwner {
         require(newOracle != address(0), "Oracle cannot be zero address");
-        address old = oracle;
-        oracle = newOracle;
-        emit OracleUpdated(old, newOracle);
+        require(newOracle != oracle,      "New oracle equals current");
+        pendingOracle         = newOracle;
+        pendingOracleAcceptAt = block.timestamp + ORACLE_ROTATION_DELAY;
+        emit OracleProposed(oracle, newOracle, pendingOracleAcceptAt);
+    }
+
+    /**
+     * @notice Finalize a previously proposed oracle rotation. Permissionless
+     *         by design — after the timelock the rotation is predetermined
+     *         and anyone may trigger it (bots / keeper / the new oracle).
+     *         Emits OracleUpdated (unchanged event signature for backwards
+     *         compatibility with the backend listener).
+     */
+    function acceptOracle() external {
+        address candidate = pendingOracle;
+        require(candidate != address(0),                    "No pending oracle");
+        require(block.timestamp >= pendingOracleAcceptAt,   "Oracle rotation timelock not elapsed");
+
+        address old            = oracle;
+        oracle                 = candidate;
+        pendingOracle          = address(0);
+        pendingOracleAcceptAt  = 0;
+        emit OracleUpdated(old, candidate);
+    }
+
+    /**
+     * @notice Abort a pending oracle rotation (owner-only). Used when the
+     *         owner detects a hostile proposeOracle (e.g. from a stolen
+     *         key) and needs to cancel before the timelock elapses.
+     */
+    function cancelProposedOracle() external onlyOwner {
+        address cancelled = pendingOracle;
+        require(cancelled != address(0), "No pending oracle");
+        pendingOracle         = address(0);
+        pendingOracleAcceptAt = 0;
+        emit OracleProposalCancelled(cancelled);
     }
 
     // ── View helpers ─────────────────────────────────────────────────────────

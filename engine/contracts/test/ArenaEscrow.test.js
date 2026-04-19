@@ -15,7 +15,7 @@
  *   11. View helpers (getMatch, isDeposited, isPaused)
  *
  * Sync contract:
- *   FEE_PERCENT = 5     ↔ platform_settings.fee_percent
+ *   feePercent  = 5     ↔ platform_settings.fee_percent (settable via setFeePercent; bounded by MAX_FEE_PERCENT=10)
  *   TIMEOUT = 7200 s    ↔ rage-quit threshold (Issue #56)
  *   MatchState enum     ↔ matches.status ('waiting','in_progress','completed','cancelled')
  *   winningTeam 0/1     ↔ match_players.team ('A' / 'B')
@@ -625,56 +625,177 @@ describe("ArenaEscrow", function () {
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  // 8. setOracle
+  // 8. Oracle rotation (2-step with timelock — audit 2026-04-19)
+  //
+  //    Immediate setOracle was removed. Rotation is now:
+  //      proposeOracle(new)  →  wait ORACLE_ROTATION_DELAY (24h)  →  acceptOracle()
+  //    cancelProposedOracle() can abort a hostile proposal before the delay.
   // ══════════════════════════════════════════════════════════════════════════
-  describe("setOracle", function () {
+  describe("Oracle rotation (2-step)", function () {
 
-    it("owner updates oracle — emits OracleUpdated", async function () {
+    const ORACLE_ROTATION_DELAY = 24 * 60 * 60; // mirrors contract constant
+
+    it("proposeOracle emits OracleProposed and sets pending slot", async function () {
       const { escrow, owner, oracle, players } = await loadFixture(deployFixture);
       const newOracle = players[0];
 
+      const tx = escrow.connect(owner).proposeOracle(newOracle.address);
+      await expect(tx)
+        .to.emit(escrow, "OracleProposed"); // withArgs checked below with readyAt
+
+      expect(await escrow.pendingOracle()).to.equal(newOracle.address);
+      const readyAt = await escrow.pendingOracleAcceptAt();
+      expect(readyAt).to.be.gt(0n);
+    });
+
+    it("acceptOracle reverts before timelock elapses", async function () {
+      const { escrow, owner, players } = await loadFixture(deployFixture);
+      await escrow.connect(owner).proposeOracle(players[0].address);
+      await time.increase(ORACLE_ROTATION_DELAY - 60); // 1 min short
+
       await expect(
-        escrow.connect(owner).setOracle(newOracle.address)
-      )
+        escrow.connect(owner).acceptOracle()
+      ).to.be.revertedWith("Oracle rotation timelock not elapsed");
+    });
+
+    it("acceptOracle succeeds after delay — emits OracleUpdated, clears pending", async function () {
+      const { escrow, owner, oracle, players } = await loadFixture(deployFixture);
+      const newOracle = players[0];
+      await escrow.connect(owner).proposeOracle(newOracle.address);
+      await time.increase(ORACLE_ROTATION_DELAY + 1);
+
+      await expect(escrow.connect(owner).acceptOracle())
         .to.emit(escrow, "OracleUpdated")
         .withArgs(oracle.address, newOracle.address);
 
       expect(await escrow.oracle()).to.equal(newOracle.address);
+      expect(await escrow.pendingOracle()).to.equal(ethers.ZeroAddress);
+      expect(await escrow.pendingOracleAcceptAt()).to.equal(0n);
     });
 
-    it("new oracle can immediately declare winners", async function () {
+    it("acceptOracle is permissionless after delay (anyone may finalize)", async function () {
+      const { escrow, owner, oracle, players } = await loadFixture(deployFixture);
+      const newOracle = players[0];
+      await escrow.connect(owner).proposeOracle(newOracle.address);
+      await time.increase(ORACLE_ROTATION_DELAY + 1);
+
+      // players[3] — random bystander — finalizes; should still work
+      await expect(escrow.connect(players[3]).acceptOracle())
+        .to.emit(escrow, "OracleUpdated")
+        .withArgs(oracle.address, newOracle.address);
+    });
+
+    it("new oracle can declare winners AFTER acceptOracle", async function () {
       const { escrow, owner, players } = await loadFixture(active1v1Fixture);
       const newOracle = players[5];
-      await escrow.connect(owner).setOracle(newOracle.address);
+      await escrow.connect(owner).proposeOracle(newOracle.address);
+      await time.increase(ORACLE_ROTATION_DELAY + 1);
+      await escrow.connect(owner).acceptOracle();
 
       await expect(
         escrow.connect(newOracle).declareWinner(0, 0)
       ).to.emit(escrow, "WinnerDeclared");
     });
 
-    it("old oracle can no longer declare winners after rotation", async function () {
+    it("old oracle cannot declare winners after rotation", async function () {
       const { escrow, oracle, owner, players } = await loadFixture(active1v1Fixture);
-      await escrow.connect(owner).setOracle(players[5].address);
+      await escrow.connect(owner).proposeOracle(players[5].address);
+      await time.increase(ORACLE_ROTATION_DELAY + 1);
+      await escrow.connect(owner).acceptOracle();
 
       await expect(
         escrow.connect(oracle).declareWinner(0, 0)
       ).to.be.revertedWith("Only oracle");
     });
 
-    it("reverts if non-owner calls setOracle", async function () {
+    it("old oracle STILL works while rotation is pending (pre-accept)", async function () {
+      // Critical: proposing a rotation must not brick the existing oracle
+      // — otherwise a stolen owner key could grief live matches.
+      const { escrow, oracle, owner, players } = await loadFixture(active1v1Fixture);
+      await escrow.connect(owner).proposeOracle(players[5].address);
+      // Do NOT advance time / do NOT acceptOracle
+      await expect(
+        escrow.connect(oracle).declareWinner(0, 0)
+      ).to.emit(escrow, "WinnerDeclared");
+    });
+
+    it("cancelProposedOracle aborts a hostile proposal", async function () {
+      const { escrow, owner, oracle, players } = await loadFixture(deployFixture);
+      await escrow.connect(owner).proposeOracle(players[0].address);
+
+      await expect(escrow.connect(owner).cancelProposedOracle())
+        .to.emit(escrow, "OracleProposalCancelled")
+        .withArgs(players[0].address);
+
+      expect(await escrow.pendingOracle()).to.equal(ethers.ZeroAddress);
+      expect(await escrow.oracle()).to.equal(oracle.address); // unchanged
+
+      // After cancel, acceptOracle() must revert
+      await time.increase(ORACLE_ROTATION_DELAY + 1);
+      await expect(
+        escrow.connect(owner).acceptOracle()
+      ).to.be.revertedWith("No pending oracle");
+    });
+
+    it("acceptOracle reverts if no proposal pending", async function () {
+      const { escrow, owner } = await loadFixture(deployFixture);
+      await expect(
+        escrow.connect(owner).acceptOracle()
+      ).to.be.revertedWith("No pending oracle");
+    });
+
+    it("cancelProposedOracle reverts if nothing pending", async function () {
+      const { escrow, owner } = await loadFixture(deployFixture);
+      await expect(
+        escrow.connect(owner).cancelProposedOracle()
+      ).to.be.revertedWith("No pending oracle");
+    });
+
+    it("proposeOracle reverts if non-owner", async function () {
       const { escrow, players } = await loadFixture(deployFixture);
       await expect(
-        escrow.connect(players[0]).setOracle(players[1].address)
+        escrow.connect(players[0]).proposeOracle(players[1].address)
       )
         .to.be.revertedWithCustomError(escrow, "OwnableUnauthorizedAccount")
         .withArgs(players[0].address);
     });
 
-    it("reverts if new oracle is zero address", async function () {
+    it("cancelProposedOracle reverts if non-owner", async function () {
+      const { escrow, owner, players } = await loadFixture(deployFixture);
+      await escrow.connect(owner).proposeOracle(players[0].address);
+      await expect(
+        escrow.connect(players[1]).cancelProposedOracle()
+      )
+        .to.be.revertedWithCustomError(escrow, "OwnableUnauthorizedAccount")
+        .withArgs(players[1].address);
+    });
+
+    it("proposeOracle reverts if new oracle is zero address", async function () {
       const { escrow, owner } = await loadFixture(deployFixture);
       await expect(
-        escrow.connect(owner).setOracle(ethers.ZeroAddress)
+        escrow.connect(owner).proposeOracle(ethers.ZeroAddress)
       ).to.be.revertedWith("Oracle cannot be zero address");
+    });
+
+    it("proposeOracle reverts if new oracle equals current (no-op guard)", async function () {
+      const { escrow, owner, oracle } = await loadFixture(deployFixture);
+      await expect(
+        escrow.connect(owner).proposeOracle(oracle.address)
+      ).to.be.revertedWith("New oracle equals current");
+    });
+
+    it("proposeOracle overwrites a prior pending proposal (resets timer)", async function () {
+      const { escrow, owner, players } = await loadFixture(deployFixture);
+      await escrow.connect(owner).proposeOracle(players[0].address);
+      await time.increase(ORACLE_ROTATION_DELAY / 2);
+      await escrow.connect(owner).proposeOracle(players[1].address);
+
+      expect(await escrow.pendingOracle()).to.equal(players[1].address);
+      // Timer reset: cannot accept just from the original elapsed half
+      await time.increase(ORACLE_ROTATION_DELAY / 2 + 1); // total ~1x delay from first propose
+      await expect(
+        escrow.connect(owner).acceptOracle()
+      ).to.be.revertedWith("Oracle rotation timelock not elapsed");
     });
 
   });
@@ -928,6 +1049,246 @@ describe("ArenaEscrow", function () {
       expect(await escrow.isPaused()).to.be.false;
       await escrow.connect(owner).pause();
       expect(await escrow.isPaused()).to.be.true;
+    });
+
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 13. Fee governance — setFeePercent (audit 2026-04-19)
+  //
+  //     Converts the old FEE_PERCENT constant into a settable state var so
+  //     platform_settings.fee_percent can be synced without a redeploy.
+  //     Bounded by MAX_FEE_PERCENT=10.
+  // ══════════════════════════════════════════════════════════════════════════
+  describe("Fee governance (setFeePercent)", function () {
+
+    it("initial feePercent is 5 (matches legacy FEE_PERCENT)", async function () {
+      const { escrow } = await loadFixture(deployFixture);
+      expect(await escrow.feePercent()).to.equal(5);
+    });
+
+    it("owner can change feePercent within bounds + emits event", async function () {
+      const { escrow, owner } = await loadFixture(deployFixture);
+      await expect(escrow.connect(owner).setFeePercent(7))
+        .to.emit(escrow, "FeePercentUpdated")
+        .withArgs(5, 7);
+      expect(await escrow.feePercent()).to.equal(7);
+    });
+
+    it("setFeePercent reverts above MAX_FEE_PERCENT (10)", async function () {
+      const { escrow, owner } = await loadFixture(deployFixture);
+      await expect(escrow.connect(owner).setFeePercent(11))
+        .to.be.revertedWith("Fee exceeds MAX_FEE_PERCENT");
+    });
+
+    it("setFeePercent accepts exactly MAX_FEE_PERCENT (10)", async function () {
+      const { escrow, owner } = await loadFixture(deployFixture);
+      await escrow.connect(owner).setFeePercent(10);
+      expect(await escrow.feePercent()).to.equal(10);
+    });
+
+    it("setFeePercent accepts 0 (fee-free operation)", async function () {
+      const { escrow, owner } = await loadFixture(deployFixture);
+      await escrow.connect(owner).setFeePercent(0);
+      expect(await escrow.feePercent()).to.equal(0);
+    });
+
+    it("setFeePercent reverts if value unchanged (no spurious events)", async function () {
+      const { escrow, owner } = await loadFixture(deployFixture);
+      await expect(escrow.connect(owner).setFeePercent(5))
+        .to.be.revertedWith("Fee unchanged");
+    });
+
+    it("setFeePercent reverts if called by non-owner", async function () {
+      const { escrow, players } = await loadFixture(deployFixture);
+      await expect(escrow.connect(players[0]).setFeePercent(7))
+        .to.be.revertedWithCustomError(escrow, "OwnableUnauthorizedAccount")
+        .withArgs(players[0].address);
+    });
+
+    it("declareWinner uses the current feePercent at payout time (not at match creation)", async function () {
+      // Create a match at fee=5, change fee to 10 mid-match, declareWinner
+      // should apply fee=10.
+      const { escrow, owner, oracle, players } = await loadFixture(active1v1Fixture);
+      await escrow.connect(owner).setFeePercent(10);
+
+      const totalPot  = STAKE * 2n;              // 1v1 → 0.2 ETH
+      const fee       = totalPot * 10n / 100n;   // 0.02 ETH
+      const perWinner = (totalPot - fee);         // 0.18 ETH (1 winner in 1v1)
+
+      await expect(escrow.connect(oracle).declareWinner(0, 0))
+        .to.changeEtherBalances([players[0], owner], [perWinner, fee]);
+    });
+
+    it("declareWinner with fee=0 pays entire pot to winners", async function () {
+      const { escrow, owner, oracle, players } = await loadFixture(active1v1Fixture);
+      await escrow.connect(owner).setFeePercent(0);
+
+      const totalPot  = STAKE * 2n;
+      await expect(escrow.connect(oracle).declareWinner(0, 0))
+        .to.changeEtherBalances([players[0], owner], [totalPot, 0n]);
+    });
+
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 14. Pull-payment fallback (audit 2026-04-19)
+  //
+  //     A single malicious contract recipient that reverts in receive() must
+  //     NOT be able to block payouts for everyone else in a loop.
+  //     _payOrCredit tries a bounded .call; on failure credits
+  //     pendingWithdrawals and emits PayoutCredited. The recipient can later
+  //     pull via withdraw() after fixing their receive().
+  // ══════════════════════════════════════════════════════════════════════════
+  describe("Pull-payment fallback (DoS guard)", function () {
+
+    async function deployRevertingReceiver(escrow) {
+      const Factory = await ethers.getContractFactory("RevertingReceiver");
+      const rr = await Factory.deploy(await escrow.getAddress());
+      await rr.waitForDeployment();
+      // acceptIncoming defaults to false → receive() reverts
+      return rr;
+    }
+
+    it("cancelMatch: reverting receiver credited, other depositors paid directly", async function () {
+      const { escrow, players } = await loadFixture(deployFixture);
+      const rr = await deployRevertingReceiver(escrow);
+
+      // rr creates a 2v2 (so it can cancel), players[2] joins teamB
+      await rr.createMatch(2, { value: STAKE });
+      await escrow.connect(players[2]).joinMatch(0, 1, { value: STAKE });
+
+      // rr cancels — teamA[0]=rr (revert on receive → credit), teamB[0]=players[2] (paid directly)
+      await expect(rr.cancelMatch(0))
+        .to.emit(escrow, "PayoutCredited")
+        .withArgs(await rr.getAddress(), STAKE);
+
+      expect(await escrow.pendingWithdrawals(await rr.getAddress())).to.equal(STAKE);
+      // players[2] received their stake directly (balance delta tested via separate path below)
+    });
+
+    it("claimRefund: one reverting winner does not block the other 9", async function () {
+      // 5v5 active: put a RevertingReceiver as teamA[2]. Timeout refund.
+      const { escrow, players } = await loadFixture(deployFixture);
+      const rr = await deployRevertingReceiver(escrow);
+      const teamSize = 5;
+
+      await escrow.connect(players[0]).createMatch(teamSize, { value: STAKE });
+      await escrow.connect(players[1]).joinMatch(0, 0, { value: STAKE });
+      // rr is teamA[2] — the critical iteration that would previously DoS
+      await rr.joinMatch(0, 0, { value: STAKE });
+      await escrow.connect(players[2]).joinMatch(0, 0, { value: STAKE });
+      await escrow.connect(players[3]).joinMatch(0, 0, { value: STAKE });
+      for (let i = 4; i < 9; i++)
+        await escrow.connect(players[i]).joinMatch(0, 1, { value: STAKE });
+
+      await time.increase(TIMEOUT + 1);
+
+      // claimRefund must succeed for everyone else even though rr reverts
+      const before = await Promise.all(
+        [players[0], players[1], players[2], players[3],
+         players[4], players[5], players[6], players[7], players[8]]
+          .map(p => ethers.provider.getBalance(p.address))
+      );
+      await escrow.connect(players[0]).claimRefund(0); // gas paid by p0
+      const after = await Promise.all(
+        [players[0], players[1], players[2], players[3],
+         players[4], players[5], players[6], players[7], players[8]]
+          .map(p => ethers.provider.getBalance(p.address))
+      );
+
+      // p0 spent gas, others gained exactly STAKE
+      for (let i = 1; i < 9; i++) {
+        expect(after[i] - before[i]).to.equal(STAKE, `player ${i} not refunded`);
+      }
+      // rr has STAKE credited but not received
+      expect(await escrow.pendingWithdrawals(await rr.getAddress())).to.equal(STAKE);
+    });
+
+    it("declareWinner: reverting winner credited, fee still reaches owner", async function () {
+      const { escrow, owner, oracle, players } = await loadFixture(deployFixture);
+      const rr = await deployRevertingReceiver(escrow);
+      const teamSize = 2;
+
+      await escrow.connect(players[0]).createMatch(teamSize, { value: STAKE });
+      await rr.joinMatch(0, 0, { value: STAKE });   // rr is teamA[1]
+      await escrow.connect(players[2]).joinMatch(0, 1, { value: STAKE });
+      await escrow.connect(players[3]).joinMatch(0, 1, { value: STAKE });
+
+      const totalPot  = STAKE * BigInt(teamSize) * 2n;
+      const fee       = totalPot * 5n / 100n;
+      const perWinner = (totalPot - fee) / BigInt(teamSize);
+
+      const ownerBefore = await ethers.provider.getBalance(owner.address);
+      const p0Before    = await ethers.provider.getBalance(players[0].address);
+
+      await expect(
+        escrow.connect(oracle).declareWinner(0, 0) // teamA wins
+      ).to.emit(escrow, "PayoutCredited")
+       .withArgs(await rr.getAddress(), perWinner);
+
+      // players[0] got their payout directly
+      expect(await ethers.provider.getBalance(players[0].address) - p0Before)
+        .to.equal(perWinner);
+      // owner got their fee directly
+      expect(await ethers.provider.getBalance(owner.address) - ownerBefore)
+        .to.equal(fee);
+      // rr has their winnings in pending
+      expect(await escrow.pendingWithdrawals(await rr.getAddress()))
+        .to.equal(perWinner);
+    });
+
+    it("withdraw: pulls credited funds once receive() is re-enabled", async function () {
+      const { escrow, players } = await loadFixture(deployFixture);
+      const rr = await deployRevertingReceiver(escrow);
+
+      await rr.createMatch(1, { value: STAKE });
+      await rr.cancelMatch(0); // credits STAKE to rr
+
+      // Flip receiver on
+      await rr.setAcceptIncoming(true);
+
+      const rrAddr   = await rr.getAddress();
+      const before   = await ethers.provider.getBalance(rrAddr);
+      await expect(rr.withdraw())
+        .to.emit(escrow, "Withdrawn")
+        .withArgs(rrAddr, STAKE);
+
+      expect(await ethers.provider.getBalance(rrAddr) - before).to.equal(STAKE);
+      expect(await escrow.pendingWithdrawals(rrAddr)).to.equal(0n);
+    });
+
+    it("withdraw reverts if nothing pending", async function () {
+      const { escrow, players } = await loadFixture(deployFixture);
+      await expect(
+        escrow.connect(players[0]).withdraw()
+      ).to.be.revertedWith("No pending withdrawal");
+    });
+
+    it("withdraw: second call reverts (balance zeroed by CEI)", async function () {
+      const { escrow, players } = await loadFixture(deployFixture);
+      const rr = await deployRevertingReceiver(escrow);
+
+      await rr.createMatch(1, { value: STAKE });
+      await rr.cancelMatch(0);
+      await rr.setAcceptIncoming(true);
+      await rr.withdraw();
+
+      await expect(rr.withdraw()).to.be.revertedWith("No pending withdrawal");
+    });
+
+    it("withdraw reverts if recipient's receive still fails — credit preserved", async function () {
+      // Receiver stays broken: withdraw() reverts and pending balance remains.
+      const { escrow } = await loadFixture(deployFixture);
+      const rr = await deployRevertingReceiver(escrow);
+
+      await rr.createMatch(1, { value: STAKE });
+      await rr.cancelMatch(0);
+
+      // acceptIncoming still false → receive reverts
+      await expect(rr.withdraw()).to.be.reverted;
+      // Credit must still be there (state reverted by require(success))
+      expect(await escrow.pendingWithdrawals(await rr.getAddress())).to.equal(STAKE);
     });
 
   });
