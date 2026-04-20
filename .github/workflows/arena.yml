@@ -283,6 +283,80 @@ jobs:
           fi
 
   # ══════════════════════════════════════════════════════════════════════════════
+  # 6b. ENGINE BOOT SMOKE — build the image, start db+engine via compose, and
+  #     require /health to turn green. Catches the whole class of "migrations
+  #     ran but the engine never actually booted" bugs (Dockerfile changes,
+  #     requirements changes, volume-permission drift, missing env, etc.)
+  #     BEFORE the PR is merged to main.
+  # ══════════════════════════════════════════════════════════════════════════════
+  engine-smoke:
+    name: Engine Boot Smoke Test
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if engine build surface changed
+        id: smoke_changed
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          CHANGED=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | \
+            grep -E '^(engine/Dockerfile|engine/entrypoint\.sh|engine/requirements\.txt|docker-compose\.yml|infra/sql/.+\.sql)$' || true)
+          if [ -n "$CHANGED" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Engine boot surface changed: $CHANGED"
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "No engine boot surface change — skipping"
+          fi
+
+      - name: Write minimal .env for compose
+        if: steps.smoke_changed.outputs.changed == 'true'
+        run: |
+          cat > .env <<EOF
+          DB_PASSWORD=ci_smoke_password
+          API_SECRET=ci_smoke_api_secret_not_used_outside_ci
+          ENVIRONMENT=development
+          CHAIN_ID=97
+          EOF
+
+      - name: Build engine + db and wait for health
+        if: steps.smoke_changed.outputs.changed == 'true'
+        run: |
+          set -e
+          # Only the services we need — frontend build is covered by build-check.
+          docker compose up -d --build arena-db arena-engine
+
+          echo "=== waiting for engine /health (up to 120s) ==="
+          OK=0
+          for i in $(seq 1 40); do
+            if curl -sf --max-time 3 http://localhost:8001/health > /dev/null; then
+              OK=1
+              echo "  engine healthy after ${i} probe(s)"
+              break
+            fi
+            sleep 3
+          done
+
+          if [ "$OK" -ne 1 ]; then
+            echo "❌ Engine never became healthy — dumping diagnostics"
+            echo "--- docker ps ---"
+            docker ps -a
+            echo "--- arena-engine logs ---"
+            docker logs --tail 200 arena-engine || true
+            echo "--- arena-db logs ---"
+            docker logs --tail 50 arena-db || true
+            exit 1
+          fi
+
+      - name: Tear down
+        if: always() && steps.smoke_changed.outputs.changed == 'true'
+        run: docker compose down -v || true
+
+  # ══════════════════════════════════════════════════════════════════════════════
   # 6. ISSUE MANAGEMENT — auto-label + comment on new issues
   # ══════════════════════════════════════════════════════════════════════════════
   issue-management:
@@ -354,13 +428,32 @@ jobs:
             done
             echo "✅ Migrations complete"
 
-            echo "=== waiting for engine to come up ==="
-            sleep 5
+            echo "=== waiting for engine to come up (up to 90s) ==="
+            # Previously a single 5s sleep + one curl. That gave a false red on
+            # slow cold starts and — worse — hid real container-boot failures
+            # behind a premature timeout. Now we poll every 3s for up to 90s
+            # AND dump container state on failure so we can diagnose without a
+            # second SSH session.
+            HEALTH_OK=0
+            for i in $(seq 1 30); do
+              if curl -sf --max-time 3 http://localhost:8001/health > /dev/null; then
+                HEALTH_OK=1
+                echo "  engine healthy after ${i} probe(s)"
+                break
+              fi
+              sleep 3
+            done
 
-            echo "=== health check ==="
-            curl -sf http://localhost:8001/health \
-              && echo "✅ Deploy OK at $(date)" \
-              || { echo "❌ Health check failed"; exit 1; }
+            if [ "$HEALTH_OK" -eq 1 ]; then
+              echo "✅ Deploy OK at $(date)"
+            else
+              echo "❌ Health check failed after 90s — dumping diagnostics"
+              echo "--- docker ps ---"
+              docker ps -a
+              echo "--- arena-engine logs (last 100 lines) ---"
+              docker logs --tail 100 arena-engine || true
+              exit 1
+            fi
 
   # ══════════════════════════════════════════════════════════════════════════════
   # 8. PR SYNC — auto-assign + inherit labels/milestone from linked issue
