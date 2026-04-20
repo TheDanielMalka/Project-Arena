@@ -7,11 +7,13 @@ FROM python:3.12-slim
 # System deps for OpenCV / Tesseract
 # tesseract-ocr-eng: English language data (explicit — default pkg may omit it on slim)
 # libgl1 + libglib2.0-0: required by opencv-python-headless at runtime
+# gosu: used by entrypoint to drop privileges to appuser after runtime chown
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-eng \
     libgl1 \
     libglib2.0-0 \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -32,24 +34,19 @@ COPY . .
 # the paths exist when the container starts without a compose volume.
 RUN mkdir -p /app/screenshots /app/evidence /app/logs /app/uploads/reports
 
-# ── Run as non-root (audit 2026-04-20) ───────────────────────────────────────
-# Prior to this change the engine ran as root, so any RCE (e.g. in an OCR
-# or image pipeline dep) gave immediate root inside the container and a
-# much bigger surface for escaping to the host.
-#
-# Create a system user `appuser` (uid/gid 1000 — matches the default host
-# uid so docker-compose bind-mounts from the host stay readable), chown the
-# paths the engine writes to at runtime, then switch to it.
-#
-# The named volumes defined in docker-compose.yml (arena-screenshots,
-# arena-evidence, arena-engine-logs) are mounted OVER these chowned dirs.
-# Docker preserves the chown on the named volume's first initialization,
-# so writes still succeed after the volume mount.
+# ── Non-root runtime (audit 2026-04-20) ──────────────────────────────────────
+# The container starts as root so the entrypoint can chown the mounted
+# volumes (which may have been created by older deploys that ran the
+# engine as root), then drops to `appuser` via `gosu` to execute the CMD.
+# This closes the privilege-escalation surface without breaking existing
+# named volumes whose on-disk ownership we can't change otherwise.
 RUN groupadd --system --gid 1000 appuser \
     && useradd --system --uid 1000 --gid 1000 --home-dir /app --shell /usr/sbin/nologin appuser \
     && chown -R appuser:appuser /app
 
-USER appuser
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 8000
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
