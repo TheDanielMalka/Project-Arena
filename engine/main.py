@@ -2161,7 +2161,7 @@ async def match_status(
 @app.get("/match/{match_id}/refund-status")
 async def match_refund_status(
     match_id: str,
-    token: dict = Depends(require_token),
+    token: dict | None = Depends(optional_token),
 ):
     """
     GET /match/:id/refund-status — can the calling player call ArenaEscrow.claimRefund()?
@@ -2178,6 +2178,8 @@ async def match_refund_status(
     Returns: canRefund, reason, amount (BNB string), onChainMatchId
     CONTRACT-ready: canRefund=true → frontend calls ArenaEscrow.claimRefund(onChainMatchId)
     """
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required")
     user_id: str = token["sub"]
     CONTRACT_TIMEOUT_SECONDS = 7200  # ArenaEscrow.sol: TIMEOUT = 2 hours
     try:
