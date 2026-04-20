@@ -1088,42 +1088,42 @@ class TestWithdrawArenaTokens:
         return (balance, wallet, daily, _dt.datetime.now(_dt.timezone.utc))
 
     def test_withdraw_standard_rate_returns_200(self):
-        """1100 AT → $10 USDT, standard rate (use_discount=False)."""
+        """1050 AT → $10 USDT."""
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
             self._user_row(balance=5000),   # user lookup
-            (3900,),                         # new balance after deduct
+            (3950,),                         # new balance after deduct
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 "/wallet/withdraw-at",
-                json={"at_amount": 1100, "use_discount": False},
+                json={"at_amount": 1050},
                 headers=self._auth_header(),
             )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["at_burned"] == 1100
+        assert data["at_burned"] == 1050
         assert data["usdt_value"] == 10.0
         assert "wallet_address" in data
-        assert data["at_balance"] == 3900
+        assert data["at_balance"] == 3950
 
     def test_withdraw_discount_rate_returns_200(self):
-        """950 AT → $10 USDT, discounted rate (use_discount=True)."""
+        """2100 AT → $20 USDT (two chunks of 1050)."""
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
             self._user_row(balance=5000),
-            (4050,),
+            (2900,),
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 "/wallet/withdraw-at",
-                json={"at_amount": 950, "use_discount": True},
+                json={"at_amount": 2100},
                 headers=self._auth_header(),
             )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["at_burned"] == 950
-        assert data["usdt_value"] == 10.0
+        assert data["at_burned"] == 2100
+        assert data["usdt_value"] == 20.0
 
     def test_withdraw_insufficient_balance_returns_402(self):
         """User has less AT than requested → 402."""
@@ -1132,7 +1132,7 @@ class TestWithdrawArenaTokens:
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 "/wallet/withdraw-at",
-                json={"at_amount": 1100, "use_discount": False},
+                json={"at_amount": 1050},
                 headers=self._auth_header(),
             )
         assert resp.status_code == 402
@@ -1145,31 +1145,31 @@ class TestWithdrawArenaTokens:
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 "/wallet/withdraw-at",
-                json={"at_amount": 1100, "use_discount": False},
+                json={"at_amount": 1050},
                 headers=self._auth_header(),
             )
         assert resp.status_code == 400
         assert "wallet" in resp.json()["detail"].lower()
 
     def test_withdraw_invalid_multiple_returns_400(self):
-        """Amount not a multiple of rate → 400."""
+        """Amount not a multiple of 1050 → 400."""
         ctx, session = _make_session_mock()
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 "/wallet/withdraw-at",
-                json={"at_amount": 500, "use_discount": False},  # 500 not divisible by 110
+                json={"at_amount": 500},  # 500 not divisible by 1050
                 headers=self._auth_header(),
             )
         assert resp.status_code == 400
         assert "multiple" in resp.json()["detail"].lower()
 
     def test_withdraw_below_minimum_returns_400(self):
-        """Below minimum $10 withdrawal → 400."""
+        """Below minimum → 400."""
         ctx, session = _make_session_mock()
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 "/wallet/withdraw-at",
-                json={"at_amount": 0, "use_discount": False},
+                json={"at_amount": 0},
                 headers=self._auth_header(),
             )
         assert resp.status_code == 400
@@ -1178,12 +1178,12 @@ class TestWithdrawArenaTokens:
         """Daily limit already used up → 429."""
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.return_value = self._user_row(
-            balance=20000, daily=9500  # 9500 used today, trying 1100 more = 10600 > 10000
+            balance=20000, daily=9450  # 9450 used today, 1050 more = 10500 > 10000
         )
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 "/wallet/withdraw-at",
-                json={"at_amount": 1100, "use_discount": False},
+                json={"at_amount": 1050},
                 headers=self._auth_header(),
             )
         assert resp.status_code == 429
@@ -1192,7 +1192,7 @@ class TestWithdrawArenaTokens:
     def test_withdraw_no_token_returns_401(self):
         resp = client.post(
             "/wallet/withdraw-at",
-            json={"at_amount": 1100, "use_discount": False},
+            json={"at_amount": 1050},
         )
         assert resp.status_code == 401
 
