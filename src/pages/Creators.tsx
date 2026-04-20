@@ -5,7 +5,6 @@ import {
   Trophy, Users, Zap, Pencil,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -597,7 +596,7 @@ export default function Creators() {
 
           {/* Left nav */}
           <div className="w-48 shrink-0 border-r border-border/30 bg-gray-950/40 py-4 flex flex-col gap-1 px-2">
-            {CREATOR_NAV.map(({ id, icon: Icon, label, short, desc }) => (
+            {CREATOR_NAV.map(({ id, icon: Icon, label, desc }) => (
               <button
                 key={id}
                 onClick={() => setSection(id)}

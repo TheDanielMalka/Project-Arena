@@ -9875,6 +9875,41 @@ async def get_creators(
         raise HTTPException(500, "Failed to fetch creators")
 
 
+@app.get("/creators/me", status_code=200)
+async def get_my_creator_profile(payload: dict = Depends(optional_token)):
+    """Get the current user's own creator profile."""
+    user_id = payload.get("sub") if payload else None
+    if not user_id:
+        raise HTTPException(401, "Authentication required")
+    try:
+        with SessionLocal() as session:
+            row = session.execute(text("""
+                SELECT cp.id, cp.user_id, cp.display_name, cp.bio, cp.primary_game,
+                       cp.rank_tier, cp.twitch_url, cp.youtube_url, cp.tiktok_url,
+                       cp.twitter_url, cp.clip_urls, cp.featured, cp.created_at,
+                       u.username, u.avatar, u.avatar_bg
+                FROM creator_profiles cp JOIN users u ON u.id = cp.user_id
+                WHERE cp.user_id = :uid
+            """), {"uid": user_id}).fetchone()
+            if not row:
+                raise HTTPException(404, "No creator profile found")
+            return {
+                "id": str(row[0]), "user_id": str(row[1]),
+                "display_name": row[2], "bio": row[3],
+                "primary_game": row[4], "rank_tier": row[5],
+                "twitch_url": row[6], "youtube_url": row[7],
+                "tiktok_url": row[8], "twitter_url": row[9],
+                "clip_urls": row[10] or [],
+                "featured": row[11], "created_at": str(row[12]),
+                "username": row[13], "avatar": row[14], "avatar_bg": row[15],
+            }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("get_my_creator_profile error: %s", exc)
+        raise HTTPException(500, "Failed to fetch profile")
+
+
 @app.get("/creators/{creator_id}", status_code=200)
 async def get_creator(creator_id: str):
     """Single creator profile — public."""
@@ -10071,41 +10106,6 @@ async def admin_review_creator_application(
     except Exception as exc:
         logger.error("admin_review_creator_application error: %s", exc)
         raise HTTPException(500, "Failed to review application")
-
-
-@app.get("/creators/me", status_code=200)
-async def get_my_creator_profile(payload: dict = Depends(optional_token)):
-    """Get the current user's own creator profile."""
-    user_id = payload.get("sub") if payload else None
-    if not user_id:
-        raise HTTPException(401, "Authentication required")
-    try:
-        with SessionLocal() as session:
-            row = session.execute(text("""
-                SELECT cp.id, cp.user_id, cp.display_name, cp.bio, cp.primary_game,
-                       cp.rank_tier, cp.twitch_url, cp.youtube_url, cp.tiktok_url,
-                       cp.twitter_url, cp.clip_urls, cp.featured, cp.created_at,
-                       u.username, u.avatar, u.avatar_bg
-                FROM creator_profiles cp JOIN users u ON u.id = cp.user_id
-                WHERE cp.user_id = :uid
-            """), {"uid": user_id}).fetchone()
-            if not row:
-                raise HTTPException(404, "No creator profile found")
-            return {
-                "id": str(row[0]), "user_id": str(row[1]),
-                "display_name": row[2], "bio": row[3],
-                "primary_game": row[4], "rank_tier": row[5],
-                "twitch_url": row[6], "youtube_url": row[7],
-                "tiktok_url": row[8], "twitter_url": row[9],
-                "clip_urls": row[10] or [],
-                "featured": row[11], "created_at": str(row[12]),
-                "username": row[13], "avatar": row[14], "avatar_bg": row[15],
-            }
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error("get_my_creator_profile error: %s", exc)
-        raise HTTPException(500, "Failed to fetch profile")
 
 
 @app.patch("/creators/me", status_code=200)
