@@ -2,7 +2,7 @@
  * UI tests for the two escrow-adjacent wallet modals (audit coverage gap).
  *
  *   - BuyArenaTokensModal: USDT tx-hash submission + AT crediting flow
- *   - WithdrawATModal:     AT burn + BNB withdrawal, rate selection,
+ *   - WithdrawATModal:     AT burn + BNB withdrawal (1050 AT = $10),
  *                          amount validation, wallet-destination guard
  *
  * These components previously had no direct tests — only the shared
@@ -225,17 +225,17 @@ describe("WithdrawATModal", () => {
 
   it("blocks submission when AT amount is below the minimum chunk", () => {
     render(<WithdrawATModal open onClose={() => {}} />);
-    const input = screen.getByPlaceholderText(/^1100, 2200/);
-    // Standard rate min = 1100. 500 is below min.
+    const input = screen.getByPlaceholderText(/^1050, 2100/);
+    // Min chunk = 1050. 500 is below min.
     fireEvent.change(input, { target: { value: "500" } });
     expect(screen.getByText(/invalid amount/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /withdraw/i })).toBeDisabled();
   });
 
-  it("blocks submission when AT amount is not a multiple of the rate", () => {
+  it("blocks submission when AT amount is not a multiple of 1050", () => {
     render(<WithdrawATModal open onClose={() => {}} />);
-    const input = screen.getByPlaceholderText(/^1100, 2200/);
-    fireEvent.change(input, { target: { value: "1150" } }); // 1150 % 110 ≠ 0
+    const input = screen.getByPlaceholderText(/^1050, 2100/);
+    fireEvent.change(input, { target: { value: "1150" } }); // 1150 % 1050 ≠ 0
     expect(screen.getByText(/invalid amount/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /withdraw/i })).toBeDisabled();
   });
@@ -243,8 +243,8 @@ describe("WithdrawATModal", () => {
   it("blocks submission when balance is insufficient", () => {
     resetWalletStore({ atBalance: 500 });
     render(<WithdrawATModal open onClose={() => {}} />);
-    const input = screen.getByPlaceholderText(/^1100, 2200/);
-    fireEvent.change(input, { target: { value: "1100" } });
+    const input = screen.getByPlaceholderText(/^1050, 2100/);
+    fireEvent.change(input, { target: { value: "1050" } });
     expect(screen.getByText(/insufficient at/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /withdraw/i })).toBeDisabled();
   });
@@ -252,49 +252,37 @@ describe("WithdrawATModal", () => {
   it("blocks submission above the 10,000 AT daily limit", () => {
     resetWalletStore({ atBalance: 50_000 });
     render(<WithdrawATModal open onClose={() => {}} />);
-    const input = screen.getByPlaceholderText(/^1100, 2200/);
-    // 11000 is a multiple of 110 AND > 10_000 daily cap.
-    fireEvent.change(input, { target: { value: "11000" } });
+    const input = screen.getByPlaceholderText(/^1050, 2100/);
+    // 10500 is a multiple of 1050 AND > 10,000 daily cap.
+    fireEvent.change(input, { target: { value: "10500" } });
     expect(screen.getByText(/exceeds daily limit/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /withdraw/i })).toBeDisabled();
   });
 
-  it("switches between standard and discounted rate (swapping the min chunk)", () => {
-    render(<WithdrawATModal open onClose={() => {}} />);
-    // Standard default: 1100 AT chunk in the placeholder.
-    expect(screen.getByPlaceholderText(/^1100, 2200/)).toBeInTheDocument();
-
-    // Click the discounted rate card.
-    fireEvent.click(screen.getByRole("button", { name: /discounted rate/i }));
-
-    // Placeholder must now reflect 950 AT chunks.
-    expect(screen.getByPlaceholderText(/^950, 1900/)).toBeInTheDocument();
-  });
-
-  it("Max button snaps to the largest valid multiple under balance", () => {
-    resetWalletStore({ atBalance: 2500 }); // standard rate 110 → 2*1100=2200
+  it("Max button snaps to the largest valid multiple of 1050 under balance", () => {
+    resetWalletStore({ atBalance: 2500 }); // floor(2500/1050)*1050 = 2100
     render(<WithdrawATModal open onClose={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: /max/i }));
-    const input = screen.getByPlaceholderText(/^1100, 2200/) as HTMLInputElement;
-    expect(input.value).toBe("2200");
+    const input = screen.getByPlaceholderText(/^1050, 2100/) as HTMLInputElement;
+    expect(input.value).toBe("2100");
   });
 
-  it("submits a valid amount to apiWithdrawAT with use_discount=false by default", async () => {
+  it("submits a valid amount to apiWithdrawAT", async () => {
     apiWithdrawAT.mockResolvedValueOnce({
-      ok: true, at_burned: 1100, usdt_value: 10,
+      ok: true, at_burned: 1050, usdt_value: 10,
       wallet_address: "0x7a3F9c2E1b8D4a5C6f7e8d9B0c1A2b3C4d5E6f7A",
-      at_balance: 3900, daily_remaining: 8900, rate: "standard",
+      at_balance: 3950, daily_remaining: 8950, rate: "105 AT = $1 USDT",
     });
     const onClose = vi.fn();
     render(<WithdrawATModal open onClose={onClose} />);
-    const input = screen.getByPlaceholderText(/^1100, 2200/);
-    fireEvent.change(input, { target: { value: "1100" } });
+    const input = screen.getByPlaceholderText(/^1050, 2100/);
+    fireEvent.change(input, { target: { value: "1050" } });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /withdraw/i }));
     });
     await waitFor(() => expect(apiWithdrawAT).toHaveBeenCalledTimes(1));
     const call = apiWithdrawAT.mock.calls[0];
-    expect(call[1]).toEqual({ at_amount: 1100, use_discount: false });
+    expect(call[1]).toEqual({ at_amount: 1050 });
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -304,8 +292,8 @@ describe("WithdrawATModal", () => {
     });
     const onClose = vi.fn();
     render(<WithdrawATModal open onClose={onClose} />);
-    const input = screen.getByPlaceholderText(/^1100, 2200/);
-    fireEvent.change(input, { target: { value: "1100" } });
+    const input = screen.getByPlaceholderText(/^1050, 2100/);
+    fireEvent.change(input, { target: { value: "1050" } });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /withdraw/i }));
     });
@@ -318,13 +306,12 @@ describe("WithdrawATModal", () => {
 
   it("shows converted USDT preview for a valid AT amount", () => {
     render(<WithdrawATModal open onClose={() => {}} />);
-    const input = screen.getByPlaceholderText(/^1100, 2200/);
-    fireEvent.change(input, { target: { value: "2200" } });
-    // 2200 AT / 110 = 20 USDT
+    const input = screen.getByPlaceholderText(/^1050, 2100/);
+    fireEvent.change(input, { target: { value: "2100" } });
+    // 2100 AT / 105 = 20 USDT
     const previews = screen.getAllByText(/\$20\.00 USDT/);
     expect(previews.length).toBeGreaterThan(0);
-    // Ensure the preview block specifically (flanked by ArrowRight) is visible.
     const previewBlock = previews[0]!.closest("div");
-    expect(previewBlock && within(previewBlock).getByText(/2,200 AT/)).toBeTruthy();
+    expect(previewBlock && within(previewBlock).getByText(/2,100 AT/)).toBeTruthy();
   });
 });
