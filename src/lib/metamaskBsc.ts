@@ -168,6 +168,25 @@ export async function getBnbBalance(address: string): Promise<number> {
   return parseFloat(formatEther(raw));
 }
 
+/** ArenaEscrow.claimRefund — called by a player after match cancellation to recover their stake. */
+export async function claimRefundFromEscrow(onChainMatchId: bigint): Promise<string> {
+  const addr = import.meta.env.VITE_CONTRACT_ADDRESS;
+  if (!addr?.trim()) throw new Error("VITE_CONTRACT_ADDRESS is not set");
+  const eth = getInjectedEthereum();
+  if (!eth) throw new Error("MetaMask not found");
+  await ensureTargetChain(eth);
+  const provider = new BrowserProvider(eth);
+  const signer = await provider.getSigner();
+  const contract = new Contract(
+    addr,
+    ["function claimRefund(uint256 matchId)"],
+    signer,
+  );
+  const tx = await contract.claimRefund(onChainMatchId);
+  await tx.wait();
+  return tx.hash;
+}
+
 export async function connectMetaMaskAndSignOwnership(): Promise<{ address: string; signature: string }> {
   const eth = getInjectedEthereum();
   if (!eth) {
