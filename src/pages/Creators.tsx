@@ -113,13 +113,13 @@ function CreatorCard({ creator: c, onClick }: CreatorCardProps) {
               c.featured ? "border-arena-gold/60" : "border-border/50",
             )} style={{ background: c.avatar_bg ? `var(--${c.avatar_bg}, #1a1a2e)` : "#1a1a2e" }}>
               {avatarUrl
-                ? <img src={avatarUrl} alt={c.display_name} className={cn("h-full w-full object-cover", identityPortraitCropClassName(c.avatar))} />
+                ? <img src={avatarUrl} alt={c.display_name} className={cn("h-full w-full object-cover", identityPortraitCropClassName)} />
                 : <span className="text-foreground/80">{c.display_name.slice(0, 2).toUpperCase()}</span>
               }
             </div>
             {c.equipped_badge_icon && (
               <div className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full bg-background border border-border/60 flex items-center justify-center text-[9px]">
-                {renderForgeShopIcon(c.equipped_badge_icon, "h-3 w-3")}
+                {renderForgeShopIcon(c.equipped_badge_icon, "sm")}
               </div>
             )}
           </div>
@@ -190,7 +190,7 @@ function CreatorModal({ creator: c, onClose }: { creator: CreatorProfile; onClos
               <div className="relative shrink-0">
                 <div className="h-16 w-16 rounded-full overflow-hidden border-2 border-arena-cyan/30 flex items-center justify-center text-lg font-bold bg-secondary/40">
                   {avatarUrl
-                    ? <img src={avatarUrl} alt={c.display_name} className={cn("h-full w-full object-cover", identityPortraitCropClassName(c.avatar))} />
+                    ? <img src={avatarUrl} alt={c.display_name} className={cn("h-full w-full object-cover", identityPortraitCropClassName)} />
                     : c.display_name.slice(0, 2).toUpperCase()
                   }
                 </div>
@@ -459,7 +459,7 @@ export default function Creators() {
   });
 
   return (
-    <ArenaPageShell>
+    <ArenaPageShell variant="creators">
       <div className="flex flex-col gap-0 min-h-screen text-foreground">
 
         {/* ── Page header ── */}

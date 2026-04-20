@@ -13,4 +13,5 @@ export type ArenaPageVariant =
   | "settings"
   | "arena-client"
   | "players"
-  | "player-profile";
+  | "player-profile"
+  | "creators";
