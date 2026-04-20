@@ -952,16 +952,15 @@ class EscrowClient:
             for (player_id,) in players:
                 player_id = str(player_id)
 
-                # Insert transaction only if this tx_hash hasn't been credited yet.
-                # ON CONFLICT on idx_transactions_tx_hash_unique (tx_hash WHERE NOT NULL)
-                # blocks duplicate credits from replayed on-chain events.
-                result = session.execute(
+                # ON CONFLICT on idx_transactions_tx_hash_unique blocks duplicate
+                # rows when the same tx_hash is replayed. Double-credit is prevented
+                # by the status guard above — we return early if already 'cancelled'.
+                session.execute(
                     text("""
                         INSERT INTO transactions
                             (id, user_id, type, amount, token, status, match_id, tx_hash)
                         VALUES (:id, :uid, 'refund', :amount, 'BNB', 'completed', :mid, :tx)
                         ON CONFLICT DO NOTHING
-                        RETURNING id
                     """),
                     {
                         "id": str(uuid.uuid4()), "uid": player_id,
@@ -969,25 +968,20 @@ class EscrowClient:
                         "tx": tx_hash,
                     },
                 )
-                inserted = result.fetchone() is not None
-
-                # Only update balances when the transaction row was actually inserted.
-                # If the INSERT was skipped (conflict), the balance was already updated.
-                if inserted:
-                    # FOR UPDATE — lock user_balances row before mutation (C12).
-                    session.execute(
-                        text("SELECT 1 FROM user_balances WHERE user_id = :uid FOR UPDATE"),
-                        {"uid": player_id},
-                    )
-                    session.execute(
-                        text("""
-                            UPDATE user_balances
-                            SET available = available + :stake,
-                                in_escrow = GREATEST(0, in_escrow - :stake)
-                            WHERE user_id = :uid
-                        """),
-                        {"stake": stake, "uid": player_id},
-                    )
+                # FOR UPDATE — lock user_balances row before mutation (C12).
+                session.execute(
+                    text("SELECT 1 FROM user_balances WHERE user_id = :uid FOR UPDATE"),
+                    {"uid": player_id},
+                )
+                session.execute(
+                    text("""
+                        UPDATE user_balances
+                        SET available = available + :stake,
+                            in_escrow = GREATEST(0, in_escrow - :stake)
+                        WHERE user_id = :uid
+                    """),
+                    {"stake": stake, "uid": player_id},
+                )
 
             session.execute(
                 text(
