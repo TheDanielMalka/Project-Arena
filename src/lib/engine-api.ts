@@ -276,27 +276,6 @@ async function fetchWithOptionalUserAuth(
  * GET /match/:id/status — full JSON (optional Bearer for `your_team`).
  * DB-ready: matches + match_players; CONTRACT-ready: on_chain_match_id → deposit().
  */
-export interface MatchRefundStatusResponse {
-  canRefund: boolean;
-  onChainMatchId: number | string | null;
-  amount: string;
-}
-
-export async function apiGetMatchRefundStatus(
-  matchId: string,
-  token: string | null,
-): Promise<MatchRefundStatusResponse | null> {
-  try {
-    const url = `${ENGINE_BASE}/match/${encodeURIComponent(matchId)}/refund-status`;
-    const res = await arenaUserFetch(url, token ?? "", {});
-    if (!res.ok) return null;
-    return (await res.json()) as MatchRefundStatusResponse;
-  } catch (err) {
-    reportEngineApiError(err);
-    return null;
-  }
-}
-
 export async function apiGetMatchStatus(
   matchId: string,
   token?: string | null,
