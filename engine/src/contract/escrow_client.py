@@ -904,16 +904,23 @@ class EscrowClient:
         """
         Shared refund logic for MatchRefunded / MatchCancelled.
 
+        Idempotent: if the match is already 'cancelled' in DB we skip immediately —
+        same guard pattern as _at_payout_already_happened() for AT matches.
+        The match row is locked FOR UPDATE so concurrent event replays serialize
+        and only the first caller proceeds.
+
         DB-ready:
           UPDATE matches SET status='cancelled', ended_at=NOW()
           For each (deposited) player:
-            INSERT transactions (type='refund')
+            INSERT transactions (type='refund') ON CONFLICT (tx_hash) DO NOTHING
             UPDATE user_balances SET available += stake, in_escrow -= stake
         """
         with self._session_factory() as session:
+            # FOR UPDATE — serialize concurrent / replayed event handlers for this match.
             match_row = session.execute(
                 text(
-                    "SELECT id, stake_per_player FROM matches WHERE on_chain_match_id = :oid"
+                    "SELECT id, stake_per_player, status "
+                    "FROM matches WHERE on_chain_match_id = :oid FOR UPDATE"
                 ),
                 {"oid": on_chain_id},
             ).fetchone()
@@ -922,8 +929,18 @@ class EscrowClient:
                     "_refund_all_players: no DB match for on_chain_id=%s", on_chain_id
                 )
                 return
-            db_match_id = str(match_row[0])
-            stake       = float(match_row[1]) if match_row[1] else 0.0
+
+            db_match_id   = str(match_row[0])
+            stake         = float(match_row[1]) if match_row[1] else 0.0
+            current_status = match_row[2]
+
+            # Idempotency guard — already processed, do not double-credit.
+            if current_status == "cancelled":
+                logger.info(
+                    "_refund_all_players: match=%s already cancelled — skipping (reason=%s)",
+                    db_match_id, reason,
+                )
+                return
 
             query_str = (
                 "SELECT user_id FROM match_players WHERE match_id = :mid AND has_deposited = TRUE"
@@ -934,12 +951,17 @@ class EscrowClient:
 
             for (player_id,) in players:
                 player_id = str(player_id)
-                session.execute(
+
+                # Insert transaction only if this tx_hash hasn't been credited yet.
+                # ON CONFLICT on idx_transactions_tx_hash_unique (tx_hash WHERE NOT NULL)
+                # blocks duplicate credits from replayed on-chain events.
+                result = session.execute(
                     text("""
                         INSERT INTO transactions
                             (id, user_id, type, amount, token, status, match_id, tx_hash)
                         VALUES (:id, :uid, 'refund', :amount, 'BNB', 'completed', :mid, :tx)
                         ON CONFLICT DO NOTHING
+                        RETURNING id
                     """),
                     {
                         "id": str(uuid.uuid4()), "uid": player_id,
@@ -947,20 +969,25 @@ class EscrowClient:
                         "tx": tx_hash,
                     },
                 )
-                # FOR UPDATE — lock user_balances row before refund mutation (C12).
-                session.execute(
-                    text("SELECT 1 FROM user_balances WHERE user_id = :uid FOR UPDATE"),
-                    {"uid": player_id},
-                )
-                session.execute(
-                    text("""
-                        UPDATE user_balances
-                        SET available = available + :stake,
-                            in_escrow = GREATEST(0, in_escrow - :stake)
-                        WHERE user_id = :uid
-                    """),
-                    {"stake": stake, "uid": player_id},
-                )
+                inserted = result.fetchone() is not None
+
+                # Only update balances when the transaction row was actually inserted.
+                # If the INSERT was skipped (conflict), the balance was already updated.
+                if inserted:
+                    # FOR UPDATE — lock user_balances row before mutation (C12).
+                    session.execute(
+                        text("SELECT 1 FROM user_balances WHERE user_id = :uid FOR UPDATE"),
+                        {"uid": player_id},
+                    )
+                    session.execute(
+                        text("""
+                            UPDATE user_balances
+                            SET available = available + :stake,
+                                in_escrow = GREATEST(0, in_escrow - :stake)
+                            WHERE user_id = :uid
+                        """),
+                        {"stake": stake, "uid": player_id},
+                    )
 
             session.execute(
                 text(
