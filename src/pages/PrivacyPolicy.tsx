@@ -61,7 +61,7 @@ const SECTIONS: Section[] = [
           {[
             { label: "Data Controller", value: operatorLegalCopy.dataController },
             { label: "Registered Address", value: operatorLegalCopy.registeredAddress },
-            { label: "Privacy Contact", value: "privacy@arena.gg" },
+            { label: "Privacy Contact", value: "privacy@project-arena.com" },
             { label: "DPO (if appointed)", value: operatorLegalCopy.dpoDetails },
           ].map((item) => (
             <div key={item.label} className="bg-secondary/40 border border-border/50 rounded-lg px-3 py-2">
@@ -71,7 +71,7 @@ const SECTIONS: Section[] = [
           ))}
         </div>
         <p>
-          For all privacy-related requests, contact us at <strong className="text-foreground">privacy@arena.gg</strong> with
+          For all privacy-related requests, contact us at <strong className="text-foreground">privacy@project-arena.com</strong> with
           the subject line matching your request type (e.g., "Data Access Request", "Data Deletion Request").
         </p>
       </div>
@@ -103,7 +103,7 @@ const SECTIONS: Section[] = [
           If we become aware that personal data has been submitted by or on behalf of a person under 18, we will
           immediately suspend the account, delete all associated personal data, and reverse any pending transactions
           to the extent technically possible. If you believe an underage individual has created an account, please
-          contact us immediately at <strong className="text-foreground">privacy@arena.gg</strong>.
+          contact us immediately at <strong className="text-foreground">privacy@project-arena.com</strong>.
         </p>
         <p>
           We do not use age-gating techniques that can be trivially bypassed. Age confirmation constitutes a binding
@@ -121,7 +121,7 @@ const SECTIONS: Section[] = [
         <p>This Privacy Policy applies to personal data processed when you:</p>
         <ul className="space-y-1.5">
           {[
-            "Visit or use the Arena web application (arena.gg and subdomains)",
+            "Visit or use the Arena web application (project-arena.com and subdomains)",
             "Create an account and use authenticated platform features",
             "Use the Arena Desktop Client for game session detection and result reporting",
             "Participate in staked matches, disputes, or support interactions",
@@ -479,7 +479,7 @@ const SECTIONS: Section[] = [
               <p className="text-xs font-semibold text-foreground">{item.right}</p>
               <p className="text-xs text-muted-foreground mt-0.5">{item.desc}</p>
               <p className="text-[10px] text-muted-foreground/50 mt-1 font-mono">
-                Email: privacy@arena.gg · Subject: "{item.email}"
+                Email: privacy@project-arena.com · Subject: "{item.email}"
               </p>
             </div>
           ))}
@@ -530,7 +530,7 @@ const SECTIONS: Section[] = [
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {[
-            { label: "Privacy Email", value: "privacy@arena.gg" },
+            { label: "Privacy Email", value: "privacy@project-arena.com" },
             { label: "DPO Contact", value: operatorLegalCopy.dpoContact },
             { label: "Postal Address", value: operatorLegalCopy.registeredAddress },
           ].map((item) => (

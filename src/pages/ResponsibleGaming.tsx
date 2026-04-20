@@ -64,7 +64,7 @@ const SECTIONS: Section[] = [
         </p>
         <p>
           <strong className="text-foreground">Parent and guardian notice:</strong> If you believe a minor has
-          accessed Arena, contact us immediately at <span className="text-primary font-mono">safety@arena.gg</span>.
+          accessed Arena, contact us immediately at <span className="text-primary font-mono">safety@project-arena.com</span>.
           We will investigate and act swiftly.
         </p>
       </div>
@@ -216,7 +216,7 @@ const SECTIONS: Section[] = [
         </div>
         <p>
           To activate self-exclusion, go to <span className="text-primary font-mono">Settings → Responsible Gaming → Self-Exclusion</span>,
-          or contact <span className="text-primary font-mono">safety@arena.gg</span>. During any exclusion period,
+          or contact <span className="text-primary font-mono">safety@project-arena.com</span>. During any exclusion period,
           open matches will be completed and funds returned to your wallet. No new matches can be created or joined.
         </p>
         <p>
@@ -321,7 +321,7 @@ const SECTIONS: Section[] = [
           <p className="text-arena-orange font-semibold text-xs mb-1">Financial Hardship</p>
           <p>
             If you are experiencing financial hardship, Arena will cooperate fully with any freeze, exclusion,
-            or fund-return request. Contact <span className="font-mono text-foreground">safety@arena.gg</span> —
+            or fund-return request. Contact <span className="font-mono text-foreground">safety@project-arena.com</span> —
             requests are processed within 24 hours.
           </p>
         </div>
@@ -348,7 +348,7 @@ const SECTIONS: Section[] = [
             { region: "AU", name: "Gambling Help Online", contact: "1800 858 858", url: "gamblinghelponline.org.au", hours: "24/7" },
             { region: "IL", name: "ERAN (Emotional First Aid)", contact: "1201", url: "eran.org.il", hours: "24/7" },
             { region: "Global", name: "Gamblers Anonymous", contact: "gamblersanonymous.org", url: "gamblersanonymous.org", hours: "Meeting-based" },
-            { region: "Arena", name: "Arena Safety Team", contact: "safety@arena.gg", url: "arena.gg", hours: "Response < 24h" },
+            { region: "Arena", name: "Arena Safety Team", contact: "safety@project-arena.com", url: "project-arena.com", hours: "Response < 24h" },
           ].map((res) => (
             <div key={res.name} className="rounded-lg border border-border/50 bg-secondary/30 px-4 py-3">
               <div className="flex items-center justify-between mb-1">
@@ -520,7 +520,7 @@ const ResponsibleGaming = () => {
           <p className="font-semibold text-foreground">Need help right now?</p>
           <p className="text-muted-foreground">
             Contact Arena's safety team at{" "}
-            <span className="text-primary font-mono">safety@arena.gg</span> or call the National Gambling
+            <span className="text-primary font-mono">safety@project-arena.com</span> or call the National Gambling
             Helpline (UK) on <span className="text-primary font-mono">0808 8020 133</span> — free, confidential,
             available 24/7.
           </p>
