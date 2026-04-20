@@ -296,6 +296,37 @@ export async function apiGetMatchStatus(
   }
 }
 
+/** Shape returned by GET /match/:id/refund-status */
+export interface RefundStatusResponse {
+  canRefund:       boolean;
+  reason:          string;
+  amount:          string;
+  onChainMatchId:  number | string | null;
+}
+
+/**
+ * GET /match/:id/refund-status — check if the calling user can claim an on-chain refund.
+ * CONTRACT-ready: canRefund=true → UI calls ArenaEscrow.claimRefund(onChainMatchId).
+ * DB-ready: matches + match_players (refund_claimed column).
+ */
+export async function apiGetMatchRefundStatus(
+  matchId: string,
+  token: string | null | undefined,
+): Promise<RefundStatusResponse | null> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 5000);
+    const url = `${ENGINE_BASE}/match/${encodeURIComponent(matchId)}/refund-status`;
+    const res = await fetchWithOptionalUserAuth(url, token, { signal: controller.signal });
+    clearTimeout(tid);
+    if (!res.ok) return null;
+    return (await res.json()) as RefundStatusResponse;
+  } catch (err) {
+    reportEngineApiError(err);
+    return null;
+  }
+}
+
 /** Shape returned by GET /match/active */
 export type ActiveMatchPlayer = {
   user_id: string;
@@ -1211,16 +1242,13 @@ export async function apiBuyAtPackage(
 /**
  * POST /wallet/withdraw-at — burn AT and receive BNB equivalent to user's linked wallet.
  *
- * Rates:
- *   Standard:   1100 AT = $10 USDT  (use_discount: false)
- *   Discounted:  950 AT = $10 USDT  (use_discount: true)
- *
+ * Rate: 1050 AT = $10 USDT. Amounts must be multiples of 1050.
  * Daily limit: 10,000 AT per user.
  * CONTRACT-ready: platform wallet sends BNB to user wallet.
  */
 export async function apiWithdrawAT(
   token: string,
-  body: { at_amount: number; use_discount: boolean },
+  body: { at_amount: number },
 ): Promise<
   | { ok: true; at_burned: number; usdt_value: number; wallet_address: string; at_balance: number; daily_remaining: number; rate: string }
   | { ok: false; status: number; detail: string | null }

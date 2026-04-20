@@ -72,12 +72,11 @@ USDT_CONTRACT_ADDRESS = os.getenv("USDT_CONTRACT_ADDRESS")        # ERC20 USDT o
 AT_PER_USDT           = int(os.getenv("AT_PER_USDT", "10"))       # Arena Tokens credited per 1 USDT
 
 # ── AT Withdrawal ─────────────────────────────────────────────
-# Standard rate: 1100 AT = $10 USDT  →  AT_PER_USDT_WITHDRAW = 110 AT per $1
-# Discounted rate: 950 AT = $10 USDT →  AT_PER_USDT_WITHDRAW_DISCOUNT = 95 AT per $1
+# Rate: 1050 AT = $10 USDT  →  AT_PER_USDT_WITHDRAW = 105 AT per $1
+# Amounts must be multiples of 1050 (AT_PER_USDT_WITHDRAW * 10).
 # Daily cap: 10,000 AT maximum withdrawal per user per day
-AT_PER_USDT_WITHDRAW          = int(os.getenv("AT_PER_USDT_WITHDRAW", "110"))          # AT per $1 (no discount)
-AT_PER_USDT_WITHDRAW_DISCOUNT = int(os.getenv("AT_PER_USDT_WITHDRAW_DISCOUNT", "95"))  # AT per $1 (with discount)
-AT_DAILY_WITHDRAW_LIMIT       = int(os.getenv("AT_DAILY_WITHDRAW_LIMIT", "10000"))     # max AT per day
+AT_PER_USDT_WITHDRAW    = int(os.getenv("AT_PER_USDT_WITHDRAW", "105"))      # AT per $1 → 1050 AT = $10
+AT_DAILY_WITHDRAW_LIMIT = int(os.getenv("AT_DAILY_WITHDRAW_LIMIT", "10000")) # max AT per day
 PLATFORM_WALLET_ADDRESS       = os.getenv("PLATFORM_WALLET_ADDRESS", "")              # Arena platform wallet (BNB sender)
 
 # ── Infrastructure ───────────────────────────────────────────
