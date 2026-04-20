@@ -9814,3 +9814,260 @@ async def admin_audit_log_list(
     except Exception as exc:
         logger.error("admin_audit_log_list error: %s", exc)
         raise HTTPException(500, "Failed to fetch audit log")
+
+
+# ── Creators Hub ──────────────────────────────────────────────────────────────
+
+
+@app.get("/creators", status_code=200)
+async def get_creators(
+    game: str | None = None,
+    tier: str | None = None,
+    featured: bool | None = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """Public list of approved creators."""
+    try:
+        with SessionLocal() as session:
+            where = ["cp.user_id = u.id"]
+            params: dict = {"limit": min(limit, 100), "offset": offset}
+            if game:
+                where.append("cp.primary_game = :game")
+                params["game"] = game
+            if tier:
+                where.append("cp.rank_tier = :tier")
+                params["tier"] = tier
+            if featured is not None:
+                where.append("cp.featured = :featured")
+                params["featured"] = featured
+            where_sql = "WHERE " + " AND ".join(where)
+            rows = session.execute(text(f"""
+                SELECT cp.id, cp.user_id, cp.display_name, cp.bio, cp.primary_game,
+                       cp.rank_tier, cp.twitch_url, cp.youtube_url, cp.tiktok_url,
+                       cp.twitter_url, cp.clip_urls, cp.featured, cp.created_at,
+                       u.username, u.avatar, u.avatar_bg, u.equipped_badge_icon, u.rank
+                FROM creator_profiles cp, users u
+                {where_sql}
+                ORDER BY cp.featured DESC, cp.approved_at DESC
+                LIMIT :limit OFFSET :offset
+            """), params).fetchall()
+            total = session.execute(text(f"""
+                SELECT COUNT(*) FROM creator_profiles cp, users u {where_sql}
+            """), {k: v for k, v in params.items() if k not in ("limit", "offset")}).scalar()
+            creators = [
+                {
+                    "id": str(r[0]), "user_id": str(r[1]), "display_name": r[2],
+                    "bio": r[3], "primary_game": r[4], "rank_tier": r[5],
+                    "twitch_url": r[6], "youtube_url": r[7], "tiktok_url": r[8],
+                    "twitter_url": r[9], "clip_urls": r[10] or [],
+                    "featured": r[11], "created_at": r[12].isoformat() if r[12] else None,
+                    "username": r[13], "avatar": r[14], "avatar_bg": r[15],
+                    "equipped_badge_icon": r[16], "rank": r[17],
+                }
+                for r in rows
+            ]
+        return {"creators": creators, "total": total or 0, "limit": limit, "offset": offset}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("get_creators error: %s", exc)
+        raise HTTPException(500, "Failed to fetch creators")
+
+
+@app.get("/creators/{creator_id}", status_code=200)
+async def get_creator(creator_id: str):
+    """Single creator profile — public."""
+    try:
+        with SessionLocal() as session:
+            row = session.execute(text("""
+                SELECT cp.id, cp.user_id, cp.display_name, cp.bio, cp.primary_game,
+                       cp.rank_tier, cp.twitch_url, cp.youtube_url, cp.tiktok_url,
+                       cp.twitter_url, cp.clip_urls, cp.featured, cp.created_at,
+                       u.username, u.avatar, u.avatar_bg, u.equipped_badge_icon, u.rank,
+                       u.arena_id,
+                       (SELECT COUNT(*) FROM matches m
+                        JOIN match_players mp ON mp.match_id = m.id
+                        WHERE mp.user_id = cp.user_id AND m.status = 'completed') AS total_matches,
+                       (SELECT COUNT(*) FROM matches m
+                        WHERE m.winner_id = cp.user_id AND m.status = 'completed') AS wins
+                FROM creator_profiles cp JOIN users u ON u.id = cp.user_id
+                WHERE cp.id = :cid
+            """), {"cid": creator_id}).fetchone()
+            if not row:
+                raise HTTPException(404, "Creator not found")
+            return {
+                "id": str(row[0]), "user_id": str(row[1]), "display_name": row[2],
+                "bio": row[3], "primary_game": row[4], "rank_tier": row[5],
+                "twitch_url": row[6], "youtube_url": row[7], "tiktok_url": row[8],
+                "twitter_url": row[9], "clip_urls": row[10] or [],
+                "featured": row[11], "created_at": row[12].isoformat() if row[12] else None,
+                "username": row[13], "avatar": row[14], "avatar_bg": row[15],
+                "equipped_badge_icon": row[16], "rank": row[17], "arena_id": row[18],
+                "total_matches": int(row[19] or 0), "wins": int(row[20] or 0),
+            }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("get_creator error: %s", exc)
+        raise HTTPException(500, "Failed to fetch creator")
+
+
+@app.post("/creators/apply", status_code=201)
+async def apply_creator(request: Request, payload: dict = Depends(optional_token)):
+    """Submit a creator application. Requires auth."""
+    if not payload:
+        raise HTTPException(401, "Authentication required")
+    user_id = payload.get("sub")
+    body = await request.json()
+    primary_game = body.get("primary_game", "").strip()
+    if not primary_game:
+        raise HTTPException(400, "primary_game is required")
+    try:
+        with SessionLocal() as session:
+            existing = session.execute(text(
+                "SELECT id, status FROM creator_applications WHERE user_id = :uid"
+            ), {"uid": user_id}).fetchone()
+            if existing:
+                if existing[1] == "pending":
+                    raise HTTPException(409, "Application already pending")
+                if existing[1] == "approved":
+                    raise HTTPException(409, "Already a creator")
+                session.execute(text("""
+                    UPDATE creator_applications
+                    SET primary_game=:game, twitch_url=:tw, youtube_url=:yt,
+                        tiktok_url=:tt, twitter_url=:tx, bio=:bio,
+                        motivation=:mot, status='pending', reviewed_by=NULL,
+                        review_note=NULL, reviewed_at=NULL, created_at=NOW()
+                    WHERE user_id=:uid
+                """), {
+                    "uid": user_id, "game": primary_game,
+                    "tw": body.get("twitch_url"), "yt": body.get("youtube_url"),
+                    "tt": body.get("tiktok_url"), "tx": body.get("twitter_url"),
+                    "bio": body.get("bio"), "mot": body.get("motivation"),
+                })
+            else:
+                session.execute(text("""
+                    INSERT INTO creator_applications
+                      (user_id, primary_game, twitch_url, youtube_url, tiktok_url,
+                       twitter_url, bio, motivation)
+                    VALUES (:uid, :game, :tw, :yt, :tt, :tx, :bio, :mot)
+                """), {
+                    "uid": user_id, "game": primary_game,
+                    "tw": body.get("twitch_url"), "yt": body.get("youtube_url"),
+                    "tt": body.get("tiktok_url"), "tx": body.get("twitter_url"),
+                    "bio": body.get("bio"), "mot": body.get("motivation"),
+                })
+            session.commit()
+        return {"status": "pending", "message": "Application submitted"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("apply_creator error: %s", exc)
+        raise HTTPException(500, "Failed to submit application")
+
+
+@app.get("/admin/creators/applications", status_code=200)
+async def admin_get_creator_applications(
+    status: str = "pending",
+    payload: dict = Depends(require_admin),
+):
+    """Admin — list creator applications."""
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(text("""
+                SELECT ca.id, ca.user_id, ca.primary_game, ca.twitch_url, ca.youtube_url,
+                       ca.tiktok_url, ca.twitter_url, ca.bio, ca.motivation,
+                       ca.status, ca.review_note, ca.created_at,
+                       u.username, u.rank, u.avatar, u.avatar_bg,
+                       (SELECT COUNT(*) FROM matches m JOIN match_players mp ON mp.match_id=m.id
+                        WHERE mp.user_id=ca.user_id AND m.status='completed') AS matches
+                FROM creator_applications ca JOIN users u ON u.id = ca.user_id
+                WHERE ca.status = :status
+                ORDER BY ca.created_at DESC
+            """), {"status": status}).fetchall()
+            return {"applications": [
+                {
+                    "id": str(r[0]), "user_id": str(r[1]), "primary_game": r[2],
+                    "twitch_url": r[3], "youtube_url": r[4], "tiktok_url": r[5],
+                    "twitter_url": r[6], "bio": r[7], "motivation": r[8],
+                    "status": r[9], "review_note": r[10],
+                    "created_at": r[11].isoformat() if r[11] else None,
+                    "username": r[12], "rank": r[13], "avatar": r[14],
+                    "avatar_bg": r[15], "match_count": int(r[16] or 0),
+                }
+                for r in rows
+            ]}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("admin_get_creator_applications error: %s", exc)
+        raise HTTPException(500, "Failed to fetch applications")
+
+
+@app.patch("/admin/creators/applications/{application_id}", status_code=200)
+async def admin_review_creator_application(
+    application_id: str,
+    request: Request,
+    payload: dict = Depends(require_admin),
+):
+    """Admin — approve or reject a creator application."""
+    admin_id = payload.get("sub")
+    body = await request.json()
+    new_status = body.get("status")
+    review_note = body.get("review_note", "")
+    if new_status not in ("approved", "rejected"):
+        raise HTTPException(400, "status must be 'approved' or 'rejected'")
+    try:
+        with SessionLocal() as session:
+            app_row = session.execute(text("""
+                SELECT ca.user_id, ca.primary_game, ca.twitch_url, ca.youtube_url,
+                       ca.tiktok_url, ca.twitter_url, ca.bio, u.username, u.rank
+                FROM creator_applications ca JOIN users u ON u.id = ca.user_id
+                WHERE ca.id = :aid
+            """), {"aid": application_id}).fetchone()
+            if not app_row:
+                raise HTTPException(404, "Application not found")
+            session.execute(text("""
+                UPDATE creator_applications
+                SET status=:status, reviewed_by=:rid, review_note=:note, reviewed_at=NOW()
+                WHERE id=:aid
+            """), {"status": new_status, "rid": admin_id, "note": review_note, "aid": application_id})
+            if new_status == "approved":
+                session.execute(text("""
+                    INSERT INTO creator_profiles
+                      (user_id, display_name, primary_game, twitch_url, youtube_url,
+                       tiktok_url, twitter_url, bio, rank_tier, approved_by, approved_at)
+                    VALUES (:uid, :name, :game, :tw, :yt, :tt, :tx, :bio, :rank, :rid, NOW())
+                    ON CONFLICT (user_id) DO UPDATE SET
+                      display_name=EXCLUDED.display_name, primary_game=EXCLUDED.primary_game,
+                      twitch_url=EXCLUDED.twitch_url, youtube_url=EXCLUDED.youtube_url,
+                      tiktok_url=EXCLUDED.tiktok_url, twitter_url=EXCLUDED.twitter_url,
+                      bio=EXCLUDED.bio, rank_tier=EXCLUDED.rank_tier,
+                      approved_by=EXCLUDED.approved_by, approved_at=EXCLUDED.approved_at
+                """), {
+                    "uid": str(app_row[0]), "name": app_row[7], "game": app_row[1],
+                    "tw": app_row[2], "yt": app_row[3], "tt": app_row[4],
+                    "tx": app_row[5], "bio": app_row[6], "rank": app_row[8], "rid": admin_id,
+                })
+                session.execute(text("""
+                    INSERT INTO notifications (user_id, type, title, message)
+                    VALUES (:uid, 'system', 'Creator Application Approved',
+                            'Congratulations! Your Arena Creator application has been approved.')
+                """), {"uid": str(app_row[0])})
+            else:
+                session.execute(text("""
+                    INSERT INTO notifications (user_id, type, title, message)
+                    VALUES (:uid, 'system', 'Creator Application Update',
+                            :msg)
+                """), {
+                    "uid": str(app_row[0]),
+                    "msg": f"Your creator application was not approved. {review_note or ''}".strip(),
+                })
+            session.commit()
+        return {"status": new_status}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("admin_review_creator_application error: %s", exc)
+        raise HTTPException(500, "Failed to review application")

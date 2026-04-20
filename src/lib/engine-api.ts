@@ -3399,3 +3399,67 @@ export async function apiAdminDeclareWinner(
   }
 }
 
+// ─── Creators Hub ─────────────────────────────────────────────────────────────
+
+import type { CreatorProfile, CreatorApplication } from "@/types";
+
+export async function apiGetCreators(params?: {
+  game?: string; tier?: string; featured?: boolean; limit?: number; offset?: number;
+}): Promise<{ creators: CreatorProfile[]; total: number }> {
+  const qs = new URLSearchParams();
+  if (params?.game)    qs.set("game", params.game);
+  if (params?.tier)    qs.set("tier", params.tier);
+  if (params?.featured !== undefined) qs.set("featured", String(params.featured));
+  if (params?.limit)   qs.set("limit", String(params.limit));
+  if (params?.offset)  qs.set("offset", String(params.offset));
+  const res = await fetch(`${ENGINE_BASE}/creators?${qs}`);
+  if (!res.ok) throw new Error("Failed to fetch creators");
+  return res.json();
+}
+
+export async function apiGetCreator(id: string): Promise<CreatorProfile> {
+  const res = await fetch(`${ENGINE_BASE}/creators/${id}`);
+  if (!res.ok) throw new Error("Creator not found");
+  return res.json();
+}
+
+export async function apiApplyCreator(
+  token: string,
+  data: {
+    primary_game: string; bio?: string; motivation?: string;
+    twitch_url?: string; youtube_url?: string; tiktok_url?: string; twitter_url?: string;
+  }
+): Promise<{ status: string }> {
+  const res = await arenaUserFetch(`${ENGINE_BASE}/creators/apply`, token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  const raw = await res.json();
+  if (!res.ok) throw new Error(raw.detail || "Failed to submit application");
+  return raw;
+}
+
+export async function apiAdminGetCreatorApplications(
+  token: string, status = "pending"
+): Promise<{ applications: CreatorApplication[] }> {
+  const res = await arenaUserFetch(`${ENGINE_BASE}/admin/creators/applications?status=${status}`, token);
+  if (!res.ok) throw new Error("Failed to fetch applications");
+  return res.json();
+}
+
+export async function apiAdminReviewCreatorApplication(
+  token: string, applicationId: string, status: "approved" | "rejected", review_note?: string
+): Promise<{ status: string }> {
+  const res = await arenaUserFetch(
+    `${ENGINE_BASE}/admin/creators/applications/${applicationId}`, token, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status, review_note }),
+    }
+  );
+  const raw = await res.json();
+  if (!res.ok) throw new Error(raw.detail || "Failed to review application");
+  return raw;
+}
+

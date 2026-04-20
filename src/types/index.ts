@@ -595,3 +595,49 @@ export interface ForgeExchangeRateQuote {
   source?: "oracle" | "fixed" | "api";
   validUntil?: string;
 }
+
+// ─── Creators Hub ────────────────────────────────────────────────────────────
+
+export interface CreatorProfile {
+  id: string;
+  user_id: string;
+  display_name: string;
+  bio: string | null;
+  primary_game: string;
+  rank_tier: string | null;
+  twitch_url: string | null;
+  youtube_url: string | null;
+  tiktok_url: string | null;
+  twitter_url: string | null;
+  clip_urls: string[];
+  featured: boolean;
+  created_at: string;
+  username: string;
+  avatar: string | null;
+  avatar_bg: string | null;
+  equipped_badge_icon: string | null;
+  rank: number;
+  arena_id?: string;
+  total_matches?: number;
+  wins?: number;
+}
+
+export interface CreatorApplication {
+  id: string;
+  user_id: string;
+  primary_game: string;
+  twitch_url: string | null;
+  youtube_url: string | null;
+  tiktok_url: string | null;
+  twitter_url: string | null;
+  bio: string | null;
+  motivation: string | null;
+  status: "pending" | "approved" | "rejected";
+  review_note: string | null;
+  created_at: string;
+  username: string;
+  rank: number;
+  avatar: string | null;
+  avatar_bg: string | null;
+  match_count: number;
+}
