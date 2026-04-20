@@ -20,6 +20,7 @@ import Profile from "./pages/Profile";
 import Admin from "./pages/Admin";
 import WalletPage from "./pages/Wallet";
 import Leaderboard from "./pages/Leaderboard";
+import Creators from "./pages/Creators";
 import SettingsPage from "./pages/Settings";
 import TermsOfService from "./pages/TermsOfService";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
@@ -98,6 +99,7 @@ const AppShell = () => (
             <Route path="/profile" element={<AppLayout><Profile /></AppLayout>} />
             <Route path="/wallet" element={<AppLayout><WalletPage /></AppLayout>} />
             <Route path="/leaderboard" element={<AppLayout><Leaderboard /></AppLayout>} />
+            <Route path="/creators" element={<AppLayout><Creators /></AppLayout>} />
             <Route path="/settings" element={<AppLayout><SettingsPage /></AppLayout>} />
             <Route path="/terms-of-service" element={<AppLayout><TermsOfService /></AppLayout>} />
             <Route path="/privacy-policy" element={<AppLayout><PrivacyPolicy /></AppLayout>} />

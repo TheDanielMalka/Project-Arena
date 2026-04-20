@@ -20,7 +20,7 @@ import {
   ShieldAlert, Gavel, Users, Ban, CheckCircle2, XCircle, AlertTriangle,
   Activity, DollarSign, Eye, Clock, Search, ArrowUpDown, ArrowUp, ArrowDown,
   Download, Power, Settings, Radio, ChevronRight, Zap, Flag, RefreshCw,
-  TrendingUp, Shield,
+  TrendingUp, Shield, Tv2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useNotificationStore } from "@/stores/notificationStore";
@@ -306,6 +306,7 @@ const NAV = [
   { id: "platform", icon: Settings,       label: "Platform"   },
   { id: "fraud",    icon: AlertTriangle,  label: "Fraud"      },
   { id: "oracle",   icon: Activity,       label: "Oracle"     },
+  { id: "creators", icon: Tv2,            label: "Creators"   },
 ] as const;
 type NavId = typeof NAV[number]["id"];
 
@@ -1967,6 +1968,109 @@ const Admin = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+          {/* ══ CREATORS ══ */}
+          {section === "creators" && (() => {
+            const [apps, setApps] = useState<import("@/types").CreatorApplication[]>([]);
+            const [appsLoading, setAppsLoading] = useState(false);
+            const [appsFilter, setAppsFilter] = useState<"pending"|"approved"|"rejected">("pending");
+            const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
+
+            useEffect(() => {
+              if (!token) return;
+              setAppsLoading(true);
+              import("@/lib/engine-api").then(({ apiAdminGetCreatorApplications }) =>
+                apiAdminGetCreatorApplications(token, appsFilter)
+                  .then((d) => setApps(d.applications))
+                  .catch(() => setApps([]))
+                  .finally(() => setAppsLoading(false))
+              );
+            }, [appsFilter]);
+
+            const review = async (id: string, status: "approved" | "rejected") => {
+              if (!token) return;
+              const { apiAdminReviewCreatorApplication } = await import("@/lib/engine-api");
+              await apiAdminReviewCreatorApplication(token, id, status, reviewNotes[id]);
+              setApps((prev) => prev.filter((a) => a.id !== id));
+            };
+
+            return (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <div>
+                    <p className="text-sm font-display font-bold">Creator Applications</p>
+                    <p className="text-[11px] text-muted-foreground">Review and approve creator submissions</p>
+                  </div>
+                  <div className="ml-auto flex gap-1">
+                    {(["pending","approved","rejected"] as const).map((s) => (
+                      <button key={s} onClick={() => setAppsFilter(s)}
+                        className={cn("px-3 py-1 rounded text-[10px] font-mono uppercase border transition-colors",
+                          appsFilter === s ? "bg-primary/10 border-primary/40 text-primary" : "border-border/40 text-muted-foreground hover:text-foreground")}>
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {appsLoading ? (
+                  <div className="flex items-center justify-center py-16">
+                    <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground/40" />
+                  </div>
+                ) : apps.length === 0 ? (
+                  <div className="text-center py-16 text-muted-foreground">
+                    <Tv2 className="h-10 w-10 mx-auto mb-3 opacity-20" />
+                    <p className="text-sm font-display">No {appsFilter} applications</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {apps.map((app) => (
+                      <div key={app.id} className="rounded-xl border border-border/50 bg-secondary/20 p-4 space-y-3">
+                        <div className="flex items-start gap-3">
+                          <div className="h-10 w-10 rounded-full bg-secondary/60 border border-border/50 flex items-center justify-center text-sm font-bold shrink-0">
+                            {app.username.slice(0, 2).toUpperCase()}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-bold text-foreground">{app.username}</p>
+                            <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-primary/10 border border-primary/30 text-primary">{app.primary_game}</span>
+                              <span className="text-[10px] font-mono text-muted-foreground/50">{app.match_count} matches</span>
+                            </div>
+                          </div>
+                        </div>
+                        {app.bio && <p className="text-xs text-muted-foreground/70 border-l-2 border-border/40 pl-2">{app.bio}</p>}
+                        {app.motivation && <p className="text-xs text-muted-foreground/60 italic">"{app.motivation}"</p>}
+                        <div className="flex flex-wrap gap-1.5 text-[10px] font-mono">
+                          {[app.twitch_url, app.youtube_url, app.tiktok_url, app.twitter_url].filter(Boolean).map((url, i) => (
+                            <a key={i} href={url!} target="_blank" rel="noreferrer"
+                              className="px-2 py-0.5 rounded border border-border/40 text-arena-cyan/70 hover:text-arena-cyan transition-colors">
+                              {url!.replace(/https?:\/\/(www\.)?/, "").split("/")[0]}
+                            </a>
+                          ))}
+                        </div>
+                        {appsFilter === "pending" && (
+                          <div className="flex items-center gap-2 pt-1">
+                            <input
+                              className="flex-1 h-7 bg-secondary/40 border border-border/40 rounded px-2 text-xs font-mono placeholder:text-muted-foreground/30"
+                              placeholder="Review note (optional)..."
+                              value={reviewNotes[app.id] ?? ""}
+                              onChange={(e) => setReviewNotes((n) => ({ ...n, [app.id]: e.target.value }))}
+                            />
+                            <Button size="sm" className="h-7 px-3 text-xs bg-green-500/10 border border-green-500/30 text-green-400 hover:bg-green-500/20"
+                              onClick={() => review(app.id, "approved")}>
+                              <CheckCircle2 className="h-3 w-3 mr-1" /> Approve
+                            </Button>
+                            <Button size="sm" variant="outline" className="h-7 px-3 text-xs border-destructive/30 text-destructive hover:bg-destructive/10"
+                              onClick={() => review(app.id, "rejected")}>
+                              <XCircle className="h-3 w-3 mr-1" /> Reject
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
       {/* ── Kill Switch Confirm ── */}
       <AlertDialog open={killConfirm} onOpenChange={setKillConfirm}>
