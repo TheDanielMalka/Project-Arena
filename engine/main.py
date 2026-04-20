@@ -9875,6 +9875,42 @@ async def get_creators(
         raise HTTPException(500, "Failed to fetch creators")
 
 
+@app.get("/creators/me", status_code=200)
+async def get_my_creator_profile(payload: dict = Depends(optional_token)):
+    """Get the current user's own creator profile."""
+    user_id = payload.get("sub") if payload else None
+    if not user_id:
+        raise HTTPException(401, "Authentication required")
+    try:
+        with SessionLocal() as session:
+            row = session.execute(text("""
+                SELECT cp.id, cp.user_id, cp.display_name, cp.bio, cp.primary_game,
+                       cp.rank_tier, cp.twitch_url, cp.youtube_url, cp.tiktok_url,
+                       cp.twitter_url, cp.clip_urls, cp.featured, cp.created_at,
+                       u.username, u.avatar, u.avatar_bg, u.equipped_badge_icon, u.rank
+                FROM creator_profiles cp JOIN users u ON u.id = cp.user_id
+                WHERE cp.user_id = :uid
+            """), {"uid": user_id}).fetchone()
+            if not row:
+                raise HTTPException(404, "No creator profile found")
+            return {
+                "id": str(row[0]), "user_id": str(row[1]),
+                "display_name": row[2], "bio": row[3],
+                "primary_game": row[4], "rank_tier": row[5],
+                "twitch_url": row[6], "youtube_url": row[7],
+                "tiktok_url": row[8], "twitter_url": row[9],
+                "clip_urls": row[10] or [],
+                "featured": row[11], "created_at": str(row[12]),
+                "username": row[13], "avatar": row[14], "avatar_bg": row[15],
+                "equipped_badge_icon": row[16], "rank": row[17],
+            }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("get_my_creator_profile error: %s", exc)
+        raise HTTPException(500, "Failed to fetch profile")
+
+
 @app.get("/creators/{creator_id}", status_code=200)
 async def get_creator(creator_id: str):
     """Single creator profile — public."""
@@ -10071,3 +10107,130 @@ async def admin_review_creator_application(
     except Exception as exc:
         logger.error("admin_review_creator_application error: %s", exc)
         raise HTTPException(500, "Failed to review application")
+
+
+@app.patch("/creators/me", status_code=200)
+async def update_my_creator_profile(request: Request, payload: dict = Depends(optional_token)):
+    """Update the current user's creator profile (bio and links only)."""
+    user_id = payload.get("sub") if payload else None
+    if not user_id:
+        raise HTTPException(401, "Authentication required")
+    body = await request.json()
+    allowed = {"bio", "twitch_url", "youtube_url", "tiktok_url", "twitter_url"}
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        raise HTTPException(400, "No valid fields to update")
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("SELECT id FROM creator_profiles WHERE user_id = :uid"), {"uid": user_id}
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "No creator profile found")
+            set_clause = ", ".join(f"{k}=:{k}" for k in updates)
+            session.execute(
+                text(f"UPDATE creator_profiles SET {set_clause} WHERE user_id=:uid"),
+                {**updates, "uid": user_id},
+            )
+            session.commit()
+        return {"status": "updated"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("update_my_creator_profile error: %s", exc)
+        raise HTTPException(500, "Failed to update profile")
+
+
+@app.get("/admin/creators/profiles", status_code=200)
+async def admin_get_creator_profiles(
+    payload: dict = Depends(require_admin),
+    limit: int = 50,
+    offset: int = 0,
+):
+    """Admin — list all approved creator profiles."""
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(text("""
+                SELECT cp.id, cp.user_id, cp.display_name, cp.bio, cp.primary_game,
+                       cp.rank_tier, cp.twitch_url, cp.youtube_url, cp.tiktok_url,
+                       cp.twitter_url, cp.featured, cp.created_at,
+                       u.username, u.avatar, u.avatar_bg, u.rank
+                FROM creator_profiles cp JOIN users u ON u.id = cp.user_id
+                ORDER BY cp.featured DESC, cp.created_at DESC
+                LIMIT :lim OFFSET :off
+            """), {"lim": limit, "off": offset}).fetchall()
+            total = session.execute(text("SELECT COUNT(*) FROM creator_profiles")).scalar()
+            profiles = [
+                {
+                    "id": str(r[0]), "user_id": str(r[1]), "display_name": r[2],
+                    "bio": r[3], "primary_game": r[4], "rank_tier": r[5],
+                    "twitch_url": r[6], "youtube_url": r[7], "tiktok_url": r[8],
+                    "twitter_url": r[9], "featured": r[10], "created_at": str(r[11]),
+                    "username": r[12], "avatar": r[13], "avatar_bg": r[14],
+                    "rank": r[15], "clip_urls": [], "equipped_badge_icon": None,
+                }
+                for r in rows
+            ]
+        return {"profiles": profiles, "total": total or 0}
+    except Exception as exc:
+        logger.error("admin_get_creator_profiles error: %s", exc)
+        raise HTTPException(500, "Failed to fetch profiles")
+
+
+@app.patch("/admin/creators/{creator_id}", status_code=200)
+async def admin_edit_creator_profile(
+    creator_id: str,
+    request: Request,
+    payload: dict = Depends(require_admin),
+):
+    """Admin — edit any creator profile."""
+    body = await request.json()
+    allowed = {
+        "display_name", "bio", "primary_game", "rank_tier",
+        "twitch_url", "youtube_url", "tiktok_url", "twitter_url", "featured",
+    }
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        raise HTTPException(400, "No valid fields to update")
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("SELECT id FROM creator_profiles WHERE id = :cid"), {"cid": creator_id}
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "Creator profile not found")
+            set_clause = ", ".join(f"{k}=:{k}" for k in updates)
+            session.execute(
+                text(f"UPDATE creator_profiles SET {set_clause} WHERE id=:cid"),
+                {**updates, "cid": creator_id},
+            )
+            session.commit()
+        return {"status": "updated"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("admin_edit_creator_profile error: %s", exc)
+        raise HTTPException(500, "Failed to update creator profile")
+
+
+@app.delete("/admin/creators/{creator_id}", status_code=200)
+async def admin_delete_creator_profile(
+    creator_id: str,
+    payload: dict = Depends(require_admin),
+):
+    """Admin — permanently delete a creator profile."""
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("SELECT id FROM creator_profiles WHERE id = :cid"), {"cid": creator_id}
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "Creator profile not found")
+            session.execute(text("DELETE FROM creator_profiles WHERE id=:cid"), {"cid": creator_id})
+            session.commit()
+        return {"status": "deleted"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("admin_delete_creator_profile error: %s", exc)
+        raise HTTPException(500, "Failed to delete creator profile")
