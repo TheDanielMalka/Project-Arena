@@ -25,6 +25,7 @@ import { useNotificationStore } from "@/stores/notificationStore";
 import { userFacingNotification } from "@/lib/userFacingNotification";
 import { useForgeStore } from "@/stores/forgeStore";
 import { useToast } from "@/hooks/use-toast";
+import { ENGINE_BASE } from "@/lib/engine-api";
 import { getXpInfo } from "@/lib/xp";
 import {
   getAvatarBackground,
@@ -125,6 +126,23 @@ const Profile = () => {
     setDraftEquippedBadge(selectedEquippedBadge);
   }, [showAvatarPicker]);
 
+  // Handle Steam OpenID callback redirect params
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const linked = params.get("steam_linked");
+    const err    = params.get("steam_error");
+    if (!linked && !err) return;
+    window.history.replaceState({}, "", window.location.pathname);
+    if (linked === "1") {
+      void refreshProfileFromServer();
+      toast({ title: "Steam Connected!", description: "Your Steam account has been linked to Arena." });
+    } else if (err === "taken") {
+      toast({ title: "Steam Already Linked", description: "That Steam account is already linked to another Arena account.", variant: "destructive" });
+    } else {
+      toast({ title: "Steam Connection Failed", description: "Could not verify your Steam account. Please try again.", variant: "destructive" });
+    }
+  }, []);
+
   const forgeAvatarIcons   = new Set(
     SEED_ITEMS.filter((i) => i.category === "avatar").map((i) => i.icon),
   );
@@ -191,15 +209,7 @@ const Profile = () => {
   const [serviceConnections, setServiceConnections] = useState<Record<string, string | false>>({
     discord: false,
     faceit: false,
-    riot: false,
   });
-
-  useEffect(() => {
-    setServiceConnections((prev) => ({
-      ...prev,
-      riot: user?.riotId ?? false,
-    }));
-  }, [user?.riotId]);
 
   const walletAddress =
     user?.walletShort ||
@@ -375,8 +385,8 @@ const Profile = () => {
     setLinkAccountId("");
   };
 
-  const handleDisconnectService = (service: "discord" | "faceit" | "riot") => {
-    const label = service === "discord" ? "Discord" : service === "faceit" ? "FACEIT" : "Riot Games";
+  const handleDisconnectService = (service: "discord" | "faceit") => {
+    const label = service === "discord" ? "Discord" : "FACEIT";
     setServiceConnections((prev) => ({ ...prev, [service]: false }));
     toast({ title: `${label} Disconnected`, description: `Your ${label} account has been unlinked.` });
     addNotification({ type: "system", title: `🔗 ${label} Unlinked`, message: `Your ${label} account has been disconnected from Arena.` });
@@ -388,11 +398,20 @@ const Profile = () => {
       icon: Gamepad2,
       img: "https://cdn.simpleicons.org/steam/ffffff",
       imgBg: "rgba(27,40,56,0.9)",
-      status: "connected" as const,
-      detail: user?.steamId || "—",
+      status: user?.steamVerified ? "connected" as const : "disconnected" as const,
+      detail: user?.steamVerified
+        ? (user.steamId ?? "Verified")
+        : user?.steamId
+          ? "Unverified — click Connect"
+          : "Not connected",
       color: "text-arena-cyan",
       borderColor: "border-arena-cyan/30",
       bgColor: "bg-arena-cyan/5",
+      onConnect: () => {
+        if (!token) return;
+        window.location.href = `${ENGINE_BASE}/auth/steam?token=${encodeURIComponent(token)}`;
+      },
+      // No onDisconnect — Steam link is permanent once verified
     },
     {
       name: "Wallet",
@@ -436,13 +455,14 @@ const Profile = () => {
       icon: Gamepad2,
       img: "https://cdn.simpleicons.org/riotgames/D32936",
       imgBg: "rgba(211,41,54,0.12)",
-      status: serviceConnections.riot ? "connected" as const : "disconnected" as const,
-      detail: serviceConnections.riot || "Not connected",
+      status: user?.riotVerified ? "connected" as const : "disconnected" as const,
+      detail: user?.riotVerified
+        ? (user.riotId ?? "Verified")
+        : "Coming soon",
       color: "text-red-400",
       borderColor: "border-red-500/30",
       bgColor: "bg-red-500/5",
-      onConnect: () => handleOpenLinkDialog("Riot Games", "service", undefined, "Riot ID / gameName#TAG"),
-      onDisconnect: () => handleDisconnectService("riot"),
+      // Riot OAuth — coming soon; no onConnect yet
     },
   ];
 

@@ -88,7 +88,7 @@ export interface MatchStatusApiResponse {
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const ENGINE_BASE =
+export const ENGINE_BASE =
   (import.meta.env.VITE_ENGINE_API_URL as string | undefined)?.trim() ?? "/api";
 
 const ENGINE_TOKEN =

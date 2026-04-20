@@ -80,6 +80,10 @@ export interface UserProfile {
   twoFactorEnabled?: boolean;
   /** From GET /auth/me `auth_provider` — email password vs Google OAuth */
   authProvider?: "email" | "google";
+  /** TRUE only after Steam OpenID verification — required for CS2 matches */
+  steamVerified: boolean;
+  /** TRUE only after Riot OAuth verification — required for Valorant matches */
+  riotVerified: boolean;
 }
 
 export interface UserStats {

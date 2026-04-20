@@ -1,10 +1,12 @@
 import hashlib
 import hmac as _hmac
+import httpx
 import os
 import re
 import secrets
 import logging
 import threading
+import urllib.parse
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
@@ -14,14 +16,14 @@ from collections import defaultdict as _defaultdict
 
 from fastapi import FastAPI, HTTPException, Depends, Header, Query, UploadFile, File, Request, Response, Cookie
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 import jwt as _jwt
 
-from src.config import DATABASE_URL, ENVIRONMENT, MIN_CLIENT_VERSION
+from src.config import DATABASE_URL, ENVIRONMENT, MIN_CLIENT_VERSION, STEAM_API_KEY, ENGINE_BASE_URL, FRONTEND_URL
 from src.vision.capture import capture_screen, crop_roi
 from src.vision.engine import VisionEngine, VisionEngineConfig
 from src.vision.rage_quit import RageQuitDetector
@@ -897,41 +899,8 @@ async def optional_token(
 
 class RegisterRequest(BaseModel):
     username: str
-    email: str
+    email:    str
     password: str
-    steam_id: str | None = None   # CS2 account; at least one game account required
-    riot_id:  str | None = None   # Valorant account; at least one game account required
-
-    @model_validator(mode="after")
-    def require_and_validate_game_account(self) -> "RegisterRequest":
-        """
-        Enforce two rules at the Pydantic layer (→ automatic 422):
-          1. At least one of steam_id / riot_id must be provided.
-          2. Whichever is provided must pass the format check.
-        Format checks are pure string validation — no DB or network calls.
-        """
-        steam = self.steam_id.strip() if self.steam_id else None
-        riot  = self.riot_id.strip()  if self.riot_id  else None
-
-        if not steam and not riot:
-            raise ValueError(
-                "At least one game account is required: "
-                "provide steam_id (for CS2) or riot_id (for Valorant)"
-            )
-
-        if steam:
-            err = auth.validate_steam_id(steam)
-            if err:
-                raise ValueError(err)
-            self.steam_id = steam   # store stripped value
-
-        if riot:
-            err = auth.validate_riot_id(riot)
-            if err:
-                raise ValueError(err)
-            self.riot_id = riot     # store stripped value
-
-        return self
 
 
 class LoginRequest(BaseModel):
@@ -990,6 +959,9 @@ class UserProfile(BaseModel):
     region: str = "EU"  # user_settings.region — EU | NA | ASIA | SA | OCE | ME
     # DB-ready: users.auth_provider — 'email' | 'google'
     auth_provider: str = "email"
+    # Game account verification — TRUE only after real OAuth/OpenID proof
+    steam_verified: bool = False
+    riot_verified:  bool = False
 
 
 # ── Request / Response models ─────────────────────────────────────────────────
@@ -2381,12 +2353,10 @@ async def register(req: RegisterRequest, request: Request, response: Response):
     # ── Normalize inputs ──────────────────────────────────────────────────────
     email    = req.email.strip().lower()
     username = req.username.strip()
-    steam_id = req.steam_id.strip() if req.steam_id else None
-    riot_id  = req.riot_id.strip()  if req.riot_id  else None
 
     try:
         with SessionLocal() as session:
-            # ── Duplicate checks — one clear 409 per field ────────────────────
+            # ── Duplicate checks ──────────────────────────────────────────────
             if session.execute(
                 text("SELECT 1 FROM users WHERE lower(email) = :e"), {"e": email}
             ).fetchone():
@@ -2397,17 +2367,7 @@ async def register(req: RegisterRequest, request: Request, response: Response):
             ).fetchone():
                 raise HTTPException(409, "Username already taken")
 
-            if steam_id and session.execute(
-                text("SELECT 1 FROM users WHERE steam_id = :s"), {"s": steam_id}
-            ).fetchone():
-                raise HTTPException(409, "Steam ID already linked to another account")
-
-            if riot_id and session.execute(
-                text("SELECT 1 FROM users WHERE riot_id = :r"), {"r": riot_id}
-            ).fetchone():
-                raise HTTPException(409, "Riot ID already linked to another account")
-
-            # ── Blacklist checks (migration 025) ──────────────────────────────
+            # ── Wallet blacklist (migration 025) ──────────────────────────────
             wallet_addr = getattr(req, "wallet_address", None)
             if wallet_addr and session.execute(
                 text("SELECT 1 FROM wallet_blacklist WHERE wallet_address = :w"),
@@ -2415,29 +2375,16 @@ async def register(req: RegisterRequest, request: Request, response: Response):
             ).fetchone():
                 raise HTTPException(409, "This wallet address is banned from the platform")
 
-            if steam_id and session.execute(
-                text("SELECT 1 FROM wallet_blacklist WHERE steam_id = :s"),
-                {"s": steam_id},
-            ).fetchone():
-                raise HTTPException(409, "This Steam ID is banned from the platform")
-
-            if riot_id and session.execute(
-                text("SELECT 1 FROM wallet_blacklist WHERE riot_id = :r"),
-                {"r": riot_id},
-            ).fetchone():
-                raise HTTPException(409, "This Riot ID is banned from the platform")
-
             # ── Create user ───────────────────────────────────────────────────
             pw_hash  = auth.hash_password(req.password)
             arena_id = auth.generate_arena_id()
             row = session.execute(
                 text(
-                    "INSERT INTO users (username, email, password_hash, arena_id, steam_id, riot_id, at_balance) "
-                    "VALUES (:u, :e, :h, :a, :s, :r, 200) "
+                    "INSERT INTO users (username, email, password_hash, arena_id, at_balance) "
+                    "VALUES (:u, :e, :h, :a, 200) "
                     "RETURNING id, username, email, arena_id"
                 ),
-                {"u": username, "e": email, "h": pw_hash, "a": arena_id,
-                 "s": steam_id, "r": riot_id},
+                {"u": username, "e": email, "h": pw_hash, "a": arena_id},
             ).fetchone()
 
             user_id = str(row[0])
@@ -2745,7 +2692,9 @@ async def me(payload: dict = Depends(verify_token)):
                     "         ELSE 'user' "
                     "       END, "
                     "       COALESCE(us.region, 'EU'), "
-                    "       COALESCE(u.auth_provider, 'email') "
+                    "       COALESCE(u.auth_provider, 'email'), "
+                    "       COALESCE(u.steam_verified, FALSE), "
+                    "       COALESCE(u.riot_verified,  FALSE) "
                     "FROM users u "
                     "LEFT JOIN user_stats s ON s.user_id = u.id "
                     "LEFT JOIN user_settings us ON us.user_id = u.id "
@@ -2798,6 +2747,8 @@ async def me(payload: dict = Depends(verify_token)):
         role=str(row[17]) if row[17] is not None else "user",
         region=str(row[18]) if len(row) > 18 and row[18] else "EU",
         auth_provider=str(row[19]) if len(row) > 19 and row[19] else "email",
+        steam_verified=bool(row[20]) if len(row) > 20 and row[20] is not None else False,
+        riot_verified=bool(row[21]) if len(row) > 21 and row[21] is not None else False,
     )
 
 
@@ -2878,18 +2829,6 @@ async def patch_user_me(req: PatchUserRequest, payload: dict = Depends(verify_to
         logger.error("patch_user_me uniqueness check error: %s", exc)
         raise HTTPException(500, "Profile update failed")
 
-    # ── Guard: cannot unlink both game accounts simultaneously ───────────────
-    # A user without any game account can't join any match.
-    # We check the resulting state: if both would become NULL → 400.
-    unlinking_steam = req.steam_id is not None and req.steam_id.strip() == ""
-    unlinking_riot  = req.riot_id  is not None and req.riot_id.strip()  == ""
-    if unlinking_steam and unlinking_riot:
-        raise HTTPException(
-            400,
-            "Cannot unlink both game accounts at once. "
-            "Keep at least one (Steam ID or Riot ID) to remain eligible for matches."
-        )
-
     # ── Build update fields ───────────────────────────────────────────────────
     fields: dict = {}
     if req.avatar                  is not None: fields["avatar"]                  = req.avatar
@@ -2898,9 +2837,16 @@ async def patch_user_me(req: PatchUserRequest, payload: dict = Depends(verify_to
     if req.forge_unlocked_item_ids is not None:
         fields["forge_unlocked_item_ids"] = req.forge_unlocked_item_ids
     if req.username       is not None: fields["username"]       = req.username.strip()
-    if req.steam_id       is not None: fields["steam_id"]       = req.steam_id.strip()       or None  # "" → NULL
-    if req.riot_id        is not None: fields["riot_id"]        = req.riot_id.strip()        or None  # "" → NULL
     if req.wallet_address is not None: fields["wallet_address"] = req.wallet_address.strip() or None  # "" → NULL (unlink)
+    # Changing steam_id via text resets verification (only OpenID can set steam_verified=TRUE)
+    if req.steam_id is not None:
+        fields["steam_id"]         = req.steam_id.strip() or None  # "" → NULL
+        fields["steam_verified"]   = False
+        fields["steam_verified_at"] = None
+    if req.riot_id is not None:
+        fields["riot_id"]         = req.riot_id.strip() or None  # "" → NULL
+        fields["riot_verified"]   = False
+        fields["riot_verified_at"] = None
 
     if fields:
         set_clause = ", ".join(f"{col} = :{col}" for col in fields)
@@ -3188,6 +3134,87 @@ async def logout(response: Response, payload: dict = Depends(verify_token)):
     return {"logged_out": True}
 
 
+@app.get("/auth/steam")
+async def steam_auth_start(token: str):
+    """
+    Redirect the user's browser to Steam OpenID login.
+    Pass the JWT as `token` query param so the callback can identify the user.
+    """
+    params = {
+        "openid.ns":         "http://specs.openid.net/auth/2.0",
+        "openid.mode":       "checkid_setup",
+        "openid.return_to":  f"{ENGINE_BASE_URL}/auth/steam/callback?token={urllib.parse.quote(token, safe='')}",
+        "openid.realm":      ENGINE_BASE_URL,
+        "openid.identity":   "http://specs.openid.net/auth/2.0/identifier_select",
+        "openid.claimed_id": "http://specs.openid.net/auth/2.0/identifier_select",
+    }
+    url = "https://steamcommunity.com/openid/login?" + urllib.parse.urlencode(params)
+    return RedirectResponse(url, status_code=302)
+
+
+@app.get("/auth/steam/callback")
+async def steam_auth_callback(token: str, request: Request):
+    """
+    Steam OpenID callback. Verifies the assertion server-to-server, extracts
+    the verified Steam64 ID, and saves it to the authenticated user's profile.
+    Redirects the browser back to the frontend with ?steam_linked=1 on success.
+    """
+    error_url = f"{FRONTEND_URL}/profile?steam_error=1"
+
+    # Forward all query params back to Steam for verification
+    check_params = dict(request.query_params)
+    check_params["openid.mode"] = "check_authentication"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as _hc:
+            _verify = await _hc.post(
+                "https://steamcommunity.com/openid/login",
+                data=check_params,
+            )
+        if "is_valid:true" not in _verify.text:
+            return RedirectResponse(error_url, status_code=302)
+    except Exception as _e:
+        logger.warning("Steam OpenID verification error: %s", _e)
+        return RedirectResponse(error_url, status_code=302)
+
+    # Extract Steam64 ID from claimed_id URL
+    claimed_id = check_params.get("openid.claimed_id", "")
+    steam_id = claimed_id.split("/")[-1]
+    if not re.match(r"^7656119\d{10}$", steam_id):
+        return RedirectResponse(error_url, status_code=302)
+
+    # Decode token to get user_id
+    try:
+        payload = auth.decode_token(token)
+        user_id = str(payload["sub"])
+    except Exception:
+        return RedirectResponse(error_url, status_code=302)
+
+    try:
+        with SessionLocal() as session:
+            # Reject if Steam ID already belongs to another account
+            if session.execute(
+                text("SELECT 1 FROM users WHERE steam_id = :s AND id != :uid"),
+                {"s": steam_id, "uid": user_id},
+            ).fetchone():
+                return RedirectResponse(f"{FRONTEND_URL}/profile?steam_error=taken", status_code=302)
+
+            session.execute(
+                text(
+                    "UPDATE users "
+                    "SET steam_id = :s, steam_verified = TRUE, steam_verified_at = NOW() "
+                    "WHERE id = :uid"
+                ),
+                {"s": steam_id, "uid": user_id},
+            )
+            session.commit()
+    except Exception as _e:
+        logger.error("Steam link DB error: %s", _e)
+        return RedirectResponse(error_url, status_code=302)
+
+    return RedirectResponse(f"{FRONTEND_URL}/profile?steam_linked=1", status_code=302)
+
+
 @app.post("/client/bind", status_code=200)
 async def client_bind(req: BindRequest, payload: dict = Depends(verify_token)):
     """
@@ -3261,25 +3288,33 @@ def _normalize_game(raw: str) -> str:
     return mapping.get(raw.strip().lower(), raw.strip())
 
 
-def _assert_game_account(game: str, steam_id: str | None, riot_id: str | None) -> None:
+def _assert_game_account(
+    game: str,
+    steam_id: str | None,
+    riot_id: str | None,
+    steam_verified: bool = False,
+    riot_verified: bool = False,
+) -> None:
     """
-    Raise HTTPException(403) if the user lacks the required game account.
+    Raise HTTPException(403) if the user is not verified for the requested game.
 
-    CS2      → needs steam_id
-    Valorant → needs riot_id
+    CS2      → steam_verified must be TRUE (linked via Steam OpenID)
+    Valorant → riot_verified must be TRUE (linked via Riot OAuth — coming soon)
     """
-    if game == "CS2" and not steam_id:
-        raise HTTPException(
-            403,
-            "A verified Steam ID is required to create or join CS2 matches. "
-            "Add your Steam ID in Profile → Settings."
-        )
-    if game == "Valorant" and not riot_id:
-        raise HTTPException(
-            403,
-            "A verified Riot ID is required to create or join Valorant matches. "
-            "Add your Riot ID in Profile → Settings."
-        )
+    if game == "CS2":
+        if not steam_id or not steam_verified:
+            raise HTTPException(
+                403,
+                "Your Steam account must be verified to create or join CS2 matches. "
+                "Go to Profile → Connections → Steam → Connect."
+            )
+    if game == "Valorant":
+        if not riot_id or not riot_verified:
+            raise HTTPException(
+                403,
+                "Your Riot account must be verified to create or join Valorant matches. "
+                "Go to Profile → Connections → Riot Games → Connect."
+            )
 
 
 def _assert_usdt_balance(wallet_address: str, required_usdt: float) -> None:
@@ -4125,17 +4160,21 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
 
     try:
         with SessionLocal() as session:
-            # ── Look up creator's game accounts ───────────────────────────────
+            # ── Look up creator's game accounts + verification ────────────────
             user_row = session.execute(
-                text("SELECT steam_id, riot_id, wallet_address FROM users WHERE id = :uid"),
+                text(
+                    "SELECT steam_id, riot_id, wallet_address, "
+                    "       COALESCE(steam_verified, FALSE), COALESCE(riot_verified, FALSE) "
+                    "FROM users WHERE id = :uid"
+                ),
                 {"uid": user_id},
             ).fetchone()
 
             if not user_row:
                 raise HTTPException(404, "User not found")
 
-            steam_id, riot_id, wallet_address = user_row
-            _assert_game_account(game, steam_id, riot_id)
+            steam_id, riot_id, wallet_address, steam_verified, riot_verified = user_row
+            _assert_game_account(game, steam_id, riot_id, steam_verified, riot_verified)
 
             # ── Block duplicate rooms: 1 active room per user ─────────────────
             active_room = session.execute(
@@ -4280,17 +4319,21 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
             if match_password and not _verify_room_password(req.password, match_password):
                 raise HTTPException(403, "Incorrect room password")
 
-            # ── Check joiner's game account ───────────────────────────────────
+            # ── Check joiner's game account + verification ────────────────────
             user_row = session.execute(
-                text("SELECT steam_id, riot_id, wallet_address FROM users WHERE id = :uid"),
+                text(
+                    "SELECT steam_id, riot_id, wallet_address, "
+                    "       COALESCE(steam_verified, FALSE), COALESCE(riot_verified, FALSE) "
+                    "FROM users WHERE id = :uid"
+                ),
                 {"uid": user_id},
             ).fetchone()
 
             if not user_row:
                 raise HTTPException(404, "User not found")
 
-            steam_id, riot_id, wallet_address = user_row
-            _assert_game_account(game, steam_id, riot_id)
+            steam_id, riot_id, wallet_address, steam_verified, riot_verified = user_row
+            _assert_game_account(game, steam_id, riot_id, steam_verified, riot_verified)
 
             # ── Suspension / ban check ────────────────────────────────────────
             _assert_not_suspended(session, user_id)

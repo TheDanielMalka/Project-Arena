@@ -48,12 +48,10 @@ interface UserState {
   ) => Promise<boolean | "rate_limited" | { needs_2fa: true; temp_token: string }>;
   /** After login returned needs_2fa — POST /auth/2fa/confirm then same hydration as login */
   completeTwoFactorLogin: (temp_token: string, code: string) => Promise<boolean>;
-  // DB-ready: replace with POST /api/auth/signup
   signup: (
     username: string,
     email: string,
     password: string,
-    gameAccounts?: { steamId?: string; riotId?: string },
   ) => Promise<SignupResult>;
   /** POST /auth/google with Google Identity id_token — same hydration as login */
   loginWithGoogleIdToken: (
@@ -179,6 +177,8 @@ function userProfileFromMe(profile: MeProfile): UserProfile {
     region: regionFromMe(profile.region ?? undefined),
     twoFactorEnabled: !!profile.two_factor_enabled,
     authProvider: profile.auth_provider === "google" ? "google" : "email",
+    steamVerified: !!profile.steam_verified,
+    riotVerified: !!profile.riot_verified,
   };
 }
 
@@ -246,12 +246,8 @@ export const useUserStore = create<UserState>((set, get) => ({
     username: string,
     email: string,
     password: string,
-    gameAccounts?: { steamId?: string; riotId?: string },
   ): Promise<SignupResult> => {
-    const reg = await apiRegister(username, email, password, {
-      steam_id: gameAccounts?.steamId?.trim() || null,
-      riot_id: gameAccounts?.riotId?.trim() || null,
-    });
+    const reg = await apiRegister(username, email, password, {});
     if (reg.ok === false) {
       return {
         ok: false as const,
@@ -272,8 +268,6 @@ export const useUserStore = create<UserState>((set, get) => ({
       ...user,
       username: data.username,
       email: data.email.trim().toLowerCase(),
-      steamId: gameAccounts?.steamId?.trim() || profile.steam_id?.trim() || null,
-      riotId: gameAccounts?.riotId?.trim() || profile.riot_id?.trim() || null,
       avatarInitials: data.username.slice(0, 2).toUpperCase(),
       arenaId: data.arena_id ?? profile.arena_id ?? user.arenaId,
     };
@@ -375,6 +369,8 @@ export const useUserStore = create<UserState>((set, get) => ({
       region: regionFromMe(profile.region ?? undefined) ?? user.region,
       twoFactorEnabled: profile.two_factor_enabled ?? user.twoFactorEnabled,
       authProvider: profile.auth_provider === "google" ? "google" : "email",
+      steamVerified: !!profile.steam_verified,
+      riotVerified: !!profile.riot_verified,
     };
     set({ user: next, walletConnected: !!w });
     hydrateWalletForgeAfterAuth(next);
