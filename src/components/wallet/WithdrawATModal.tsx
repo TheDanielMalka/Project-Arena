@@ -1,10 +1,8 @@
 /**
  * WithdrawATModal — burn Arena Tokens and receive BNB equivalent to linked wallet.
  *
- * Rates (per $10 USDT):
- *   Standard:   1100 AT = $10  (AT_PER_USDT_WITHDRAW = 110)
- *   Discounted:  950 AT = $10  (AT_PER_USDT_WITHDRAW_DISCOUNT = 95)
- *
+ * Rate: 1050 AT = $10 USDT  (AT_PER_USDT_WITHDRAW = 105 AT per $1)
+ * Amounts must be multiples of 1050 (1050, 2100, 3150…).
  * Daily limit: 10,000 AT.
  * CONTRACT-ready: platform wallet sends BNB on-chain after this call.
  */
@@ -15,13 +13,12 @@ import { useUserStore }   from "@/stores/userStore";
 import { useWalletStore } from "@/stores/walletStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { apiWithdrawAT } from "@/lib/engine-api";
-import { Flame, Wallet, Info, ArrowRight, Loader2 } from "lucide-react";
+import { Flame, Wallet, ArrowRight, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ── Constants (mirror engine/src/config.py) ────────────────────────────────
-const AT_STANDARD_RATE   = 110;   // AT per $1 USDT  (1100 AT = $10)
-const AT_DISCOUNT_RATE   = 95;    // AT per $1 USDT   (950 AT = $10)
-const AT_UNIT_USDT       = 10;    // minimum $10 per withdrawal
+const AT_RATE_PER_DOLLAR = 105;   // AT per $1 USDT  (1050 AT = $10)
+const AT_UNIT            = 1050;  // smallest withdrawal chunk
 const AT_DAILY_LIMIT     = 10_000;
 
 // ── Props ──────────────────────────────────────────────────────────────────
@@ -34,21 +31,18 @@ interface WithdrawATModalProps {
 
 // ── Component ──────────────────────────────────────────────────────────────
 export function WithdrawATModal({ open, onClose, onSuccess }: WithdrawATModalProps) {
-  const { user, token }    = useUserStore();
+  const { token } = useUserStore();
   const { connectedAddress, atBalance } = useWalletStore();
 
-  const [useDiscount, setUseDiscount] = useState(false);
-  const [atInput, setAtInput]         = useState("");
-  const [busy, setBusy]               = useState(false);
+  const [atInput, setAtInput] = useState("");
+  const [busy, setBusy]       = useState(false);
 
   if (!open) return null;
 
-  const rate      = useDiscount ? AT_DISCOUNT_RATE : AT_STANDARD_RATE;
-  const unitAT    = rate * AT_UNIT_USDT;          // smallest chunk: 950 or 1100
   const atParsed  = parseInt(atInput, 10) || 0;
-  const usdtValue = atParsed > 0 && atParsed % rate === 0 ? atParsed / rate : null;
+  const usdtValue = atParsed > 0 && atParsed % AT_UNIT === 0 ? atParsed / AT_RATE_PER_DOLLAR : null;
 
-  const validAmount = atParsed >= unitAT && atParsed % rate === 0 && atParsed <= AT_DAILY_LIMIT;
+  const validAmount = atParsed >= AT_UNIT && atParsed % AT_UNIT === 0 && atParsed <= AT_DAILY_LIMIT;
   const hasBalance  = atParsed <= (atBalance ?? 0);
   const canSubmit   = validAmount && hasBalance && !!connectedAddress && !!token && !busy;
 
@@ -60,7 +54,7 @@ export function WithdrawATModal({ open, onClose, onSuccess }: WithdrawATModalPro
     if (!canSubmit || !token) return;
     setBusy(true);
     try {
-      const res = await apiWithdrawAT(token, { at_amount: atParsed, use_discount: useDiscount });
+      const res = await apiWithdrawAT(token, { at_amount: atParsed });
       if (res.ok === false) {
         useNotificationStore.getState().addNotification({
           type: "system",
@@ -97,51 +91,18 @@ export function WithdrawATModal({ open, onClose, onSuccess }: WithdrawATModalPro
           </div>
         </div>
 
-        {/* Rate selector */}
-        <div className="space-y-1.5">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-display">Conversion Rate</p>
-          <div className="grid grid-cols-2 gap-2">
-            {[false, true].map((disc) => {
-              const r = disc ? AT_DISCOUNT_RATE : AT_STANDARD_RATE;
-              return (
-                <button
-                  key={String(disc)}
-                  onClick={() => { setUseDiscount(disc); setAtInput(""); }}
-                  className={cn(
-                    "rounded-xl border p-3 text-left transition-all",
-                    useDiscount === disc
-                      ? "border-arena-purple/50 bg-arena-purple/10"
-                      : "border-border/60 bg-secondary/30 hover:border-border"
-                  )}
-                >
-                  <p className="font-display text-xs font-bold text-foreground">
-                    {r * AT_UNIT_USDT} AT = $10
-                  </p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">
-                    {disc ? "Discounted rate" : "Standard rate"}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-          <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-            <Info className="h-3 w-3" />
-            Keep more AT inside Arena for the discounted rate.
-          </p>
-        </div>
-
         {/* Amount input */}
         <div className="space-y-1.5">
           <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-display">
-            AT Amount <span className="text-muted-foreground/60">(multiples of {unitAT})</span>
+            AT Amount <span className="text-muted-foreground/60">(multiples of {AT_UNIT})</span>
           </p>
           <div className="flex gap-2">
             <Input
               type="number"
-              min={unitAT}
-              step={unitAT}
+              min={AT_UNIT}
+              step={AT_UNIT}
               max={AT_DAILY_LIMIT}
-              placeholder={`${unitAT}, ${unitAT * 2}, ${unitAT * 5}…`}
+              placeholder={`${AT_UNIT}, ${AT_UNIT * 2}, ${AT_UNIT * 3}…`}
               value={atInput}
               onChange={(e) => setAtInput(e.target.value)}
               className="font-mono bg-secondary border-border"
@@ -149,7 +110,7 @@ export function WithdrawATModal({ open, onClose, onSuccess }: WithdrawATModalPro
             <button
               onClick={() => {
                 const max = Math.min(atBalance ?? 0, AT_DAILY_LIMIT);
-                const snapped = Math.floor(max / unitAT) * unitAT;
+                const snapped = Math.floor(max / AT_UNIT) * AT_UNIT;
                 setAtInput(String(snapped > 0 ? snapped : ""));
               }}
               className="text-xs text-arena-purple hover:underline whitespace-nowrap"

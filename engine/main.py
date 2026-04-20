@@ -2158,6 +2158,112 @@ async def match_status(
 
 
 
+@app.get("/match/{match_id}/refund-status")
+async def match_refund_status(
+    match_id: str,
+    token: dict | None = Depends(optional_token),
+):
+    """
+    Check whether the calling user can claim a refund for this match.
+
+    Returns:
+      canRefund        — true only when: match is cancelled + user deposited + not yet claimed
+      reason           — human-readable reason when canRefund is false
+      amount           — stake in BNB as a string (e.g. "0.1")
+      onChainMatchId   — the on-chain match ID needed by ArenaEscrow.claimRefund()
+
+    CONTRACT-ready: canRefund=true → frontend calls ArenaEscrow.claimRefund(onChainMatchId)
+    DB-ready: matches + match_players
+    """
+    user_id: str | None = token.get("sub") if token else None
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("""
+                    SELECT status, on_chain_match_id, stake_per_player
+                    FROM matches WHERE id = :mid
+                """),
+                {"mid": match_id},
+            ).fetchone()
+
+            if not row:
+                return {"canRefund": False, "reason": "match_not_found", "amount": "0", "onChainMatchId": None}
+
+            match_status_val  = row[0]
+            on_chain_match_id = row[1]
+            stake             = row[2]
+
+            if match_status_val != "cancelled":
+                return {
+                    "canRefund": False,
+                    "reason": "match_not_cancelled",
+                    "amount": str(stake or "0"),
+                    "onChainMatchId": on_chain_match_id,
+                }
+
+            if on_chain_match_id is None:
+                return {
+                    "canRefund": False,
+                    "reason": "no_on_chain_id",
+                    "amount": str(stake or "0"),
+                    "onChainMatchId": None,
+                }
+
+            if not user_id:
+                return {
+                    "canRefund": False,
+                    "reason": "unauthenticated",
+                    "amount": str(stake or "0"),
+                    "onChainMatchId": on_chain_match_id,
+                }
+
+            player_row = session.execute(
+                text("""
+                    SELECT has_deposited, refund_claimed
+                    FROM match_players
+                    WHERE match_id = :mid AND user_id = :uid
+                """),
+                {"mid": match_id, "uid": user_id},
+            ).fetchone()
+
+            if not player_row:
+                return {
+                    "canRefund": False,
+                    "reason": "not_a_player",
+                    "amount": str(stake or "0"),
+                    "onChainMatchId": on_chain_match_id,
+                }
+
+            has_deposited  = player_row[0]
+            refund_claimed = player_row[1]
+
+            if not has_deposited:
+                return {
+                    "canRefund": False,
+                    "reason": "no_deposit",
+                    "amount": "0",
+                    "onChainMatchId": on_chain_match_id,
+                }
+
+            if refund_claimed:
+                return {
+                    "canRefund": False,
+                    "reason": "already_claimed",
+                    "amount": str(stake or "0"),
+                    "onChainMatchId": on_chain_match_id,
+                }
+
+            return {
+                "canRefund": True,
+                "reason": "eligible",
+                "amount": str(stake or "0"),
+                "onChainMatchId": on_chain_match_id,
+            }
+    except Exception as exc:
+        logger.error("match_refund_status error: %s", exc)
+        raise HTTPException(500, "Failed to fetch refund status")
+
+
 @app.get("/match/{match_id}/consensus")
 async def match_consensus_state(
     match_id: str,
@@ -4975,8 +5081,7 @@ async def buy_arena_tokens(req: BuyAtRequest, payload: dict = Depends(verify_tok
 
 class WithdrawAtRequest(BaseModel):
     """POST /wallet/withdraw-at body."""
-    at_amount: int       # AT to burn (must be multiple of 95 or 110 depending on discount)
-    use_discount: bool = False  # True → 950 AT = $10, False → 1100 AT = $10
+    at_amount: int  # AT to burn — must be a multiple of 1050
 
 
 @app.post("/wallet/withdraw-at", status_code=200)
@@ -4984,13 +5089,10 @@ async def withdraw_arena_tokens(req: WithdrawAtRequest, payload: dict = Depends(
     """
     POST /wallet/withdraw-at — burn AT and send equivalent BNB to user's wallet.
 
-    Rates (per $10 USDT equivalent):
-      Standard:  1100 AT → $10 USDT → sent as BNB to user wallet
-      Discounted:  950 AT → $10 USDT → sent as BNB to user wallet
-
+    Rate: 1050 AT = $10 USDT → sent as BNB to user wallet.
     Rules:
       - User must have a linked wallet_address.
-      - at_amount must be divisible by the base unit (950 or 1100).
+      - at_amount must be a multiple of 1050.
       - Daily limit: 10,000 AT per user per calendar day (UTC).
       - Burns AT from DB; CONTRACT-ready: sends BNB from platform wallet.
 
@@ -5002,7 +5104,6 @@ async def withdraw_arena_tokens(req: WithdrawAtRequest, payload: dict = Depends(
     """
     from src.config import (
         AT_PER_USDT_WITHDRAW,
-        AT_PER_USDT_WITHDRAW_DISCOUNT,
         AT_DAILY_WITHDRAW_LIMIT,
         BLOCKCHAIN_RPC_URL,
         PLATFORM_WALLET_ADDRESS,
@@ -5017,22 +5118,19 @@ async def withdraw_arena_tokens(req: WithdrawAtRequest, payload: dict = Depends(
     if at_amount <= 0:
         raise HTTPException(400, "at_amount must be greater than 0")
 
-    # Rate: AT per $1 USDT
-    rate = AT_PER_USDT_WITHDRAW_DISCOUNT if req.use_discount else AT_PER_USDT_WITHDRAW
+    rate     = AT_PER_USDT_WITHDRAW        # 105 AT per $1
+    unit_at  = rate * 10                   # 1050 AT per $10
 
-    # Must be a whole number of $1 units
-    if at_amount % rate != 0:
-        unit_label = f"{rate * 10} AT" if rate == AT_PER_USDT_WITHDRAW else f"{rate * 10} AT"
+    if at_amount % unit_at != 0:
         raise HTTPException(
             400,
-            f"at_amount must be a multiple of {rate} "
-            f"({'discounted' if req.use_discount else 'standard'} rate: {rate} AT = $1 USDT). "
-            f"Smallest withdrawal: {rate * 10} AT = $10 USDT.",
+            f"at_amount must be a multiple of {unit_at} (1050 AT = $10 USDT). "
+            f"Smallest withdrawal: {unit_at} AT.",
         )
 
     usdt_value = at_amount / rate          # USDT equivalent
     if usdt_value < 10.0:
-        raise HTTPException(400, f"Minimum withdrawal is $10 USDT equivalent ({rate * 10} AT).")
+        raise HTTPException(400, f"Minimum withdrawal is $10 USDT equivalent ({unit_at} AT).")
 
     try:
         with SessionLocal() as session:
