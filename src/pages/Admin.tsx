@@ -20,7 +20,7 @@ import {
   ShieldAlert, Gavel, Users, Ban, CheckCircle2, XCircle, AlertTriangle,
   Activity, DollarSign, Eye, Clock, Search, ArrowUpDown, ArrowUp, ArrowDown,
   Download, Power, Settings, Radio, ChevronRight, Zap, Flag, RefreshCw,
-  TrendingUp, Shield, Tv2,
+  TrendingUp, Shield, Tv2, Star, Pencil, Trash2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useNotificationStore } from "@/stores/notificationStore";
@@ -297,22 +297,50 @@ function auditRowsToActivity(entries: AuditLog[]): AdminActivityEvent[] {
 }
 
 // ─── Admin Creators Section ──────────────────────────────────────
-function AdminCreatorsSection({ token }: { token: string | null }) {
-  const [apps, setApps] = useState<import("@/types").CreatorApplication[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [filter, setFilter] = useState<"pending" | "approved" | "rejected">("pending");
-  const [notes, setNotes] = useState<Record<string, string>>({});
+type CreatorEditForm = {
+  display_name: string; bio: string; primary_game: string; rank_tier: string;
+  twitch_url: string; youtube_url: string; tiktok_url: string; twitter_url: string;
+  featured: boolean;
+};
 
-  useEffect(() => {
+function AdminCreatorsSection({ token }: { token: string | null }) {
+  const [tab, setTab] = useState<"applications" | "profiles">("applications");
+  const [apps, setApps] = useState<import("@/types").CreatorApplication[]>([]);
+  const [profiles, setProfiles] = useState<import("@/types").CreatorProfile[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [appFilter, setAppFilter] = useState<"pending" | "approved" | "rejected">("pending");
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [editTarget, setEditTarget] = useState<import("@/types").CreatorProfile | null>(null);
+  const [editForm, setEditForm] = useState<CreatorEditForm | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<import("@/types").CreatorProfile | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const loadApps = useCallback(() => {
     if (!token) return;
     setLoading(true);
     import("@/lib/engine-api").then(({ apiAdminGetCreatorApplications }) =>
-      apiAdminGetCreatorApplications(token, filter)
+      apiAdminGetCreatorApplications(token, appFilter)
         .then((d) => setApps(d.applications))
         .catch(() => setApps([]))
         .finally(() => setLoading(false))
     );
-  }, [token, filter]);
+  }, [token, appFilter]);
+
+  const loadProfiles = useCallback(() => {
+    if (!token) return;
+    setLoading(true);
+    import("@/lib/engine-api").then(({ apiAdminGetCreatorProfiles }) =>
+      (apiAdminGetCreatorProfiles as (t: string) => Promise<{ profiles: import("@/types").CreatorProfile[] }>)(token)
+        .then((d) => setProfiles(d.profiles))
+        .catch(() => setProfiles([]))
+        .finally(() => setLoading(false))
+    );
+  }, [token]);
+
+  useEffect(() => {
+    if (tab === "applications") loadApps();
+    else loadProfiles();
+  }, [tab, loadApps, loadProfiles]);
 
   const review = async (id: string, status: "approved" | "rejected") => {
     if (!token) return;
@@ -321,80 +349,275 @@ function AdminCreatorsSection({ token }: { token: string | null }) {
     setApps((prev) => prev.filter((a) => a.id !== id));
   };
 
+  const openEdit = (p: import("@/types").CreatorProfile) => {
+    setEditTarget(p);
+    setEditForm({
+      display_name: p.display_name,
+      bio: p.bio ?? "",
+      primary_game: p.primary_game,
+      rank_tier: p.rank_tier ?? "",
+      twitch_url: p.twitch_url ?? "",
+      youtube_url: p.youtube_url ?? "",
+      tiktok_url: p.tiktok_url ?? "",
+      twitter_url: p.twitter_url ?? "",
+      featured: p.featured,
+    });
+  };
+
+  const saveEdit = async () => {
+    if (!token || !editTarget || !editForm) return;
+    setSaving(true);
+    try {
+      const { apiAdminEditCreatorProfile } = await import("@/lib/engine-api");
+      await (apiAdminEditCreatorProfile as (t: string, id: string, d: Partial<CreatorEditForm>) => Promise<unknown>)(
+        token, editTarget.id, {
+          ...editForm,
+          rank_tier: editForm.rank_tier || undefined,
+          bio: editForm.bio || undefined,
+          twitch_url: editForm.twitch_url || undefined,
+          youtube_url: editForm.youtube_url || undefined,
+          tiktok_url: editForm.tiktok_url || undefined,
+          twitter_url: editForm.twitter_url || undefined,
+        }
+      );
+      setProfiles((prev) => prev.map((p) => p.id === editTarget.id ? { ...p, ...editForm } : p));
+      setEditTarget(null);
+      setEditForm(null);
+    } catch { /* ignore */ } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleFeatured = async (p: import("@/types").CreatorProfile) => {
+    if (!token) return;
+    const { apiAdminEditCreatorProfile } = await import("@/lib/engine-api");
+    await (apiAdminEditCreatorProfile as (t: string, id: string, d: { featured: boolean }) => Promise<unknown>)(
+      token, p.id, { featured: !p.featured }
+    );
+    setProfiles((prev) => prev.map((c) => c.id === p.id ? { ...c, featured: !c.featured } : c));
+  };
+
+  const confirmDelete = async () => {
+    if (!token || !deleteTarget) return;
+    const { apiAdminDeleteCreatorProfile } = await import("@/lib/engine-api");
+    await (apiAdminDeleteCreatorProfile as (t: string, id: string) => Promise<unknown>)(token, deleteTarget.id);
+    setProfiles((prev) => prev.filter((c) => c.id !== deleteTarget.id));
+    setDeleteTarget(null);
+  };
+
   return (
     <div className="space-y-4">
+      {/* Header + main tabs */}
       <div className="flex items-center gap-3">
         <div>
-          <p className="text-sm font-display font-bold">Creator Applications</p>
-          <p className="text-[11px] text-muted-foreground">Review and approve creator submissions</p>
+          <p className="text-sm font-display font-bold">Creators</p>
+          <p className="text-[11px] text-muted-foreground">Manage applications and approved creator profiles</p>
         </div>
         <div className="ml-auto flex gap-1">
-          {(["pending", "approved", "rejected"] as const).map((s) => (
-            <button key={s} onClick={() => setFilter(s)}
+          {(["applications", "profiles"] as const).map((t) => (
+            <button key={t} onClick={() => setTab(t)}
               className={cn("px-3 py-1 rounded text-[10px] font-mono uppercase border transition-colors",
-                filter === s ? "bg-primary/10 border-primary/40 text-primary" : "border-border/40 text-muted-foreground hover:text-foreground")}>
-              {s}
+                tab === t ? "bg-primary/10 border-primary/40 text-primary" : "border-border/40 text-muted-foreground hover:text-foreground")}>
+              {t}
             </button>
           ))}
         </div>
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground/40" />
-        </div>
-      ) : apps.length === 0 ? (
-        <div className="text-center py-16 text-muted-foreground">
-          <Tv2 className="h-10 w-10 mx-auto mb-3 opacity-20" />
-          <p className="text-sm font-display">No {filter} applications</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {apps.map((app) => (
-            <div key={app.id} className="rounded-xl border border-border/50 bg-secondary/20 p-4 space-y-3">
-              <div className="flex items-start gap-3">
-                <div className="h-10 w-10 rounded-full bg-secondary/60 border border-border/50 flex items-center justify-center text-sm font-bold shrink-0">
-                  {app.username.slice(0, 2).toUpperCase()}
+      {/* ── Applications ── */}
+      {tab === "applications" && (
+        <>
+          <div className="flex gap-1">
+            {(["pending", "approved", "rejected"] as const).map((s) => (
+              <button key={s} onClick={() => setAppFilter(s)}
+                className={cn("px-2 py-0.5 rounded text-[9px] font-mono uppercase border transition-colors",
+                  appFilter === s ? "bg-primary/10 border-primary/40 text-primary" : "border-border/30 text-muted-foreground/60 hover:text-foreground")}>
+                {s}
+              </button>
+            ))}
+          </div>
+          {loading ? (
+            <div className="flex items-center justify-center py-16">
+              <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground/40" />
+            </div>
+          ) : apps.length === 0 ? (
+            <div className="text-center py-16 text-muted-foreground">
+              <Tv2 className="h-10 w-10 mx-auto mb-3 opacity-20" />
+              <p className="text-sm font-display">No {appFilter} applications</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {apps.map((app) => (
+                <div key={app.id} className="rounded-xl border border-border/50 bg-secondary/20 p-4 space-y-3">
+                  <div className="flex items-start gap-3">
+                    <div className="h-10 w-10 rounded-full bg-secondary/60 border border-border/50 flex items-center justify-center text-sm font-bold shrink-0">
+                      {app.username.slice(0, 2).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-foreground">{app.username}</p>
+                      <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-primary/10 border border-primary/30 text-primary">{app.primary_game}</span>
+                        <span className="text-[10px] font-mono text-muted-foreground/50">{app.match_count} matches</span>
+                      </div>
+                    </div>
+                  </div>
+                  {app.bio && <p className="text-xs text-muted-foreground/70 border-l-2 border-border/40 pl-2">{app.bio}</p>}
+                  {app.motivation && <p className="text-xs text-muted-foreground/60 italic">"{app.motivation}"</p>}
+                  <div className="flex flex-wrap gap-1.5 text-[10px] font-mono">
+                    {[app.twitch_url, app.youtube_url, app.tiktok_url, app.twitter_url].filter(Boolean).map((url, i) => (
+                      <a key={i} href={url!} target="_blank" rel="noreferrer"
+                        className="px-2 py-0.5 rounded border border-border/40 text-arena-cyan/70 hover:text-arena-cyan transition-colors">
+                        {url!.replace(/https?:\/\/(www\.)?/, "").split("/")[0]}
+                      </a>
+                    ))}
+                  </div>
+                  {appFilter === "pending" && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <input
+                        className="flex-1 h-7 bg-secondary/40 border border-border/40 rounded px-2 text-xs font-mono placeholder:text-muted-foreground/30"
+                        placeholder="Review note (optional)..."
+                        value={notes[app.id] ?? ""}
+                        onChange={(e) => setNotes((n) => ({ ...n, [app.id]: e.target.value }))}
+                      />
+                      <Button size="sm" className="h-7 px-3 text-xs bg-green-500/10 border border-green-500/30 text-green-400 hover:bg-green-500/20"
+                        onClick={() => void review(app.id, "approved")}>
+                        <CheckCircle2 className="h-3 w-3 mr-1" /> Approve
+                      </Button>
+                      <Button size="sm" variant="outline" className="h-7 px-3 text-xs border-destructive/30 text-destructive hover:bg-destructive/10"
+                        onClick={() => void review(app.id, "rejected")}>
+                        <XCircle className="h-3 w-3 mr-1" /> Reject
+                      </Button>
+                    </div>
+                  )}
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-foreground">{app.username}</p>
-                  <div className="flex items-center gap-2 flex-wrap mt-0.5">
-                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-primary/10 border border-primary/30 text-primary">{app.primary_game}</span>
-                    <span className="text-[10px] font-mono text-muted-foreground/50">{app.match_count} matches</span>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── Profiles ── */}
+      {tab === "profiles" && (
+        <>
+          {loading ? (
+            <div className="flex items-center justify-center py-16">
+              <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground/40" />
+            </div>
+          ) : profiles.length === 0 ? (
+            <div className="text-center py-16 text-muted-foreground">
+              <Tv2 className="h-10 w-10 mx-auto mb-3 opacity-20" />
+              <p className="text-sm font-display">No approved creator profiles yet</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {profiles.map((p) => (
+                <div key={p.id} className={cn(
+                  "rounded-xl border bg-secondary/20 p-3 flex items-center gap-3",
+                  p.featured ? "border-arena-gold/30" : "border-border/40"
+                )}>
+                  <div className="h-9 w-9 rounded-full bg-secondary/60 border border-border/50 flex items-center justify-center text-xs font-bold shrink-0">
+                    {p.display_name.slice(0, 2).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-bold text-foreground truncate">{p.display_name}</p>
+                      {p.featured && <span className="text-[9px] font-mono text-arena-gold border border-arena-gold/30 px-1 rounded">FEAT</span>}
+                    </div>
+                    <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/50">
+                      <span>@{p.username}</span>
+                      <span>·</span>
+                      <span>{p.primary_game}</span>
+                      {p.rank_tier && <><span>·</span><span>{p.rank_tier}</span></>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0"
+                      title={p.featured ? "Remove featured" : "Mark featured"}
+                      onClick={() => void toggleFeatured(p)}>
+                      <Star className={cn("h-3.5 w-3.5", p.featured ? "text-arena-gold fill-arena-gold" : "text-muted-foreground/40")} />
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                      onClick={() => openEdit(p)}>
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-destructive/50 hover:text-destructive hover:bg-destructive/10"
+                      onClick={() => setDeleteTarget(p)}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
                   </div>
                 </div>
-              </div>
-              {app.bio && <p className="text-xs text-muted-foreground/70 border-l-2 border-border/40 pl-2">{app.bio}</p>}
-              {app.motivation && <p className="text-xs text-muted-foreground/60 italic">"{app.motivation}"</p>}
-              <div className="flex flex-wrap gap-1.5 text-[10px] font-mono">
-                {[app.twitch_url, app.youtube_url, app.tiktok_url, app.twitter_url].filter(Boolean).map((url, i) => (
-                  <a key={i} href={url!} target="_blank" rel="noreferrer"
-                    className="px-2 py-0.5 rounded border border-border/40 text-arena-cyan/70 hover:text-arena-cyan transition-colors">
-                    {url!.replace(/https?:\/\/(www\.)?/, "").split("/")[0]}
-                  </a>
-                ))}
-              </div>
-              {filter === "pending" && (
-                <div className="flex items-center gap-2 pt-1">
-                  <input
-                    className="flex-1 h-7 bg-secondary/40 border border-border/40 rounded px-2 text-xs font-mono placeholder:text-muted-foreground/30"
-                    placeholder="Review note (optional)..."
-                    value={notes[app.id] ?? ""}
-                    onChange={(e) => setNotes((n) => ({ ...n, [app.id]: e.target.value }))}
-                  />
-                  <Button size="sm" className="h-7 px-3 text-xs bg-green-500/10 border border-green-500/30 text-green-400 hover:bg-green-500/20"
-                    onClick={() => review(app.id, "approved")}>
-                    <CheckCircle2 className="h-3 w-3 mr-1" /> Approve
-                  </Button>
-                  <Button size="sm" variant="outline" className="h-7 px-3 text-xs border-destructive/30 text-destructive hover:bg-destructive/10"
-                    onClick={() => review(app.id, "rejected")}>
-                    <XCircle className="h-3 w-3 mr-1" /> Reject
-                  </Button>
-                </div>
-              )}
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </>
+      )}
+
+      {/* ── Edit Dialog ── */}
+      {editTarget && editForm && (
+        <Dialog open onOpenChange={() => { setEditTarget(null); setEditForm(null); }}>
+          <DialogContent className="max-w-md bg-card border-border">
+            <DialogHeader>
+              <DialogTitle className="font-display text-sm">Edit Creator: {editTarget.display_name}</DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground">Changes apply immediately.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2.5 py-1 max-h-[60vh] overflow-y-auto pr-1">
+              {([
+                { key: "display_name", label: "Display Name" },
+                { key: "bio", label: "Bio" },
+                { key: "primary_game", label: "Primary Game" },
+                { key: "rank_tier", label: "Rank Tier" },
+                { key: "twitch_url", label: "Twitch URL" },
+                { key: "youtube_url", label: "YouTube URL" },
+                { key: "tiktok_url", label: "TikTok URL" },
+                { key: "twitter_url", label: "Twitter/X URL" },
+              ] as const).map(({ key, label }) => (
+                <div key={key} className="space-y-1">
+                  <label className="text-[10px] font-mono text-muted-foreground/50 uppercase tracking-widest">{label}</label>
+                  <Input
+                    className="h-7 bg-secondary/60 border-border text-xs"
+                    value={editForm[key] as string}
+                    onChange={(e) => setEditForm((f) => f ? { ...f, [key]: e.target.value } : f)}
+                  />
+                </div>
+              ))}
+              <div className="flex items-center gap-2 pt-1">
+                <input type="checkbox" id="creator-featured" checked={editForm.featured}
+                  onChange={(e) => setEditForm((f) => f ? { ...f, featured: e.target.checked } : f)}
+                  className="accent-primary h-3.5 w-3.5 cursor-pointer"
+                />
+                <label htmlFor="creator-featured" className="text-xs text-foreground/80 cursor-pointer">Featured</label>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button size="sm" variant="ghost" className="text-xs h-8" onClick={() => { setEditTarget(null); setEditForm(null); }}>Cancel</Button>
+              <Button size="sm" className="text-xs font-display h-8" disabled={saving} onClick={() => void saveEdit()}>
+                {saving ? <RefreshCw className="h-3 w-3 animate-spin mr-1" /> : <CheckCircle2 className="h-3 w-3 mr-1" />}
+                Save
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* ── Delete Confirm ── */}
+      {deleteTarget && (
+        <AlertDialog open onOpenChange={() => setDeleteTarget(null)}>
+          <AlertDialogContent className="bg-card border-border">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="font-display text-sm">Remove {deleteTarget.display_name}?</AlertDialogTitle>
+              <AlertDialogDescription className="text-xs">
+                This permanently deletes their creator profile. Their account is not affected.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel className="text-xs h-8">Cancel</AlertDialogCancel>
+              <AlertDialogAction className="text-xs h-8 bg-destructive hover:bg-destructive/90 font-display"
+                onClick={() => void confirmDelete()}>
+                <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       )}
     </div>
   );
@@ -2017,6 +2240,9 @@ const Admin = () => {
             </div>
           )}
 
+          {/* ══ CREATORS ══ */}
+          {section === "creators" && <AdminCreatorsSection token={token} />}
+
         </div>
       </div>
 
@@ -2072,9 +2298,6 @@ const Admin = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-          {/* ══ CREATORS ══ */}
-          {section === "creators" && <AdminCreatorsSection token={token} />}
 
       {/* ── Kill Switch Confirm ── */}
       <AlertDialog open={killConfirm} onOpenChange={setKillConfirm}>

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Tv2, Youtube, Twitter, ExternalLink, Star, Radio, Crosshair,
   ChevronRight, Send, X, CheckCircle2, Loader2, Crown, Flame,
-  Trophy, Users, Zap,
+  Trophy, Users, Zap, Pencil,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,7 @@ import { renderForgeShopIcon } from "@/lib/forgeItemIcon";
 import { cn } from "@/lib/utils";
 import {
   apiGetCreators, apiGetCreator, apiApplyCreator,
+  apiGetMyCreatorProfile, apiEditMyCreatorProfile,
 } from "@/lib/engine-api";
 import type { CreatorProfile } from "@/types";
 
@@ -403,17 +404,129 @@ function ApplyModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: ()
   );
 }
 
+// ─── Edit Profile Modal ───────────────────────────────────────
+
+function EditProfileModal({ profile, onClose, onSaved }: {
+  profile: CreatorProfile;
+  onClose: () => void;
+  onSaved: (updated: Partial<CreatorProfile>) => void;
+}) {
+  const token = useUserStore((s) => s.token);
+  const [form, setForm] = useState({
+    bio: profile.bio ?? "",
+    twitch_url: profile.twitch_url ?? "",
+    youtube_url: profile.youtube_url ?? "",
+    tiktok_url: profile.tiktok_url ?? "",
+    twitter_url: profile.twitter_url ?? "",
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  const save = async () => {
+    if (!token) return;
+    setLoading(true); setError(null);
+    try {
+      await apiEditMyCreatorProfile(token, form);
+      setSuccess(true);
+      setTimeout(() => { onSaved(form); onClose(); }, 800);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to save");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-md bg-gray-950 border-border/50 p-0 overflow-hidden">
+        <div className="h-[2px] w-full bg-gradient-to-r from-arena-cyan via-primary to-arena-purple" />
+        <div className="p-6 space-y-4">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-foreground">
+              <Pencil className="h-4 w-4 text-arena-cyan" />
+              Edit Your Creator Profile
+            </DialogTitle>
+            <DialogDescription className="text-muted-foreground/60 text-xs font-mono">
+              UPDATE LINKS · BIO · ARENA CREATOR NETWORK
+            </DialogDescription>
+          </DialogHeader>
+
+          {success ? (
+            <div className="flex flex-col items-center gap-3 py-6">
+              <CheckCircle2 className="h-10 w-10 text-green-500" />
+              <p className="text-sm text-foreground font-medium">Profile Updated</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {([
+                { key: "twitch_url",  label: "Twitch URL",     placeholder: "https://twitch.tv/..." },
+                { key: "youtube_url", label: "YouTube URL",    placeholder: "https://youtube.com/..." },
+                { key: "tiktok_url",  label: "TikTok URL",     placeholder: "https://tiktok.com/..." },
+                { key: "twitter_url", label: "Twitter/X URL",  placeholder: "https://x.com/..." },
+              ] as const).map(({ key, label, placeholder }) => (
+                <div key={key} className="space-y-1.5">
+                  <label className="text-[10px] font-mono text-muted-foreground/50 uppercase tracking-widest">{label}</label>
+                  <Input
+                    className="bg-secondary/40 border-border/50 text-sm h-8"
+                    placeholder={placeholder}
+                    value={form[key]}
+                    onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+                  />
+                </div>
+              ))}
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-mono text-muted-foreground/50 uppercase tracking-widest">Bio</label>
+                <Textarea
+                  className="bg-secondary/40 border-border/50 text-sm min-h-[72px] resize-none"
+                  placeholder="Tell the Arena community about yourself..."
+                  value={form.bio}
+                  onChange={(e) => setForm((f) => ({ ...f, bio: e.target.value }))}
+                  maxLength={300}
+                />
+              </div>
+
+              {error && (
+                <p className="text-xs text-destructive font-mono bg-destructive/10 border border-destructive/30 rounded px-3 py-2">{error}</p>
+              )}
+
+              <div className="flex items-center gap-2 pt-1">
+                <Button variant="outline" size="sm" onClick={onClose} className="flex-1">
+                  <X className="h-3 w-3 mr-1" /> Cancel
+                </Button>
+                <Button size="sm" onClick={() => void save()} disabled={loading} className="flex-1 bg-arena-cyan/10 border border-arena-cyan/40 text-arena-cyan hover:bg-arena-cyan/20">
+                  {loading ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <CheckCircle2 className="h-3 w-3 mr-1" />}
+                  Save
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Main Page ───────────────────────────────────────────────
 
 export default function Creators() {
   const user  = useUserStore((s) => s.user);
-  const [section, setSection]         = useState<CreatorSection>("all");
-  const [creators, setCreators]       = useState<CreatorProfile[]>([]);
-  const [loading, setLoading]         = useState(true);
-  const [selected, setSelected]       = useState<CreatorProfile | null>(null);
-  const [showApply, setShowApply]     = useState(false);
-  const [gameFilter, setGameFilter]   = useState("All Games");
-  const [tierFilter, setTierFilter]   = useState("All Tiers");
+  const token = useUserStore((s) => s.token);
+  const [section, setSection]           = useState<CreatorSection>("all");
+  const [creators, setCreators]         = useState<CreatorProfile[]>([]);
+  const [loading, setLoading]           = useState(true);
+  const [selected, setSelected]         = useState<CreatorProfile | null>(null);
+  const [showApply, setShowApply]       = useState(false);
+  const [showEdit, setShowEdit]         = useState(false);
+  const [myProfile, setMyProfile]       = useState<CreatorProfile | null>(null);
+  const [gameFilter, setGameFilter]     = useState("All Games");
+  const [tierFilter, setTierFilter]     = useState("All Tiers");
+
+  useEffect(() => {
+    if (!token) return;
+    apiGetMyCreatorProfile(token).then(setMyProfile).catch(() => setMyProfile(null));
+  }, [token]);
 
   const fetchCreators = useCallback(async (overrides?: { game?: string; tier?: string; featured?: boolean }) => {
     setLoading(true);
@@ -503,15 +616,25 @@ export default function Creators() {
               </button>
             ))}
 
-            {/* apply CTA */}
-            {user && section !== "apply" && (
-              <button
-                onClick={() => setShowApply(true)}
-                className="mt-auto mx-1 px-3 py-2 rounded-md border border-arena-cyan/25 bg-arena-cyan/5 text-arena-cyan/80 hover:bg-arena-cyan/10 hover:text-arena-cyan transition-colors text-[10px] font-mono uppercase tracking-widest flex items-center gap-1.5">
-                <Radio className="h-3 w-3" />
-                APPLY NOW
-              </button>
-            )}
+            {/* edit / apply CTAs */}
+            <div className="mt-auto flex flex-col gap-1 mx-1">
+              {myProfile && (
+                <button
+                  onClick={() => setShowEdit(true)}
+                  className="px-3 py-2 rounded-md border border-arena-cyan/25 bg-arena-cyan/5 text-arena-cyan/80 hover:bg-arena-cyan/10 hover:text-arena-cyan transition-colors text-[10px] font-mono uppercase tracking-widest flex items-center gap-1.5">
+                  <Pencil className="h-3 w-3" />
+                  EDIT PROFILE
+                </button>
+              )}
+              {user && !myProfile && section !== "apply" && (
+                <button
+                  onClick={() => setShowApply(true)}
+                  className="px-3 py-2 rounded-md border border-arena-cyan/25 bg-arena-cyan/5 text-arena-cyan/80 hover:bg-arena-cyan/10 hover:text-arena-cyan transition-colors text-[10px] font-mono uppercase tracking-widest flex items-center gap-1.5">
+                  <Radio className="h-3 w-3" />
+                  APPLY NOW
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Content */}
@@ -617,6 +740,13 @@ export default function Creators() {
         <ApplyModal
           onClose={() => setShowApply(false)}
           onSuccess={() => { setShowApply(false); setSection("all"); fetchCreators(); }}
+        />
+      )}
+      {showEdit && myProfile && (
+        <EditProfileModal
+          profile={myProfile}
+          onClose={() => setShowEdit(false)}
+          onSaved={(updated) => setMyProfile((p) => p ? { ...p, ...updated } : p)}
         />
       )}
     </ArenaPageShell>

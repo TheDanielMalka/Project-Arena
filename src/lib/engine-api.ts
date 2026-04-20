@@ -3463,3 +3463,63 @@ export async function apiAdminReviewCreatorApplication(
   return raw;
 }
 
+export async function apiGetMyCreatorProfile(token: string): Promise<CreatorProfile> {
+  const res = await arenaUserFetch(`${ENGINE_BASE}/creators/me`, token);
+  if (!res.ok) throw new Error("No creator profile");
+  return res.json();
+}
+
+export async function apiEditMyCreatorProfile(
+  token: string,
+  data: { bio?: string; twitch_url?: string; youtube_url?: string; tiktok_url?: string; twitter_url?: string }
+): Promise<{ status: string }> {
+  const res = await arenaUserFetch(`${ENGINE_BASE}/creators/me`, token, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  const raw = await res.json();
+  if (!res.ok) throw new Error(raw.detail || "Failed to update profile");
+  return raw;
+}
+
+export async function apiAdminGetCreatorProfiles(
+  token: string, limit = 50, offset = 0
+): Promise<{ profiles: CreatorProfile[]; total: number }> {
+  const res = await arenaUserFetch(
+    `${ENGINE_BASE}/admin/creators/profiles?limit=${limit}&offset=${offset}`, token
+  );
+  if (!res.ok) throw new Error("Failed to fetch profiles");
+  return res.json();
+}
+
+export async function apiAdminEditCreatorProfile(
+  token: string,
+  creatorId: string,
+  data: {
+    display_name?: string; bio?: string; primary_game?: string; rank_tier?: string;
+    twitch_url?: string; youtube_url?: string; tiktok_url?: string; twitter_url?: string;
+    featured?: boolean;
+  }
+): Promise<{ status: string }> {
+  const res = await arenaUserFetch(`${ENGINE_BASE}/admin/creators/${creatorId}`, token, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  const raw = await res.json();
+  if (!res.ok) throw new Error(raw.detail || "Failed to update creator");
+  return raw;
+}
+
+export async function apiAdminDeleteCreatorProfile(
+  token: string, creatorId: string
+): Promise<{ status: string }> {
+  const res = await arenaUserFetch(`${ENGINE_BASE}/admin/creators/${creatorId}`, token, {
+    method: "DELETE",
+  });
+  const raw = await res.json();
+  if (!res.ok) throw new Error(raw.detail || "Failed to delete creator");
+  return raw;
+}
+
