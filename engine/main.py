@@ -2164,101 +2164,68 @@ async def match_refund_status(
     token: dict | None = Depends(optional_token),
 ):
     """
-    Check whether the calling user can claim a refund for this match.
+    GET /match/:id/refund-status — can the calling player call ArenaEscrow.claimRefund()?
 
-    Returns:
-      canRefund        — true only when: match is cancelled + user deposited + not yet claimed
-      reason           — human-readable reason when canRefund is false
-      amount           — stake in BNB as a string (e.g. "0.1")
-      onChainMatchId   — the on-chain match ID needed by ArenaEscrow.claimRefund()
+    claimRefund() is only valid for ACTIVE matches past the 2-hour on-chain TIMEOUT.
+    Cancelled matches (cancelMatch/cancelWaiting) already auto-refund inside those calls.
 
+    canRefund = True when ALL of:
+      1. match status is 'in_progress'        (= ACTIVE on-chain)
+      2. started_at < NOW() - 2h             (contract TIMEOUT elapsed)
+      3. on_chain_match_id IS NOT NULL
+      4. player has_deposited = TRUE
+
+    Returns: canRefund, reason, amount (BNB string), onChainMatchId
     CONTRACT-ready: canRefund=true → frontend calls ArenaEscrow.claimRefund(onChainMatchId)
-    DB-ready: matches + match_players
     """
-    user_id: str | None = token.get("sub") if token else None
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    user_id: str = token["sub"]
+    CONTRACT_TIMEOUT_SECONDS = 7200  # ArenaEscrow.sol: TIMEOUT = 2 hours
     try:
         with SessionLocal() as session:
             row = session.execute(
-                text("""
-                    SELECT status, on_chain_match_id, stake_per_player
-                    FROM matches WHERE id = :mid
-                """),
+                text(
+                    "SELECT status, on_chain_match_id, stake_per_player, started_at "
+                    "FROM matches WHERE id = :mid"
+                ),
                 {"mid": match_id},
             ).fetchone()
 
             if not row:
                 return {"canRefund": False, "reason": "match_not_found", "amount": "0", "onChainMatchId": None}
 
-            match_status_val  = row[0]
-            on_chain_match_id = row[1]
-            stake             = row[2]
+            match_status_val, on_chain_match_id, stake, started_at = row
 
-            if match_status_val != "cancelled":
-                return {
-                    "canRefund": False,
-                    "reason": "match_not_cancelled",
-                    "amount": str(stake or "0"),
-                    "onChainMatchId": on_chain_match_id,
-                }
+            if match_status_val != "in_progress":
+                return {"canRefund": False, "reason": "match_not_active", "amount": str(stake or "0"), "onChainMatchId": on_chain_match_id}
 
             if on_chain_match_id is None:
-                return {
-                    "canRefund": False,
-                    "reason": "no_on_chain_id",
-                    "amount": str(stake or "0"),
-                    "onChainMatchId": None,
-                }
+                return {"canRefund": False, "reason": "no_on_chain_id", "amount": str(stake or "0"), "onChainMatchId": None}
 
-            if not user_id:
-                return {
-                    "canRefund": False,
-                    "reason": "unauthenticated",
-                    "amount": str(stake or "0"),
-                    "onChainMatchId": on_chain_match_id,
-                }
+            if started_at is None:
+                return {"canRefund": False, "reason": "not_started", "amount": str(stake or "0"), "onChainMatchId": on_chain_match_id}
+
+            elapsed_row = session.execute(
+                text("SELECT EXTRACT(EPOCH FROM (NOW() - :started))::int >= :timeout AS elapsed"),
+                {"started": started_at, "timeout": CONTRACT_TIMEOUT_SECONDS},
+            ).fetchone()
+            if not elapsed_row or not elapsed_row[0]:
+                return {"canRefund": False, "reason": "timeout_not_reached", "amount": str(stake or "0"), "onChainMatchId": on_chain_match_id}
 
             player_row = session.execute(
-                text("""
-                    SELECT has_deposited, refund_claimed
-                    FROM match_players
-                    WHERE match_id = :mid AND user_id = :uid
-                """),
+                text("SELECT has_deposited FROM match_players WHERE match_id = :mid AND user_id = :uid"),
                 {"mid": match_id, "uid": user_id},
             ).fetchone()
 
             if not player_row:
-                return {
-                    "canRefund": False,
-                    "reason": "not_a_player",
-                    "amount": str(stake or "0"),
-                    "onChainMatchId": on_chain_match_id,
-                }
+                return {"canRefund": False, "reason": "not_a_player", "amount": str(stake or "0"), "onChainMatchId": on_chain_match_id}
 
-            has_deposited  = player_row[0]
-            refund_claimed = player_row[1]
+            if not player_row[0]:
+                return {"canRefund": False, "reason": "no_deposit", "amount": "0", "onChainMatchId": on_chain_match_id}
 
-            if not has_deposited:
-                return {
-                    "canRefund": False,
-                    "reason": "no_deposit",
-                    "amount": "0",
-                    "onChainMatchId": on_chain_match_id,
-                }
+            return {"canRefund": True, "reason": "eligible", "amount": str(stake or "0"), "onChainMatchId": on_chain_match_id}
 
-            if refund_claimed:
-                return {
-                    "canRefund": False,
-                    "reason": "already_claimed",
-                    "amount": str(stake or "0"),
-                    "onChainMatchId": on_chain_match_id,
-                }
-
-            return {
-                "canRefund": True,
-                "reason": "eligible",
-                "amount": str(stake or "0"),
-                "onChainMatchId": on_chain_match_id,
-            }
     except Exception as exc:
         logger.error("match_refund_status error: %s", exc)
         raise HTTPException(500, "Failed to fetch refund status")

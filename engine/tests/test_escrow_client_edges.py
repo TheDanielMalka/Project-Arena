@@ -162,7 +162,7 @@ class TestRaceForUpdateLocking:
         mid = str(uuid.uuid4())
         p1 = str(uuid.uuid4()); p2 = str(uuid.uuid4())
         c, _, _, s = _client(
-            fns=[(mid, 0.1)],                       # match row (id, stake)
+            fns=[(mid, 0.1, "in_progress")],        # match row (id, stake, status)
             fas=[[(p1,), (p2,)]],                   # players list
         )
         c._handle_match_cancelled({"args": {"matchId": 1}})
@@ -326,7 +326,7 @@ class TestCancelRefundEdges:
         non-depositors (who never put money in escrow) don't get "refunded".
         """
         mid = str(uuid.uuid4())
-        c, _, _, s = _client(fns=[(mid, 0.1)], fas=[[]])
+        c, _, _, s = _client(fns=[(mid, 0.1, "in_progress")], fas=[[]])
         c._handle_match_cancelled({"args": {"matchId": 1}})
         sqls = [str(call.args[0]) for call in s.execute.call_args_list]
         assert any("has_deposited = TRUE" in sql for sql in sqls), (
@@ -340,7 +340,7 @@ class TestCancelRefundEdges:
         query does not need the has_deposited filter here.
         """
         mid = str(uuid.uuid4())
-        c, _, _, s = _client(fns=[(mid, 0.1)], fas=[[]])
+        c, _, _, s = _client(fns=[(mid, 0.1, "in_progress")], fas=[[]])
         c._handle_match_refunded({"args": {"matchId": 1}})
         sqls = [str(call.args[0]) for call in s.execute.call_args_list]
         # The refund path must at least SELECT user_id FROM match_players,
@@ -362,7 +362,7 @@ class TestCancelRefundEdges:
         """
         mid = str(uuid.uuid4())
         p1 = str(uuid.uuid4())
-        c, _, _, s = _client(fns=[(mid, None)], fas=[[(p1,)]])
+        c, _, _, s = _client(fns=[(mid, None, "in_progress")], fas=[[(p1,)]])
         c._handle_match_cancelled({"args": {"matchId": 1}})
         # Find the INSERT ... transactions refund row params.
         refund_calls = [
@@ -378,7 +378,7 @@ class TestCancelRefundEdges:
         match row must still transition to status='cancelled'.
         """
         mid = str(uuid.uuid4())
-        c, _, _, s = _client(fns=[(mid, 0.1)], fas=[[]])
+        c, _, _, s = _client(fns=[(mid, 0.1, "in_progress")], fas=[[]])
         c._handle_match_cancelled({"args": {"matchId": 1}})
         sqls = [str(call.args[0]) for call in s.execute.call_args_list]
         assert any(
