@@ -100,24 +100,21 @@ class SocialMediaAutomator:
             print(f"Facebook posting failed: {e}")
     
     def post_to_twitter(self, content: str, image_url: str = None):
-        """Post to Twitter/X"""
-        if not all([self.twitter_api_key, self.twitter_api_secret, 
-                   self.twitter_access_token, self.twitter_access_secret]):
+        """Post to Twitter/X (API v2)"""
+        if not all([self.twitter_api_key, self.twitter_api_secret,
+                    self.twitter_access_token, self.twitter_access_secret]):
             print("Twitter credentials not configured")
             return
-        
-        auth = tweepy.OAuthHandler(self.twitter_api_key, self.twitter_api_secret)
-        auth.set_access_token(self.twitter_access_token, self.twitter_access_secret)
-        api = tweepy.API(auth)
-        
+
+        client = tweepy.Client(
+            consumer_key=self.twitter_api_key,
+            consumer_secret=self.twitter_api_secret,
+            access_token=self.twitter_access_token,
+            access_token_secret=self.twitter_access_secret,
+        )
+
         try:
-            if image_url:
-                # Download and upload image
-                response = requests.get(image_url)
-                media = api.media_upload(filename="temp_image.png", file=response.content)
-                api.update_status(content, media_ids=[media.media_id])
-            else:
-                api.update_status(content)
+            client.create_tweet(text=content[:280])
             print("Posted to Twitter")
         except Exception as e:
             print(f"Twitter posting failed: {e}")

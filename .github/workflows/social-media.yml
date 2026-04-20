@@ -11,54 +11,71 @@ on:
 jobs:
   social-media:
     runs-on: ubuntu-latest
-    if: github.event_name == 'release' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true) || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    
+    if: |
+      github.event_name == 'release' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-          
+
       - name: Install dependencies
-        run: |
-          pip install -r social-media/requirements.txt
-          
-      - name: Determine event type and data
+        run: pip install -r social-media/requirements.txt
+
+      - name: Build event data file
         id: event_data
+        env:
+          COMMIT_MSG:   ${{ github.event.head_commit.message }}
+          PR_TITLE:     ${{ github.event.pull_request.title }}
+          PR_BODY:      ${{ github.event.pull_request.body }}
+          RELEASE_TAG:  ${{ github.event.release.tag_name }}
+          RELEASE_BODY: ${{ github.event.release.body }}
         run: |
+          # Pass event strings through env vars (safe — no shell injection)
+          # then use jq --arg so special chars are JSON-escaped automatically.
           if [[ "${{ github.event_name }}" == "release" ]]; then
-            echo "event_type=release" >> $GITHUB_OUTPUT
-            echo 'event_data={"release":{"tag_name":"${{ github.event.release.tag_name }}","body":"${{ github.event.release.body }}"}}' >> $GITHUB_OUTPUT
-          elif [[ "${{ github.event_name }}" == "pull_request" && "${{ github.event.pull_request.merged }}" == "true" ]]; then
-            echo "event_type=pull_request" >> $GITHUB_OUTPUT
-            echo 'event_data={"pull_request":{"title":"${{ github.event.pull_request.title }}","body":"${{ github.event.pull_request.body }}","number":"${{ github.event.pull_request.number }}"}}' >> $GITHUB_OUTPUT
-          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
-            echo "event_type=push" >> $GITHUB_OUTPUT
-            echo "event_data={\"ref\":\"${{ github.ref }}\",\"commits\":[{\"message\":\"${{ github.event.head_commit.message }}\"}]}" >> $GITHUB_OUTPUT
+            echo "event_type=release" >> "$GITHUB_OUTPUT"
+            jq -n \
+              --arg tag  "$RELEASE_TAG" \
+              --arg body "$RELEASE_BODY" \
+              '{"release":{"tag_name":$tag,"body":$body}}' > event_data.json
+
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "event_type=pull_request" >> "$GITHUB_OUTPUT"
+            jq -n \
+              --arg title  "$PR_TITLE" \
+              --arg body   "$PR_BODY" \
+              --argjson number "${{ github.event.pull_request.number }}" \
+              '{"pull_request":{"title":$title,"body":$body,"number":$number}}' > event_data.json
+
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "event_type=push" >> "$GITHUB_OUTPUT"
+            jq -n \
+              --arg ref "${{ github.ref }}" \
+              --arg msg "$COMMIT_MSG" \
+              '{"ref":$ref,"commits":[{"message":$msg}]}' > event_data.json
           fi
-          
+
       - name: Post to Social Media
         env:
-          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-          FACEBOOK_ACCESS_TOKEN: ${{ secrets.FACEBOOK_ACCESS_TOKEN }}
-          FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
-          TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
-          TWITTER_API_SECRET: ${{ secrets.TWITTER_API_SECRET }}
-          TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
-          TWITTER_ACCESS_SECRET: ${{ secrets.TWITTER_ACCESS_SECRET }}
+          DISCORD_BOT_TOKEN:      ${{ secrets.DISCORD_BOT_TOKEN }}
+          FACEBOOK_ACCESS_TOKEN:  ${{ secrets.FACEBOOK_ACCESS_TOKEN }}
+          FACEBOOK_PAGE_ID:       ${{ secrets.FACEBOOK_PAGE_ID }}
+          TWITTER_API_KEY:        ${{ secrets.TWITTER_API_KEY }}
+          TWITTER_API_SECRET:     ${{ secrets.TWITTER_API_SECRET }}
+          TWITTER_ACCESS_TOKEN:   ${{ secrets.TWITTER_ACCESS_TOKEN }}
+          TWITTER_ACCESS_SECRET:  ${{ secrets.TWITTER_ACCESS_SECRET }}
           INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
-          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
-          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
-          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          REDDIT_CLIENT_ID:       ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET:   ${{ secrets.REDDIT_CLIENT_SECRET }}
+          YOUTUBE_API_KEY:        ${{ secrets.YOUTUBE_API_KEY }}
         run: |
-          python social-media/auto_post.py --event ${{ steps.event_data.outputs.event_type }} --data ${{ steps.event_data.outputs.event_data }}
-          
-      - name: Test Run (for debugging)
-        if: failure()
-        env:
-          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-        run: |
-          python social-media/auto_post.py --event ${{ steps.event_data.outputs.event_type }} --test
+          python social-media/auto_post.py \
+            --event "${{ steps.event_data.outputs.event_type }}" \
+            --data  event_data.json
