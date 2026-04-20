@@ -9887,7 +9887,7 @@ async def get_my_creator_profile(payload: dict = Depends(optional_token)):
                 SELECT cp.id, cp.user_id, cp.display_name, cp.bio, cp.primary_game,
                        cp.rank_tier, cp.twitch_url, cp.youtube_url, cp.tiktok_url,
                        cp.twitter_url, cp.clip_urls, cp.featured, cp.created_at,
-                       u.username, u.avatar, u.avatar_bg
+                       u.username, u.avatar, u.avatar_bg, u.equipped_badge_icon, u.rank
                 FROM creator_profiles cp JOIN users u ON u.id = cp.user_id
                 WHERE cp.user_id = :uid
             """), {"uid": user_id}).fetchone()
@@ -9902,6 +9902,7 @@ async def get_my_creator_profile(payload: dict = Depends(optional_token)):
                 "clip_urls": row[10] or [],
                 "featured": row[11], "created_at": str(row[12]),
                 "username": row[13], "avatar": row[14], "avatar_bg": row[15],
+                "equipped_badge_icon": row[16], "rank": row[17],
             }
     except HTTPException:
         raise
