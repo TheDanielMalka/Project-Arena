@@ -419,32 +419,6 @@ jobs:
               echo "  fail2ban already running — skipping"
             fi
 
-            echo "=== CloudWatch Agent ==="
-            if ! systemctl list-units --type=service 2>/dev/null | grep -q amazon-cloudwatch-agent; then
-              echo "  Installing CloudWatch Agent..."
-              wget -q https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
-              sudo dpkg -i amazon-cloudwatch-agent.deb
-              rm -f amazon-cloudwatch-agent.deb
-            else
-              echo "  CloudWatch Agent already installed — skipping install"
-            fi
-            sudo cp ~/Project-Arena/infra/cloudwatch/amazon-cloudwatch-agent.json \
-              /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
-            AWS_KEY=$(grep -m1 'AWS_ACCESS_KEY_ID' ~/Project-Arena/.env | cut -d'=' -f2- | tr -d '"' | tr -d "'")
-            AWS_SECRET=$(grep -m1 'AWS_SECRET_ACCESS_KEY' ~/Project-Arena/.env | cut -d'=' -f2- | tr -d '"' | tr -d "'")
-            AWS_REGION=$(grep -m1 'AWS_REGION' ~/Project-Arena/.env | cut -d'=' -f2- | tr -d '"' | tr -d "'" || echo "us-east-1")
-            sudo mkdir -p /root/.aws
-            sudo bash -c "cat > /root/.aws/credentials <<EOF
-[AmazonCloudWatchAgent]
-aws_access_key_id = ${AWS_KEY}
-aws_secret_access_key = ${AWS_SECRET}
-region = ${AWS_REGION}
-EOF"
-            sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
-              -a fetch-config -m ec2 -s \
-              -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
-            echo "  CloudWatch Agent running — logs streaming to /arena/ssh/auth + /arena/system/syslog"
-
             echo "=== authorized_keys monitor ==="
             sudo apt-get install -y inotify-tools -qq
             sudo cp ~/Project-Arena/infra/scripts/monitor-authorized-keys.sh /usr/local/bin/arena-ssh-monitor.sh
