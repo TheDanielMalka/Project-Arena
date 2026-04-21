@@ -419,6 +419,16 @@ jobs:
               echo "  fail2ban already running — skipping"
             fi
 
+            echo "=== authorized_keys monitor ==="
+            sudo apt-get install -y inotify-tools -qq
+            sudo cp ~/Project-Arena/infra/scripts/monitor-authorized-keys.sh /usr/local/bin/arena-ssh-monitor.sh
+            sudo chmod +x /usr/local/bin/arena-ssh-monitor.sh
+            sudo cp ~/Project-Arena/infra/systemd/arena-ssh-monitor.service /etc/systemd/system/
+            sudo systemctl daemon-reload
+            sudo systemctl enable arena-ssh-monitor
+            sudo systemctl restart arena-ssh-monitor
+            echo "  authorized_keys monitor running"
+
             echo "=== fail2ban config (slack alerts + sshd jail) ==="
             sudo cp ~/Project-Arena/infra/fail2ban/action.d/slack-arena.conf /etc/fail2ban/action.d/
             sudo cp ~/Project-Arena/infra/fail2ban/jail.d/arena-sshd.conf /etc/fail2ban/jail.d/

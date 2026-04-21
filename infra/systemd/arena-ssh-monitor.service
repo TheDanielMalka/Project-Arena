@@ -1,0 +1,13 @@
+[Unit]
+Description=Arena SSH authorized_keys Monitor
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/arena-ssh-monitor.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
