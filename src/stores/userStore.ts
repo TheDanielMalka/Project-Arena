@@ -178,6 +178,7 @@ function userProfileFromMe(profile: MeProfile): UserProfile {
     authProvider: profile.auth_provider === "google" ? "google" : "email",
     steamVerified: !!profile.steam_verified,
     riotVerified: !!profile.riot_verified,
+    country: profile.country ?? null,
   };
 }
 
