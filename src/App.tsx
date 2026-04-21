@@ -36,6 +36,8 @@ import ForumHome from "./pages/forum/ForumHome";
 import CategoryPage from "./pages/forum/CategoryPage";
 import ThreadPage from "./pages/forum/ThreadPage";
 import NewThreadPage from "./pages/forum/NewThreadPage";
+import SearchPage from "./pages/forum/SearchPage";
+import { ForumLayout } from "./components/forum/ForumLayout";
 
 const queryClient = new QueryClient();
 
@@ -116,10 +118,11 @@ const AppShell = () => (
             <Route path="/forge" element={<AppLayout><Forge /></AppLayout>} />
             <Route path="/players" element={<AppLayout><Players /></AppLayout>} />
             <Route path="/players/:username" element={<AppLayout><PlayerProfile /></AppLayout>} />
-            <Route path="/forum" element={<AppLayout><ForumHome /></AppLayout>} />
-            <Route path="/forum/new" element={<AppLayout><NewThreadPage /></AppLayout>} />
-            <Route path="/forum/t/:threadSlug" element={<AppLayout><ThreadPage /></AppLayout>} />
-            <Route path="/forum/:categorySlug" element={<AppLayout><CategoryPage /></AppLayout>} />
+            <Route path="/forum" element={<ForumLayout><ForumHome /></ForumLayout>} />
+            <Route path="/forum/new" element={<ForumLayout><NewThreadPage /></ForumLayout>} />
+            <Route path="/forum/search" element={<ForumLayout><SearchPage /></ForumLayout>} />
+            <Route path="/forum/t/:threadSlug" element={<ForumLayout><ThreadPage /></ForumLayout>} />
+            <Route path="/forum/:categorySlug" element={<ForumLayout><CategoryPage /></ForumLayout>} />
             <Route path="/admin" element={<AdminRoute />} />
             <Route path="*" element={<NotFound />} />
           </Routes>

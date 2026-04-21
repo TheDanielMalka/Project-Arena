@@ -10,15 +10,28 @@ import { Button } from "@/components/ui/button";
 import type { ForumThread } from "@/lib/engine-api";
 import { formatDistanceToNow } from "date-fns";
 
-function ThreadRow({ thread }: { thread: ForumThread }) {
+const GAME_COLORS: Record<string, string> = {
+  cs2:          "#4FC3F7",
+  valorant:     "#FF4655",
+  mlbb:         "#F59E0B",
+  wildrift:     "#06B6D4",
+  honorofkings: "#8B5CF6",
+  general:      "#6366f1",
+  feedback:     "#F59E0B",
+};
+
+function ThreadRow({ thread, categorySlug }: { thread: ForumThread; categorySlug: string }) {
   const ago = thread.last_post_at
     ? formatDistanceToNow(new Date(thread.last_post_at), { addSuffix: true })
     : formatDistanceToNow(new Date(thread.created_at), { addSuffix: true });
 
+  const accentColor = GAME_COLORS[categorySlug] ?? GAME_COLORS.general;
+
   return (
     <Link
       to={`/forum/t/${thread.slug}`}
-      className="group flex items-center justify-between px-4 py-3 hover:bg-white/[0.03] transition-colors border-b border-border/20 last:border-0"
+      className="group flex items-center justify-between px-4 py-3 hover:bg-white/[0.03] transition-colors border-b border-border/20 last:border-0 border-l-2"
+      style={{ borderLeftColor: thread.is_pinned ? accentColor : "transparent" }}
     >
       <div className="flex items-center gap-2 min-w-0">
         {thread.is_pinned && (
@@ -121,10 +134,10 @@ export default function CategoryPage() {
                     Pinned
                   </span>
                 </div>
-                {pinned.map((t) => <ThreadRow key={t.id} thread={t} />)}
+                {pinned.map((t) => <ThreadRow key={t.id} thread={t} categorySlug={categorySlug ?? ""} />)}
               </div>
             )}
-            {regular.map((t) => <ThreadRow key={t.id} thread={t} />)}
+            {regular.map((t) => <ThreadRow key={t.id} thread={t} categorySlug={categorySlug ?? ""} />)}
           </>
         )}
       </div>
