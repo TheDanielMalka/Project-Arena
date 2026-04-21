@@ -406,6 +406,51 @@ jobs:
 
             cd ~/Project-Arena
 
+            echo "=== fail2ban guard ==="
+            if ! command -v fail2ban-server &> /dev/null; then
+              echo "  fail2ban not installed — installing..."
+              sudo apt-get install -y fail2ban
+              sudo systemctl enable fail2ban
+              sudo systemctl start fail2ban
+            elif ! sudo systemctl is-active --quiet fail2ban; then
+              echo "  fail2ban installed but not running — starting..."
+              sudo systemctl start fail2ban
+            else
+              echo "  fail2ban already running — skipping"
+            fi
+
+            echo "=== CloudWatch Agent ==="
+            if ! systemctl list-units --type=service 2>/dev/null | grep -q amazon-cloudwatch-agent; then
+              echo "  Installing CloudWatch Agent..."
+              wget -q https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
+              sudo dpkg -i amazon-cloudwatch-agent.deb
+              rm -f amazon-cloudwatch-agent.deb
+            else
+              echo "  CloudWatch Agent already installed — skipping install"
+            fi
+            sudo cp ~/Project-Arena/infra/cloudwatch/amazon-cloudwatch-agent.json \
+              /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+            sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+              -a fetch-config -m ec2 -s \
+              -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+            echo "  CloudWatch Agent running — logs streaming to /arena/ssh/auth + /arena/system/syslog"
+
+            echo "=== authorized_keys monitor ==="
+            sudo apt-get install -y inotify-tools -qq
+            sudo cp ~/Project-Arena/infra/scripts/monitor-authorized-keys.sh /usr/local/bin/arena-ssh-monitor.sh
+            sudo chmod +x /usr/local/bin/arena-ssh-monitor.sh
+            sudo cp ~/Project-Arena/infra/systemd/arena-ssh-monitor.service /etc/systemd/system/
+            sudo systemctl daemon-reload
+            sudo systemctl enable arena-ssh-monitor
+            sudo systemctl restart arena-ssh-monitor
+            echo "  authorized_keys monitor running"
+
+            echo "=== fail2ban config (slack alerts + sshd jail) ==="
+            sudo cp ~/Project-Arena/infra/fail2ban/action.d/slack-arena.conf /etc/fail2ban/action.d/
+            sudo cp ~/Project-Arena/infra/fail2ban/jail.d/arena-sshd.conf /etc/fail2ban/jail.d/
+            sudo systemctl reload fail2ban || sudo systemctl restart fail2ban
+            echo "  fail2ban config applied"
+
             echo "=== git pull ==="
             git pull origin main
 
@@ -413,6 +458,13 @@ jobs:
             docker system prune -af
             docker-compose down
             docker-compose up -d --build
+
+            echo "=== daily fraud report cron ==="
+            sudo cp ~/Project-Arena/infra/scripts/daily-fraud-report.py /usr/local/bin/arena-fraud-report.py
+            sudo chmod +x /usr/local/bin/arena-fraud-report.py
+            CRON_LINE="0 7 * * * root /usr/bin/python3 /usr/local/bin/arena-fraud-report.py >> /var/log/arena-fraud-report.log 2>&1"
+            echo "$CRON_LINE" | sudo tee /etc/cron.d/arena-fraud-report > /dev/null
+            echo "  fraud report cron set — runs daily at 07:00 UTC"
 
             echo "=== waiting for DB to accept connections ==="
             for i in $(seq 1 15); do
