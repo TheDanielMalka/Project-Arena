@@ -24,6 +24,7 @@ from sqlalchemy.orm import sessionmaker
 import jwt as _jwt
 
 from src.config import DATABASE_URL, ENVIRONMENT, MIN_CLIENT_VERSION, STEAM_API_KEY, ENGINE_BASE_URL, FRONTEND_URL
+from src.forum import router as forum_router
 from src.vision.capture import capture_screen, crop_roi
 from src.vision.engine import VisionEngine, VisionEngineConfig
 from src.vision.rage_quit import RageQuitDetector
@@ -666,6 +667,130 @@ async def lifespan(app: FastAPI):
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_tx_hash_unique "
                 "ON transactions(tx_hash) WHERE tx_hash IS NOT NULL"
             ))
+
+            # Migration 039: Forum — 4 new tables, no changes to existing tables.
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS forum_categories (
+                    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    parent_id       UUID REFERENCES forum_categories(id) ON DELETE CASCADE,
+                    slug            VARCHAR(60)  UNIQUE NOT NULL,
+                    name            VARCHAR(120) NOT NULL,
+                    description     TEXT,
+                    icon            VARCHAR(80),
+                    color           VARCHAR(20)  DEFAULT '#6366f1',
+                    sort_order      INT          DEFAULT 0,
+                    post_count      INT          DEFAULT 0,
+                    thread_count    INT          DEFAULT 0,
+                    last_post_at    TIMESTAMPTZ,
+                    last_post_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+                    is_announcements BOOLEAN     DEFAULT FALSE,
+                    created_at      TIMESTAMPTZ  DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS forum_threads (
+                    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    category_id     UUID NOT NULL REFERENCES forum_categories(id) ON DELETE CASCADE,
+                    author_id       UUID NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+                    title           VARCHAR(300) NOT NULL,
+                    body            TEXT         NOT NULL,
+                    slug            VARCHAR(340) UNIQUE NOT NULL,
+                    status          VARCHAR(20)  DEFAULT 'open',
+                    is_pinned       BOOLEAN      DEFAULT FALSE,
+                    is_announcement BOOLEAN      DEFAULT FALSE,
+                    views           INT          DEFAULT 0,
+                    reply_count     INT          DEFAULT 0,
+                    last_reply_at   TIMESTAMPTZ,
+                    last_reply_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+                    tags            TEXT[]       DEFAULT '{}',
+                    created_at      TIMESTAMPTZ  DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS forum_posts (
+                    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    thread_id       UUID NOT NULL REFERENCES forum_threads(id) ON DELETE CASCADE,
+                    author_id       UUID NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+                    parent_post_id  UUID REFERENCES forum_posts(id) ON DELETE SET NULL,
+                    body            TEXT         NOT NULL,
+                    is_deleted      BOOLEAN      DEFAULT FALSE,
+                    edit_count      INT          DEFAULT 0,
+                    edited_at       TIMESTAMPTZ,
+                    reactions       JSONB        DEFAULT '{}',
+                    created_at      TIMESTAMPTZ  DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS forum_moderators (
+                    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    category_id UUID REFERENCES forum_categories(id) ON DELETE CASCADE,
+                    granted_by  UUID REFERENCES users(id) ON DELETE SET NULL,
+                    granted_at  TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE (user_id, category_id)
+                )
+            """))
+            # Forum indexes
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_forum_threads_category "
+                "ON forum_threads(category_id, last_reply_at DESC)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_forum_posts_thread "
+                "ON forum_posts(thread_id, created_at ASC) WHERE is_deleted = FALSE"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_forum_threads_fts "
+                "ON forum_threads USING GIN(to_tsvector('english', title || ' ' || body))"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_forum_threads_author "
+                "ON forum_threads(author_id, created_at DESC)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_forum_posts_author "
+                "ON forum_posts(author_id, created_at DESC)"
+            ))
+            # Seed initial categories (idempotent)
+            conn.execute(text("""
+                INSERT INTO forum_categories (slug, name, description, icon, color, sort_order)
+                VALUES
+                  ('cs2',      'CS2',                'Counter-Strike 2 discussion, guides and highlights', 'cs2',      '#4FC3F7', 1),
+                  ('valorant', 'Valorant',           'Valorant strategies, clips and LFG',               'valorant', '#FF4655', 2),
+                  ('general',  'General Arena',      'Off-topic, platform news and community chat',      'arena',    '#6366f1', 3),
+                  ('feedback', 'Suggestions & Bugs', 'Feature requests and bug reports',                 'bug',      '#F59E0B', 4)
+                ON CONFLICT (slug) DO NOTHING
+            """))
+            # Seed sub-categories for CS2
+            conn.execute(text("""
+                INSERT INTO forum_categories (parent_id, slug, name, description, icon, color, sort_order, is_announcements)
+                SELECT id, slug2, name2, desc2, icon2, color2, ord2, ann2
+                FROM forum_categories,
+                (VALUES
+                  ('cs2-announcements', 'Announcements',     'Official CS2 announcements',          'megaphone', '#4FC3F7', 1, TRUE),
+                  ('cs2-discussion',    'Discussion',        'General CS2 talk',                    'chat',      '#4FC3F7', 2, FALSE),
+                  ('cs2-strategy',      'Strategy & Guides', 'Tactics, setups and tips',            'book',      '#4FC3F7', 3, FALSE),
+                  ('cs2-lfg',           'Looking for Match', 'Find teammates for competitive play', 'users',     '#4FC3F7', 4, FALSE),
+                  ('cs2-clips',         'Clips & Highlights','Share your best plays',               'video',     '#4FC3F7', 5, FALSE)
+                ) AS t(slug2, name2, desc2, icon2, color2, ord2, ann2)
+                WHERE forum_categories.slug = 'cs2'
+                ON CONFLICT (slug) DO NOTHING
+            """))
+            # Seed sub-categories for Valorant
+            conn.execute(text("""
+                INSERT INTO forum_categories (parent_id, slug, name, description, icon, color, sort_order, is_announcements)
+                SELECT id, slug2, name2, desc2, icon2, color2, ord2, ann2
+                FROM forum_categories,
+                (VALUES
+                  ('val-announcements', 'Announcements',     'Official Valorant announcements',     'megaphone', '#FF4655', 1, TRUE),
+                  ('val-discussion',    'Discussion',        'General Valorant talk',               'chat',      '#FF4655', 2, FALSE),
+                  ('val-strategy',      'Strategy & Guides', 'Agent comps, lineups and tips',       'book',      '#FF4655', 3, FALSE),
+                  ('val-lfg',           'Looking for Match', 'Find teammates for ranked play',      'users',     '#FF4655', 4, FALSE),
+                  ('val-clips',         'Clips & Highlights','Share your best plays',               'video',     '#FF4655', 5, FALSE)
+                ) AS t(slug2, name2, desc2, icon2, color2, ord2, ann2)
+                WHERE forum_categories.slug = 'valorant'
+                ON CONFLICT (slug) DO NOTHING
+            """))
             conn.commit()
         logger.info("✅ Arena Engine connected to DB")
     except Exception as exc:
@@ -800,6 +925,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(forum_router)
 
 
 @app.middleware("http")
