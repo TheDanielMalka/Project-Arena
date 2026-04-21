@@ -377,8 +377,12 @@ class TestMatchStatusRoute:
 
 class TestPatchWalletAddress:
     """
-    Verifies the wallet_address field in PATCH /users/me.
-    DB is not available in tests — we mock SessionLocal to control responses.
+    Verifies the wallet_address field in PATCH /users/me under the identity-lock
+    policy:
+      • Write-once — accepted only when the user's current wallet_address is NULL.
+      • No unlink — "" returns 400.
+      • No re-assignment — returns 400 if wallet already linked.
+      • 24h post-deletion cooldown — returns 409.
     """
 
     _VALID_ADDR = "0xAbCd1234AbCd1234AbCd1234AbCd1234AbCd1234"
@@ -400,40 +404,74 @@ class TestPatchWalletAddress:
         resp = self._patch({"wallet_address": "0x" + "G" * 40})
         assert resp.status_code == 400
 
-    # ── Link / unlink (DB mocked) ─────────────────────────────────────────────
+    # ── Lock & cooldown semantics (DB mocked) ────────────────────────────────
 
-    def test_link_valid_address_calls_db_update(self):
-        """Valid address with no conflict → DB UPDATE executed."""
+    def test_link_when_no_current_wallet_succeeds(self):
+        """User with wallet_address=NULL can link a new wallet — no 400."""
         with patch("main.SessionLocal") as MockSession:
             session = MockSession.return_value.__enter__.return_value
-            session.execute.return_value.fetchone.return_value = None  # no conflict
+            # current wallet = None, uniqueness clear, cooldown clear
+            session.execute.return_value.fetchone.side_effect = [
+                (None,),  # current wallet
+                None,     # uniqueness
+                None,     # cooldown
+                None,     # (UPDATE session — fetchone not consumed)
+            ]
             resp = self._patch({"wallet_address": self._VALID_ADDR})
-        # No DB in test env → will fail at UPDATE, but format check passes (not 400)
         assert resp.status_code != 400
+        assert resp.status_code != 409
 
-    def test_unlink_empty_string_accepted(self):
-        """wallet_address="" passes format check (unlink path — no regex applied)."""
-        with patch("main.SessionLocal") as MockSession:
-            session = MockSession.return_value.__enter__.return_value
-            session.execute.return_value.fetchone.return_value = None
-            resp = self._patch({"wallet_address": ""})
-        assert resp.status_code != 400
+    def test_unlink_empty_string_returns_400(self):
+        """wallet_address="" is an unlink attempt — rejected under the lock."""
+        resp = self._patch({"wallet_address": ""})
+        assert resp.status_code == 400
+        assert "cannot be unlinked" in resp.json()["detail"].lower()
 
-    def test_unlink_null_accepted(self):
-        """wallet_address=null passes (Pydantic accepts None for Optional field)."""
+    def test_unlink_null_ignored(self):
+        """wallet_address=null means "no change" — no 400 because field is omitted."""
         with patch("main.SessionLocal") as MockSession:
             session = MockSession.return_value.__enter__.return_value
             session.execute.return_value.fetchone.return_value = None
             resp = self._patch({"wallet_address": None})
         assert resp.status_code != 400
 
-    def test_conflict_returns_409(self):
-        """wallet_address already taken by another user → 409."""
+    def test_already_linked_returns_400(self):
+        """User who already has a wallet cannot change it — 400."""
         with patch("main.SessionLocal") as MockSession:
             session = MockSession.return_value.__enter__.return_value
-            session.execute.return_value.fetchone.return_value = (1,)  # conflict row
+            # current wallet is already set → lock enforced
+            session.execute.return_value.fetchone.side_effect = [
+                ("0xEXISTING0000000000000000000000000000000",),  # current wallet
+            ]
+            resp = self._patch({"wallet_address": self._VALID_ADDR})
+        assert resp.status_code == 400
+        assert "already linked" in resp.json()["detail"].lower()
+
+    def test_conflict_with_other_user_returns_409(self):
+        """wallet_address taken by another live user → 409."""
+        with patch("main.SessionLocal") as MockSession:
+            session = MockSession.return_value.__enter__.return_value
+            session.execute.return_value.fetchone.side_effect = [
+                (None,),  # current wallet (NULL — not yet linked)
+                (1,),     # uniqueness hit — another user has it
+            ]
             resp = self._patch({"wallet_address": self._VALID_ADDR})
         assert resp.status_code == 409
+
+    def test_cooldown_returns_409(self):
+        """wallet_address in 24h post-deletion cooldown → 409."""
+        from datetime import datetime, timezone, timedelta
+        recent_delete = datetime.now(timezone.utc) - timedelta(hours=1)
+        with patch("main.SessionLocal") as MockSession:
+            session = MockSession.return_value.__enter__.return_value
+            session.execute.return_value.fetchone.side_effect = [
+                (None,),             # current wallet
+                None,                # uniqueness clear
+                (recent_delete,),    # cooldown — deleted 1h ago → blocked
+            ]
+            resp = self._patch({"wallet_address": self._VALID_ADDR})
+        assert resp.status_code == 409
+        assert "cooldown" in resp.json()["detail"].lower()
 
     def test_unrelated_fields_not_affected(self):
         """Sending only avatar does not touch wallet_address logic."""
@@ -441,7 +479,6 @@ class TestPatchWalletAddress:
             session = MockSession.return_value.__enter__.return_value
             session.execute.return_value.fetchone.return_value = None
             resp = self._patch({"avatar": "avatar_01"})
-        # Should not hit wallet validation path at all
         assert resp.status_code != 400
 
 

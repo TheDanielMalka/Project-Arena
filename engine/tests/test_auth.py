@@ -146,6 +146,8 @@ class TestRegister:
         session.execute.return_value.fetchone.side_effect = [
             None,   # email duplicate check
             None,   # username duplicate check
+            None,   # deleted_accounts email_hash cooldown check
+            None,   # deleted_accounts username_hash cooldown check
             (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),  # INSERT RETURNING
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -168,6 +170,8 @@ class TestRegister:
         session.execute.return_value.fetchone.side_effect = [
             None,   # email duplicate check
             None,   # username duplicate check
+            None,   # deleted_accounts email_hash cooldown check
+            None,   # deleted_accounts username_hash cooldown check
             (FAKE_UUID, "user", "user@arena.gg", FAKE_ARENA_ID),
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -198,7 +202,7 @@ class TestRegister:
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
             None,          # email check passes
-            (FAKE_UUID,),  # username already taken → 409 before steam check
+            (FAKE_UUID,),  # username already taken → 409 before cooldown check
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post("/auth/register", json={
@@ -216,6 +220,8 @@ class TestRegister:
         session.execute.return_value.fetchone.side_effect = [
             None,          # email check passes
             None,          # username check passes
+            None,          # email_hash cooldown clear
+            None,          # username_hash cooldown clear
             (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),  # INSERT RETURNING
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -233,6 +239,8 @@ class TestRegister:
         session.execute.return_value.fetchone.side_effect = [
             None,          # email check passes
             None,          # username check passes
+            None,          # email_hash cooldown clear
+            None,          # username_hash cooldown clear
             (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),  # INSERT RETURNING
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -284,6 +292,8 @@ class TestRegister:
         session.execute.return_value.fetchone.side_effect = [
             None,   # email duplicate check
             None,   # username duplicate check
+            None,   # deleted_accounts email_hash cooldown check
+            None,   # deleted_accounts username_hash cooldown check
             (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -300,6 +310,8 @@ class TestRegister:
         session.execute.return_value.fetchone.side_effect = [
             None,   # email duplicate check
             None,   # username duplicate check
+            None,   # deleted_accounts email_hash cooldown check
+            None,   # deleted_accounts username_hash cooldown check
             (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -317,6 +329,8 @@ class TestRegister:
         session.execute.return_value.fetchone.side_effect = [
             None,   # email duplicate check
             None,   # username duplicate check
+            None,   # deleted_accounts email_hash cooldown check
+            None,   # deleted_accounts username_hash cooldown check
             (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -334,6 +348,8 @@ class TestRegister:
         session.execute.return_value.fetchone.side_effect = [
             None,   # email duplicate check
             None,   # username duplicate check
+            None,   # deleted_accounts email_hash cooldown check
+            None,   # deleted_accounts username_hash cooldown check
             (FAKE_UUID, "user", "user@arena.gg", FAKE_ARENA_ID),
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -354,6 +370,8 @@ class TestRegister:
         session.execute.return_value.fetchone.side_effect = [
             None,   # email duplicate check
             None,   # username duplicate check
+            None,   # deleted_accounts email_hash cooldown check
+            None,   # deleted_accounts username_hash cooldown check
             (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),
         ]
         with patch("main.SessionLocal", return_value=ctx):

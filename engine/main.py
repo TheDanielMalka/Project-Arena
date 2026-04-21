@@ -2367,6 +2367,14 @@ async def register(req: RegisterRequest, request: Request, response: Response):
             ).fetchone():
                 raise HTTPException(409, "Username already taken")
 
+            # ── 24h post-deletion cooldown (migration 023 `deleted_accounts`) ─
+            # Same identifiers cannot be re-registered within 24h of a prior
+            # account deletion. Hashing matches the scheme in _delete_user_account.
+            email_hash    = hashlib.sha256(email.encode()).hexdigest()
+            username_hash = hashlib.sha256(username.encode()).hexdigest()
+            _assert_identifier_cooldown(session, "email",    email_hash)
+            _assert_identifier_cooldown(session, "username", username_hash)
+
             # ── Wallet blacklist (migration 025) ──────────────────────────────
             wallet_addr = getattr(req, "wallet_address", None)
             if wallet_addr and session.execute(
@@ -2756,6 +2764,14 @@ class PatchUserRequest(BaseModel):
     """
     PATCH /users/me payload — partial update of identity fields.
     All fields optional; only provided fields are written to DB.
+
+    Identity-lock policy:
+      • steam_id / riot_id — NEVER writable via this endpoint. Set only by the
+        OpenID / OAuth callback; cleared only by account deletion. Any non-null
+        value on these fields is rejected with 400.
+      • wallet_address — write-once. May be linked only while the user's current
+        wallet_address is NULL. Re-assignment or unlink is rejected with 400.
+
     DB-ready: maps to users table columns.
     """
     model_config = ConfigDict(extra="forbid")
@@ -2763,11 +2779,11 @@ class PatchUserRequest(BaseModel):
     avatar_bg: str | None = None
     equipped_badge_icon: str | None = None
     forge_unlocked_item_ids: list[str] | None = None
-    # Identity fields — uniqueness enforced per field
     username:       str | None = None   # case-insensitive unique
-    steam_id:       str | None = None   # globally unique; pass "" to unlink
-    riot_id:        str | None = None   # globally unique; pass "" to unlink
-    wallet_address: str | None = None   # Ethereum address; pass "" or null to unlink
+    # Identity fields — write rules enforced in handler, see docstring above.
+    steam_id:       str | None = None   # REJECTED if non-null (OpenID only)
+    riot_id:        str | None = None   # REJECTED if non-null (OAuth only)
+    wallet_address: str | None = None   # write-once; set only when currently NULL
 
 
 @app.patch("/users/me", response_model=UserProfile)
@@ -2775,16 +2791,37 @@ async def patch_user_me(req: PatchUserRequest, payload: dict = Depends(verify_to
     """
     Partial update of the authenticated user's profile.
 
-    Cosmetic fields (avatar, badge, forge items) are updated directly.
-    Identity fields (username, steam_id, riot_id, wallet_address) are checked
-    for uniqueness before writing — returns 409 if the value is already taken.
-    Pass "" or null to unlink a field (sets column to NULL in DB).
-    wallet_address: validated as 0x + 40 hex chars; "" or null → unlink.
+    Cosmetic fields (avatar, badge, forge items, username) are updated directly.
+
+    Identity-lock policy (see PatchUserRequest docstring):
+      • steam_id / riot_id — rejected outright. Only the OpenID / OAuth callback
+        may set these. Account deletion is the only way to clear them.
+      • wallet_address — write-once. Allowed only when the user's current
+        wallet_address is NULL and the value is not in the 24-hour post-deletion
+        cooldown. Changes or unlinks return 400.
+
     DB-ready: writes to users table columns.
     """
     user_id: str = payload["sub"]
 
-    # ── Uniqueness checks for identity fields ─────────────────────────────────
+    # ── Identity-lock enforcement ─────────────────────────────────────────────
+    # steam_id / riot_id are never writable here. Any non-null value (including
+    # an empty string, which previously meant "unlink") is a client-side attempt
+    # to bypass the OpenID/OAuth flow and must be rejected.
+    if req.steam_id is not None:
+        raise HTTPException(
+            400,
+            "Steam ID is set only by the Steam OpenID flow and cleared only by "
+            "account deletion. This field cannot be modified here.",
+        )
+    if req.riot_id is not None:
+        raise HTTPException(
+            400,
+            "Riot ID is set only by the Riot OAuth flow and cleared only by "
+            "account deletion. This field cannot be modified here.",
+        )
+
+    # ── Uniqueness / lock checks for remaining writable identity fields ───────
     try:
         with SessionLocal() as session:
             if req.username is not None:
@@ -2795,41 +2832,51 @@ async def patch_user_me(req: PatchUserRequest, payload: dict = Depends(verify_to
                 if conflict:
                     raise HTTPException(409, "Username already taken")
 
-            if req.steam_id is not None and req.steam_id != "":
-                conflict = session.execute(
-                    text("SELECT 1 FROM users WHERE steam_id = :s AND id != :uid"),
-                    {"s": req.steam_id.strip(), "uid": user_id},
-                ).fetchone()
-                if conflict:
-                    raise HTTPException(409, "Steam ID already linked to another account")
-
-            if req.riot_id is not None and req.riot_id != "":
-                conflict = session.execute(
-                    text("SELECT 1 FROM users WHERE riot_id = :r AND id != :uid"),
-                    {"r": req.riot_id.strip(), "uid": user_id},
-                ).fetchone()
-                if conflict:
-                    raise HTTPException(409, "Riot ID already linked to another account")
-
-            if req.wallet_address is not None and req.wallet_address.strip() != "":
+            if req.wallet_address is not None:
+                # Reject explicit unlink attempts.
+                if req.wallet_address.strip() == "":
+                    raise HTTPException(
+                        400,
+                        "Wallet address cannot be unlinked. It is cleared only "
+                        "by account deletion.",
+                    )
                 addr = req.wallet_address.strip()
                 # Basic Ethereum address format check (0x + 40 hex chars)
                 import re
                 if not re.fullmatch(r"0x[0-9a-fA-F]{40}", addr):
                     raise HTTPException(400, "Invalid Ethereum wallet address format")
+
+                # Write-once rule: reject if the user already has a wallet linked.
+                current = session.execute(
+                    text("SELECT wallet_address FROM users WHERE id = :uid"),
+                    {"uid": user_id},
+                ).fetchone()
+                if current and current[0]:
+                    raise HTTPException(
+                        400,
+                        "Wallet address is already linked to this account and "
+                        "cannot be changed. It is cleared only by account deletion.",
+                    )
+
+                # Uniqueness across live users.
                 conflict = session.execute(
                     text("SELECT 1 FROM users WHERE wallet_address = :w AND id != :uid"),
                     {"w": addr, "uid": user_id},
                 ).fetchone()
                 if conflict:
                     raise HTTPException(409, "Wallet address already linked to another account")
+
+                # 24h post-deletion cooldown.
+                _assert_identifier_cooldown(session, "wallet_address", addr)
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("patch_user_me uniqueness check error: %s", exc)
+        logger.error("patch_user_me check error: %s", exc)
         raise HTTPException(500, "Profile update failed")
 
     # ── Build update fields ───────────────────────────────────────────────────
+    # steam_id / riot_id are never written here (rejected above). wallet_address
+    # is only ever set here when transitioning NULL → value (write-once).
     fields: dict = {}
     if req.avatar                  is not None: fields["avatar"]                  = req.avatar
     if req.avatar_bg               is not None: fields["avatar_bg"]               = req.avatar_bg
@@ -2837,16 +2884,7 @@ async def patch_user_me(req: PatchUserRequest, payload: dict = Depends(verify_to
     if req.forge_unlocked_item_ids is not None:
         fields["forge_unlocked_item_ids"] = req.forge_unlocked_item_ids
     if req.username       is not None: fields["username"]       = req.username.strip()
-    if req.wallet_address is not None: fields["wallet_address"] = req.wallet_address.strip() or None  # "" → NULL (unlink)
-    # Changing steam_id via text resets verification (only OpenID can set steam_verified=TRUE)
-    if req.steam_id is not None:
-        fields["steam_id"]         = req.steam_id.strip() or None  # "" → NULL
-        fields["steam_verified"]   = False
-        fields["steam_verified_at"] = None
-    if req.riot_id is not None:
-        fields["riot_id"]         = req.riot_id.strip() or None  # "" → NULL
-        fields["riot_verified"]   = False
-        fields["riot_verified_at"] = None
+    if req.wallet_address is not None: fields["wallet_address"] = req.wallet_address.strip()
 
     if fields:
         set_clause = ", ".join(f"{col} = :{col}" for col in fields)
@@ -3199,6 +3237,29 @@ async def steam_auth_callback(token: str, request: Request):
             ).fetchone():
                 return RedirectResponse(f"{FRONTEND_URL}/profile?steam_error=taken", status_code=302)
 
+            # Reject if this Steam ID was attached to an account deleted in the
+            # last 24h (identity cooldown — migration 023 `deleted_accounts`).
+            try:
+                _assert_identifier_cooldown(session, "steam_id", steam_id)
+            except HTTPException:
+                return RedirectResponse(
+                    f"{FRONTEND_URL}/profile?steam_error=cooldown",
+                    status_code=302,
+                )
+
+            # Block relinking the current user's own steam_id to itself if it's
+            # already set and verified — identity is locked post-link.
+            current = session.execute(
+                text("SELECT steam_id, steam_verified FROM users WHERE id = :uid"),
+                {"uid": user_id},
+            ).fetchone()
+            if current and current[0] and current[0] != steam_id:
+                # User already has a different Steam ID locked to this account.
+                return RedirectResponse(
+                    f"{FRONTEND_URL}/profile?steam_error=locked",
+                    status_code=302,
+                )
+
             session.execute(
                 text(
                     "UPDATE users "
@@ -3286,6 +3347,54 @@ def _normalize_game(raw: str) -> str:
     """Normalise game name to canonical form ('CS2' or 'Valorant')."""
     mapping = {"cs2": "CS2", "valorant": "Valorant"}
     return mapping.get(raw.strip().lower(), raw.strip())
+
+
+_IDENTIFIER_COOLDOWN_HOURS = 24
+
+_COOLDOWN_COLUMN_MAP = {
+    # Logical name → (deleted_accounts column, human-readable label)
+    "steam_id":       ("steam_id",       "Steam ID"),
+    "riot_id":        ("riot_id",        "Riot ID"),
+    "wallet_address": ("wallet_address", "Wallet address"),
+    "email":          ("email_hash",     "Email"),
+    "username":       ("username_hash",  "Username"),
+}
+
+
+def _assert_identifier_cooldown(session, field: str, value: str) -> None:
+    """
+    Reject re-use of an identifier within 24h of an account deletion.
+
+    `value` is the raw value for steam_id / riot_id / wallet_address, or the
+    already-sha256-hashed string for email / username (since deleted_accounts
+    stores email_hash / username_hash, not plaintext).
+
+    DB-ready: reads from deleted_accounts (migration 023).
+    Raises HTTPException(409) with a deterministic "retry after" timestamp.
+    """
+    try:
+        col, label = _COOLDOWN_COLUMN_MAP[field]
+    except KeyError:
+        # Programmer error — fail loudly.
+        raise RuntimeError(f"_assert_identifier_cooldown: unknown field {field!r}")
+
+    row = session.execute(
+        text(
+            f"SELECT deleted_at FROM deleted_accounts "
+            f"WHERE {col} = :v "
+            f"  AND deleted_at > NOW() - INTERVAL '{_IDENTIFIER_COOLDOWN_HOURS} hours' "
+            f"ORDER BY deleted_at DESC LIMIT 1"
+        ),
+        {"v": value},
+    ).fetchone()
+    if row:
+        retry_at = row[0] + timedelta(hours=_IDENTIFIER_COOLDOWN_HOURS)
+        raise HTTPException(
+            409,
+            f"{label} is in a {_IDENTIFIER_COOLDOWN_HOURS}-hour cooldown after a "
+            f"previous account deletion. Available again at "
+            f"{retry_at.isoformat(timespec='seconds')}.",
+        )
 
 
 def _assert_game_account(
