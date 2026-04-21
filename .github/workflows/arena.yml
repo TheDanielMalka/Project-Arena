@@ -459,6 +459,13 @@ jobs:
             docker-compose down
             docker-compose up -d --build
 
+            echo "=== daily fraud report cron ==="
+            sudo cp ~/Project-Arena/infra/scripts/daily-fraud-report.py /usr/local/bin/arena-fraud-report.py
+            sudo chmod +x /usr/local/bin/arena-fraud-report.py
+            CRON_LINE="0 7 * * * root /usr/bin/python3 /usr/local/bin/arena-fraud-report.py >> /var/log/arena-fraud-report.log 2>&1"
+            echo "$CRON_LINE" | sudo tee /etc/cron.d/arena-fraud-report > /dev/null
+            echo "  fraud report cron set — runs daily at 07:00 UTC"
+
             echo "=== waiting for DB to accept connections ==="
             for i in $(seq 1 15); do
               docker exec arena-db pg_isready -U arena_admin -d arena \
