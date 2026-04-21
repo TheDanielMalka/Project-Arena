@@ -145,7 +145,7 @@ function HeroCinematicBackdrop() {
 const FEATURES = [
   { icon: Swords, color: "text-primary", bg: "bg-primary/10 border-primary/25", title: "1v1 & 5v5", desc: "Solo duels or full team battles across all supported titles." },
   { icon: Lock, color: "text-arena-cyan", bg: "bg-arena-cyan/10 border-arena-cyan/25", title: "Smart Escrow", desc: "Funds locked on-chain. No one touches them until the match resolves." },
-  { icon: Wallet, color: "text-arena-gold", bg: "bg-arena-gold/10 border-arena-gold/25", title: "Multi-Chain", desc: "Deposit & withdraw on BSC, Solana, and Ethereum — your keys, your funds." },
+  { icon: Wallet, color: "text-arena-gold", bg: "bg-arena-gold/10 border-arena-gold/25", title: "Multi-Chain", desc: "BSC, Solana & Ethereum — funds locked in a smart contract on-chain. Zero third-party access, ever." },
   { icon: Trophy, color: "text-arena-orange", bg: "bg-orange-500/10 border-orange-500/25", title: "Ranked System", desc: "Climb Bronze → Master. Earn XP, unlock badges, prove your rank." },
   { icon: Eye, color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/25", title: "Vision Engine", desc: "AI-powered OCR auto-reads results. No manual reporting, no disputes." },
   { icon: Cpu, color: "text-rose-400", bg: "bg-rose-500/10 border-rose-500/25", title: "Anti-Cheat Link", desc: "Integrated with VAC, Vanguard, EAC. Cheaters get banned and refunded." },
