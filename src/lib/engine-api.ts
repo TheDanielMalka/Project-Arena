@@ -2871,6 +2871,7 @@ export interface ForumPost {
   created_at: string;
   updated_at: string;
   is_deleted: boolean;
+  edit_count: number;
   reactions: Record<string, number>;
 }
 

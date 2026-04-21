@@ -47,14 +47,23 @@ def _rl_check(bucket: dict[str, list[float]], uid: str, limit: int) -> None:
 def _require_user(
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> dict:
-    """Validate Bearer token; return {user_id, email, username}."""
+    """Validate Bearer token; return {user_id, email, username}.
+    Also blocks banned/suspended users from posting.
+    """
     if not creds:
         raise HTTPException(401, "Authentication required")
-    # Import here to avoid circular; main.py exposes auth module globally.
     import src.auth as _auth
     payload = _auth.verify_token(creds.credentials)
     if not payload:
         raise HTTPException(401, "Invalid or expired token")
+    # Block banned / suspended accounts from writing
+    with _get_db() as session:
+        row = session.execute(
+            text("SELECT status FROM users WHERE id = :uid"),
+            {"uid": payload["user_id"]},
+        ).fetchone()
+    if row and row[0] in ("banned", "suspended"):
+        raise HTTPException(403, f"Account is {row[0]}. Forum access restricted.")
     return payload
 
 
@@ -616,13 +625,14 @@ def create_post(thread_id: str, body: PostCreate, user: dict = Depends(_require_
             WHERE id = :cid
         """), {"uid": uid, "cid": str(t[1])})
 
+        import json as _json
+
         # Notify thread author of reply (skip self-reply)
         thread_meta = session.execute(
             text("SELECT author_id, title, slug FROM forum_threads WHERE id = :id"),
             {"id": thread_id},
         ).fetchone()
         if thread_meta and str(thread_meta[0]) != uid:
-            import json as _json
             session.execute(text("""
                 INSERT INTO notifications (user_id, type, title, message, metadata)
                 VALUES (:uid, 'forum_reply', :title, :msg, :meta::jsonb)
@@ -632,6 +642,24 @@ def create_post(thread_id: str, body: PostCreate, user: dict = Depends(_require_
                 "msg":   f'Someone replied to "{thread_meta[1]}"',
                 "meta":  _json.dumps({"thread_id": thread_id, "slug": thread_meta[2], "post_id": str(row[0])}),
             })
+
+        # Notify @mentioned users (depth-1, skip self)
+        mentions = set(re.findall(r"@([\w\-]{2,32})", body.body))
+        for username in mentions:
+            mentioned = session.execute(
+                text("SELECT id FROM users WHERE username = :u"), {"u": username}
+            ).fetchone()
+            if mentioned and str(mentioned[0]) != uid:
+                session.execute(text("""
+                    INSERT INTO notifications (user_id, type, title, message, metadata)
+                    VALUES (:uid, 'forum_mention', :title, :msg, :meta::jsonb)
+                    ON CONFLICT DO NOTHING
+                """), {
+                    "uid":   str(mentioned[0]),
+                    "title": "You were mentioned in a forum post",
+                    "msg":   f'@{user["username"]} mentioned you in "{thread_meta[1] if thread_meta else "a thread"}"',
+                    "meta":  _json.dumps({"thread_id": thread_id, "post_id": str(row[0])}),
+                })
 
         session.commit()
         card = _user_card(session, uid)
@@ -729,11 +757,33 @@ def react_post(post_id: str, body: ReactionBody, user: dict = Depends(_require_u
         reactions[emoji] = count
         reactions[user_key] = users_set
 
-        import json
+        import json as _json
         session.execute(
             text("UPDATE forum_posts SET reactions = :r WHERE id = :id"),
-            {"r": json.dumps(reactions), "id": post_id},
+            {"r": _json.dumps(reactions), "id": post_id},
         )
+
+        # forum_reaction batch notification at thresholds 5 / 10 / 25 / 50
+        total_reactions = sum(
+            v for k, v in reactions.items() if not k.startswith("_users_")
+        )
+        _REACTION_THRESHOLDS = (5, 10, 25, 50)
+        if total_reactions in _REACTION_THRESHOLDS:
+            post_author = session.execute(
+                text("SELECT author_id, thread_id FROM forum_posts WHERE id = :id"),
+                {"id": post_id},
+            ).fetchone()
+            if post_author and str(post_author[0]) != uid:
+                session.execute(text("""
+                    INSERT INTO notifications (user_id, type, title, message, metadata)
+                    VALUES (:uid, 'forum_reaction', :title, :msg, :meta::jsonb)
+                """), {
+                    "uid":   str(post_author[0]),
+                    "title": f"Your post got {total_reactions} reactions!",
+                    "msg":   f"{total_reactions} people reacted to your forum post",
+                    "meta":  _json.dumps({"post_id": post_id, "thread_id": str(post_author[1]), "count": total_reactions}),
+                })
+
         session.commit()
 
     public = {k: v for k, v in reactions.items() if not k.startswith("_users_")}

@@ -75,11 +75,12 @@ export default function NewThreadPage() {
       body: body.trim(),
     });
     setSubmitting(false);
-    if (result.ok) {
-      navigate(`/forum/t/${result.slug}`);
-    } else {
-      toast({ title: "Failed to create thread", description: result.detail, variant: "destructive" });
+    if (!result.ok) {
+      const detail = (result as { ok: false; detail: string }).detail;
+      toast({ title: "Failed to create thread", description: detail, variant: "destructive" });
+      return;
     }
+    navigate(`/forum/t/${result.slug}`);
   };
 
   return (

@@ -7,6 +7,8 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
+import "highlight.js/styles/github-dark.css";
 import { formatDistanceToNow, format, differenceInMinutes } from "date-fns";
 import { useForumStore } from "@/stores/forumStore";
 import { useUserStore } from "@/stores/userStore";
@@ -226,10 +228,15 @@ function PostCard({
                 prose-headings:font-hud prose-headings:text-arena-cyan
                 prose-a:text-arena-cyan prose-a:no-underline hover:prose-a:underline
                 prose-code:bg-white/5 prose-code:px-1 prose-code:rounded prose-code:text-[0.8em]
-                prose-pre:bg-white/5 prose-pre:border prose-pre:border-border/30
+                prose-pre:!bg-transparent prose-pre:!p-0
                 prose-blockquote:border-l-arena-cyan prose-blockquote:text-muted-foreground
                 prose-strong:text-foreground prose-hr:border-border/30">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{post.body}</ReactMarkdown>
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeHighlight]}
+                >
+                  {post.body}
+                </ReactMarkdown>
               </div>
             )}
 
