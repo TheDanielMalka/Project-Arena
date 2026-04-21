@@ -24,6 +24,7 @@ from sqlalchemy.orm import sessionmaker
 import jwt as _jwt
 
 from src.config import DATABASE_URL, ENVIRONMENT, MIN_CLIENT_VERSION, STEAM_API_KEY, ENGINE_BASE_URL, FRONTEND_URL
+from src.forum import router as forum_router
 from src.vision.capture import capture_screen, crop_roi
 from src.vision.engine import VisionEngine, VisionEngineConfig
 from src.vision.rage_quit import RageQuitDetector
@@ -666,6 +667,228 @@ async def lifespan(app: FastAPI):
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_tx_hash_unique "
                 "ON transactions(tx_hash) WHERE tx_hash IS NOT NULL"
             ))
+
+            # Migration 039: Forum — 4 new tables, no changes to existing tables.
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS forum_categories (
+                    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    parent_id       UUID REFERENCES forum_categories(id) ON DELETE CASCADE,
+                    slug            VARCHAR(60)  UNIQUE NOT NULL,
+                    name            VARCHAR(120) NOT NULL,
+                    description     TEXT,
+                    icon            VARCHAR(80),
+                    color           VARCHAR(20)  DEFAULT '#6366f1',
+                    sort_order      INT          DEFAULT 0,
+                    post_count      INT          DEFAULT 0,
+                    thread_count    INT          DEFAULT 0,
+                    last_post_at    TIMESTAMPTZ,
+                    last_post_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+                    is_announcements BOOLEAN     DEFAULT FALSE,
+                    created_at      TIMESTAMPTZ  DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS forum_threads (
+                    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    category_id     UUID NOT NULL REFERENCES forum_categories(id) ON DELETE CASCADE,
+                    author_id       UUID NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+                    title           VARCHAR(300) NOT NULL,
+                    body            TEXT         NOT NULL,
+                    slug            VARCHAR(340) UNIQUE NOT NULL,
+                    status          VARCHAR(20)  DEFAULT 'open',
+                    is_pinned       BOOLEAN      DEFAULT FALSE,
+                    is_announcement BOOLEAN      DEFAULT FALSE,
+                    views           INT          DEFAULT 0,
+                    reply_count     INT          DEFAULT 0,
+                    last_reply_at   TIMESTAMPTZ,
+                    last_reply_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+                    tags            TEXT[]       DEFAULT '{}',
+                    created_at      TIMESTAMPTZ  DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS forum_posts (
+                    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    thread_id       UUID NOT NULL REFERENCES forum_threads(id) ON DELETE CASCADE,
+                    author_id       UUID NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+                    parent_post_id  UUID REFERENCES forum_posts(id) ON DELETE SET NULL,
+                    body            TEXT         NOT NULL,
+                    is_deleted      BOOLEAN      DEFAULT FALSE,
+                    edit_count      INT          DEFAULT 0,
+                    edited_at       TIMESTAMPTZ,
+                    reactions       JSONB        DEFAULT '{}',
+                    created_at      TIMESTAMPTZ  DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS forum_moderators (
+                    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    category_id UUID REFERENCES forum_categories(id) ON DELETE CASCADE,
+                    granted_by  UUID REFERENCES users(id) ON DELETE SET NULL,
+                    granted_at  TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE (user_id, category_id)
+                )
+            """))
+            # Forum indexes
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_forum_threads_category "
+                "ON forum_threads(category_id, last_reply_at DESC)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_forum_posts_thread "
+                "ON forum_posts(thread_id, created_at ASC) WHERE is_deleted = FALSE"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_forum_threads_fts "
+                "ON forum_threads USING GIN(to_tsvector('english', title || ' ' || body))"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_forum_threads_author "
+                "ON forum_threads(author_id, created_at DESC)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_forum_posts_author "
+                "ON forum_posts(author_id, created_at DESC)"
+            ))
+            # Seed initial categories (idempotent)
+            conn.execute(text("""
+                INSERT INTO forum_categories (slug, name, description, icon, color, sort_order)
+                VALUES
+                  ('cs2',      'CS2',                'Counter-Strike 2 discussion, guides and highlights', 'cs2',      '#4FC3F7', 1),
+                  ('valorant', 'Valorant',           'Valorant strategies, clips and LFG',               'valorant', '#FF4655', 2),
+                  ('general',  'General Arena',      'Off-topic, platform news and community chat',      'arena',    '#6366f1', 3),
+                  ('feedback', 'Suggestions & Bugs', 'Feature requests and bug reports',                 'bug',      '#F59E0B', 4)
+                ON CONFLICT (slug) DO NOTHING
+            """))
+            # Seed sub-categories for CS2
+            conn.execute(text("""
+                INSERT INTO forum_categories (parent_id, slug, name, description, icon, color, sort_order, is_announcements)
+                SELECT id, slug2, name2, desc2, icon2, color2, ord2, ann2
+                FROM forum_categories,
+                (VALUES
+                  ('cs2-announcements', 'Announcements',     'Official CS2 announcements',          'megaphone', '#4FC3F7', 1, TRUE),
+                  ('cs2-discussion',    'Discussion',        'General CS2 talk',                    'chat',      '#4FC3F7', 2, FALSE),
+                  ('cs2-strategy',      'Strategy & Guides', 'Tactics, setups and tips',            'book',      '#4FC3F7', 3, FALSE),
+                  ('cs2-lfg',           'Looking for Match', 'Find teammates for competitive play', 'users',     '#4FC3F7', 4, FALSE),
+                  ('cs2-clips',         'Clips & Highlights','Share your best plays',               'video',     '#4FC3F7', 5, FALSE)
+                ) AS t(slug2, name2, desc2, icon2, color2, ord2, ann2)
+                WHERE forum_categories.slug = 'cs2'
+                ON CONFLICT (slug) DO NOTHING
+            """))
+            # Seed sub-categories for Valorant
+            conn.execute(text("""
+                INSERT INTO forum_categories (parent_id, slug, name, description, icon, color, sort_order, is_announcements)
+                SELECT id, slug2, name2, desc2, icon2, color2, ord2, ann2
+                FROM forum_categories,
+                (VALUES
+                  ('val-announcements', 'Announcements',     'Official Valorant announcements',     'megaphone', '#FF4655', 1, TRUE),
+                  ('val-discussion',    'Discussion',        'General Valorant talk',               'chat',      '#FF4655', 2, FALSE),
+                  ('val-strategy',      'Strategy & Guides', 'Agent comps, lineups and tips',       'book',      '#FF4655', 3, FALSE),
+                  ('val-lfg',           'Looking for Match', 'Find teammates for ranked play',      'users',     '#FF4655', 4, FALSE),
+                  ('val-clips',         'Clips & Highlights','Share your best plays',               'video',     '#FF4655', 5, FALSE)
+                ) AS t(slug2, name2, desc2, icon2, color2, ord2, ann2)
+                WHERE forum_categories.slug = 'valorant'
+                ON CONFLICT (slug) DO NOTHING
+            """))
+            # Seed top-level categories: MLBB, Wild Rift, Honor of Kings
+            conn.execute(text("""
+                INSERT INTO forum_categories (slug, name, description, icon, color, sort_order)
+                VALUES
+                  ('mlbb',     'Mobile Legends',   'MLBB strategies, heroes and LFG',             'mlbb',     '#F59E0B', 5),
+                  ('wildrift', 'Wild Rift',         'Wild Rift builds, ranked tips and highlights', 'wildrift', '#06B6D4', 6),
+                  ('honorofkings', 'Honor of Kings','HoK gameplay, strategies and community',      'hok',      '#8B5CF6', 7)
+                ON CONFLICT (slug) DO NOTHING
+            """))
+            # Seed sub-categories for MLBB
+            conn.execute(text("""
+                INSERT INTO forum_categories (parent_id, slug, name, description, icon, color, sort_order, is_announcements)
+                SELECT id, slug2, name2, desc2, icon2, color2, ord2, ann2
+                FROM forum_categories,
+                (VALUES
+                  ('mlbb-announcements', 'Announcements',     'Official MLBB announcements',          'megaphone', '#F59E0B', 1, TRUE),
+                  ('mlbb-discussion',    'Discussion',        'General MLBB talk',                    'chat',      '#F59E0B', 2, FALSE),
+                  ('mlbb-strategy',      'Strategy & Guides', 'Hero builds, rotations and tips',      'book',      '#F59E0B', 3, FALSE),
+                  ('mlbb-lfg',           'Looking for Match', 'Find teammates for ranked play',       'users',     '#F59E0B', 4, FALSE),
+                  ('mlbb-clips',         'Clips & Highlights','Share your best plays',                'video',     '#F59E0B', 5, FALSE)
+                ) AS t(slug2, name2, desc2, icon2, color2, ord2, ann2)
+                WHERE forum_categories.slug = 'mlbb'
+                ON CONFLICT (slug) DO NOTHING
+            """))
+            # Seed sub-categories for Wild Rift
+            conn.execute(text("""
+                INSERT INTO forum_categories (parent_id, slug, name, description, icon, color, sort_order, is_announcements)
+                SELECT id, slug2, name2, desc2, icon2, color2, ord2, ann2
+                FROM forum_categories,
+                (VALUES
+                  ('wr-announcements', 'Announcements',     'Official Wild Rift announcements',     'megaphone', '#06B6D4', 1, TRUE),
+                  ('wr-discussion',    'Discussion',        'General Wild Rift talk',               'chat',      '#06B6D4', 2, FALSE),
+                  ('wr-strategy',      'Strategy & Guides', 'Champion builds and lane guides',      'book',      '#06B6D4', 3, FALSE),
+                  ('wr-lfg',           'Looking for Match', 'Find duo or team partners',            'users',     '#06B6D4', 4, FALSE),
+                  ('wr-clips',         'Clips & Highlights','Share your best plays',                'video',     '#06B6D4', 5, FALSE)
+                ) AS t(slug2, name2, desc2, icon2, color2, ord2, ann2)
+                WHERE forum_categories.slug = 'wildrift'
+                ON CONFLICT (slug) DO NOTHING
+            """))
+            # Seed sub-categories for Honor of Kings
+            conn.execute(text("""
+                INSERT INTO forum_categories (parent_id, slug, name, description, icon, color, sort_order, is_announcements)
+                SELECT id, slug2, name2, desc2, icon2, color2, ord2, ann2
+                FROM forum_categories,
+                (VALUES
+                  ('hok-announcements', 'Announcements',     'Official HoK announcements',           'megaphone', '#8B5CF6', 1, TRUE),
+                  ('hok-discussion',    'Discussion',        'General HoK talk',                     'chat',      '#8B5CF6', 2, FALSE),
+                  ('hok-strategy',      'Strategy & Guides', 'Hero guides and team compositions',    'book',      '#8B5CF6', 3, FALSE),
+                  ('hok-lfg',           'Looking for Match', 'Find ranked teammates',                'users',     '#8B5CF6', 4, FALSE),
+                  ('hok-clips',         'Clips & Highlights','Share your best plays',                'video',     '#8B5CF6', 5, FALSE)
+                ) AS t(slug2, name2, desc2, icon2, color2, ord2, ann2)
+                WHERE forum_categories.slug = 'honorofkings'
+                ON CONFLICT (slug) DO NOTHING
+            """))
+            # Seed sub-categories for General Arena
+            conn.execute(text("""
+                INSERT INTO forum_categories (parent_id, slug, name, description, icon, color, sort_order, is_announcements)
+                SELECT id, slug2, name2, desc2, icon2, color2, ord2, ann2
+                FROM forum_categories,
+                (VALUES
+                  ('general-announcements', 'Announcements',     'Platform-wide announcements',      'megaphone', '#6366f1', 1, TRUE),
+                  ('general-discussion',    'Discussion',        'Off-topic community chat',         'chat',      '#6366f1', 2, FALSE),
+                  ('general-introductions', 'Introductions',     'New here? Introduce yourself',     'user',      '#6366f1', 3, FALSE)
+                ) AS t(slug2, name2, desc2, icon2, color2, ord2, ann2)
+                WHERE forum_categories.slug = 'general'
+                ON CONFLICT (slug) DO NOTHING
+            """))
+            # Seed sub-categories for Suggestions & Bugs
+            conn.execute(text("""
+                INSERT INTO forum_categories (parent_id, slug, name, description, icon, color, sort_order, is_announcements)
+                SELECT id, slug2, name2, desc2, icon2, color2, ord2, ann2
+                FROM forum_categories,
+                (VALUES
+                  ('feedback-features',  'Feature Requests', 'Suggest new features or improvements', 'sparkles', '#F59E0B', 1, FALSE),
+                  ('feedback-bugs',      'Bug Reports',      'Report bugs and technical issues',      'bug',      '#F59E0B', 2, FALSE),
+                  ('feedback-balance',   'Balance & Rules',  'Discuss match rules and fairness',      'scale',    '#F59E0B', 3, FALSE)
+                ) AS t(slug2, name2, desc2, icon2, color2, ord2, ann2)
+                WHERE forum_categories.slug = 'feedback'
+                ON CONFLICT (slug) DO NOTHING
+            """))
+            # Migration 039b: forum_reports table
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS forum_reports (
+                    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    post_id     UUID NOT NULL REFERENCES forum_posts(id) ON DELETE CASCADE,
+                    reporter_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    reason      VARCHAR(200) NOT NULL,
+                    status      VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    reviewed_by UUID REFERENCES users(id),
+                    reviewed_at TIMESTAMPTZ,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (post_id, reporter_id)
+                )
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_forum_reports_status
+                ON forum_reports(status, created_at DESC)
+            """))
             conn.commit()
         logger.info("✅ Arena Engine connected to DB")
     except Exception as exc:
@@ -800,6 +1023,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(forum_router)
 
 
 @app.middleware("http")

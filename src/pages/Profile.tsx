@@ -1,4 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
+const ForumActivityCard = lazy(() =>
+  import("@/components/forum/ForumActivityCard").then((m) => ({ default: m.ForumActivityCard }))
+);
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -868,6 +871,11 @@ const Profile = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* Forum Activity */}
+      <Suspense fallback={null}>
+        <ForumActivityCard userId={user?.id} />
+      </Suspense>
 
       {/* Link Game Dialog */}
       <Dialog open={!!linkDialog} onOpenChange={(open) => { if (!open) setLinkDialog(null); }}>

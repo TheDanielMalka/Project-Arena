@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import {
   LayoutDashboard, Swords, History, User, ShieldAlert, Wallet, Trophy,
   Settings2, Medal, Shield, Gem, Sparkles, Crown, Users2, Monitor,
-  LogOut, Mail, ChevronUp, Flame, Tv2, type LucideIcon,
+  LogOut, Mail, ChevronUp, Flame, Tv2, MessageSquare, type LucideIcon,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useNavigate } from "react-router-dom";
@@ -35,6 +35,7 @@ const NAV_ITEMS = [
   { title: "Leaderboard",   url: "/leaderboard", icon: Trophy          },
   { title: "Creators",      url: "/creators",    icon: Tv2             },
   { title: "Hub",           url: "/hub",         icon: Users2          },
+  { title: "Forum",        url: "/forum",       icon: MessageSquare   },
   { title: "Wallet",        url: "/wallet",      icon: Wallet          },
   { title: "Forge",         url: "/forge",       icon: Flame           },
   { title: "Settings",      url: "/settings",    icon: Settings2       },

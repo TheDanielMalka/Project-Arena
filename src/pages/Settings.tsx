@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,7 @@ import {
   AlertCircle, ChevronRight, Wallet, Gamepad2, User,
   Eye, EyeOff, CheckCircle2, SlidersHorizontal, ShieldAlert, Check, X,
   Smartphone, Copy, RefreshCw, KeyRound, ShieldCheck, ShieldOff, Mail,
-  Ticket, Monitor,
+  Ticket, Monitor, MessageSquare,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -35,6 +35,8 @@ import {
   apiAuth2faDisable,
   apiPatchUserSettings,
   apiDeleteMyAccount,
+  apiGetForumProfile,
+  apiPatchForumProfile,
 } from "@/lib/engine-api";
 
 // ─── Nav sections ──────────────────────────────────────────────
@@ -44,6 +46,7 @@ const SECTIONS = [
   { id: "security",      icon: Shield,           label: "Security",      color: "text-arena-orange" },
   { id: "betting",       icon: Wallet,           label: "Betting",       color: "text-arena-gold"   },
   { id: "game",          icon: Gamepad2,         label: "Game",          color: "text-primary"      },
+  { id: "forum",         icon: MessageSquare,    label: "Forum",         color: "text-arena-cyan"   },
   { id: "support",       icon: Ticket,           label: "Help & ticket", color: "text-arena-cyan"   },
   { id: "danger",        icon: Trash2,           label: "Danger Zone",   color: "text-destructive"  },
 ] as const;
@@ -69,6 +72,90 @@ const SectionTitle = ({ icon: Icon, label, color }: { icon: React.ElementType; l
     <h2 className="font-display text-sm font-bold uppercase tracking-widest text-muted-foreground">{label}</h2>
   </div>
 );
+
+// ─── Forum settings sub-component ─────────────────────────────
+function ForumSettingsSection() {
+  const token = useUserStore((s) => s.token);
+  const { toast } = useToast();
+  const [signature, setSignature] = useState("");
+  const [badge, setBadge] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!token) return;
+    apiGetForumProfile(token).then((data) => {
+      if (data) {
+        setSignature(data.signature ?? "");
+        setBadge(data.badge ?? "");
+      }
+      setLoaded(true);
+    });
+  }, [token]);
+
+  const handleSave = async () => {
+    if (!token) return;
+    setSaving(true);
+    const ok = await apiPatchForumProfile(token, {
+      signature: signature.trim() || undefined,
+      badge: badge.trim() || undefined,
+    });
+    setSaving(false);
+    toast(ok
+      ? { title: "Forum profile saved" }
+      : { title: "Failed to save", variant: "destructive" }
+    );
+  };
+
+  if (!loaded) return <div className="text-xs text-muted-foreground py-4">Loading…</div>;
+
+  return (
+    <div>
+      <SectionTitle icon={MessageSquare} label="Forum" color="text-arena-cyan" />
+      <div className="space-y-4">
+        <SettingRow label="Forum Signature" desc="Appears below every post you make (max 200 chars)">
+          <div className="w-full max-w-xs">
+            <input
+              value={signature}
+              onChange={(e) => setSignature(e.target.value.slice(0, 200))}
+              placeholder="e.g. CS2 Global Elite · EST 2019"
+              className="w-full bg-white/5 border border-border/40 rounded px-3 py-1.5 text-sm outline-none focus:border-arena-cyan/40 transition-colors text-foreground placeholder:text-muted-foreground/40"
+            />
+            <p className="text-[10px] text-muted-foreground/50 text-right mt-0.5">
+              {signature.length}/200
+            </p>
+          </div>
+        </SettingRow>
+        <SettingRow label="Forum Badge" desc="Custom badge shown on your user card (max 40 chars)" last>
+          <div className="w-full max-w-xs">
+            <input
+              value={badge}
+              onChange={(e) => setBadge(e.target.value.slice(0, 40))}
+              placeholder="e.g. Season 1 Champion"
+              className="w-full bg-white/5 border border-border/40 rounded px-3 py-1.5 text-sm outline-none focus:border-arena-cyan/40 transition-colors text-foreground placeholder:text-muted-foreground/40"
+            />
+            {badge && (
+              <div className="mt-1.5 inline-flex px-2 py-0.5 rounded border border-arena-cyan/30 text-[11px] text-arena-cyan/80 bg-arena-cyan/5">
+                {badge}
+              </div>
+            )}
+          </div>
+        </SettingRow>
+        <div className="pt-2">
+          <Button
+            size="sm"
+            className="arena-hud-btn gap-1.5"
+            disabled={saving}
+            onClick={() => void handleSave()}
+          >
+            <Save className="h-3.5 w-3.5" />
+            {saving ? "Saving…" : "Save Forum Profile"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── Main component ────────────────────────────────────────────
 const ENGINE_REGION_OPTIONS: { value: UserSettingsRegion; label: string }[] = [
@@ -743,6 +830,11 @@ const SettingsPage = () => {
                 New support ticket
               </Button>
             </div>
+          )}
+
+          {/* ── FORUM ── */}
+          {active === "forum" && (
+            <ForumSettingsSection />
           )}
 
           {/* ── DANGER ── */}
