@@ -75,6 +75,7 @@ const GAME_LINK_TEMPLATE: GameConnection[] = [
   { name: "COD Mobile", platform: "mobile", status: "disconnected" },
   { name: "PUBG Mobile", platform: "mobile", status: "disconnected" },
   { name: "Fortnite Mobile", platform: "mobile", status: "disconnected" },
+  { name: "Honor of Kings", platform: "mobile", status: "disconnected" },
 ];
 
 // ── XP level icon map ──────────────────────────────────────────────────────────
@@ -247,6 +248,7 @@ const Profile = () => {
     "COD Mobile":       { abbr: "COD",  color: "#84CC16", bg: "rgba(132,204,22,0.12)", img: "https://play-lh.googleusercontent.com/cfGSXkDwxa1jW3TlhhkDJBN16-1_KEtEDhnILPcs9rXcC25g14XY6MRGCtlXHFHs0g=s120" },
     "PUBG Mobile":      { abbr: "PUBG", color: "#F59E0B", bg: "rgba(245,158,11,0.12)", img: "https://play-lh.googleusercontent.com/zCSGnBtZk0Lmp1BAbyaZfLktDzHmC6oke67qzz3G1lBegAF2asyt5KzXOJ2PVdHDYkU=s120" },
     "Fortnite Mobile":  { abbr: "FN",   color: "#38BDF8", bg: "rgba(56,189,248,0.12)", img: "https://play-lh.googleusercontent.com/FxJDPDIDJKlG9C8lOxaS041X27A0SrHAa46SGDIpPusAd4IEJihZTyGf-8rTZ_GpF34aeLvULilVuO0cpCJxTg=s120" },
+    "Honor of Kings":   { abbr: "HoK",  color: "#8B5CF6", bg: "rgba(139,92,246,0.12)", img: "https://play-lh.googleusercontent.com/hEm5NVeEv7UfFJaK8GZdfWe7p3DB_VvYx57qIEHbR0tMV_NToziH0Vbgd6CxLiWF-iURpAe-jsC_UGUDt0diPQ=s120" },
   };
 
   // Game Stats tabs: CS2 & Valorant (Arena v1) — per-game breakdown when API exists; until then show account-wide from profile
@@ -559,8 +561,8 @@ const Profile = () => {
                   <XpIcon className="h-3 w-3" />
                   {xpInfo.label}
                 </span>
-                <span className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Gamepad2 className="h-3 w-3" /> CS2
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded font-display text-xs text-muted-foreground border border-border/40 bg-secondary/30">
+                  <Gamepad2 className="h-3 w-3" /> {user?.preferredGame ?? "CS2"}
                 </span>
               </div>
               {/* XP progress bar */}
@@ -792,47 +794,62 @@ const Profile = () => {
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
             {gameConnections.filter(g => g.platform === "pc").map((game) => {
               const cfg = gameConfig[game.name] ?? { abbr: game.name.slice(0,2).toUpperCase(), color: "#888", bg: "rgba(136,136,136,0.1)" };
-              const active = false; // All PC games are Coming Soon in Arena v1
-              // DB-ready: driven by games.enabled flag from API
+              const isCs2      = game.name === "CS2";
+              const isValorant = game.name === "Valorant";
+              // CS2 verified via Steam OpenID; Valorant verified via Riot OAuth
+              const isVerified =
+                (isCs2      && !!user?.steamId   && !!user?.steamVerified) ||
+                (isValorant && !!user?.riotId    && !!user?.riotVerified);
+
               return (
                 <div key={game.name} className={`relative flex flex-col items-center gap-1.5 p-3 rounded-lg border transition-all ${
-                  active
+                  isVerified
                     ? "bg-secondary/40 border-border/50 hover:border-primary/20"
                     : "bg-secondary/20 border-border/30 opacity-60"
                 }`}>
-                  {/* status dot — hidden for coming-soon games */}
-                  {active && (
-                    <div className={`absolute top-2 right-2 w-1.5 h-1.5 rounded-full ${game.status === "connected" ? "bg-primary" : "bg-muted-foreground/30"}`} />
+                  {/* Top-right badge */}
+                  {isVerified && isCs2 && (
+                    <span className="absolute top-1.5 right-1.5 text-[8px] font-display font-bold px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-400 tracking-wide border border-emerald-500/30">
+                      VERIFIED
+                    </span>
                   )}
-                  {/* Coming Soon badge */}
-                  {!active && (
+                  {isVerified && isValorant && (
+                    <button
+                      onClick={() => toast({ title: "Account linked", description: "Your Riot account is permanently bound. Contact support to unlink." })}
+                      className="absolute top-1.5 right-1.5 text-[8px] font-display font-bold px-1 py-0.5 rounded bg-yellow-500/15 text-yellow-400 tracking-wide border border-yellow-500/30 hover:bg-yellow-500/25 transition-colors"
+                    >
+                      UNLINK
+                    </button>
+                  )}
+                  {!isVerified && (
                     <span className="absolute top-1.5 right-1.5 text-[8px] font-display font-bold px-1 py-0.5 rounded bg-muted text-muted-foreground/50 tracking-wide">SOON</span>
                   )}
-                  {/* game badge */}
-                  <div className={`w-9 h-9 rounded-lg overflow-hidden flex items-center justify-center font-display font-bold text-xs ${!active ? "grayscale" : ""}`} style={{ background: cfg.bg, border: `1px solid ${cfg.color}30` }}>
+                  {/* game icon — colored only when verified */}
+                  <div className={`w-9 h-9 rounded-lg overflow-hidden flex items-center justify-center font-display font-bold text-xs ${!isVerified ? "grayscale" : ""}`} style={{ background: cfg.bg, border: `1px solid ${cfg.color}30` }}>
                     {cfg.img
                       ? <img src={cfg.img} alt={game.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display="none"; (e.target as HTMLImageElement).parentElement!.innerHTML = `<span style="color:${cfg.color};font-size:10px;font-weight:700">${cfg.abbr}</span>`; }} />
                       : <span style={{ color: cfg.color }}>{cfg.abbr}</span>
                     }
                   </div>
                   <span className="font-display text-xs font-semibold text-center leading-tight">{game.name}</span>
-                  {active && game.status === "connected" && (
-                    <span className="text-[10px] text-muted-foreground font-mono truncate max-w-full px-1 text-center">{game.accountId}</span>
+                  {/* Account ID line */}
+                  {isVerified && (
+                    <span className="text-[10px] text-muted-foreground font-mono truncate max-w-full px-1 text-center">
+                      {isCs2 ? user?.steamId : user?.riotId}
+                    </span>
                   )}
-                  {active ? (
-                    game.status === "connected" ? (
-                      <span
-                        title="Game accounts are permanently bound to your Arena profile. Delete your account to reset."
-                        className="text-[10px] font-display px-2 py-0.5 rounded border border-primary/30 text-primary/80 bg-primary/5"
-                      >
-                        Locked
-                      </span>
-                    ) : (
-                      <button onClick={() => handleOpenLinkDialog(game.name, "game", game.platform)} className="text-[10px] font-display px-2 py-0.5 rounded border border-border hover:border-primary/50 text-muted-foreground hover:text-foreground transition-colors">
-                        Link
-                      </button>
-                    )
-                  ) : (
+                  {/* Bottom label */}
+                  {isVerified && isCs2 && (
+                    <span className="text-[10px] font-display px-2 py-0.5 rounded border border-emerald-500/30 text-emerald-400/80 bg-emerald-500/5">
+                      Steam ✓
+                    </span>
+                  )}
+                  {isVerified && isValorant && (
+                    <span className="text-[10px] font-display px-2 py-0.5 rounded border border-[#FF4655]/30 text-[#FF4655]/80 bg-[#FF4655]/5">
+                      Riot ✓
+                    </span>
+                  )}
+                  {!isVerified && (
                     <span className="text-[10px] text-muted-foreground/40 font-display">Coming Soon</span>
                   )}
                 </div>
