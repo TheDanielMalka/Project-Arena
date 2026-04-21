@@ -419,6 +419,12 @@ jobs:
               echo "  fail2ban already running — skipping"
             fi
 
+            echo "=== fail2ban config (slack alerts + sshd jail) ==="
+            sudo cp ~/Project-Arena/infra/fail2ban/action.d/slack-arena.conf /etc/fail2ban/action.d/
+            sudo cp ~/Project-Arena/infra/fail2ban/jail.d/arena-sshd.conf /etc/fail2ban/jail.d/
+            sudo systemctl reload fail2ban || sudo systemctl restart fail2ban
+            echo "  fail2ban config applied"
+
             echo "=== git pull ==="
             git pull origin main
 
