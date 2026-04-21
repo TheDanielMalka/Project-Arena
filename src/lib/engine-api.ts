@@ -2897,7 +2897,7 @@ export async function apiGetForumThreads(
 ): Promise<{ threads: ForumThread[]; total: number; pages: number } | null> {
   try {
     const res = await fetch(
-      `${ENGINE_BASE}/forum/threads?category_slug=${encodeURIComponent(categorySlug)}&page=${page}`,
+      `${ENGINE_BASE}/forum/threads?category=${encodeURIComponent(categorySlug)}&page=${page}`,
     );
     if (!res.ok) return null;
     return (await res.json()) as { threads: ForumThread[]; total: number; pages: number };
