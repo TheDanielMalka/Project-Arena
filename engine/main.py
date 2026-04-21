@@ -791,6 +791,104 @@ async def lifespan(app: FastAPI):
                 WHERE forum_categories.slug = 'valorant'
                 ON CONFLICT (slug) DO NOTHING
             """))
+            # Seed top-level categories: MLBB, Wild Rift, Honor of Kings
+            conn.execute(text("""
+                INSERT INTO forum_categories (slug, name, description, icon, color, sort_order)
+                VALUES
+                  ('mlbb',     'Mobile Legends',   'MLBB strategies, heroes and LFG',             'mlbb',     '#F59E0B', 5),
+                  ('wildrift', 'Wild Rift',         'Wild Rift builds, ranked tips and highlights', 'wildrift', '#06B6D4', 6),
+                  ('honorofkings', 'Honor of Kings','HoK gameplay, strategies and community',      'hok',      '#8B5CF6', 7)
+                ON CONFLICT (slug) DO NOTHING
+            """))
+            # Seed sub-categories for MLBB
+            conn.execute(text("""
+                INSERT INTO forum_categories (parent_id, slug, name, description, icon, color, sort_order, is_announcements)
+                SELECT id, slug2, name2, desc2, icon2, color2, ord2, ann2
+                FROM forum_categories,
+                (VALUES
+                  ('mlbb-announcements', 'Announcements',     'Official MLBB announcements',          'megaphone', '#F59E0B', 1, TRUE),
+                  ('mlbb-discussion',    'Discussion',        'General MLBB talk',                    'chat',      '#F59E0B', 2, FALSE),
+                  ('mlbb-strategy',      'Strategy & Guides', 'Hero builds, rotations and tips',      'book',      '#F59E0B', 3, FALSE),
+                  ('mlbb-lfg',           'Looking for Match', 'Find teammates for ranked play',       'users',     '#F59E0B', 4, FALSE),
+                  ('mlbb-clips',         'Clips & Highlights','Share your best plays',                'video',     '#F59E0B', 5, FALSE)
+                ) AS t(slug2, name2, desc2, icon2, color2, ord2, ann2)
+                WHERE forum_categories.slug = 'mlbb'
+                ON CONFLICT (slug) DO NOTHING
+            """))
+            # Seed sub-categories for Wild Rift
+            conn.execute(text("""
+                INSERT INTO forum_categories (parent_id, slug, name, description, icon, color, sort_order, is_announcements)
+                SELECT id, slug2, name2, desc2, icon2, color2, ord2, ann2
+                FROM forum_categories,
+                (VALUES
+                  ('wr-announcements', 'Announcements',     'Official Wild Rift announcements',     'megaphone', '#06B6D4', 1, TRUE),
+                  ('wr-discussion',    'Discussion',        'General Wild Rift talk',               'chat',      '#06B6D4', 2, FALSE),
+                  ('wr-strategy',      'Strategy & Guides', 'Champion builds and lane guides',      'book',      '#06B6D4', 3, FALSE),
+                  ('wr-lfg',           'Looking for Match', 'Find duo or team partners',            'users',     '#06B6D4', 4, FALSE),
+                  ('wr-clips',         'Clips & Highlights','Share your best plays',                'video',     '#06B6D4', 5, FALSE)
+                ) AS t(slug2, name2, desc2, icon2, color2, ord2, ann2)
+                WHERE forum_categories.slug = 'wildrift'
+                ON CONFLICT (slug) DO NOTHING
+            """))
+            # Seed sub-categories for Honor of Kings
+            conn.execute(text("""
+                INSERT INTO forum_categories (parent_id, slug, name, description, icon, color, sort_order, is_announcements)
+                SELECT id, slug2, name2, desc2, icon2, color2, ord2, ann2
+                FROM forum_categories,
+                (VALUES
+                  ('hok-announcements', 'Announcements',     'Official HoK announcements',           'megaphone', '#8B5CF6', 1, TRUE),
+                  ('hok-discussion',    'Discussion',        'General HoK talk',                     'chat',      '#8B5CF6', 2, FALSE),
+                  ('hok-strategy',      'Strategy & Guides', 'Hero guides and team compositions',    'book',      '#8B5CF6', 3, FALSE),
+                  ('hok-lfg',           'Looking for Match', 'Find ranked teammates',                'users',     '#8B5CF6', 4, FALSE),
+                  ('hok-clips',         'Clips & Highlights','Share your best plays',                'video',     '#8B5CF6', 5, FALSE)
+                ) AS t(slug2, name2, desc2, icon2, color2, ord2, ann2)
+                WHERE forum_categories.slug = 'honorofkings'
+                ON CONFLICT (slug) DO NOTHING
+            """))
+            # Seed sub-categories for General Arena
+            conn.execute(text("""
+                INSERT INTO forum_categories (parent_id, slug, name, description, icon, color, sort_order, is_announcements)
+                SELECT id, slug2, name2, desc2, icon2, color2, ord2, ann2
+                FROM forum_categories,
+                (VALUES
+                  ('general-announcements', 'Announcements',     'Platform-wide announcements',      'megaphone', '#6366f1', 1, TRUE),
+                  ('general-discussion',    'Discussion',        'Off-topic community chat',         'chat',      '#6366f1', 2, FALSE),
+                  ('general-introductions', 'Introductions',     'New here? Introduce yourself',     'user',      '#6366f1', 3, FALSE)
+                ) AS t(slug2, name2, desc2, icon2, color2, ord2, ann2)
+                WHERE forum_categories.slug = 'general'
+                ON CONFLICT (slug) DO NOTHING
+            """))
+            # Seed sub-categories for Suggestions & Bugs
+            conn.execute(text("""
+                INSERT INTO forum_categories (parent_id, slug, name, description, icon, color, sort_order, is_announcements)
+                SELECT id, slug2, name2, desc2, icon2, color2, ord2, ann2
+                FROM forum_categories,
+                (VALUES
+                  ('feedback-features',  'Feature Requests', 'Suggest new features or improvements', 'sparkles', '#F59E0B', 1, FALSE),
+                  ('feedback-bugs',      'Bug Reports',      'Report bugs and technical issues',      'bug',      '#F59E0B', 2, FALSE),
+                  ('feedback-balance',   'Balance & Rules',  'Discuss match rules and fairness',      'scale',    '#F59E0B', 3, FALSE)
+                ) AS t(slug2, name2, desc2, icon2, color2, ord2, ann2)
+                WHERE forum_categories.slug = 'feedback'
+                ON CONFLICT (slug) DO NOTHING
+            """))
+            # Migration 039b: forum_reports table
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS forum_reports (
+                    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    post_id     UUID NOT NULL REFERENCES forum_posts(id) ON DELETE CASCADE,
+                    reporter_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    reason      VARCHAR(200) NOT NULL,
+                    status      VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    reviewed_by UUID REFERENCES users(id),
+                    reviewed_at TIMESTAMPTZ,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (post_id, reporter_id)
+                )
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_forum_reports_status
+                ON forum_reports(status, created_at DESC)
+            """))
             conn.commit()
         logger.info("✅ Arena Engine connected to DB")
     except Exception as exc:

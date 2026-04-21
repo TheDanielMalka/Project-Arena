@@ -225,6 +225,18 @@ class ProfilePatch(BaseModel):
             raise ValueError("Signature max 200 chars")
         return v
 
+
+class ReportBody(BaseModel):
+    reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def reason_len(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 200:
+            raise ValueError("Reason must be 1–200 characters")
+        return v
+
 # ── Categories ────────────────────────────────────────────────────────────────
 
 @router.get("/categories")
@@ -603,8 +615,25 @@ def create_post(thread_id: str, body: PostCreate, user: dict = Depends(_require_
                 last_post_at = NOW(), last_post_user_id = :uid
             WHERE id = :cid
         """), {"uid": uid, "cid": str(t[1])})
-        session.commit()
 
+        # Notify thread author of reply (skip self-reply)
+        thread_meta = session.execute(
+            text("SELECT author_id, title, slug FROM forum_threads WHERE id = :id"),
+            {"id": thread_id},
+        ).fetchone()
+        if thread_meta and str(thread_meta[0]) != uid:
+            import json as _json
+            session.execute(text("""
+                INSERT INTO notifications (user_id, type, title, message, metadata)
+                VALUES (:uid, 'forum_reply', :title, :msg, :meta::jsonb)
+            """), {
+                "uid":   str(thread_meta[0]),
+                "title": "New reply to your thread",
+                "msg":   f'Someone replied to "{thread_meta[1]}"',
+                "meta":  _json.dumps({"thread_id": thread_id, "slug": thread_meta[2], "post_id": str(row[0])}),
+            })
+
+        session.commit()
         card = _user_card(session, uid)
 
     return {
@@ -866,3 +895,147 @@ def posts_since(thread_id: str, post_id: str) -> Any:
                 "created_at":     p[8].isoformat(),
             })
     return {"posts": post_list}
+
+
+# ── User forum activity ───────────────────────────────────────────────────────
+
+@router.get("/users/{user_id}/activity")
+def get_user_forum_activity(user_id: str) -> Any:
+    """Public endpoint — returns forum stats + recent threads for a user's profile."""
+    with _get_db() as session:
+        thread_count = session.execute(
+            text("SELECT COUNT(*) FROM forum_threads WHERE author_id = :uid AND status != 'deleted'"),
+            {"uid": user_id},
+        ).scalar() or 0
+
+        post_count = session.execute(
+            text("SELECT COUNT(*) FROM forum_posts WHERE author_id = :uid AND NOT is_deleted"),
+            {"uid": user_id},
+        ).scalar() or 0
+
+        threads = session.execute(text("""
+            SELECT t.id, t.title, t.slug, t.reply_count, t.created_at,
+                   c.slug AS cat_slug, c.name AS cat_name
+            FROM forum_threads t
+            JOIN forum_categories c ON c.id = t.category_id
+            WHERE t.author_id = :uid AND t.status != 'deleted'
+            ORDER BY t.created_at DESC
+            LIMIT 5
+        """), {"uid": user_id}).fetchall()
+
+    return {
+        "thread_count": int(thread_count),
+        "post_count":   int(post_count),
+        "threads": [
+            {
+                "id":            str(t[0]),
+                "title":         t[1],
+                "slug":          t[2],
+                "reply_count":   t[3],
+                "created_at":    t[4].isoformat(),
+                "category_slug": t[5],
+                "category_name": t[6],
+            }
+            for t in threads
+        ],
+    }
+
+
+# ── Forum profile — GET ───────────────────────────────────────────────────────
+
+@router.get("/profile/me")
+def get_forum_profile(user: dict = Depends(_require_user)) -> Any:
+    uid = user["user_id"]
+    with _get_db() as session:
+        row = session.execute(
+            text("SELECT forum_signature, forum_badge FROM users WHERE id = :uid"),
+            {"uid": uid},
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "User not found")
+    return {"signature": row[0], "badge": row[1]}
+
+
+# ── Report system ─────────────────────────────────────────────────────────────
+
+@router.post("/posts/{post_id}/report", status_code=201)
+def report_post(post_id: str, body: ReportBody, user: dict = Depends(_require_user)) -> Any:
+    uid = user["user_id"]
+    with _get_db() as session:
+        p = session.execute(
+            text("SELECT 1 FROM forum_posts WHERE id = :id AND NOT is_deleted"),
+            {"id": post_id},
+        ).fetchone()
+        if not p:
+            raise HTTPException(404, "Post not found")
+        try:
+            session.execute(text("""
+                INSERT INTO forum_reports (post_id, reporter_id, reason)
+                VALUES (:pid, :uid, :reason)
+            """), {"pid": post_id, "uid": uid, "reason": body.reason})
+            session.commit()
+        except Exception:
+            raise HTTPException(409, "You already reported this post")
+    return {"ok": True}
+
+
+@router.get("/admin/reported")
+def list_reported_posts(user: dict = Depends(_require_user)) -> Any:
+    uid = user["user_id"]
+    with _get_db() as session:
+        if not _is_forum_mod(session, uid):
+            raise HTTPException(403, "Moderators only")
+        rows = session.execute(text("""
+            SELECT r.id, r.reason, r.status, r.created_at,
+                   p.id AS post_id, p.body, p.thread_id,
+                   u.username AS reporter, pu.username AS post_author
+            FROM forum_reports r
+            JOIN forum_posts  p  ON p.id = r.post_id
+            JOIN users        u  ON u.id = r.reporter_id
+            JOIN users        pu ON pu.id = p.author_id
+            WHERE r.status = 'pending'
+            ORDER BY r.created_at ASC
+            LIMIT 100
+        """)).fetchall()
+    return {"reports": [
+        {
+            "id":          str(r[0]),
+            "reason":      r[1],
+            "status":      r[2],
+            "created_at":  r[3].isoformat(),
+            "post_id":     str(r[4]),
+            "post_body":   r[5][:200] if r[5] else "",
+            "thread_id":   str(r[6]),
+            "reporter":    r[7],
+            "post_author": r[8],
+        }
+        for r in rows
+    ]}
+
+
+@router.post("/admin/reported/{report_id}/resolve")
+def resolve_report(
+    report_id: str,
+    action: str = Query(..., pattern="^(dismiss|remove_post)$"),
+    user: dict = Depends(_require_user),
+) -> Any:
+    uid = user["user_id"]
+    with _get_db() as session:
+        if not _is_forum_mod(session, uid):
+            raise HTTPException(403, "Moderators only")
+        r = session.execute(
+            text("SELECT post_id FROM forum_reports WHERE id = :id"), {"id": report_id}
+        ).fetchone()
+        if not r:
+            raise HTTPException(404, "Report not found")
+        if action == "remove_post":
+            session.execute(
+                text("UPDATE forum_posts SET is_deleted = TRUE WHERE id = :id"), {"id": str(r[0])}
+            )
+        session.execute(text("""
+            UPDATE forum_reports
+            SET status = 'resolved', reviewed_by = :uid, reviewed_at = NOW()
+            WHERE id = :id
+        """), {"uid": uid, "id": report_id})
+        session.commit()
+    return {"ok": True}
