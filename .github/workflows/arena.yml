@@ -419,6 +419,9 @@ jobs:
               echo "  fail2ban already running — skipping"
             fi
 
+            echo "=== git pull ==="
+            git pull origin main
+
             echo "=== CloudWatch Agent ==="
             if ! systemctl list-units --type=service 2>/dev/null | grep -q amazon-cloudwatch-agent; then
               echo "  Installing CloudWatch Agent..."
@@ -450,9 +453,6 @@ jobs:
             sudo cp ~/Project-Arena/infra/fail2ban/jail.d/arena-sshd.conf /etc/fail2ban/jail.d/
             sudo systemctl reload fail2ban || sudo systemctl restart fail2ban
             echo "  fail2ban config applied"
-
-            echo "=== git pull ==="
-            git pull origin main
 
             echo "=== rebuild containers ==="
             docker system prune -af
