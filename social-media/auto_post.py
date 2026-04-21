@@ -198,22 +198,25 @@ class SocialMediaAutomator:
             await self.handle_pull_request_event(event_data)
     
     async def handle_push_event(self, data: Dict[str, Any]):
-        """Handle push to main branch"""
+        """Handle push to main branch — skip merge commits (covered by pull_request event)"""
         commits = data.get('commits', [])
         commit_messages = [commit['message'] for commit in commits]
-        
-        # Generate content for push event
+        latest = commit_messages[0] if commit_messages else ""
+
+        # Merge commits are announced via the pull_request event — avoid double-posting
+        if latest.startswith("Merge pull request") or latest.startswith("Merge branch"):
+            print("Skipping push event: merge commit handled by pull_request event")
+            return
+
         content_data = {
             "commit_count": len(commits),
-            "latest_commit": commit_messages[0] if commit_messages else "No commit message",
+            "latest_commit": latest or "Platform update",
             "branch": data.get('ref', '').split('/')[-1],
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
-        
+
         content = self.generate_content("push_update", content_data)
-        
-        # Post to all platforms
-        await self.post_to_all_platforms(content, image_url="https://arena.gg/images/update-banner.png")
+        await self.post_to_all_platforms(content, image_url="https://project-arena.com/images/update-banner.png")
     
     async def handle_release_event(self, data: Dict[str, Any]):
         """Handle new release"""
@@ -224,14 +227,12 @@ class SocialMediaAutomator:
         content_data = {
             "version": tag_name,
             "release_notes": release_notes[:200] + "..." if len(release_notes) > 200 else release_notes,
-            "download_url": "https://arena.gg/download",
+            "download_url": "https://project-arena.com/download",
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         
         content = self.generate_content("release_announcement", content_data)
-        
-        # Post to all platforms
-        await self.post_to_all_platforms(content, image_url="https://arena.gg/images/release-banner.png")
+        await self.post_to_all_platforms(content, image_url="https://project-arena.com/images/release-banner.png")
     
     async def handle_pull_request_event(self, data: Dict[str, Any]):
         """Handle pull request merge"""
@@ -312,7 +313,7 @@ async def main():
             content = automator.generate_content("release_announcement", {
                 "version": "v2.1.0",
                 "release_notes": "Major security updates and new tournament features",
-                "download_url": "https://arena.gg/download",
+                "download_url": "https://project-arena.com/download",
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             })
         
