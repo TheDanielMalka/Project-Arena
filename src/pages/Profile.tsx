@@ -138,6 +138,18 @@ const Profile = () => {
       toast({ title: "Steam Connected!", description: "Your Steam account has been linked to Arena." });
     } else if (err === "taken") {
       toast({ title: "Steam Already Linked", description: "That Steam account is already linked to another Arena account.", variant: "destructive" });
+    } else if (err === "cooldown") {
+      toast({
+        title: "Steam ID in Cooldown",
+        description: "That Steam account was recently unlinked from a deleted Arena profile. Try again in up to 24 hours.",
+        variant: "destructive",
+      });
+    } else if (err === "locked") {
+      toast({
+        title: "Steam ID Locked",
+        description: "Your Arena account is already linked to a different Steam ID. Steam links are permanent — delete your account to reset.",
+        variant: "destructive",
+      });
     } else {
       toast({ title: "Steam Connection Failed", description: "Could not verify your Steam account. Please try again.", variant: "destructive" });
     }
@@ -338,17 +350,6 @@ const Profile = () => {
       title: userFacingNotification.lookApplied.title,
       message: userFacingNotification.lookApplied.message,
     });
-  };
-
-  const handleUnlinkGame = (gameName: string) => {
-    setGameConnections((prev) =>
-      prev.map((g) => {
-        if (g.name !== gameName) return g;
-        toast({ title: `${gameName} Disconnected`, description: `Your ${gameName} account has been unlinked.` });
-        addNotification({ type: "system", title: `🔗 ${gameName} Unlinked`, message: `Your ${gameName} account has been disconnected.` });
-        return { ...g, status: "disconnected", accountId: undefined };
-      })
-    );
   };
 
   const handleOpenLinkDialog = (name: string, type: "game" | "service", platform?: "pc" | "mobile", placeholder?: string) => {
@@ -817,9 +818,12 @@ const Profile = () => {
                   )}
                   {active ? (
                     game.status === "connected" ? (
-                      <button onClick={() => handleUnlinkGame(game.name)} className="text-[10px] font-display px-2 py-0.5 rounded border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors">
-                        Unlink
-                      </button>
+                      <span
+                        title="Game accounts are permanently bound to your Arena profile. Delete your account to reset."
+                        className="text-[10px] font-display px-2 py-0.5 rounded border border-primary/30 text-primary/80 bg-primary/5"
+                      >
+                        Locked
+                      </span>
                     ) : (
                       <button onClick={() => handleOpenLinkDialog(game.name, "game", game.platform)} className="text-[10px] font-display px-2 py-0.5 rounded border border-border hover:border-primary/50 text-muted-foreground hover:text-foreground transition-colors">
                         Link

@@ -70,8 +70,6 @@ interface UserState {
   unlinkWalletFromProfile: () => void;
   /** After MetaMask link + PATCH success — keep user.* in sync with chain address. */
   setLinkedWalletAddress: (address: string) => void;
-  // DB-ready: replace with POST /api/wallet/disconnect
-  disconnectWallet: () => void;
   // DB-ready: PATCH /api/users/me — persist identity row (avatar, avatar_bg, equipped_badge_icon, forge_unlocked_item_ids, …)
   updateProfile: (updates: UserProfilePatch) => void;
   /** DB-ready: POST /api/forge/purchase response — append forge_unlocked_item_ids; for badge also set equipped_badge_icon to purchased icon (auto-equip) */
@@ -449,10 +447,6 @@ export const useUserStore = create<UserState>((set, get) => ({
     });
   },
 
-  disconnectWallet: () => {
-    get().unlinkWalletFromProfile();
-  },
-
   updateProfile: (updates) => {
     set((state) => {
       if (!state.user) return { user: null };
@@ -473,14 +467,6 @@ export const useUserStore = create<UserState>((set, get) => ({
     if ("avatarBg" in updates) patch.avatar_bg = updates.avatarBg ?? null;
     if ("equippedBadgeIcon" in updates) patch.equipped_badge_icon = updates.equippedBadgeIcon ?? null;
     if ("unlockedForgeItemIds" in updates) patch.forge_unlocked_item_ids = updates.unlockedForgeItemIds ?? [];
-    if ("steamId" in updates && updates.steamId !== undefined) {
-      const s = updates.steamId;
-      patch.steam_id = s === null || s === "" ? null : s.trim();
-    }
-    if ("riotId" in updates && updates.riotId !== undefined) {
-      const r = updates.riotId;
-      patch.riot_id = r === null || r === "" ? null : r.trim();
-    }
     if ("username" in updates && updates.username !== undefined) patch.username = updates.username;
 
     if (Object.keys(patch).length > 0) void apiPatchMe(token, patch);

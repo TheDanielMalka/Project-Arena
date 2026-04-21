@@ -102,8 +102,12 @@ export interface UserBalance {
   inEscrow: number;
 }
 
-/** Client / PATCH payload — `stats` may be partial; merged into existing user_stats row in userStore.updateProfile */
-export type UserProfilePatch = Omit<Partial<UserProfile>, "stats"> & {
+/**
+ * Client-side PATCH payload for userStore.updateProfile.
+ * Excludes server-controlled identity fields: steamId, riotId, walletAddress are
+ * set exclusively by OpenID/OAuth/MetaMask flows and are never patched directly.
+ */
+export type UserProfilePatch = Omit<Partial<UserProfile>, "stats" | "steamId" | "riotId" | "walletAddress"> & {
   stats?: Partial<UserStats>;
 };
 

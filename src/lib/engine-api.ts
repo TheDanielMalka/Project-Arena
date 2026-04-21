@@ -1512,7 +1512,8 @@ export async function apiRespondToNotification(
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-// PATCH /users/me — persist avatar, badge, forge changes to DB
+// PATCH /users/me — persist avatar, badge, forge, username changes to DB
+// Note: steam_id and riot_id are server-controlled (OpenID/OAuth only) and cannot be sent here.
 export async function apiPatchMe(
   token: string,
   patch: {
@@ -1520,8 +1521,6 @@ export async function apiPatchMe(
     avatar_bg?: string | null;
     equipped_badge_icon?: string | null;
     forge_unlocked_item_ids?: string[];
-    steam_id?: string | null;
-    riot_id?: string | null;
     username?: string | null;
   },
 ): Promise<boolean> {
@@ -1538,39 +1537,36 @@ export async function apiPatchMe(
   }
 }
 
+export type ApiPatchWalletResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
 /**
- * PATCH /users/me — set `wallet_address` after client-side signature (Issue #23).
- * Engine: `wallet_address` on PatchUserRequest — checksummed address string.
+ * PATCH /users/me — write-once wallet_address after client-side ownership signature.
+ * Returns a discriminated union so callers can surface specific errors:
+ *   400 → already linked to this account or empty address rejected
+ *   409 → this wallet address is in a 24h post-deletion cooldown
  */
-export async function apiPatchMeWalletAddress(token: string, wallet_address: string): Promise<boolean> {
+export async function apiPatchMeWalletAddress(token: string, wallet_address: string): Promise<ApiPatchWalletResult> {
   try {
     const res = await arenaUserFetch(`${ENGINE_BASE}/users/me`, token, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ wallet_address }),
     });
-    return res.ok;
+    if (res.ok) return { ok: true };
+    const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
+    const detail = parseFastApiDetail(raw.detail) ?? "";
+    if (res.status === 400) {
+      return { ok: false, error: detail || "Wallet address could not be saved. You may already have a wallet linked." };
+    }
+    if (res.status === 409) {
+      return { ok: false, error: detail || "This wallet address is in a 24-hour cooldown. Try another address or wait." };
+    }
+    return { ok: false, error: detail || "Could not save wallet to your profile." };
   } catch (err) {
     reportEngineApiError(err);
-    return false;
-  }
-}
-
-/**
- * PATCH /users/me — clear linked wallet (`users.wallet_address` → NULL).
- * Engine: same contract as unlinking steam/riot — send empty string (or null once supported).
- */
-export async function apiUnlinkMeWalletAddress(token: string): Promise<boolean> {
-  try {
-    const res = await arenaUserFetch(`${ENGINE_BASE}/users/me`, token, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ wallet_address: "" }),
-    });
-    return res.ok;
-  } catch (err) {
-    reportEngineApiError(err);
-    return false;
+    return { ok: false, error: "Network error — could not reach the server." };
   }
 }
 
