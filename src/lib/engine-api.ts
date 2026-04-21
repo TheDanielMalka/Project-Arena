@@ -2818,6 +2818,319 @@ export async function apiClaimForgeChallenge(
   }
 }
 
+// ── Forum API ─────────────────────────────────────────────────────────────────
+
+export interface ForumUserCard {
+  id: string;
+  username: string;
+  avatar: string | null;
+  avatar_bg: string | null;
+  arena_id: string;
+  rank: string;
+  member_since: string;
+  forum_post_count: number;
+  role: string;
+  forum_signature: string | null;
+  forum_badge: string | null;
+}
+
+export interface ForumCategory {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  icon: string | null;
+  parent_id: string | null;
+  thread_count: number;
+  children: ForumCategory[];
+}
+
+export interface ForumThread {
+  id: string;
+  slug: string;
+  title: string;
+  category_id: string;
+  category_slug: string;
+  category_name: string;
+  author: ForumUserCard;
+  reply_count: number;
+  is_pinned: boolean;
+  is_locked: boolean;
+  status: string;
+  created_at: string;
+  last_post_at: string | null;
+  view_count: number;
+}
+
+export interface ForumPost {
+  id: string;
+  thread_id: string;
+  author: ForumUserCard;
+  body: string;
+  post_number: number;
+  created_at: string;
+  updated_at: string;
+  is_deleted: boolean;
+  reactions: Record<string, number>;
+}
+
+export interface ForumThreadDetail extends ForumThread {
+  first_post: ForumPost;
+}
+
+export async function apiGetForumCategories(): Promise<ForumCategory[] | null> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/forum/categories`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { categories: ForumCategory[] };
+    return data.categories;
+  } catch (err) {
+    reportEngineApiError(err);
+    return null;
+  }
+}
+
+export async function apiGetForumThreads(
+  categorySlug: string,
+  page = 1,
+): Promise<{ threads: ForumThread[]; total: number; pages: number } | null> {
+  try {
+    const res = await fetch(
+      `${ENGINE_BASE}/forum/threads?category_slug=${encodeURIComponent(categorySlug)}&page=${page}`,
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as { threads: ForumThread[]; total: number; pages: number };
+  } catch (err) {
+    reportEngineApiError(err);
+    return null;
+  }
+}
+
+export async function apiGetForumThread(slug: string): Promise<ForumThreadDetail | null> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/forum/threads/${encodeURIComponent(slug)}`);
+    if (!res.ok) return null;
+    return (await res.json()) as ForumThreadDetail;
+  } catch (err) {
+    reportEngineApiError(err);
+    return null;
+  }
+}
+
+export async function apiCreateForumThread(
+  token: string,
+  data: { title: string; category_id: string; body: string },
+): Promise<{ ok: true; slug: string } | { ok: false; detail: string }> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/forum/threads`, token, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false as const, detail: parseFastApiDetail(raw.detail) ?? "Error" };
+    return { ok: true as const, slug: raw.slug as string };
+  } catch (err) {
+    reportEngineApiError(err);
+    return { ok: false as const, detail: "Network error" };
+  }
+}
+
+export async function apiGetForumPosts(
+  threadId: string,
+  page = 1,
+): Promise<{ posts: ForumPost[]; total: number; pages: number } | null> {
+  try {
+    const res = await fetch(
+      `${ENGINE_BASE}/forum/threads/${encodeURIComponent(threadId)}/posts?page=${page}`,
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as { posts: ForumPost[]; total: number; pages: number };
+  } catch (err) {
+    reportEngineApiError(err);
+    return null;
+  }
+}
+
+export async function apiCreateForumPost(
+  token: string,
+  threadId: string,
+  body: string,
+): Promise<{ ok: true; post: ForumPost } | { ok: false; detail: string }> {
+  try {
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/forum/threads/${encodeURIComponent(threadId)}/posts`,
+      token,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body }),
+      },
+    );
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false as const, detail: parseFastApiDetail(raw.detail) ?? "Error" };
+    return { ok: true as const, post: raw as unknown as ForumPost };
+  } catch (err) {
+    reportEngineApiError(err);
+    return { ok: false as const, detail: "Network error" };
+  }
+}
+
+export async function apiReactForumPost(
+  token: string,
+  postId: string,
+  emoji: string,
+): Promise<Record<string, number> | null> {
+  try {
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/forum/posts/${encodeURIComponent(postId)}/react`,
+      token,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emoji }),
+      },
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as { reactions: Record<string, number> };
+    return data.reactions;
+  } catch (err) {
+    reportEngineApiError(err);
+    return null;
+  }
+}
+
+export async function apiSearchForum(
+  q: string,
+): Promise<{ threads: ForumThread[]; posts: ForumPost[] } | null> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/forum/search?q=${encodeURIComponent(q)}`);
+    if (!res.ok) return null;
+    return (await res.json()) as { threads: ForumThread[]; posts: ForumPost[] };
+  } catch (err) {
+    reportEngineApiError(err);
+    return null;
+  }
+}
+
+export async function apiPollForumThread(
+  threadId: string,
+  afterPostId: string,
+): Promise<{ posts: ForumPost[] } | null> {
+  try {
+    const res = await fetch(
+      `${ENGINE_BASE}/forum/threads/${encodeURIComponent(threadId)}/poll?after=${encodeURIComponent(afterPostId)}`,
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as { posts: ForumPost[] };
+  } catch (err) {
+    reportEngineApiError(err);
+    return null;
+  }
+}
+
+export async function apiGetForumProfile(
+  token: string,
+): Promise<{ signature: string | null; badge: string | null } | null> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/forum/profile/me`, token, { method: "GET" });
+    if (!res.ok) return null;
+    return (await res.json()) as { signature: string | null; badge: string | null };
+  } catch (err) {
+    reportEngineApiError(err);
+    return null;
+  }
+}
+
+export async function apiPatchForumProfile(
+  token: string,
+  data: { signature?: string; badge?: string },
+): Promise<boolean> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/forum/profile/me`, token, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    return res.ok;
+  } catch (err) {
+    reportEngineApiError(err);
+    return false;
+  }
+}
+
+export async function apiDeleteForumPost(token: string, postId: string): Promise<boolean> {
+  try {
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/forum/posts/${encodeURIComponent(postId)}`,
+      token,
+      { method: "DELETE" },
+    );
+    return res.ok;
+  } catch (err) {
+    reportEngineApiError(err);
+    return false;
+  }
+}
+
+export async function apiDeleteForumThread(token: string, threadId: string): Promise<boolean> {
+  try {
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/forum/threads/${encodeURIComponent(threadId)}`,
+      token,
+      { method: "DELETE" },
+    );
+    return res.ok;
+  } catch (err) {
+    reportEngineApiError(err);
+    return false;
+  }
+}
+
+export async function apiPinForumThread(
+  token: string,
+  threadId: string,
+  pin: boolean,
+): Promise<boolean> {
+  try {
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/forum/threads/${encodeURIComponent(threadId)}/pin`,
+      token,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin }),
+      },
+    );
+    return res.ok;
+  } catch (err) {
+    reportEngineApiError(err);
+    return false;
+  }
+}
+
+export async function apiLockForumThread(
+  token: string,
+  threadId: string,
+  lock: boolean,
+): Promise<boolean> {
+  try {
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/forum/threads/${encodeURIComponent(threadId)}/lock`,
+      token,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lock }),
+      },
+    );
+    return res.ok;
+  } catch (err) {
+    reportEngineApiError(err);
+    return false;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Admin API
 // ─────────────────────────────────────────────────────────────────────────────
