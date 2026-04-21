@@ -6,7 +6,10 @@ CLAUDE.md
 .cursor/
 *.mdc
 AGENT_SYNC.md
+AGENTS_SYNC.md
 .claude/
+.cascade/
+.arena-agents/
 
 
 # -----------------------------
