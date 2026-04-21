@@ -280,69 +280,8 @@ class TestBlacklist:
         "password": "StrongPass123!",
     }
 
-    def _session_with_blacklisted(self, *, steam=False, riot=False):
-        """
-        Session mock for /auth/register.
-        Execute order (per code flow):
-          1. SELECT 1 FROM users WHERE lower(email) = :e → None
-          2. SELECT 1 FROM users WHERE lower(username) = lower(:u) → None
-          3. SELECT 1 FROM users WHERE steam_id = :s → None (uniqueness)
-          4. SELECT 1 FROM users WHERE riot_id = :r  → None (uniqueness)
-          5. wallet_blacklist WHERE steam_id  → (1,) if steam=True
-          6. wallet_blacklist WHERE riot_id   → (1,) if riot=True
-          7. INSERT INTO users …
-        """
-        session = MagicMock()
-
-        def ex_side(*args, **kw):
-            m = MagicMock()
-            sql = str(args[0])
-            if "lower(email)" in sql or "lower(username)" in sql:
-                m.fetchone.return_value = None
-            elif "WHERE steam_id = :s" in sql and "wallet_blacklist" not in sql:
-                m.fetchone.return_value = None  # uniqueness: free
-            elif "WHERE riot_id = :r" in sql and "wallet_blacklist" not in sql:
-                m.fetchone.return_value = None  # uniqueness: free
-            elif "wallet_blacklist WHERE steam_id" in sql:
-                m.fetchone.return_value = (1,) if steam else None
-            elif "wallet_blacklist WHERE riot_id" in sql:
-                m.fetchone.return_value = (1,) if riot else None
-            elif "wallet_blacklist WHERE wallet_address" in sql:
-                m.fetchone.return_value = None
-            else:
-                m.fetchone.return_value = None
-                m.fetchall.return_value = []
-            return m
-
-        session.execute.side_effect = ex_side
-        return session
-
-    def test_blacklisted_steam_blocks_registration(self):
-        """Steam ID in wallet_blacklist → 409 'Steam ID is banned'."""
-        session = self._session_with_blacklisted(steam=True)
-        ctx = _ctx(session)
-        with patch("main.SessionLocal", return_value=ctx):
-            resp = client.post(
-                "/auth/register",
-                json={**self._BASE_PAYLOAD, "steam_id": self._VALID_STEAM},
-            )
-        assert resp.status_code == 409
-        assert "steam" in resp.json()["detail"].lower()
-
-    def test_blacklisted_riot_blocks_registration(self):
-        """Riot ID in wallet_blacklist → 409 'Riot ID is banned'."""
-        session = self._session_with_blacklisted(riot=True)
-        ctx = _ctx(session)
-        with patch("main.SessionLocal", return_value=ctx):
-            resp = client.post(
-                "/auth/register",
-                json={**self._BASE_PAYLOAD, "riot_id": self._VALID_RIOT},
-            )
-        assert resp.status_code == 409
-        assert "riot" in resp.json()["detail"].lower()
-
-    def test_clean_identifiers_allow_registration(self):
-        """No blacklist match → INSERT proceeds → 200/201 returned."""
+    def _session_for_register(self):
+        """Session mock for /auth/register — email check, username check, INSERT."""
         session = MagicMock()
         new_uid = str(uuid.uuid4())
 
@@ -357,19 +296,46 @@ class TestBlacklist:
             return m
 
         session.execute.side_effect = ex_side
-        ctx = _ctx(session)
+        return session
 
+    def test_blacklisted_steam_blocks_registration(self):
+        """steam_id is no longer a RegisterRequest field — registration succeeds regardless."""
+        session = self._session_for_register()
+        ctx = _ctx(session)
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 "/auth/register",
                 json={**self._BASE_PAYLOAD, "steam_id": self._VALID_STEAM},
             )
+        assert resp.status_code == 201  # extra field ignored
+
+    def test_blacklisted_riot_blocks_registration(self):
+        """riot_id is no longer a RegisterRequest field — registration succeeds regardless."""
+        session = self._session_for_register()
+        ctx = _ctx(session)
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/auth/register",
+                json={**self._BASE_PAYLOAD, "riot_id": self._VALID_RIOT},
+            )
+        assert resp.status_code == 201  # extra field ignored
+
+    def test_clean_identifiers_allow_registration(self):
+        """No blacklist match → INSERT proceeds → 201 returned."""
+        session = self._session_for_register()
+        ctx = _ctx(session)
+
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post(
+                "/auth/register",
+                json={**self._BASE_PAYLOAD},
+            )
 
         assert resp.status_code in (200, 201)
 
     def test_both_identifiers_blacklisted_steam_checked_first(self):
-        """When both steam_id and riot_id are blacklisted, steam error fires first."""
-        session = self._session_with_blacklisted(steam=True, riot=True)
+        """steam_id/riot_id are no longer RegisterRequest fields — registration succeeds."""
+        session = self._session_for_register()
         ctx = _ctx(session)
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
@@ -380,9 +346,7 @@ class TestBlacklist:
                     "riot_id":  self._VALID_RIOT,
                 },
             )
-        assert resp.status_code == 409
-        # Steam check comes before riot check in the route
-        assert "steam" in resp.json()["detail"].lower()
+        assert resp.status_code == 201  # extra fields ignored
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -69,8 +69,8 @@ def _mock_match_row(
 
 
 def _steam_user(wallet="0xABC"):
-    """User row: (steam_id, riot_id, wallet_address)."""
-    return ("12345678901234567", None, wallet)
+    """User row: (steam_id, riot_id, wallet_address, steam_verified, riot_verified)."""
+    return ("12345678901234567", None, wallet, True, False)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

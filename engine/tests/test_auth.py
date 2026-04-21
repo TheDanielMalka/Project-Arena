@@ -142,12 +142,10 @@ class TestAuthUtils:
 class TestRegister:
     def test_register_success_returns_201_and_token(self):
         ctx, session = _make_session_mock()
-        # Flow: email check → username check → steam_id dup check → steam blacklist check → INSERT RETURNING
+        # Flow: email check → username check → INSERT RETURNING
         session.execute.return_value.fetchone.side_effect = [
             None,   # email duplicate check
             None,   # username duplicate check
-            None,   # steam_id duplicate check
-            None,   # steam_id blacklist check (migration 025)
             (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),  # INSERT RETURNING
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -170,8 +168,6 @@ class TestRegister:
         session.execute.return_value.fetchone.side_effect = [
             None,   # email duplicate check
             None,   # username duplicate check
-            None,   # steam_id duplicate check
-            None,   # steam_id blacklist check (migration 025)
             (FAKE_UUID, "user", "user@arena.gg", FAKE_ARENA_ID),
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -214,43 +210,39 @@ class TestRegister:
         assert resp.status_code == 409
         assert "username" in resp.json()["detail"].lower()
 
-    def test_register_duplicate_steam_id_returns_409(self):
-        """Duplicate steam_id → 409 with specific message."""
+    def test_register_extra_game_fields_ignored_returns_201(self):
+        """steam_id/riot_id in body are ignored (not in RegisterRequest) → 201."""
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
             None,          # email check passes
             None,          # username check passes
-            (FAKE_UUID,),  # steam_id already linked
+            (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),  # INSERT RETURNING
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post("/auth/register", json={
                 "username": "newuser",
                 "email": "new@arena.gg",
                 "password": "password123",
-                "steam_id": VALID_STEAM_ID,
+                "steam_id": VALID_STEAM_ID,  # ignored by RegisterRequest
             })
-        assert resp.status_code == 409
-        assert "steam" in resp.json()["detail"].lower()
+        assert resp.status_code == 201
 
-    def test_register_duplicate_riot_id_returns_409(self):
-        """Duplicate riot_id → 409 with specific message.
-        steam_id not provided → its check is skipped → riot_id is the 3rd fetchone."""
+    def test_register_riot_field_ignored_returns_201(self):
+        """riot_id in body is ignored → 201."""
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
             None,          # email check passes
             None,          # username check passes
-            # steam_id check SKIPPED (not in request)
-            (FAKE_UUID,),  # riot_id already linked
+            (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),  # INSERT RETURNING
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post("/auth/register", json={
                 "username": "newuser",
                 "email": "new@arena.gg",
                 "password": "password123",
-                "riot_id": VALID_RIOT_ID,
+                "riot_id": VALID_RIOT_ID,  # ignored by RegisterRequest
             })
-        assert resp.status_code == 409
-        assert "riot" in resp.json()["detail"].lower()
+        assert resp.status_code == 201
 
     def test_register_duplicate_returns_409(self):
         """Legacy test — any duplicate returns 409."""
@@ -284,46 +276,64 @@ class TestRegister:
         resp = client.post("/auth/register", json={"username": "nopass"})
         assert resp.status_code == 422
 
-    # ── New: game account requirement ─────────────────────────────────────────
+    # ── Game accounts are no longer required at registration ─────────────────
 
-    def test_register_no_game_account_returns_422(self):
-        """Registration without steam_id AND riot_id must return 422."""
-        resp = client.post("/auth/register", json={
-            "username": "newuser",
-            "email": "new@arena.gg",
-            "password": "password123",
-            # intentionally omitting both steam_id and riot_id
-        })
-        assert resp.status_code == 422
-
-    def test_register_invalid_steam_id_returns_422(self):
-        """Invalid Steam ID format must be rejected before hitting the DB."""
-        resp = client.post("/auth/register", json={
-            "username": "newuser",
-            "email": "new@arena.gg",
-            "password": "password123",
-            "steam_id": "12345",  # too short, wrong prefix
-        })
-        assert resp.status_code == 422
-
-    def test_register_invalid_riot_id_returns_422(self):
-        """Invalid Riot ID format (missing #TAG) must be rejected before hitting the DB."""
-        resp = client.post("/auth/register", json={
-            "username": "newuser",
-            "email": "new@arena.gg",
-            "password": "password123",
-            "riot_id": "NoHashHere",
-        })
-        assert resp.status_code == 422
-
-    def test_register_valid_riot_id_only_accepted(self):
-        """riot_id alone (without steam_id) satisfies the game account requirement."""
+    def test_register_no_game_account_returns_201(self):
+        """Registration without steam_id/riot_id is allowed — game verification is post-registration."""
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
             None,   # email duplicate check
             None,   # username duplicate check
-            None,   # riot_id duplicate check (steam_id check skipped)
-            None,   # riot_id blacklist check (migration 025)
+            (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post("/auth/register", json={
+                "username": "newuser",
+                "email": "new@arena.gg",
+                "password": "password123",
+            })
+        assert resp.status_code == 201
+
+    def test_register_invalid_steam_id_in_body_ignored(self):
+        """Invalid steam_id in body is ignored (not a RegisterRequest field) → 201."""
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            None,   # email duplicate check
+            None,   # username duplicate check
+            (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post("/auth/register", json={
+                "username": "newuser",
+                "email": "new@arena.gg",
+                "password": "password123",
+                "steam_id": "12345",  # invalid format but ignored
+            })
+        assert resp.status_code == 201
+
+    def test_register_invalid_riot_id_in_body_ignored(self):
+        """Invalid riot_id in body is ignored → 201."""
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            None,   # email duplicate check
+            None,   # username duplicate check
+            (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),
+        ]
+        with patch("main.SessionLocal", return_value=ctx):
+            resp = client.post("/auth/register", json={
+                "username": "newuser",
+                "email": "new@arena.gg",
+                "password": "password123",
+                "riot_id": "NoHashHere",  # invalid format but ignored
+            })
+        assert resp.status_code == 201
+
+    def test_register_succeeds_with_only_email_username_password(self):
+        """Registration requires only username/email/password — game accounts linked later."""
+        ctx, session = _make_session_mock()
+        session.execute.return_value.fetchone.side_effect = [
+            None,   # email duplicate check
+            None,   # username duplicate check
             (FAKE_UUID, "user", "user@arena.gg", FAKE_ARENA_ID),
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -331,7 +341,6 @@ class TestRegister:
                 "username": "user",
                 "email": "user@arena.gg",
                 "password": "password123",
-                "riot_id": VALID_RIOT_ID,
             })
         assert resp.status_code == 201
 
@@ -345,8 +354,6 @@ class TestRegister:
         session.execute.return_value.fetchone.side_effect = [
             None,   # email duplicate check
             None,   # username duplicate check
-            None,   # steam_id duplicate check
-            None,   # steam_id blacklist check (migration 025)
             (FAKE_UUID, "newuser", "new@arena.gg", FAKE_ARENA_ID),
         ]
         with patch("main.SessionLocal", return_value=ctx):
@@ -354,7 +361,6 @@ class TestRegister:
                 "username": "newuser",
                 "email": "new@arena.gg",
                 "password": "password123",
-                "steam_id": VALID_STEAM_ID,
             })
         # Find the INSERT call and assert it sets at_balance = 200
         insert_calls = [
@@ -640,11 +646,11 @@ class TestMatchGating:
         token = auth.issue_token(FAKE_UUID, "daniel@arena.gg")
         return {"Authorization": f"Bearer {token}"}
 
-    # ── Helper user rows (steam_id, riot_id, wallet_address) ─────────────────
-    def _user_steam(self):          return (VALID_STEAM_ID, None,           "0xABC")
-    def _user_riot(self):           return (None,           VALID_RIOT_ID,  "0xABC")
-    def _user_none(self):           return (None,           None,           "0xABC")
-    def _user_steam_no_wallet(self):return (VALID_STEAM_ID, None,           None)
+    # ── Helper user rows (steam_id, riot_id, wallet_address, steam_verified, riot_verified) ──
+    def _user_steam(self):          return (VALID_STEAM_ID, None,           "0xABC", True,  False)
+    def _user_riot(self):           return (None,           VALID_RIOT_ID,  "0xABC", False, True)
+    def _user_none(self):           return (None,           None,           "0xABC", False, False)
+    def _user_steam_no_wallet(self):return (VALID_STEAM_ID, None,           None,    True,  False)
 
     # ── POST /matches ─────────────────────────────────────────────────────────
 

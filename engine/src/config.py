@@ -83,6 +83,14 @@ PLATFORM_WALLET_ADDRESS       = os.getenv("PLATFORM_WALLET_ADDRESS", "")        
 SSH_KEY_PATH = os.getenv("SSH_KEY_PATH")
 ORACLE_API_KEY = os.getenv("ORACLE_API_KEY")
 
+# ── Steam ─────────────────────────────────────────────────────
+# STEAM_API_KEY: optional — if set, validates Steam ID existence at registration.
+# ENGINE_BASE_URL: public URL of this engine; Steam redirects back to it.
+# FRONTEND_URL:   public URL of the React frontend; engine redirects after auth.
+STEAM_API_KEY   = os.getenv("STEAM_API_KEY")
+ENGINE_BASE_URL = os.getenv("ENGINE_BASE_URL", "http://localhost:8000")
+FRONTEND_URL    = os.getenv("FRONTEND_URL",    "http://localhost:5173")
+
 # ── App Settings ─────────────────────────────────────────────
 API_SECRET = os.getenv("API_SECRET", "change_me_in_production")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")

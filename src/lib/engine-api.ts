@@ -88,7 +88,7 @@ export interface MatchStatusApiResponse {
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const ENGINE_BASE =
+export const ENGINE_BASE =
   (import.meta.env.VITE_ENGINE_API_URL as string | undefined)?.trim() ?? "/api";
 
 const ENGINE_TOKEN =
@@ -658,6 +658,8 @@ export async function apiGetMe(token: string): Promise<{
   wallet_address: string | null;
   steam_id: string | null;
   riot_id: string | null;
+  steam_verified: boolean;
+  riot_verified: boolean;
   xp: number;
   wins: number;
   losses: number;
@@ -692,6 +694,8 @@ export async function apiGetMe(token: string): Promise<{
       wallet_address: string | null;
       steam_id: string | null;
       riot_id: string | null;
+      steam_verified: boolean;
+      riot_verified: boolean;
       xp: number;
       wins: number;
       losses: number;

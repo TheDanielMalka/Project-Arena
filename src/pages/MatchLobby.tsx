@@ -181,9 +181,12 @@ const GameLogo = ({ game, size = 22 }: { game: string; size?: number }) => {
 interface GameDropdownProps {
   label: string; icon: React.ElementType;
   games: Record<string, { logo: string; color: string; comingSoon?: boolean }>;
-  activeGame: string; onSelect: (g: string) => void; comingSoon?: boolean;
+  activeGame: string; onSelect: (g: string) => void;
+  comingSoon?: boolean;
+  /** Games locked due to missing verification — shown with lock badge */
+  lockedGames?: Set<string>;
 }
-const GameDropdown = ({ label, icon: Icon, games, activeGame, onSelect, comingSoon }: GameDropdownProps) => {
+const GameDropdown = ({ label, icon: Icon, games, activeGame, onSelect, comingSoon, lockedGames }: GameDropdownProps) => {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const hasActive = !comingSoon && Object.keys(games).some((g) => g === activeGame && !games[g].comingSoon);
@@ -218,6 +221,15 @@ const GameDropdown = ({ label, icon: Icon, games, activeGame, onSelect, comingSo
                     onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
                   <span className="font-medium truncate text-muted-foreground">{name}</span>
                   <span className="ml-auto text-[9px] font-display font-bold px-1.5 py-0.5 rounded bg-muted text-muted-foreground/70 tracking-wide shrink-0">SOON</span>
+                </div>
+              ) : lockedGames?.has(name) ? (
+                // ── Unverified game row — locked until user completes OAuth ──
+                <div key={name} title={`Verify your ${name === "CS2" ? "Steam" : "Riot"} account in Profile → Connections`}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm cursor-not-allowed opacity-50">
+                  <img src={cfg.logo} alt={name} className="w-6 h-6 rounded object-cover shrink-0 grayscale"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                  <span className="font-medium truncate text-muted-foreground">{name}</span>
+                  <span className="ml-auto text-[9px] font-display font-bold px-1.5 py-0.5 rounded bg-muted text-muted-foreground/70 tracking-wide shrink-0">VERIFY</span>
                 </div>
               ) : (
                 <button key={name} onClick={() => { onSelect(name); setOpen(false); }}
@@ -518,13 +530,12 @@ const MatchLobby = () => {
     const walletAddr = useWalletStore.getState().connectedAddress;
     const walletOk = matchStakeCurrency(match) === "AT" ? true : !!walletAddr;
 
-    // 3. Identity — game account on profile (matches create/join API gates).
-    const isCs2 = match.game === "CS2";
-    const identityOk = isCs2
-      ? !!user.steamId
+    // 3. Identity — verified game account required (matches create/join API gates).
+    const identityOk = match.game === "CS2"
+      ? !!user.steamVerified
       : match.game === "Valorant"
-        ? !!user.riotId
-        : !!(user.steamId || user.riotId);
+        ? !!user.riotVerified
+        : true; // other games: no verification gate yet
 
     // 4. Balance — AT (DB) or native BNB on chain ≥ stake
     let balanceOk = false;
@@ -1864,7 +1875,11 @@ const MatchLobby = () => {
                       activeGame={newMatchGame} onSelect={(g) => {
                         setNewMatchGame(g as Game);
                         setNewMatchMode(getDefaultMode(g as Game).mode);
-                      }} />
+                      }}
+                      lockedGames={new Set([
+                        ...(!user?.steamVerified ? ["CS2"] : []),
+                        ...(!user?.riotVerified  ? ["Valorant"] : []),
+                      ])} />
                     <GameDropdown label="Mobile" icon={Smartphone} games={MOBILE_GAME_CONFIG}
                       activeGame={newMatchGame} onSelect={(g) => setNewMatchGame(g as Game)} comingSoon />
                   </div>
@@ -1988,6 +2003,24 @@ const MatchLobby = () => {
                         try {
                         if (!newMatchGame || !newMatchBet || !newMatchMode || !user) return;
                         if (createStakeCurrency === "CRYPTO" && !connectedAddress) return;
+
+                        // Verification gate — check before any API call
+                        if (newMatchGame === "CS2" && !user.steamVerified) {
+                          useNotificationStore.getState().addNotification({
+                            type: "system",
+                            title: "Steam verification required",
+                            message: "Go to Profile → Connections → Steam → Connect to verify your Steam account before creating a CS2 match.",
+                          });
+                          return;
+                        }
+                        if (newMatchGame === "Valorant" && !user.riotVerified) {
+                          useNotificationStore.getState().addNotification({
+                            type: "system",
+                            title: "Riot verification required",
+                            message: "Go to Profile → Connections → Riot Games → Connect to verify your Riot account before creating a Valorant match.",
+                          });
+                          return;
+                        }
                         const teamSize = getTeamSize(newMatchMode);
                         let serverMatchId: string | undefined;
                         let stakeCurrencyResolved: StakeCurrency = createStakeCurrency;
