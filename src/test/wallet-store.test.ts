@@ -13,7 +13,6 @@ vi.mock("@/lib/engine-api", async (importOriginal) => {
       stake_per_player: 0.01,
       your_team: 0 as const,
     }),
-    apiUnlinkMeWalletAddress: vi.fn().mockResolvedValue(true),
   };
 });
 
@@ -231,7 +230,7 @@ describe("walletStore — non-custodial model", () => {
     expect(useWalletStore.getState().transactions.length).toBe(countBefore);
   });
 
-  // ── connectWallet / disconnectWallet ──────────────────────────────────────
+  // ── connectWallet ─────────────────────────────────────────────────────────
   it("connectWallet returns error when not signed in", async () => {
     const { useUserStore } = await import("@/stores/userStore");
     useUserStore.getState().logout();
@@ -244,11 +243,5 @@ describe("walletStore — non-custodial model", () => {
     useWalletStore.setState({ connectedAddress: "0xNEWADDR0000000000000000000000000000000001", selectedNetwork: "bsc" });
     expect(useWalletStore.getState().connectedAddress).toBe("0xNEWADDR0000000000000000000000000000000001");
     expect(useWalletStore.getState().selectedNetwork).toBe("bsc");
-  });
-
-  it("disconnectWallet clears connectedAddress", async () => {
-    const r = await useWalletStore.getState().disconnectWallet();
-    expect(r.ok).toBe(true);
-    expect(useWalletStore.getState().connectedAddress).toBeNull();
   });
 });

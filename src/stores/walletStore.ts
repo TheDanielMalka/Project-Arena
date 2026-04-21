@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { parseEther } from "ethers";
 import type { Transaction, TransactionType, TransactionStatus, Network } from "@/types";
 import { useUserStore } from "@/stores/userStore";
-import { apiGetMatchStatus, apiPatchMeWalletAddress, apiUnlinkMeWalletAddress } from "@/lib/engine-api";
+import { apiGetMatchStatus, apiPatchMeWalletAddress } from "@/lib/engine-api";
 import { friendlyChainErrorMessage } from "@/lib/friendlyChainError";
 import { connectMetaMaskAndSignOwnership, depositToEscrow } from "@/lib/metamaskBsc";
 import { publishAtToWalletAndForge } from "@/lib/sessionAtSync";
@@ -19,8 +19,6 @@ export function consumeLastLockEscrowFailureMessage(): string | null {
 export type ConnectWalletResult =
   | { ok: true }
   | { ok: false; error: string };
-
-export type DisconnectWalletResult = ConnectWalletResult;
 
 // ─── Architecture note ──────────────────────────────────────────────────────
 // Arena is NON-CUSTODIAL. The platform never holds user funds.
@@ -73,9 +71,8 @@ interface WalletState {
   setDailyBettingLimit: (limit: number) => void;
   // DB-ready: wagmi useBalance() — returns live chain value; this is the local preview
   getAvailableBalance: () => number;
-  /** MetaMask (EIP-1193) on BSC Testnet — sign ownership message, then PATCH /users/me `wallet_address`. */
+  /** MetaMask (EIP-1193) on BSC Testnet — sign ownership message, then PATCH /users/me `wallet_address`. Write-once. */
   connectWallet: () => Promise<ConnectWalletResult>;
-  disconnectWallet: () => Promise<DisconnectWalletResult>;
   /** Until POST /wallet/buy-at: local mock only; then refreshProfileFromServer */
   buyArenaTokens: (atAmount: number, totalUsdtCost: number) => boolean;
 }
@@ -103,13 +100,9 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         return { ok: false as const, error: "Sign in to link your wallet." };
       }
       const { address } = await connectMetaMaskAndSignOwnership();
-      const saved = await apiPatchMeWalletAddress(token, address);
-      if (!saved) {
-        return {
-          ok: false as const,
-          error:
-            "Could not save wallet to your profile. The server may not accept wallet_address on PATCH /users/me yet.",
-        };
+      const result = await apiPatchMeWalletAddress(token, address);
+      if (result.ok === false) {
+        return { ok: false as const, error: result.error };
       }
       set({ connectedAddress: address, selectedNetwork: "bsc" });
       useUserStore.getState().setLinkedWalletAddress(address);
@@ -128,23 +121,6 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       }
       return { ok: false as const, error: friendlyChainErrorMessage(e) };
     }
-  },
-
-  disconnectWallet: async (): Promise<DisconnectWalletResult> => {
-    const token = useUserStore.getState().token;
-    if (token) {
-      const ok = await apiUnlinkMeWalletAddress(token);
-      if (!ok) {
-        return {
-          ok: false as const,
-          error:
-            "Could not unlink wallet on the server. If the backend is not updated yet, try again after deploy.",
-        };
-      }
-    }
-    set({ connectedAddress: null });
-    useUserStore.getState().unlinkWalletFromProfile();
-    return { ok: true as const };
   },
 
   setDailyBettingLimit: (limit) =>

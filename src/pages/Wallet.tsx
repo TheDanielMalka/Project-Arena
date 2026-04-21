@@ -10,7 +10,7 @@ import {
   Copy, CheckCircle2, Eye, EyeOff, ExternalLink,
   TrendingUp, TrendingDown, Clock, RefreshCw,
   Search, Landmark, Flame, Wallet, ShieldCheck,
-  ChevronLeft, ChevronRight, Swords, WifiOff, Zap, Unplug,
+  ChevronLeft, ChevronRight, Swords, WifiOff, Zap, Lock,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useWalletStore } from "@/stores/walletStore";
@@ -62,7 +62,6 @@ const WalletPage = () => {
     usdtBalance, atBalance,
     dailyBettingLimit, dailyBettingUsed, platformBettingMax,
     transactions, setDailyBettingLimit, connectWallet: linkMetaMaskWallet,
-    disconnectWallet: unlinkMetaMaskWallet,
   } = useWalletStore();
   const { arenaTokens: forgeAT } = useForgeStore();
 
@@ -74,7 +73,6 @@ const WalletPage = () => {
   const [buyATOpen, setBuyATOpen]           = useState(false);
   const [withdrawATOpen, setWithdrawATOpen] = useState(false);
   const [walletLinkBusy, setWalletLinkBusy] = useState(false);
-  const [walletUnlinkBusy, setWalletUnlinkBusy] = useState(false);
 
   // Derived
   const networkCfg      = NETWORKS[selectedNetwork];
@@ -207,69 +205,9 @@ const WalletPage = () => {
                     }
                   </button>
                 </div>
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="text-xs font-display"
-                    disabled={walletUnlinkBusy || !user}
-                    onClick={() => {
-                      void (async () => {
-                        setWalletUnlinkBusy(true);
-                        try {
-                          const r = await unlinkMetaMaskWallet();
-                          if (r.ok === false) {
-                            toast({ variant: "destructive", title: "Wallet", description: r.error });
-                            return;
-                          }
-                          toast({
-                            title: "Wallet disconnected",
-                            description: "Profile updated — this wallet is no longer linked.",
-                          });
-                        } finally {
-                          setWalletUnlinkBusy(false);
-                        }
-                      })();
-                    }}
-                  >
-                    <Unplug className="mr-1.5 h-3.5 w-3.5" />
-                    {walletUnlinkBusy ? "…" : "Disconnect"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="text-xs font-display"
-                    disabled={walletUnlinkBusy || !user}
-                    onClick={() => {
-                      void (async () => {
-                        setWalletUnlinkBusy(true);
-                        try {
-                          const d = await unlinkMetaMaskWallet();
-                          if (d.ok === false) {
-                            toast({ variant: "destructive", title: "Wallet", description: d.error });
-                            return;
-                          }
-                          const r = await linkMetaMaskWallet();
-                          if (r.ok === false) {
-                            toast({ variant: "destructive", title: "Wallet", description: r.error });
-                            return;
-                          }
-                          syncProfileWalletConnected();
-                          toast({
-                            title: "Wallet switched",
-                            description: "New address saved to your profile.",
-                          });
-                        } finally {
-                          setWalletUnlinkBusy(false);
-                        }
-                      })();
-                    }}
-                  >
-                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-                    Switch wallet
-                  </Button>
+                <div className="flex items-center gap-1.5 pt-1 text-[10px] text-muted-foreground font-display">
+                  <Lock className="h-3 w-3 shrink-0" />
+                  Wallet is permanently bound to your account. Delete your account to release it.
                 </div>
                 </>
               ) : (
