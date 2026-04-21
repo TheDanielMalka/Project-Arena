@@ -794,6 +794,23 @@ export async function apiPatchUserSettings(
   }
 }
 
+export async function apiPatchPreferredGame(
+  token: string,
+  preferredGame: string,
+): Promise<boolean> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/users/settings`, token, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preferred_game: preferredGame }),
+    });
+    return res.ok;
+  } catch (err) {
+    reportEngineApiError(err);
+    return false;
+  }
+}
+
 /** POST /auth/2fa/setup */
 export async function apiAuth2faSetup(
   token: string,

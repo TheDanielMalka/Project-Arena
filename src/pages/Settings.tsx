@@ -34,6 +34,7 @@ import {
   apiAuth2faVerify,
   apiAuth2faDisable,
   apiPatchUserSettings,
+  apiPatchPreferredGame,
   apiDeleteMyAccount,
   apiGetForumProfile,
   apiPatchForumProfile,
@@ -195,6 +196,7 @@ const SettingsPage = () => {
   const [pwConfirmOpen, setPwConfirmOpen] = useState(false);
   const [pwUpdated, setPwUpdated] = useState(false);
   const [pwSaving, setPwSaving] = useState(false);
+  const [gameSaving, setGameSaving] = useState(false);
 
   // ── Email change flow ──────────────────────────────────────────
   // Step 1 "verify"  → user enters password to prove identity
@@ -809,6 +811,28 @@ const SettingsPage = () => {
                     onCheckedChange={(v) => setGame((p) => ({ ...p, autoReady: v }))}
                   />
                 </SettingRow>
+              </div>
+              <div className="pt-3 flex justify-end">
+                <Button
+                  size="sm"
+                  className="arena-hud-btn gap-1.5"
+                  disabled={gameSaving}
+                  onClick={async () => {
+                    if (!token) return;
+                    setGameSaving(true);
+                    const ok = await apiPatchPreferredGame(token, game.defaultGame);
+                    setGameSaving(false);
+                    if (ok) {
+                      updateProfile({ preferredGame: game.defaultGame as import("@/types").Game });
+                      toast({ title: "Game preferences saved" });
+                    } else {
+                      toast({ title: "Failed to save", variant: "destructive" });
+                    }
+                  }}
+                >
+                  <Save className="h-3.5 w-3.5" />
+                  {gameSaving ? "Saving…" : "Save Game Preferences"}
+                </Button>
               </div>
             </div>
           )}

@@ -3133,11 +3133,17 @@ async def patch_user_me(req: PatchUserRequest, payload: dict = Depends(verify_to
 
 
 class UserSettingsRegionPatch(BaseModel):
-    """PATCH /users/settings — region only (Phase 2)."""
-    region: str
+    """PATCH /users/settings — region and/or preferred_game."""
+    region: str | None = None
+    preferred_game: str | None = None
 
 
 _ALLOWED_REGIONS = frozenset({"EU", "NA", "ASIA", "SA", "OCE", "ME"})
+_ALLOWED_GAMES   = frozenset({"CS2", "Valorant", "COD", "League of Legends", "PUBG",
+                               "Overwatch 2", "Team Fortress 2", "Fortnite",
+                               "FIFA / EA FC", "PES / eFootball",
+                               "MLBB", "Wild Rift", "COD Mobile", "PUBG Mobile",
+                               "Fortnite Mobile", "Honor of Kings"})
 
 
 @app.patch("/users/settings")
@@ -3145,26 +3151,44 @@ async def patch_user_settings(
     req: UserSettingsRegionPatch,
     payload: dict = Depends(verify_token),
 ):
-    """Update user_settings.region (EU | NA | ASIA | SA | OCE | ME)."""
-    r = req.region.strip().upper()
-    if r not in _ALLOWED_REGIONS:
-        raise HTTPException(400, f"region must be one of: {', '.join(sorted(_ALLOWED_REGIONS))}")
+    """Update user_settings.region and/or users.preferred_game."""
     uid = payload["sub"]
+    result: dict = {}
     try:
         with SessionLocal() as session:
-            session.execute(
-                text(
-                    "INSERT INTO user_settings (user_id, region) VALUES (:uid, :reg) "
-                    "ON CONFLICT (user_id) DO UPDATE SET "
-                    "region = EXCLUDED.region, updated_at = NOW()"
-                ),
-                {"uid": uid, "reg": r},
-            )
+            if req.region is not None:
+                r = req.region.strip().upper()
+                if r not in _ALLOWED_REGIONS:
+                    raise HTTPException(400, f"region must be one of: {', '.join(sorted(_ALLOWED_REGIONS))}")
+                session.execute(
+                    text(
+                        "INSERT INTO user_settings (user_id, region) VALUES (:uid, :reg) "
+                        "ON CONFLICT (user_id) DO UPDATE SET "
+                        "region = EXCLUDED.region, updated_at = NOW()"
+                    ),
+                    {"uid": uid, "reg": r},
+                )
+                result["region"] = r
+
+            if req.preferred_game is not None:
+                g = req.preferred_game.strip()
+                if g not in _ALLOWED_GAMES:
+                    raise HTTPException(400, f"Unknown game: {g}")
+                session.execute(
+                    text("UPDATE users SET preferred_game = :g WHERE id = :uid"),
+                    {"g": g, "uid": uid},
+                )
+                result["preferred_game"] = g
+
+            if not result:
+                raise HTTPException(400, "No valid fields provided")
             session.commit()
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("patch_user_settings error: %s", exc)
         raise HTTPException(500, "Failed to update settings")
-    return {"region": r}
+    return result
 
 
 class DeleteAccountBody(BaseModel):
