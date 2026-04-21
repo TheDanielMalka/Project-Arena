@@ -148,7 +148,7 @@ class TestDailyStakeLimit:
     """
 
     def _user_row(self, steam=VALID_STEAM, riot=None, wallet="0xABC"):
-        return (steam, riot, wallet)
+        return (steam, riot, wallet, steam is not None, riot is not None)
 
     def _make_multi_session(self, today_staked: int, at_balance: int = 1000):
         """
@@ -266,7 +266,7 @@ class TestPenaltySystem:
     """Suspension/ban gate on create_match (1st offense) and join_match (3rd+)."""
 
     def _user_row(self, steam=VALID_STEAM, riot=None, wallet="0xABC"):
-        return (steam, riot, wallet)
+        return (steam, riot, wallet, steam is not None, riot is not None)
 
     def _suspended_session(self, suspended_until_offset_hours: int = 24):
         """User whose suspended_until is in the future."""
@@ -325,8 +325,8 @@ class TestPenaltySystem:
         session.execute.return_value.fetchone.side_effect = [
             # 1. match lookup (7 fields: game, status, bet_amount, stake_currency, password, max_players, max_per_team)
             ("CS2", "waiting", 10, "AT", None, 2, 1),
-            # 2. user row (3 fields: steam_id, riot_id, wallet_address)
-            (VALID_STEAM, None, "0xABC"),
+            # 2. user row (5 fields: steam_id, riot_id, wallet_address, steam_verified, riot_verified)
+            (VALID_STEAM, None, "0xABC", True, False),
             # 3. penalty row → permanently banned
             (None, datetime.now(timezone.utc)),
         ]

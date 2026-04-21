@@ -98,7 +98,7 @@ class TestAtLeaveKickCreate:
         new_mid = str(uuid.uuid4())
         session = MagicMock()
         session.execute.return_value.fetchone.side_effect = [
-            (_VALID_STEAM, None, "0xABC"),
+            (_VALID_STEAM, None, "0xABC", True, False),
             None,  # no active room
             (200,),  # _assert_at_balance
             (0,),  # _get_daily_staked
