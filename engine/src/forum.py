@@ -279,7 +279,7 @@ def get_categories() -> Any:
             "last_post_at":    r[10].isoformat() if r[10] else None,
             "is_announcements":r[11],
             "last_poster":     r[12],
-            "subcategories":   [],
+            "children":        [],
         }
         cats[cat["id"]] = cat
         if not cat["parent_id"]:
@@ -287,7 +287,7 @@ def get_categories() -> Any:
         else:
             parent = cats.get(cat["parent_id"])
             if parent:
-                parent["subcategories"].append(cat)
+                parent["children"].append(cat)
     return {"categories": tops}
 
 
@@ -305,10 +305,12 @@ def get_category(slug: str) -> Any:
             SELECT t.id, t.title, t.slug, t.status, t.is_pinned, t.is_announcement,
                    t.views, t.reply_count, t.last_reply_at, t.tags, t.created_at,
                    u.username, u.avatar, u.arena_id,
-                   lu.username AS last_reply_username
+                   lu.username AS last_reply_username,
+                   t.category_id, c.slug AS category_slug, c.name AS category_name
             FROM forum_threads t
             JOIN users u ON u.id = t.author_id
             LEFT JOIN users lu ON lu.id = t.last_reply_user_id
+            LEFT JOIN forum_categories c ON c.id = t.category_id
             WHERE t.category_id = :cid AND t.status != 'deleted'
             ORDER BY t.is_pinned DESC, COALESCE(t.last_reply_at, t.created_at) DESC
             LIMIT 50
@@ -322,22 +324,40 @@ def get_category(slug: str) -> Any:
 # ── Threads ───────────────────────────────────────────────────────────────────
 
 def _fmt_thread(r: Any) -> dict:
+    # r[0..14] = id, title, slug, status, is_pinned, is_announcement,
+    #             views, reply_count, last_reply_at, tags, created_at,
+    #             u.username, u.avatar, u.arena_id, lu.username,
+    # r[15..17] = t.category_id, c.slug, c.name  (added in queries below)
     return {
-        "id":                str(r[0]),
-        "title":             r[1],
-        "slug":              r[2],
-        "status":            r[3],
-        "is_pinned":         r[4],
-        "is_announcement":   r[5],
-        "views":             r[6],
-        "reply_count":       r[7],
-        "last_reply_at":     r[8].isoformat() if r[8] else None,
-        "tags":              list(r[9] or []),
-        "created_at":        r[10].isoformat(),
-        "author_username":   r[11],
-        "author_avatar":     r[12],
-        "author_arena_id":   r[13],
-        "last_reply_by":     r[14],
+        "id":              str(r[0]),
+        "title":           r[1],
+        "slug":            r[2],
+        "status":          r[3],
+        "is_pinned":       bool(r[4]),
+        "is_locked":       False,
+        "is_announcement": bool(r[5]),
+        "view_count":      r[6],
+        "reply_count":     r[7],
+        "last_post_at":    r[8].isoformat() if r[8] else None,
+        "tags":            list(r[9] or []),
+        "created_at":      r[10].isoformat(),
+        "author": {
+            "id":               None,
+            "username":         r[11],
+            "avatar":           r[12],
+            "avatar_bg":        None,
+            "arena_id":         r[13],
+            "rank":             None,
+            "member_since":     None,
+            "forum_post_count": 0,
+            "role":             "user",
+            "forum_signature":  None,
+            "forum_badge":      None,
+        },
+        "last_reply_by":   r[14],
+        "category_id":     str(r[15]) if len(r) > 15 and r[15] else "",
+        "category_slug":   r[16] if len(r) > 16 and r[16] else "",
+        "category_name":   r[17] if len(r) > 17 and r[17] else "",
     }
 
 
@@ -363,90 +383,148 @@ def list_threads(
                 raise HTTPException(404, "Category not found")
             where = "t.category_id = :cid AND"
             params: dict = {"cid": str(cat_row[0]), "limit": 30, "offset": offset}
+            count_row = session.execute(
+                text("SELECT COUNT(*) FROM forum_threads WHERE category_id = :cid AND status != 'deleted'"),
+                {"cid": str(cat_row[0])},
+            ).fetchone()
         else:
             where = ""
             params = {"limit": 30, "offset": offset}
+            count_row = session.execute(
+                text("SELECT COUNT(*) FROM forum_threads WHERE status != 'deleted'")
+            ).fetchone()
+
+        total = int(count_row[0]) if count_row else 0
+        pages = max(1, (total + 29) // 30)
 
         rows = session.execute(text(f"""
             SELECT t.id, t.title, t.slug, t.status, t.is_pinned, t.is_announcement,
                    t.views, t.reply_count, t.last_reply_at, t.tags, t.created_at,
                    u.username, u.avatar, u.arena_id,
-                   lu.username AS last_reply_username
+                   lu.username AS last_reply_username,
+                   t.category_id, c.slug AS category_slug, c.name AS category_name
             FROM forum_threads t
             JOIN users u ON u.id = t.author_id
             LEFT JOIN users lu ON lu.id = t.last_reply_user_id
+            LEFT JOIN forum_categories c ON c.id = t.category_id
             WHERE {where} t.status != 'deleted'
             ORDER BY {order}
             LIMIT :limit OFFSET :offset
         """), params).fetchall()
 
-    return {"threads": [_fmt_thread(r) for r in rows], "page": page}
+    return {"threads": [_fmt_thread(r) for r in rows], "total": total, "pages": pages, "page": page}
 
 
-@router.get("/threads/{thread_id}")
-def get_thread(thread_id: str, page: int = Query(1, ge=1)) -> Any:
+def _fmt_post(p: Any, card: dict, thread_id: str, post_number: int) -> dict:
+    return {
+        "id":             str(p[0]),
+        "thread_id":      thread_id,
+        "author":         card,
+        "parent_post_id": str(p[2]) if p[2] else None,
+        "body":           "[deleted]" if p[4] else p[3],
+        "is_deleted":     bool(p[4]),
+        "edit_count":     p[5] or 0,
+        "updated_at":     p[6].isoformat() if p[6] else p[8].isoformat(),
+        "reactions":      dict(p[7] or {}),
+        "created_at":     p[8].isoformat(),
+        "post_number":    post_number,
+    }
+
+
+@router.get("/threads/{thread_id}/posts")
+def get_thread_posts(thread_id: str, page: int = Query(1, ge=1)) -> Any:
+    """Paginated posts for a thread (called with thread UUID)."""
+    offset = (page - 1) * 20
     with _get_db() as session:
-        t = session.execute(text("""
-            SELECT t.id, t.category_id, t.author_id, t.title, t.body, t.slug,
-                   t.status, t.is_pinned, t.is_announcement, t.views, t.reply_count,
-                   t.tags, t.created_at, t.last_reply_at
-            FROM forum_threads t WHERE t.id = :id AND t.status != 'deleted'
-        """), {"id": thread_id}).fetchone()
-        if not t:
-            raise HTTPException(404, "Thread not found")
+        total_row = session.execute(
+            text("SELECT COUNT(*) FROM forum_posts WHERE thread_id = :tid"),
+            {"tid": thread_id},
+        ).fetchone()
+        total = int(total_row[0]) if total_row else 0
+        pages = max(1, (total + 19) // 20)
 
-        # Increment view counter (fire-and-forget style)
-        session.execute(
-            text("UPDATE forum_threads SET views = views + 1 WHERE id = :id"),
-            {"id": thread_id},
-        )
-        session.commit()
-
-        offset = (page - 1) * 20
-        posts = session.execute(text("""
+        rows = session.execute(text("""
             SELECT p.id, p.author_id, p.parent_post_id, p.body, p.is_deleted,
-                   p.edit_count, p.edited_at, p.reactions, p.created_at
+                   p.edit_count, p.edited_at, p.reactions, p.created_at,
+                   ROW_NUMBER() OVER (ORDER BY p.created_at ASC) AS post_number
             FROM forum_posts p
             WHERE p.thread_id = :tid
             ORDER BY p.created_at ASC
             LIMIT 20 OFFSET :offset
         """), {"tid": thread_id, "offset": offset}).fetchall()
 
-        author_card = _user_card(session, str(t[2]))
         post_list = []
-        for p in posts:
+        for p in rows:
             card = _user_card(session, str(p[1]) if p[1] else None)
-            post_list.append({
-                "id":             str(p[0]),
-                "author":         card,
-                "parent_post_id": str(p[2]) if p[2] else None,
-                "body":           "[post removed]" if p[4] else p[3],
-                "is_deleted":     p[4],
-                "edit_count":     p[5],
-                "edited_at":      p[6].isoformat() if p[6] else None,
-                "reactions":      dict(p[7] or {}),
-                "created_at":     p[8].isoformat(),
-            })
+            post_list.append(_fmt_post(p, card, thread_id, int(p[9])))
+
+    return {"posts": post_list, "total": total, "pages": pages}
+
+
+@router.get("/threads/{thread_slug}")
+def get_thread(thread_slug: str) -> Any:
+    """Fetch a single thread by slug (or UUID). Returns ForumThreadDetail."""
+    import uuid as _uuid
+    try:
+        _uuid.UUID(thread_slug)
+        where_clause = "t.id = :val"
+    except ValueError:
+        where_clause = "t.slug = :val"
+
+    with _get_db() as session:
+        t = session.execute(text(f"""
+            SELECT t.id, t.category_id, t.author_id, t.title, t.body, t.slug,
+                   t.status, t.is_pinned, t.is_announcement, t.views, t.reply_count,
+                   t.tags, t.created_at, t.last_reply_at,
+                   c.slug AS category_slug, c.name AS category_name
+            FROM forum_threads t
+            LEFT JOIN forum_categories c ON c.id = t.category_id
+            WHERE {where_clause} AND t.status != 'deleted'
+        """), {"val": thread_slug}).fetchone()
+        if not t:
+            raise HTTPException(404, "Thread not found")
+
+        thread_id = str(t[0])
+        session.execute(
+            text("UPDATE forum_threads SET views = views + 1 WHERE id = :id"),
+            {"id": thread_id},
+        )
+        session.commit()
+
+        first_post_row = session.execute(text("""
+            SELECT p.id, p.author_id, p.parent_post_id, p.body, p.is_deleted,
+                   p.edit_count, p.edited_at, p.reactions, p.created_at
+            FROM forum_posts p
+            WHERE p.thread_id = :tid
+            ORDER BY p.created_at ASC
+            LIMIT 1
+        """), {"tid": thread_id}).fetchone()
+
+        author_card = _user_card(session, str(t[2]))
+        first_post = None
+        if first_post_row:
+            fp_card = _user_card(session, str(first_post_row[1]) if first_post_row[1] else None)
+            first_post = _fmt_post(first_post_row, fp_card, thread_id, 1)
 
     return {
-        "thread": {
-            "id":              str(t[0]),
-            "category_id":     str(t[1]),
-            "title":           t[3],
-            "body":            t[4],
-            "slug":            t[5],
-            "status":          t[6],
-            "is_pinned":       t[7],
-            "is_announcement": t[8],
-            "views":           t[9] + 1,
-            "reply_count":     t[10],
-            "tags":            list(t[11] or []),
-            "created_at":      t[12].isoformat(),
-            "last_reply_at":   t[13].isoformat() if t[13] else None,
-            "author":          author_card,
-        },
-        "posts": post_list,
-        "page":  page,
+        "id":              thread_id,
+        "category_id":     str(t[1]),
+        "category_slug":   t[14] or "",
+        "category_name":   t[15] or "",
+        "title":           t[3],
+        "body":            t[4],
+        "slug":            t[5],
+        "status":          t[6],
+        "is_pinned":       bool(t[7]),
+        "is_locked":       t[6] == "locked",
+        "is_announcement": bool(t[8]),
+        "view_count":      (t[9] or 0) + 1,
+        "reply_count":     t[10] or 0,
+        "tags":            list(t[11] or []),
+        "created_at":      t[12].isoformat(),
+        "last_post_at":    t[13].isoformat() if t[13] else None,
+        "author":          author_card,
+        "first_post":      first_post,
     }
 
 
