@@ -52,6 +52,7 @@ interface UserState {
     username: string,
     email: string,
     password: string,
+    opts?: { steamId?: string; riotId?: string },
   ) => Promise<SignupResult>;
   /** POST /auth/google with Google Identity id_token — same hydration as login */
   loginWithGoogleIdToken: (
@@ -246,6 +247,7 @@ export const useUserStore = create<UserState>((set, get) => ({
     username: string,
     email: string,
     password: string,
+    _opts?: { steamId?: string; riotId?: string },
   ): Promise<SignupResult> => {
     const reg = await apiRegister(username, email, password, {});
     if (reg.ok === false) {
