@@ -681,6 +681,7 @@ export async function apiGetMe(token: string): Promise<{
   two_factor_enabled?: boolean;
   /** users.auth_provider — 'email' | 'google' */
   auth_provider?: string | null;
+  country?: string | null;
 } | null> {
   try {
     const res = await arenaUserFetch(`${ENGINE_BASE}/auth/me`, token, {});
@@ -713,6 +714,7 @@ export async function apiGetMe(token: string): Promise<{
       region?: string | null;
       two_factor_enabled?: boolean;
       auth_provider?: string | null;
+      country?: string | null;
     };
   } catch (err) {
     reportEngineApiError(err);
@@ -791,6 +793,23 @@ export async function apiPatchUserSettings(
   } catch (err) {
     reportEngineApiError(err);
     return { ok: false, detail: "Network error" };
+  }
+}
+
+export async function apiPatchCountry(
+  token: string,
+  country: string,
+): Promise<boolean> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/users/settings`, token, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ country }),
+    });
+    return res.ok;
+  } catch (err) {
+    reportEngineApiError(err);
+    return false;
   }
 }
 

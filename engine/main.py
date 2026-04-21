@@ -871,6 +871,12 @@ async def lifespan(app: FastAPI):
                 WHERE forum_categories.slug = 'feedback'
                 ON CONFLICT (slug) DO NOTHING
             """))
+            # Migration 040: country field on users (ISO 3166-1 alpha-2)
+            conn.execute(text("""
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS country VARCHAR(2)
+            """))
+            conn.commit()
+
             # Migration 039b: forum_reports table
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS forum_reports (
@@ -1187,6 +1193,8 @@ class UserProfile(BaseModel):
     # Game account verification — TRUE only after real OAuth/OpenID proof
     steam_verified: bool = False
     riot_verified:  bool = False
+    # ISO 3166-1 alpha-2 country code (user-set once, shown as flag in profile)
+    country: str | None = None
 
 
 # ── Request / Response models ─────────────────────────────────────────────────
@@ -2927,7 +2935,8 @@ async def me(payload: dict = Depends(verify_token)):
                     "       COALESCE(us.region, 'EU'), "
                     "       COALESCE(u.auth_provider, 'email'), "
                     "       COALESCE(u.steam_verified, FALSE), "
-                    "       COALESCE(u.riot_verified,  FALSE) "
+                    "       COALESCE(u.riot_verified,  FALSE), "
+                    "       u.country "
                     "FROM users u "
                     "LEFT JOIN user_stats s ON s.user_id = u.id "
                     "LEFT JOIN user_settings us ON us.user_id = u.id "
@@ -2982,6 +2991,7 @@ async def me(payload: dict = Depends(verify_token)):
         auth_provider=str(row[19]) if len(row) > 19 and row[19] else "email",
         steam_verified=bool(row[20]) if len(row) > 20 and row[20] is not None else False,
         riot_verified=bool(row[21]) if len(row) > 21 and row[21] is not None else False,
+        country=str(row[22]) if len(row) > 22 and row[22] else None,
     )
 
 
@@ -3133,9 +3143,10 @@ async def patch_user_me(req: PatchUserRequest, payload: dict = Depends(verify_to
 
 
 class UserSettingsRegionPatch(BaseModel):
-    """PATCH /users/settings — region and/or preferred_game."""
+    """PATCH /users/settings — region, preferred_game, and/or country."""
     region: str | None = None
     preferred_game: str | None = None
+    country: str | None = None
 
 
 _ALLOWED_REGIONS = frozenset({"EU", "NA", "ASIA", "SA", "OCE", "ME"})
@@ -3179,6 +3190,16 @@ async def patch_user_settings(
                     {"g": g, "uid": uid},
                 )
                 result["preferred_game"] = g
+
+            if req.country is not None:
+                c = req.country.strip().upper()
+                if len(c) != 2 or not c.isalpha():
+                    raise HTTPException(400, "country must be a 2-letter ISO 3166-1 alpha-2 code")
+                session.execute(
+                    text("UPDATE users SET country = :c WHERE id = :uid"),
+                    {"c": c, "uid": uid},
+                )
+                result["country"] = c
 
             if not result:
                 raise HTTPException(400, "No valid fields provided")

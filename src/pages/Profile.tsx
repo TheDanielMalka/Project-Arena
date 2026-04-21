@@ -28,7 +28,7 @@ import { useNotificationStore } from "@/stores/notificationStore";
 import { userFacingNotification } from "@/lib/userFacingNotification";
 import { useForgeStore } from "@/stores/forgeStore";
 import { useToast } from "@/hooks/use-toast";
-import { ENGINE_BASE } from "@/lib/engine-api";
+import { ENGINE_BASE, apiPatchCountry } from "@/lib/engine-api";
 import { getXpInfo } from "@/lib/xp";
 import {
   getAvatarBackground,
@@ -51,6 +51,38 @@ import {
 import { SEED_ITEMS } from "@/stores/forgeStore";
 import { ArenaPageShell, TacticalFrame } from "@/components/visual";
 import { renderForgeShopIcon } from "@/lib/forgeItemIcon";
+
+// ── Country utilities ──────────────────────────────────────────────────────────
+const flagEmoji = (code: string) =>
+  [...code.toUpperCase()].map((c) => String.fromCodePoint(0x1F1E6 + c.charCodeAt(0) - 65)).join("");
+
+const COUNTRIES: { code: string; name: string }[] = [
+  { code: "US", name: "United States" }, { code: "GB", name: "United Kingdom" },
+  { code: "IL", name: "Israel" },        { code: "DE", name: "Germany" },
+  { code: "FR", name: "France" },        { code: "ES", name: "Spain" },
+  { code: "IT", name: "Italy" },         { code: "PT", name: "Portugal" },
+  { code: "NL", name: "Netherlands" },   { code: "BE", name: "Belgium" },
+  { code: "CH", name: "Switzerland" },   { code: "AT", name: "Austria" },
+  { code: "PL", name: "Poland" },        { code: "CZ", name: "Czechia" },
+  { code: "RO", name: "Romania" },       { code: "GR", name: "Greece" },
+  { code: "TR", name: "Turkey" },        { code: "RU", name: "Russia" },
+  { code: "UA", name: "Ukraine" },       { code: "SE", name: "Sweden" },
+  { code: "NO", name: "Norway" },        { code: "DK", name: "Denmark" },
+  { code: "FI", name: "Finland" },       { code: "CA", name: "Canada" },
+  { code: "MX", name: "Mexico" },        { code: "BR", name: "Brazil" },
+  { code: "AR", name: "Argentina" },     { code: "CL", name: "Chile" },
+  { code: "CO", name: "Colombia" },      { code: "AU", name: "Australia" },
+  { code: "NZ", name: "New Zealand" },   { code: "JP", name: "Japan" },
+  { code: "KR", name: "South Korea" },   { code: "CN", name: "China" },
+  { code: "TW", name: "Taiwan" },        { code: "HK", name: "Hong Kong" },
+  { code: "SG", name: "Singapore" },     { code: "TH", name: "Thailand" },
+  { code: "MY", name: "Malaysia" },      { code: "PH", name: "Philippines" },
+  { code: "ID", name: "Indonesia" },     { code: "VN", name: "Vietnam" },
+  { code: "IN", name: "India" },         { code: "PK", name: "Pakistan" },
+  { code: "SA", name: "Saudi Arabia" },  { code: "AE", name: "UAE" },
+  { code: "EG", name: "Egypt" },         { code: "ZA", name: "South Africa" },
+  { code: "NG", name: "Nigeria" },       { code: "MA", name: "Morocco" },
+];
 
 type GameConnection = {
   name: string;
@@ -101,6 +133,8 @@ const Profile = () => {
   const [bgTab, setBgTab]                       = useState<"free" | "event" | "premium">("free");
   const [badgeTab, setBadgeTab]                 = useState<"free" | "event" | "premium">("free");
   const [selectedEquippedBadge, setSelectedEquippedBadge] = useState<string | undefined>(user?.equippedBadgeIcon);
+  const [showCountryPicker, setShowCountryPicker] = useState(false);
+  const [savingCountry, setSavingCountry]         = useState(false);
   /** Draft inside picker — committed only via Apply */
   const [draftAvatar, setDraftAvatar]           = useState<string>(user?.avatar ?? "initials");
   const [draftBg, setDraftBg]                   = useState<string>(user?.avatarBg ?? "default");
@@ -585,9 +619,23 @@ const Profile = () => {
                   <p className="text-[9px] text-muted-foreground/50 mt-0.5">{xpInfo.remaining} XP to next level</p>
                 )}
               </div>
-              <div className="flex items-center gap-4 mt-2">
+              <div className="flex items-center gap-4 mt-2 flex-wrap">
                 <span className="text-xs text-muted-foreground font-mono">{user?.steamId || "—"}</span>
                 <span className="text-xs text-muted-foreground">Since March 2026</span>
+                {/* Country flag — click to set/change */}
+                <button
+                  onClick={() => setShowCountryPicker(true)}
+                  className="flex items-center gap-1 text-xs text-muted-foreground/70 hover:text-foreground transition-colors"
+                  title={user?.country ? `${flagEmoji(user.country)} ${COUNTRIES.find(c => c.code === user.country)?.name ?? user.country}` : "Set your country"}
+                >
+                  {user?.country ? (
+                    <span className="text-base leading-none">{flagEmoji(user.country)}</span>
+                  ) : (
+                    <span className="text-[10px] font-display border border-border/40 rounded px-1 py-0.5 text-muted-foreground/50 hover:border-primary/30 hover:text-primary/60 transition-colors">
+                      + Flag
+                    </span>
+                  )}
+                </button>
               </div>
             </div>
             </div>
@@ -893,6 +941,53 @@ const Profile = () => {
       <Suspense fallback={null}>
         <ForumActivityCard userId={user?.id} />
       </Suspense>
+
+      {/* Country Picker Dialog */}
+      <Dialog open={showCountryPicker} onOpenChange={setShowCountryPicker}>
+        <DialogContent className="bg-card border-border max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="font-display text-sm uppercase tracking-widest text-arena-cyan flex items-center gap-2">
+              🌍 Select Country
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Your flag will appear on your profile. You can change it at any time.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-1 max-h-72 overflow-y-auto py-1 pr-1">
+            {COUNTRIES.map((c) => (
+              <button
+                key={c.code}
+                disabled={savingCountry}
+                onClick={async () => {
+                  if (!token) return;
+                  setSavingCountry(true);
+                  const ok = await apiPatchCountry(token, c.code);
+                  setSavingCountry(false);
+                  if (ok) {
+                    updateProfile({ country: c.code });
+                    setShowCountryPicker(false);
+                    toast({ title: `${flagEmoji(c.code)} Country updated` });
+                  } else {
+                    toast({ title: "Failed to save country", variant: "destructive" });
+                  }
+                }}
+                className={cn(
+                  "flex items-center gap-2 px-3 py-2 rounded text-sm text-left transition-colors",
+                  user?.country === c.code
+                    ? "bg-primary/10 border border-primary/30 text-foreground"
+                    : "hover:bg-secondary/60 text-muted-foreground hover:text-foreground border border-transparent",
+                )}
+              >
+                <span className="text-base shrink-0">{flagEmoji(c.code)}</span>
+                <span className="font-display text-[11px] truncate">{c.name}</span>
+              </button>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={() => setShowCountryPicker(false)}>Cancel</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Link Game Dialog */}
       <Dialog open={!!linkDialog} onOpenChange={(open) => { if (!open) setLinkDialog(null); }}>

@@ -84,6 +84,8 @@ export interface UserProfile {
   steamVerified: boolean;
   /** TRUE only after Riot OAuth verification — required for Valorant matches */
   riotVerified: boolean;
+  /** ISO 3166-1 alpha-2 country code — user-set once, displayed as flag emoji */
+  country?: string | null;
 }
 
 export interface UserStats {
