@@ -69,6 +69,7 @@ _escrow_client = None
 _listener_task = None  # background thread task — EscrowClient.listen()
 _slack_oracle_task = None  # Slack watchdog (escrow + SLACK_ALERTS_WEBHOOK_URL only)
 _pii_retention_task = None  # GDPR daily purge — see migration 036
+_pool_manager_task = None  # Public match pool — keeps N open rooms per config row
 
 # Oracle → Slack: OK→bad fires immediately; sustained bad repeats every _SLACK_ORACLE_REPEAT_SECS.
 _slack_oracle_prev_listener_ok: bool | None = None
@@ -308,6 +309,100 @@ async def _expired_match_cleanup_loop(interval: int = 300) -> None:
                     _refund_at_match(mid)
         except Exception as exc:
             logger.error("_expired_match_cleanup_loop error: %s", exc)
+
+
+# ── Public Match Pool Manager ──────────────────────────────────────────────────
+
+async def _public_pool_manager_loop() -> None:
+    """
+    Background task: keeps a configured number of public waiting rooms open
+    for each (game, mode, stake_currency, stake_amount) in public_match_pool_config.
+
+    Runs every POOL_MANAGER_INTERVAL seconds (default 30).
+    Creates rooms as the ARENA_SYSTEM_USER_ID — a non-playable system account.
+
+    For AT rooms: room is ready for players immediately.
+    For CRYPTO rooms: room has no on_chain_match_id yet. The first player who
+      joins calls createMatch on-chain and passes their onChainMatchId to the
+      join endpoint, which stores it and updates the on-chain host reference.
+
+    Race-safety: unique room code generated per room; counting uses a
+    transaction-isolated read so concurrent workers never double-create.
+    """
+    import asyncio as _asyncio
+    import secrets as _secrets
+    import string as _string
+
+    _CHARS = _string.ascii_uppercase + _string.digits
+    _MODE_SIZES = {"1v1": 1, "2v2": 2, "4v4": 4, "5v5": 5}
+    interval = config.POOL_MANAGER_INTERVAL
+    system_uid = config.ARENA_SYSTEM_USER_ID
+
+    # Stagger 10s so DB is fully ready after other boot tasks.
+    await _asyncio.sleep(10)
+
+    while True:
+        try:
+            with SessionLocal() as session:
+                configs = session.execute(
+                    text(
+                        "SELECT game, mode, stake_currency, stake_amount, min_open_rooms "
+                        "FROM public_match_pool_config WHERE is_active = TRUE"
+                    )
+                ).fetchall()
+
+                for row in configs:
+                    game_val, mode_val, sc, amount, min_open = (
+                        row[0], row[1], row[2], row[3], row[4]
+                    )
+                    open_count = session.execute(
+                        text(
+                            "SELECT COUNT(*) FROM matches "
+                            "WHERE type = 'public' AND status = 'waiting' "
+                            "AND game = :g AND mode = :m "
+                            "AND stake_currency = :sc AND bet_amount = :amt"
+                        ),
+                        {"g": game_val, "m": mode_val, "sc": sc, "amt": amount},
+                    ).scalar() or 0
+
+                    needed = max(0, min_open - open_count)
+                    team_size = _MODE_SIZES.get(mode_val, 1)
+                    max_players = team_size * 2
+
+                    for _ in range(needed):
+                        code = "PUB-" + "".join(
+                            _secrets.choice(_CHARS) for _ in range(5)
+                        )
+                        session.execute(
+                            text(
+                                "INSERT INTO matches "
+                                "  (type, game, host_id, mode, bet_amount, stake_currency, "
+                                "   code, max_players, max_per_team, status) "
+                                "VALUES ('public', :g, :host, :m, :amt, :sc, "
+                                "        :code, :maxp, :mpt, 'waiting')"
+                            ),
+                            {
+                                "g":    game_val,
+                                "host": system_uid,
+                                "m":    mode_val,
+                                "amt":  amount,
+                                "sc":   sc,
+                                "code": code,
+                                "maxp": max_players,
+                                "mpt":  team_size,
+                            },
+                        )
+                        logger.info(
+                            "Pool: created public room code=%s game=%s mode=%s %s %.4f",
+                            code, game_val, mode_val, sc, amount,
+                        )
+
+                session.commit()
+
+        except Exception as exc:
+            logger.error("_public_pool_manager_loop error: %s", exc)
+
+        await _asyncio.sleep(interval)
 
 
 # ── GDPR — PII retention daily purge ───────────────────────────────────────────
@@ -981,6 +1076,11 @@ async def lifespan(app: FastAPI):
         _slack_oracle_task = asyncio.create_task(_oracle_slack_watch_loop())
         logger.info("✅ Oracle Slack watchdog started")
 
+    # Public match pool — keeps configured number of open rooms per game/mode/stake.
+    global _pool_manager_task
+    _pool_manager_task = asyncio.create_task(_public_pool_manager_loop())
+    logger.info("✅ Public match pool manager started")
+
     yield
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
@@ -999,6 +1099,12 @@ async def lifespan(app: FastAPI):
         _slack_oracle_task.cancel()
         try:
             await _slack_oracle_task
+        except asyncio.CancelledError:
+            pass
+    if _pool_manager_task:
+        _pool_manager_task.cancel()
+        try:
+            await _pool_manager_task
         except asyncio.CancelledError:
             pass
     if _listener_task:
