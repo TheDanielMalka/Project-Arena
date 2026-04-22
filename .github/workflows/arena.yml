@@ -454,10 +454,25 @@ jobs:
             sudo systemctl reload fail2ban || sudo systemctl restart fail2ban
             echo "  fail2ban config applied"
 
-            echo "=== rebuild containers ==="
-            docker system prune -af
+            echo "=== ensure swap is active (frontend build needs it) ==="
+            if ! swapon --show | grep -q swapfile; then
+              sudo swapon /swapfile && echo "  swapfile activated" || echo "  swapfile not found — continuing"
+            else
+              echo "  swap already active: $(free -h | awk '/Swap/{print $2}')"
+            fi
+
+            echo "=== tear down + prune ==="
             docker-compose down
-            docker-compose up -d --build
+            docker system prune -af --volumes
+
+            echo "=== build frontend (no-cache, isolated — avoids OOM on shared build) ==="
+            docker-compose build --no-cache --parallel=false arena-frontend
+
+            echo "=== build remaining services ==="
+            docker-compose build arena-engine
+
+            echo "=== start all services ==="
+            docker-compose up -d
 
             echo "=== daily fraud report cron ==="
             sudo cp ~/Project-Arena/infra/scripts/daily-fraud-report.py /usr/local/bin/arena-fraud-report.py
