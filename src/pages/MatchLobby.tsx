@@ -84,9 +84,12 @@ const IDENTITY_PROVIDER: Record<string, { name: string; field: string }> = {
   "MLBB":              { name: "Moonton",     field: "PlayerID"   },
 };
 
-const BET_AMOUNTS = [5, 10, 25, 50];
-const CREATE_BET_AMOUNTS = [5, 10, 25, 50, 100];
-const AT_BET_AMOUNTS = [500, 1000, 2500, 5000];
+// TODO: remove TEST_STAKE_* after mainnet launch
+const TEST_STAKE_USDT = 0.1;
+const TEST_STAKE_AT   = 10;
+const BET_AMOUNTS        = [0.1, 1, 3, 5, 10, 25];
+const CREATE_BET_AMOUNTS = [0.1, 1, 3, 5, 10, 25];
+const AT_BET_AMOUNTS     = [10, 100, 300, 500, 1000, 2500];
 
 function matchStakeCurrency(m: Pick<Match, "stakeCurrency">): StakeCurrency {
   return m.stakeCurrency ?? "CRYPTO";
@@ -1647,6 +1650,7 @@ const MatchLobby = () => {
             <div className="flex gap-2 flex-wrap">
               {BET_AMOUNTS.map((amount) => {
                 const matchCount = publicMatches.filter(m => m.status === "waiting" && m.betAmount === amount).length;
+                const isTest = amount === TEST_STAKE_USDT;
                 return (
                   <button key={amount} disabled={depositConfirm !== null}
                     onClick={() => setSelectedBet(selectedBet === amount ? null : amount)}
@@ -1656,6 +1660,7 @@ const MatchLobby = () => {
                         : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"
                     }`}>
                     ${amount}
+                    {isTest && <span className="ml-1 text-[8px] font-bold text-arena-gold opacity-80">TEST</span>}
                     {matchCount > 0 && (
                       <span className={`absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center ${
                         selectedBet === amount ? "bg-primary text-primary-foreground" : "bg-arena-gold text-black"
@@ -1965,16 +1970,20 @@ const MatchLobby = () => {
                   )}
                   <label className="text-xs text-muted-foreground mb-2 block uppercase tracking-wider">Bet amount</label>
                   <div className="flex gap-2 flex-wrap">
-                    {(createStakeCurrency === "AT" ? AT_BET_AMOUNTS : CREATE_BET_AMOUNTS).map((a) => (
-                      <button key={a} onClick={() => setNewMatchBet(a)}
-                        className={`px-4 py-1.5 rounded-xl border font-display text-sm font-bold transition-all ${
-                          newMatchBet === a
-                            ? "border-primary bg-primary/15 text-primary shadow-[0_0_12px_rgba(var(--primary-rgb),0.3)]"
-                            : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"
-                        }`}>
-                        {createStakeCurrency === "AT" ? `${a.toLocaleString()} AT` : `$${a}`}
-                      </button>
-                    ))}
+                    {(createStakeCurrency === "AT" ? AT_BET_AMOUNTS : CREATE_BET_AMOUNTS).map((a) => {
+                      const isTest = createStakeCurrency === "AT" ? a === TEST_STAKE_AT : a === TEST_STAKE_USDT;
+                      return (
+                        <button key={a} onClick={() => setNewMatchBet(a)}
+                          className={`px-4 py-1.5 rounded-xl border font-display text-sm font-bold transition-all ${
+                            newMatchBet === a
+                              ? "border-primary bg-primary/15 text-primary shadow-[0_0_12px_rgba(var(--primary-rgb),0.3)]"
+                              : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                          }`}>
+                          {createStakeCurrency === "AT" ? `${a.toLocaleString()} AT` : `$${a}`}
+                          {isTest && <span className="ml-1 text-[8px] font-bold text-arena-gold opacity-80">TEST</span>}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
                 {/* Password */}
