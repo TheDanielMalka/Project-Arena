@@ -1327,13 +1327,15 @@ export type ApiJoinMatchSuccess = {
   stake_currency?: string;
   team?: "A" | "B" | null;
   started?: boolean;
+  /** Set when this join triggered match start — the CS2/Valorant room password to share with players. */
+  game_password?: string | null;
 };
 
 /** POST /matches/{match_id}/join — Bearer auth */
 export async function apiJoinMatch(
   token: string,
   matchId: string,
-  opts?: { password?: string; team?: "A" | "B" },
+  opts?: { password?: string; team?: "A" | "B"; on_chain_match_id?: string },
 ): Promise<{ ok: true; data: ApiJoinMatchSuccess } | { ok: false; status: number; detail: string | null }> {
   try {
     const password = opts?.password?.trim();
@@ -1341,6 +1343,7 @@ export async function apiJoinMatch(
     const bodyFields: Record<string, unknown> = {};
     if (password) bodyFields[MATCH_JOIN_PASSWORD_FIELD] = password;
     if (team) bodyFields.team = team;
+    if (opts?.on_chain_match_id !== undefined) bodyFields.on_chain_match_id = Number(opts.on_chain_match_id);
     const hasBody = Object.keys(bodyFields).length > 0;
     const res = await arenaUserFetch(
       `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/join`,
@@ -1359,6 +1362,7 @@ export async function apiJoinMatch(
       stake_currency?: string;
       team?: unknown;
       started?: boolean;
+      game_password?: string | null;
     };
     if (res.status === 429) {
       const d = parseFastApiDetail(raw.detail);
@@ -1386,6 +1390,7 @@ export async function apiJoinMatch(
         stake_currency: raw.stake_currency ? String(raw.stake_currency) : undefined,
         team: serverTeam,
         started: !!raw.started,
+        game_password: raw.game_password ?? null,
       },
     };
   } catch (err) {

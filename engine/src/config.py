@@ -91,6 +91,15 @@ STEAM_API_KEY   = os.getenv("STEAM_API_KEY")
 ENGINE_BASE_URL = os.getenv("ENGINE_BASE_URL", "http://localhost:8000")
 FRONTEND_URL    = os.getenv("FRONTEND_URL",    "http://localhost:5173")
 
+# ── Public Match Pool ────────────────────────────────────────
+# UUID of the system user that owns auto-created public rooms.
+# Must match the UUID inserted in migration 041-public-match-pool.sql.
+ARENA_SYSTEM_USER_ID = os.getenv(
+    "ARENA_SYSTEM_USER_ID", "00000000-0000-0000-0000-000000000001"
+)
+# How often (seconds) the pool manager checks and refills open rooms.
+POOL_MANAGER_INTERVAL = int(os.getenv("POOL_MANAGER_INTERVAL", "30"))
+
 # ── App Settings ─────────────────────────────────────────────
 API_SECRET = os.getenv("API_SECRET", "change_me_in_production")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")

@@ -23,7 +23,10 @@ from sqlalchemy.orm import sessionmaker
 
 import jwt as _jwt
 
-from src.config import DATABASE_URL, ENVIRONMENT, MIN_CLIENT_VERSION, STEAM_API_KEY, ENGINE_BASE_URL, FRONTEND_URL
+from src.config import (
+    DATABASE_URL, ENVIRONMENT, MIN_CLIENT_VERSION, STEAM_API_KEY,
+    ENGINE_BASE_URL, FRONTEND_URL, POOL_MANAGER_INTERVAL, ARENA_SYSTEM_USER_ID,
+)
 from src.forum import router as forum_router
 from src.vision.capture import capture_screen, crop_roi
 from src.vision.engine import VisionEngine, VisionEngineConfig
@@ -69,6 +72,7 @@ _escrow_client = None
 _listener_task = None  # background thread task — EscrowClient.listen()
 _slack_oracle_task = None  # Slack watchdog (escrow + SLACK_ALERTS_WEBHOOK_URL only)
 _pii_retention_task = None  # GDPR daily purge — see migration 036
+_pool_manager_task = None  # Public match pool — keeps N open rooms per config row
 
 # Oracle → Slack: OK→bad fires immediately; sustained bad repeats every _SLACK_ORACLE_REPEAT_SECS.
 _slack_oracle_prev_listener_ok: bool | None = None
@@ -308,6 +312,100 @@ async def _expired_match_cleanup_loop(interval: int = 300) -> None:
                     _refund_at_match(mid)
         except Exception as exc:
             logger.error("_expired_match_cleanup_loop error: %s", exc)
+
+
+# ── Public Match Pool Manager ──────────────────────────────────────────────────
+
+async def _public_pool_manager_loop() -> None:
+    """
+    Background task: keeps a configured number of public waiting rooms open
+    for each (game, mode, stake_currency, stake_amount) in public_match_pool_config.
+
+    Runs every POOL_MANAGER_INTERVAL seconds (default 30).
+    Creates rooms as the ARENA_SYSTEM_USER_ID — a non-playable system account.
+
+    For AT rooms: room is ready for players immediately.
+    For CRYPTO rooms: room has no on_chain_match_id yet. The first player who
+      joins calls createMatch on-chain and passes their onChainMatchId to the
+      join endpoint, which stores it and updates the on-chain host reference.
+
+    Race-safety: unique room code generated per room; counting uses a
+    transaction-isolated read so concurrent workers never double-create.
+    """
+    import asyncio as _asyncio
+    import secrets as _secrets
+    import string as _string
+
+    _CHARS = _string.ascii_uppercase + _string.digits
+    _MODE_SIZES = {"1v1": 1, "2v2": 2, "4v4": 4, "5v5": 5}
+    interval = POOL_MANAGER_INTERVAL
+    system_uid = ARENA_SYSTEM_USER_ID
+
+    # Stagger 10s so DB is fully ready after other boot tasks.
+    await _asyncio.sleep(10)
+
+    while True:
+        try:
+            with SessionLocal() as session:
+                configs = session.execute(
+                    text(
+                        "SELECT game, mode, stake_currency, stake_amount, min_open_rooms "
+                        "FROM public_match_pool_config WHERE is_active = TRUE"
+                    )
+                ).fetchall()
+
+                for row in configs:
+                    game_val, mode_val, sc, amount, min_open = (
+                        row[0], row[1], row[2], row[3], row[4]
+                    )
+                    open_count = session.execute(
+                        text(
+                            "SELECT COUNT(*) FROM matches "
+                            "WHERE type = 'public' AND status = 'waiting' "
+                            "AND game = :g AND mode = :m "
+                            "AND stake_currency = :sc AND bet_amount = :amt"
+                        ),
+                        {"g": game_val, "m": mode_val, "sc": sc, "amt": amount},
+                    ).scalar() or 0
+
+                    needed = max(0, min_open - open_count)
+                    team_size = _MODE_SIZES.get(mode_val, 1)
+                    max_players = team_size * 2
+
+                    for _ in range(needed):
+                        code = "PUB-" + "".join(
+                            _secrets.choice(_CHARS) for _ in range(5)
+                        )
+                        session.execute(
+                            text(
+                                "INSERT INTO matches "
+                                "  (type, game, host_id, mode, bet_amount, stake_currency, "
+                                "   code, max_players, max_per_team, status) "
+                                "VALUES ('public', :g, :host, :m, :amt, :sc, "
+                                "        :code, :maxp, :mpt, 'waiting')"
+                            ),
+                            {
+                                "g":    game_val,
+                                "host": system_uid,
+                                "m":    mode_val,
+                                "amt":  amount,
+                                "sc":   sc,
+                                "code": code,
+                                "maxp": max_players,
+                                "mpt":  team_size,
+                            },
+                        )
+                        logger.info(
+                            "Pool: created public room code=%s game=%s mode=%s %s %.4f",
+                            code, game_val, mode_val, sc, amount,
+                        )
+
+                session.commit()
+
+        except Exception as exc:
+            logger.error("_public_pool_manager_loop error: %s", exc)
+
+        await _asyncio.sleep(interval)
 
 
 # ── GDPR — PII retention daily purge ───────────────────────────────────────────
@@ -981,6 +1079,11 @@ async def lifespan(app: FastAPI):
         _slack_oracle_task = asyncio.create_task(_oracle_slack_watch_loop())
         logger.info("✅ Oracle Slack watchdog started")
 
+    # Public match pool — keeps configured number of open rooms per game/mode/stake.
+    global _pool_manager_task
+    _pool_manager_task = asyncio.create_task(_public_pool_manager_loop())
+    logger.info("✅ Public match pool manager started")
+
     yield
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
@@ -999,6 +1102,12 @@ async def lifespan(app: FastAPI):
         _slack_oracle_task.cancel()
         try:
             await _slack_oracle_task
+        except asyncio.CancelledError:
+            pass
+    if _pool_manager_task:
+        _pool_manager_task.cancel()
+        try:
+            await _pool_manager_task
         except asyncio.CancelledError:
             pass
     if _listener_task:
@@ -2300,7 +2409,8 @@ async def match_status(
         with SessionLocal() as session:
             row = session.execute(
                 text("""
-                    SELECT status, winner_id, on_chain_match_id, stake_per_player
+                    SELECT status, winner_id, on_chain_match_id, stake_per_player,
+                           game_password
                     FROM matches
                     WHERE id = :mid
                 """),
@@ -2349,6 +2459,8 @@ async def match_status(
                     "your_team":         your_team,
                     "result":            result_val,
                     "score":             score_val,
+                    # Only revealed once match is in_progress — never exposed while waiting
+                    "game_password":     row[4] if match_status_val == "in_progress" else None,
                 }
     except Exception:
         pass
@@ -3756,9 +3868,15 @@ class JoinMatchRequest(BaseModel):
       When provided, the server honors the preference if that team still has a free
       slot (returns 409 if full so the client can show "Team X is full").
       When omitted, the server auto-assigns (fills A first, then B).
+
+    on_chain_match_id: provided ONLY by the first joiner of a public CRYPTO room.
+      The system user created the DB room with no on-chain ID. The first player
+      calls createMatch on-chain and passes the resulting matchId here so the
+      server can link the contract match to this DB room immediately (no EscrowClient lag).
     """
     password: str | None = None
     team: str | None = None  # "A" | "B" — optional; honored if slot available
+    on_chain_match_id: int | None = None  # public CRYPTO rooms only — first joiner sets this
 
 
 _VALID_CURRENCIES = {"CRYPTO", "AT"}
@@ -4665,7 +4783,7 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
             match_row = session.execute(
                 text(
                     "SELECT game, status, bet_amount, stake_currency, password, "
-                    "       max_players, max_per_team "
+                    "       max_players, max_per_team, type, on_chain_match_id "
                     "FROM matches WHERE id = :mid"
                 ),
                 {"mid": match_id},
@@ -4674,7 +4792,7 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
             if not match_row:
                 raise HTTPException(404, "Match not found")
 
-            game, status, stake_amount, stake_currency, match_password, max_players, max_per_team = match_row
+            game, status, stake_amount, stake_currency, match_password, max_players, max_per_team, match_type_val, existing_ocmid = match_row
             game = _normalize_game(game or "CS2")
             stake_currency = (stake_currency or "CRYPTO").upper()
 
@@ -4804,6 +4922,31 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
             if stake_currency == "AT":
                 _deduct_at(session, user_id, int(stake_amount or 0), match_id, "escrow_lock")
 
+            # ── Public CRYPTO: first joiner links the on-chain match ──────────
+            # Pool manager creates public CRYPTO rooms with no on_chain_match_id.
+            # The first player calls createMatch on-chain, gets a matchId, and
+            # passes it here. We store it and make this player the effective host
+            # so they can call cancelMatch if the room never fills.
+            if (
+                match_type_val == "public"
+                and stake_currency == "CRYPTO"
+                and req.on_chain_match_id is not None
+                and existing_ocmid is None
+                and team_a_count == 0  # this player is the first joiner (team A slot 0)
+            ):
+                session.execute(
+                    text(
+                        "UPDATE matches "
+                        "SET on_chain_match_id = :ocmid, host_id = :uid "
+                        "WHERE id = :mid AND on_chain_match_id IS NULL"
+                    ),
+                    {"ocmid": req.on_chain_match_id, "uid": user_id, "mid": match_id},
+                )
+                logger.info(
+                    "Public CRYPTO room %s linked on_chain_match_id=%s by user %s",
+                    match_id, req.on_chain_match_id, user_id,
+                )
+
             # ── Auto-start: transition waiting → in_progress when room fills ──
             # Count includes the newly inserted row (same session, uncommitted).
             count_row = session.execute(
@@ -4811,13 +4954,18 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
                 {"mid": match_id},
             ).fetchone()
             match_started = False
+            game_password: str | None = None
             if count_row and int(count_row[0]) >= (max_players or 2):
+                import secrets as _sec, string as _str
+                _pwchars = _str.ascii_letters + _str.digits
+                game_password = "".join(_sec.choice(_pwchars) for _ in range(8))
                 session.execute(
                     text(
-                        "UPDATE matches SET status = 'in_progress', started_at = NOW() "
+                        "UPDATE matches "
+                        "SET status = 'in_progress', started_at = NOW(), game_password = :pw "
                         "WHERE id = :mid AND status = 'waiting'"
                     ),
-                    {"mid": match_id},
+                    {"mid": match_id, "pw": game_password},
                 )
                 match_started = True
 
@@ -4834,8 +4982,9 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
         "match_id":       match_id,
         "game":           game,
         "stake_currency": stake_currency,
-        "team":           assigned_team,  # "A" or "B" — assigned based on current roster
-        "started":        match_started,  # True when room just filled and transitioned to in_progress
+        "team":           assigned_team,   # "A" or "B" — assigned based on current roster
+        "started":        match_started,   # True when room just filled → in_progress
+        "game_password":  game_password,   # set only when this join triggered ACTIVE; None otherwise
     }
 
 
