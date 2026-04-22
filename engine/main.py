@@ -4518,7 +4518,9 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
 
     # Derive max_players and max_per_team from mode
     _mode_sizes = {"1v1": 1, "2v2": 2, "4v4": 4, "5v5": 5}
-    team_size   = _mode_sizes.get(mode, 1)
+    if mode not in _mode_sizes:
+        raise HTTPException(400, f"Invalid mode '{mode}' — must be one of: {', '.join(_mode_sizes)}")
+    team_size   = _mode_sizes[mode]
     max_players = team_size * 2
 
     try:
