@@ -977,15 +977,16 @@ class MatchMonitor:
     def __init__(self, config: dict):
         self.config            = config
         self.engine            = EngineClient(config["engine_url"], config["auth_token"])
-        self.running           = False
-        self.monitoring        = False
-        self.current_match_id: str | None = None
-        self._thread:           threading.Thread | None = None
-        self._heartbeat_thread: threading.Thread | None = None
-        self._capture_count      = 0
-        self._last_screenshot: str | None = None
-        self._heartbeat_stop     = threading.Event()
-        self._session_id         = get_or_create_session_id(config)
+        self.running               = False
+        self.monitoring            = False
+        self.current_match_id:    str | None = None
+        self.current_match_status: str | None = None
+        self._thread:              threading.Thread | None = None
+        self._heartbeat_thread:    threading.Thread | None = None
+        self._capture_count        = 0
+        self._last_screenshot:    str | None = None
+        self._heartbeat_stop       = threading.Event()
+        self._session_id           = get_or_create_session_id(config)
 
     def start(self):
         if self.running:
@@ -1007,49 +1008,93 @@ class MatchMonitor:
         logger.info("Monitor stopped")
 
     def _loop(self):
+        _match_status:       str | None = None
+        _match_completed_at: float | None = None
+        _last_status_poll:   float = 0
+        _STATUS_POLL_INTERVAL = 10   # seconds between match-status polls
+        _CAPTURE_COOLDOWN     = 60   # seconds to keep match visible after completed
+
         while self.running:
             try:
                 game = detect_running_game()
                 if not game:
+                    _match_status = None
                     time.sleep(self.config.get("screenshot_interval", 5))
                     continue
 
                 if is_game_running(game):
                     if not self.monitoring:
-                        logger.info(f"{game} detected")
+                        logger.info(f"{game} detected — waiting for active match")
                         self.monitoring = True
 
-                    if not self.current_match_id:
-                        token = self.config.get("auth_token", "")
-                        if token:
-                            mid = self.engine.get_active_match(token)
-                            if mid:
-                                self.set_match_id(mid)
+                    token = self.config.get("auth_token", "")
 
-                    game_dir = os.path.join(
-                        self.config["screenshot_dir"], game.replace(" ", "_"))
-                    filepath = capture_screenshot(
-                        output_dir=game_dir,
-                        monitor_num=self.config.get("monitor", 1),
-                        game_name=game,
-                    )
-                    if filepath:
-                        self._capture_count += 1
-                        self._last_screenshot = filepath
-                        if self.current_match_id:
+                    # Acquire match_id when not yet in a room
+                    if not self.current_match_id and token:
+                        mid = self.engine.get_active_match(token)
+                        if mid:
+                            self.set_match_id(mid)
+                            _match_status        = None
+                            _match_completed_at  = None
+                            _last_status_poll    = 0   # poll status immediately
+
+                    # Poll match status every _STATUS_POLL_INTERVAL seconds
+                    now = time.time()
+                    if self.current_match_id and token and (now - _last_status_poll) >= _STATUS_POLL_INTERVAL:
+                        hb = self.engine.match_heartbeat(self.current_match_id, token)
+                        if hb:
+                            _match_status              = hb.get("status")
+                            self.current_match_status  = _match_status
+                            logger.debug(f"Match status: {_match_status}")
+                        _last_status_poll = now
+
+                    # ── Completed / cancelled — 60s cooldown then clear ───────
+                    if _match_status in ("completed", "cancelled"):
+                        if _match_completed_at is None:
+                            _match_completed_at = time.time()
+                            logger.info(
+                                f"Match {self.current_match_id} {_match_status} — "
+                                f"capture ends in {_CAPTURE_COOLDOWN}s"
+                            )
+                        if time.time() - _match_completed_at >= _CAPTURE_COOLDOWN:
+                            logger.info("Capture cooldown elapsed — ready for next match")
+                            self.current_match_id     = None
+                            self.current_match_status = None
+                            _match_status             = None
+                            _match_completed_at       = None
+
+                    # ── Capture ONLY when match is live ───────────────────────
+                    elif self.current_match_id and _match_status == "in_progress":
+                        game_dir = os.path.join(
+                            self.config["screenshot_dir"], game.replace(" ", "_"))
+                        filepath = capture_screenshot(
+                            output_dir=game_dir,
+                            monitor_num=self.config.get("monitor", 1),
+                            game_name=game,
+                        )
+                        if filepath:
+                            self._capture_count += 1
+                            self._last_screenshot = filepath
                             result = self.engine.upload_screenshot(
                                 self.current_match_id, filepath)
                             if result:
                                 logger.info(f"Engine: {result}")
                                 try: os.remove(filepath)
                                 except OSError: pass
-                        else:
-                            logger.debug("No match ID — saved locally")
+                    else:
+                        logger.debug(
+                            f"Game open — idle "
+                            f"(match={self.current_match_id}, status={_match_status})"
+                        )
+
                 else:
                     if self.monitoring:
                         logger.info(f"{game} closed")
-                        self.monitoring         = False
-                        self.current_match_id   = None
+                        self.monitoring            = False
+                        self.current_match_id      = None
+                        self.current_match_status  = None
+                        _match_status              = None
+                        _match_completed_at        = None
 
             except Exception as e:
                 logger.error(f"Monitor error: {e}")
