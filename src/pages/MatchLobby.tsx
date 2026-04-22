@@ -33,6 +33,7 @@ import {
   apiKickPlayer,
   apiListFriends,
   apiGetMe,
+  apiGetMatchStatus,
   mapApiMatchRowToMatch,
   type ApiFriendRow,
 } from "@/lib/engine-api";
@@ -49,7 +50,7 @@ import {
   type LobbySlot,
 } from "@/lib/lobbyRosterDisplay";
 import { createFailureMessage, inviteFailureMessage, joinFailureMessage } from "@/lib/stakeErrors";
-import { createMatchOnChain, fetchBnbUsdPrice, getBnbBalance } from "@/lib/metamaskBsc";
+import { createMatchOnChain, cancelMatchOnChain, fetchBnbUsdPrice, getBnbBalance } from "@/lib/metamaskBsc";
 import { ArenaPageShell } from "@/components/visual";
 
 // ─── Game configs ─────────────────────────────────────────────────────────────
@@ -830,7 +831,8 @@ const MatchLobby = () => {
     if (!myActiveRoom || !user) return;
     const matchId    = myActiveRoom.id;
     const stakeLabel = formatMatchStakeShort(myActiveRoom);
-    // Same as leave: drop activeRoomId first so heartbeat polling stops immediately.
+    const isCrypto   = myActiveRoom.stakeCurrency === "CRYPTO";
+    // Drop activeRoomId first so heartbeat polling stops immediately.
     setMyRoomMatchId(null);
     setDeleteRoomConfirmOpen(false);
     setCountdown(null);
@@ -839,14 +841,41 @@ const MatchLobby = () => {
     useNotificationStore.getState().addNotification({
       type: "system",
       title: "🗑️ Room Deleted",
-      message: `Match room closed. Your ${stakeLabel} deposit has been refunded.`,
+      message: `Match room closed.${isCrypto ? " Sending refund transaction to your wallet…" : ` Your ${stakeLabel} deposit has been refunded.`}`,
     });
-    if (token && looksLikeServerMatchId(matchId)) {
-      void apiCancelMatch(token, matchId).finally(() => {
-        void useMatchStore.getState().refreshMatchesFromServer(token);
-      });
+    const doServerCancel = () => {
+      if (token && looksLikeServerMatchId(matchId)) {
+        void apiCancelMatch(token, matchId).finally(() => {
+          void useMatchStore.getState().refreshMatchesFromServer(token);
+        });
+      } else {
+        void useMatchStore.getState().refreshMatchesFromServer(token ?? null);
+      }
+    };
+    if (isCrypto && token && looksLikeServerMatchId(matchId)) {
+      void (async () => {
+        try {
+          const status = await apiGetMatchStatus(matchId, token);
+          if (status?.on_chain_match_id != null) {
+            await cancelMatchOnChain(BigInt(String(status.on_chain_match_id)));
+            useNotificationStore.getState().addNotification({
+              type: "system",
+              title: "Refund sent",
+              message: "On-chain cancelMatch confirmed — tBNB is back in your wallet.",
+            });
+          }
+        } catch {
+          useNotificationStore.getState().addNotification({
+            type: "system",
+            title: "On-chain cancel failed",
+            message: "Could not call cancelMatch on-chain. Your stake will auto-refund after 1 hour via cancelWaiting.",
+          });
+        } finally {
+          doServerCancel();
+        }
+      })();
     } else {
-      void useMatchStore.getState().refreshMatchesFromServer(token ?? null);
+      doServerCancel();
     }
   }, [myActiveRoom, user, token, cancelEscrow, deleteMatch]);
 
