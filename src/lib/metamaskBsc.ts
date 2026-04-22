@@ -137,7 +137,9 @@ export async function createMatchOnChain(
   stakeEther: number,
 ): Promise<{ txHash: string; onChainMatchId: bigint }> {
   const addr = import.meta.env.VITE_CONTRACT_ADDRESS;
-  if (!addr?.trim()) throw new Error("VITE_CONTRACT_ADDRESS is not set");
+  if (!addr?.trim() || !String(addr).startsWith("0x")) {
+    throw new Error("VITE_CONTRACT_ADDRESS is not set or invalid — expected a 0x… address");
+  }
   const eth = getInjectedEthereum();
   if (!eth) throw new Error("MetaMask not found");
   await ensureTargetChain(eth);
