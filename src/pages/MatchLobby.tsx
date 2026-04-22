@@ -748,6 +748,7 @@ const MatchLobby = () => {
         updateMatchStatus(myActiveRoom.id, "in_progress");
         markInMatch(myActiveRoom.id);
         setMyRoomMatchId(null);
+        setActiveRoomOnChainId(null);
         setRoomLocked(true);
         useNotificationStore.getState().addNotification({
           type: "system",
@@ -770,11 +771,13 @@ const MatchLobby = () => {
       // DB-ready: Vision Engine called declareWinner → funds released by contract
       markIdle();
       setMyRoomMatchId(null);
+      setActiveRoomOnChainId(null);
       setRoomLocked(false);
     } else if (myActiveRoom.status === "cancelled") {
       markIdle();
       cancelEscrow(myActiveRoom.id);
       setMyRoomMatchId(null);
+      setActiveRoomOnChainId(null);
       setRoomLocked(false);
     }
   }, [myActiveRoom?.status]);
@@ -787,6 +790,7 @@ const MatchLobby = () => {
       if (myRoomMatchId && expiredIds.includes(myRoomMatchId)) {
         cancelEscrow(myRoomMatchId);
         setMyRoomMatchId(null);
+        setActiveRoomOnChainId(null);
         setCountdown(null);
         useNotificationStore.getState().addNotification({
           type: "system",
@@ -808,6 +812,7 @@ const MatchLobby = () => {
     // before any in-flight heartbeat returns in_match=false — avoids spurious
     // "removed by the host" toast after voluntary leave.
     setMyRoomMatchId(null);
+    setActiveRoomOnChainId(null);
     setCountdown(null);
     // Must pass user.username — joinMatch adds username to players,
     // so leaveMatch must use the same key to find and remove the player.
