@@ -191,6 +191,24 @@ export async function getBnbBalance(address: string): Promise<number> {
   return parseFloat(formatEther(raw));
 }
 
+/**
+ * ArenaEscrow.cancelWaiting — any depositor calls this after WAITING_TIMEOUT (1 hour)
+ * to recover funds when a match never filled. Useful for stuck test matches.
+ */
+export async function cancelWaitingOnChain(onChainMatchId: bigint): Promise<string> {
+  const addr = import.meta.env.VITE_CONTRACT_ADDRESS;
+  if (!addr?.trim() || !String(addr).startsWith("0x")) throw new Error("VITE_CONTRACT_ADDRESS is not set or invalid");
+  const eth = getInjectedEthereum();
+  if (!eth) throw new Error("MetaMask not found");
+  await ensureTargetChain(eth);
+  const provider = new BrowserProvider(eth);
+  const signer = await provider.getSigner();
+  const contract = new Contract(addr, ["function cancelWaiting(uint256 matchId)"], signer);
+  const tx = await contract.cancelWaiting(onChainMatchId);
+  await tx.wait();
+  return tx.hash;
+}
+
 /** ArenaEscrow.cancelMatch — creator cancels a WAITING match and refunds all depositors. */
 export async function cancelMatchOnChain(onChainMatchId: bigint): Promise<string> {
   const addr = import.meta.env.VITE_CONTRACT_ADDRESS;
