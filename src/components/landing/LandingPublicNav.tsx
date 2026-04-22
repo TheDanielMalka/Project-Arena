@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Swords } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUserStore } from "@/stores/userStore";
+import { ArenaLogo } from "@/components/shared/ArenaLogo";
 
 const chip =
   "inline-flex items-center justify-center border border-arena-cyan/40 bg-gradient-to-b from-black/60 to-black/80 px-2 py-1.5 font-hud text-[7px] font-semibold uppercase tracking-[0.2em] text-arena-cyan/95 shadow-[0_0_22px_-8px_hsl(var(--arena-cyan)/0.4),inset_0_1px_0_hsl(0_0%_100%/0.07)] transition-all hover:border-primary/50 hover:text-foreground hover:shadow-[0_0_28px_-6px_hsl(var(--primary)/0.35)] sm:px-2.5 sm:text-[8px] sm:tracking-[0.24em]";
@@ -26,13 +27,8 @@ export function LandingPublicNav({
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-primary/35 to-transparent" />
       <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-2 px-4 sm:px-8">
         <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
-          <Link to="/" className="flex min-w-0 items-center gap-2 sm:gap-2.5">
-            <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded border border-primary/35 bg-primary/10">
-              <Swords className="h-4 w-4 text-primary" />
-            </div>
-            <span className="font-display text-sm font-bold text-primary tracking-[0.2em] sm:text-base sm:tracking-[0.25em] pl-0.5">
-              ARENA
-            </span>
+          <Link to="/" className="flex min-w-0 items-center">
+            <ArenaLogo variant="compact" markSize={30} />
           </Link>
           {showMarketingLinks && (
             <div className="ml-1 hidden sm:flex min-w-0 flex-wrap items-center gap-1 sm:ml-3 sm:gap-2">

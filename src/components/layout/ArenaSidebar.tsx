@@ -4,6 +4,7 @@ import {
   Settings2, Medal, Shield, Gem, Sparkles, Crown, Users2, Monitor,
   LogOut, Mail, ChevronUp, Flame, Tv2, MessageSquare, type LucideIcon,
 } from "lucide-react";
+import { ArenaLogo } from "@/components/shared/ArenaLogo";
 import { NavLink } from "@/components/NavLink";
 import { useNavigate } from "react-router-dom";
 import { useUserStore }    from "@/stores/userStore";
@@ -135,15 +136,14 @@ export function ArenaSidebar() {
         )}>
           <button
             onClick={() => navigate("/")}
-            className="focus:outline-none group flex items-center gap-2"
+            className="focus:outline-none group"
           >
-            {/* Glow dot */}
-            <span className="w-1.5 h-1.5 rounded-full bg-primary shadow-[0_0_6px_2px_hsl(var(--primary)/0.6)] shrink-0" />
-            {!collapsed && (
-              <h1 className="font-display text-xl font-bold text-primary tracking-[0.18em] group-hover:opacity-80 transition-opacity select-none">
-                ARENA
-              </h1>
-            )}
+            <div className="group-hover:opacity-75 transition-opacity">
+              {collapsed
+                ? <ArenaLogo variant="mark" markSize={26} />
+                : <ArenaLogo variant="compact" markSize={26} />
+              }
+            </div>
           </button>
         </div>
 
