@@ -10,7 +10,7 @@ import {
   Copy, CheckCircle2, Eye, EyeOff, ExternalLink,
   TrendingUp, TrendingDown, Clock, RefreshCw,
   Search, Landmark, Flame, Wallet, ShieldCheck,
-  ChevronLeft, ChevronRight, Swords, WifiOff, Zap, Lock,
+  ChevronLeft, ChevronRight, Swords, WifiOff, Zap,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useWalletStore } from "@/stores/walletStore";
@@ -61,7 +61,10 @@ const WalletPage = () => {
     connectedAddress, selectedNetwork,
     usdtBalance, atBalance,
     dailyBettingLimit, dailyBettingUsed, platformBettingMax,
-    transactions, setDailyBettingLimit, connectWallet: linkMetaMaskWallet,
+    transactions, setDailyBettingLimit,
+    connectWallet: linkMetaMaskWallet,
+    disconnectWallet: unlinkWallet,
+    switchWallet: switchMetaMaskWallet,
   } = useWalletStore();
   const { arenaTokens: forgeAT } = useForgeStore();
 
@@ -205,9 +208,42 @@ const WalletPage = () => {
                     }
                   </button>
                 </div>
-                <div className="flex items-center gap-1.5 pt-1 text-[10px] text-muted-foreground font-display">
-                  <Lock className="h-3 w-3 shrink-0" />
-                  Wallet is permanently bound to your account. Delete your account to release it.
+                <div className="flex gap-2 pt-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs flex-1"
+                    onClick={() => {
+                      void (async () => {
+                        const r = await switchMetaMaskWallet();
+                        if (r.ok === false) {
+                          toast({ variant: "destructive", title: "Switch Wallet", description: r.error });
+                          return;
+                        }
+                        syncProfileWalletConnected();
+                        toast({ title: "Wallet switched", description: "New wallet connected and saved." });
+                      })();
+                    }}
+                  >
+                    Switch Wallet
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs flex-1 text-destructive hover:text-destructive border-destructive/30 hover:bg-destructive/10"
+                    onClick={() => {
+                      void (async () => {
+                        const r = await unlinkWallet();
+                        if (r.ok === false) {
+                          toast({ variant: "destructive", title: "Disconnect Wallet", description: r.error });
+                          return;
+                        }
+                        toast({ title: "Wallet disconnected", description: "Wallet unlinked from your account." });
+                      })();
+                    }}
+                  >
+                    Disconnect
+                  </Button>
                 </div>
                 </>
               ) : (

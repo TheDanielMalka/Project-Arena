@@ -49,7 +49,7 @@ describe("MatchLobby page", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /\$50/ }));
+    fireEvent.click(screen.getByRole("button", { name: /\$5/ }));
     fireEvent.click(screen.getByText("NightHawk's Match"));
 
     expect(screen.getByText("Lobby Details")).toBeInTheDocument();

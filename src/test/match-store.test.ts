@@ -39,7 +39,7 @@ describe("matchStore", () => {
   it("addMatch generates a code for custom matches", () => {
     const m = useMatchStore.getState().addMatch({
       type: "custom", host: "Y", hostId: "y1",
-      game: "CS2", mode: "5v5", betAmount: 50,
+      game: "CS2", mode: "5v5", betAmount: 5,
       players: [], maxPlayers: 10, status: "waiting",
       hasPassword: true, teamA: ["Y"], teamB: [],
       maxPerTeam: 5, teamSize: 5, depositsReceived: 1,

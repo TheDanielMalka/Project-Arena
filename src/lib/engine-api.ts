@@ -1606,6 +1606,24 @@ export async function apiPatchMeWalletAddress(token: string, wallet_address: str
   }
 }
 
+/** PATCH /users/me { unlink_wallet: true } — remove wallet from profile. */
+export async function apiUnlinkWallet(token: string): Promise<ApiPatchWalletResult> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/users/me`, token, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ unlink_wallet: true }),
+    });
+    if (res.ok) return { ok: true };
+    const raw = (await res.json().catch(() => ({}))) as { detail?: unknown };
+    const detail = parseFastApiDetail(raw.detail) ?? "";
+    return { ok: false, error: detail || "Could not unlink wallet." };
+  } catch (err) {
+    reportEngineApiError(err);
+    return { ok: false, error: "Network error — could not reach the server." };
+  }
+}
+
 // ── Auth: change password ────────────────────────────────────────────────────
 
 export type ApiChangePasswordResult =

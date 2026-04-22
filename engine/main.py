@@ -3018,7 +3018,8 @@ class PatchUserRequest(BaseModel):
     # Identity fields — write rules enforced in handler, see docstring above.
     steam_id:       str | None = None   # REJECTED if non-null (OpenID only)
     riot_id:        str | None = None   # REJECTED if non-null (OAuth only)
-    wallet_address: str | None = None   # write-once; set only when currently NULL
+    wallet_address: str | None = None   # set or replace; None means "no change"
+    unlink_wallet:  bool       = False  # True → clear wallet_address (distinct from "no change")
 
 
 @app.patch("/users/me", response_model=UserProfile)
@@ -3068,30 +3069,12 @@ async def patch_user_me(req: PatchUserRequest, payload: dict = Depends(verify_to
                     raise HTTPException(409, "Username already taken")
 
             if req.wallet_address is not None:
-                # Reject explicit unlink attempts.
                 if req.wallet_address.strip() == "":
-                    raise HTTPException(
-                        400,
-                        "Wallet address cannot be unlinked. It is cleared only "
-                        "by account deletion.",
-                    )
+                    raise HTTPException(400, "Invalid Ethereum wallet address format")
                 addr = req.wallet_address.strip()
-                # Basic Ethereum address format check (0x + 40 hex chars)
                 import re
                 if not re.fullmatch(r"0x[0-9a-fA-F]{40}", addr):
                     raise HTTPException(400, "Invalid Ethereum wallet address format")
-
-                # Write-once rule: reject if the user already has a wallet linked.
-                current = session.execute(
-                    text("SELECT wallet_address FROM users WHERE id = :uid"),
-                    {"uid": user_id},
-                ).fetchone()
-                if current and current[0]:
-                    raise HTTPException(
-                        400,
-                        "Wallet address is already linked to this account and "
-                        "cannot be changed. It is cleared only by account deletion.",
-                    )
 
                 # Uniqueness across live users.
                 conflict = session.execute(
@@ -3110,8 +3093,7 @@ async def patch_user_me(req: PatchUserRequest, payload: dict = Depends(verify_to
         raise HTTPException(500, "Profile update failed")
 
     # ── Build update fields ───────────────────────────────────────────────────
-    # steam_id / riot_id are never written here (rejected above). wallet_address
-    # is only ever set here when transitioning NULL → value (write-once).
+    # steam_id / riot_id are never written here (rejected above).
     fields: dict = {}
     if req.avatar                  is not None: fields["avatar"]                  = req.avatar
     if req.avatar_bg               is not None: fields["avatar_bg"]               = req.avatar_bg
@@ -3119,7 +3101,8 @@ async def patch_user_me(req: PatchUserRequest, payload: dict = Depends(verify_to
     if req.forge_unlocked_item_ids is not None:
         fields["forge_unlocked_item_ids"] = req.forge_unlocked_item_ids
     if req.username       is not None: fields["username"]       = req.username.strip()
-    if req.wallet_address is not None: fields["wallet_address"] = req.wallet_address.strip()
+    if req.unlink_wallet:             fields["wallet_address"]  = None
+    elif req.wallet_address is not None: fields["wallet_address"] = req.wallet_address.strip()
 
     if fields:
         set_clause = ", ".join(f"{col} = :{col}" for col in fields)

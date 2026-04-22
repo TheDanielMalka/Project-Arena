@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { parseEther } from "ethers";
 import type { Transaction, TransactionType, TransactionStatus, Network } from "@/types";
 import { useUserStore } from "@/stores/userStore";
-import { apiGetMatchStatus, apiPatchMeWalletAddress } from "@/lib/engine-api";
+import { apiGetMatchStatus, apiPatchMeWalletAddress, apiUnlinkWallet } from "@/lib/engine-api";
 import { friendlyChainErrorMessage } from "@/lib/friendlyChainError";
 import { connectMetaMaskAndSignOwnership, depositToEscrow } from "@/lib/metamaskBsc";
 import { publishAtToWalletAndForge } from "@/lib/sessionAtSync";
@@ -71,8 +71,12 @@ interface WalletState {
   setDailyBettingLimit: (limit: number) => void;
   // DB-ready: wagmi useBalance() — returns live chain value; this is the local preview
   getAvailableBalance: () => number;
-  /** MetaMask (EIP-1193) on BSC Testnet — sign ownership message, then PATCH /users/me `wallet_address`. Write-once. */
+  /** MetaMask (EIP-1193) on BSC Testnet — sign ownership message, then PATCH /users/me `wallet_address`. */
   connectWallet: () => Promise<ConnectWalletResult>;
+  /** Unlink wallet from account (PATCH /users/me { unlink_wallet: true }). */
+  disconnectWallet: () => Promise<ConnectWalletResult>;
+  /** Disconnect current wallet then immediately re-connect with a new MetaMask address. */
+  switchWallet: () => Promise<ConnectWalletResult>;
   /** Until POST /wallet/buy-at: local mock only; then refreshProfileFromServer */
   buyArenaTokens: (atAmount: number, totalUsdtCost: number) => boolean;
 }
@@ -121,6 +125,26 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       }
       return { ok: false as const, error: friendlyChainErrorMessage(e) };
     }
+  },
+
+  disconnectWallet: async (): Promise<ConnectWalletResult> => {
+    try {
+      const token = useUserStore.getState().token;
+      if (!token) return { ok: false as const, error: "Sign in to manage your wallet." };
+      const result = await apiUnlinkWallet(token);
+      if (result.ok === false) return { ok: false as const, error: result.error };
+      set({ connectedAddress: null });
+      useUserStore.getState().unlinkWalletFromProfile();
+      return { ok: true as const };
+    } catch (e) {
+      return { ok: false as const, error: "Could not disconnect wallet." };
+    }
+  },
+
+  switchWallet: async (): Promise<ConnectWalletResult> => {
+    const disconnectResult = await get().disconnectWallet();
+    if (disconnectResult.ok === false) return disconnectResult;
+    return get().connectWallet();
   },
 
   setDailyBettingLimit: (limit) =>

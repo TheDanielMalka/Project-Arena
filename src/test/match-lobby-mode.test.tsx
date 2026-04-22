@@ -94,9 +94,9 @@ describe("MatchLobby — tab labels & public tab after mode changes", () => {
     expect(screen.queryByText("ShadowKill3r's Match")).not.toBeInTheDocument();
   });
 
-  it("opens lobby details for a $50 match that is full", () => {
+  it("opens lobby details for a $5 match that is full", () => {
     renderLobby();
-    fireEvent.click(screen.getByRole("button", { name: /\$50/ }));
+    fireEvent.click(screen.getByRole("button", { name: /\$5/ }));
     fireEvent.click(screen.getByText("NightHawk's Match"));
     expect(screen.getByText("Lobby Details")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /join this lobby/i })).toBeDisabled();
