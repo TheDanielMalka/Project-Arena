@@ -50,7 +50,7 @@ export function LandingPublicNav({
         <div className="flex shrink-0 items-center gap-2 sm:gap-3">
           <button
             type="button"
-            onClick={goLoginOrDashboard}
+            onClick={() => navigate(isAuthed ? "/dashboard" : "/auth")}
             className="px-1.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground sm:px-2 sm:text-sm font-display tracking-wide"
           >
             {isAuthed ? "Dashboard" : "Login"}
@@ -58,10 +58,10 @@ export function LandingPublicNav({
           <Button
             type="button"
             size="sm"
-            onClick={goLoginOrDashboard}
+            onClick={() => navigate(isAuthed ? "/lobby" : "/auth")}
             className="glow-green font-display tracking-wider px-2.5 text-[9px] sm:px-4 sm:text-xs"
           >
-            <Swords className="mr-1 h-3 w-3 sm:mr-1.5 sm:h-3.5 sm:w-3.5" /> {isAuthed ? "Open app" : "Enter Arena"}
+            <Swords className="mr-1 h-3 w-3 sm:mr-1.5 sm:h-3.5 sm:w-3.5" /> {isAuthed ? "Match Lobby" : "Enter Arena"}
           </Button>
         </div>
       </div>
