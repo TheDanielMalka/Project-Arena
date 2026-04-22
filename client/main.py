@@ -1139,22 +1139,21 @@ class MatchMonitor:
 def _draw_arena_icon(size: int = 64, state: str = "idle",
                      badge_count: int = 0) -> Image.Image:
     """
-    PROJECT ARENA icon — chamfered square + geometric A + corner HUD ticks.
-    Matches the brand mark used on the website and in the favicon.
-    Drawn at 4× resolution then downscaled for smooth edges at any size.
+    PROJECT ARENA HUD icon.
+    Rounded dark panel, oversized neon A with triple-layer bloom,
+    hot white core, scan-line texture, corner ticks.
+    Drawn at 4× then downscaled for crisp edges at every size.
 
     States:
-      active → purple A  (monitoring ON)
-      match  → gold A    (match in progress)
-      error  → dim red   (engine offline)
-      idle   → gray A    (monitoring OFF)
-
-    badge_count: unread messages — red dot with digit (1-9, 9+) bottom-right.
+      active → red    (monitoring ON)
+      match  → gold   (match in progress)
+      error  → dim red (engine offline)
+      idle   → gray   (monitoring OFF)
     """
     colors = {
-        "active": (167, 139, 250, 255),
+        "active": BRAND["accent_pil"],
         "match":  BRAND["match_pil"],
-        "error":  (239, 68, 68, 220),
+        "error":  (220, 50, 50, 200),
         "idle":   BRAND["idle_pil"],
     }
     glyph_color = colors.get(state, colors["idle"])
@@ -1165,70 +1164,76 @@ def _draw_arena_icon(size: int = 64, state: str = "idle",
     img  = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # ── Chamfered square background ──────────────────────────────────────────
-    cut = int(s * 0.16)
-    pts = [(cut,0),(s-cut,0),(s,cut),(s,s-cut),(s-cut,s),(cut,s),(0,s-cut),(0,cut)]
-    draw.polygon(pts, fill=(8, 13, 20, 245))
+    # ── Rounded dark panel ───────────────────────────────────────────────────
+    rad = int(s * 0.18)
+    draw.rounded_rectangle([0, 0, s - 1, s - 1], radius=rad, fill=(5, 7, 13, 255))
 
-    # Border glow layer
-    border_lw = max(2, s // 50)
-    glow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    gdraw = ImageDraw.Draw(glow)
-    gdraw.polygon(pts, outline=(r, g, b, 110), width=border_lw * 3)
-    glow = glow.filter(ImageFilter.GaussianBlur(radius=max(3, s // 80)))
-    img.alpha_composite(glow)
+    # Subtle scan-line texture
+    for y in range(0, s, max(3, s // 80)):
+        draw.line([(0, y), (s, y)], fill=(255, 255, 255, 6), width=1)
 
-    # Crisp border
-    draw.polygon(pts, outline=(r, g, b, 185), width=border_lw)
-
-    # ── Geometric A glyph ────────────────────────────────────────────────────
+    # ── Geometric A — oversized, nearly full panel ────────────────────────────
     cx   = s // 2
-    lw   = max(8, s // 12)
-    top  = (cx,           int(s * 0.15))
-    bl   = (int(s * 0.12), int(s * 0.87))
-    br   = (int(s * 0.88), int(s * 0.87))
-    cb_y = int(s * 0.56)
-    ins  = int(s * 0.28)
+    lw   = max(10, s // 10)
+    top  = (cx,            int(s * 0.07))
+    bl   = (int(s * 0.05), int(s * 0.93))
+    br   = (int(s * 0.95), int(s * 0.93))
+    cb_y = int(s * 0.57)
+    ins  = int(s * 0.27)
     cb_l = (ins,      cb_y)
     cb_r = (s - ins,  cb_y)
 
-    # Shadow
-    sh  = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    shd = ImageDraw.Draw(sh)
-    off = max(2, s // 100)
-    shd.line([(top[0]+off, top[1]+off), (bl[0]+off, bl[1]+off)],   fill=(0,0,0,150), width=lw)
-    shd.line([(top[0]+off, top[1]+off), (br[0]+off, br[1]+off)],   fill=(0,0,0,150), width=lw)
-    shd.line([(cb_l[0]+off, cb_l[1]+off),(cb_r[0]+off,cb_r[1]+off)], fill=(0,0,0,150), width=max(6,s//16))
-    sh = sh.filter(ImageFilter.GaussianBlur(radius=max(1, s // 150)))
-    img.alpha_composite(sh)
+    # Layer 1 — wide outer bloom
+    b1  = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    b1d = ImageDraw.Draw(b1)
+    b1d.line([top, bl],    fill=(r, g, b, 70), width=lw * 5)
+    b1d.line([top, br],    fill=(r, g, b, 70), width=lw * 5)
+    b1d.line([cb_l, cb_r], fill=(r, g, b, 70), width=lw * 4)
+    b1 = b1.filter(ImageFilter.GaussianBlur(radius=max(6, s // 18)))
+    img.alpha_composite(b1)
 
-    # Glyph bloom
-    ag  = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    agd = ImageDraw.Draw(ag)
-    agd.line([top, bl],    fill=(r,g,b,90), width=lw * 2)
-    agd.line([top, br],    fill=(r,g,b,90), width=lw * 2)
-    agd.line([cb_l, cb_r], fill=(r,g,b,90), width=max(6,s//16) * 2)
-    ag = ag.filter(ImageFilter.GaussianBlur(radius=max(3, s // 50)))
-    img.alpha_composite(ag)
+    # Layer 2 — medium glow
+    b2  = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    b2d = ImageDraw.Draw(b2)
+    b2d.line([top, bl],    fill=(r, g, b, 130), width=lw * 2)
+    b2d.line([top, br],    fill=(r, g, b, 130), width=lw * 2)
+    b2d.line([cb_l, cb_r], fill=(r, g, b, 130), width=lw + lw // 2)
+    b2 = b2.filter(ImageFilter.GaussianBlur(radius=max(3, s // 36)))
+    img.alpha_composite(b2)
 
-    # Crisp glyph
-    draw.line([top, bl],    fill=(r,g,b,255), width=lw)
-    draw.line([top, br],    fill=(r,g,b,255), width=lw)
-    draw.line([cb_l, cb_r], fill=(r,g,b,255), width=max(6, s // 16))
+    # Layer 3 — crisp neon stroke
+    draw.line([top, bl],    fill=(r, g, b, 255), width=lw)
+    draw.line([top, br],    fill=(r, g, b, 255), width=lw)
+    draw.line([cb_l, cb_r], fill=(r, g, b, 255), width=max(7, s // 14))
+
+    # Hot white core on main strokes
+    core_lw = max(2, lw // 3)
+    draw.line([top, bl], fill=(255, 210, 210, 160), width=core_lw)
+    draw.line([top, br], fill=(255, 210, 210, 160), width=core_lw)
+
+    # ── Border neon rim ───────────────────────────────────────────────────────
+    rim = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    rd  = ImageDraw.Draw(rim)
+    rd.rounded_rectangle([0, 0, s - 1, s - 1], radius=rad,
+                         outline=(r, g, b, 90), width=max(2, s // 40))
+    rim = rim.filter(ImageFilter.GaussianBlur(radius=max(2, s // 55)))
+    img.alpha_composite(rim)
+    draw.rounded_rectangle([1, 1, s - 2, s - 2], radius=rad,
+                           outline=(r, g, b, 130), width=max(1, s // 60))
 
     # ── Corner HUD ticks ─────────────────────────────────────────────────────
-    tick   = int(s * 0.10)
-    tk_lw  = max(2, s // 60)
-    tc     = (r, g, b, 175)
-    m      = int(s * 0.04)
-    draw.line([(m, m),     (m+tick, m)],   fill=tc, width=tk_lw)
-    draw.line([(m, m),     (m, m+tick)],   fill=tc, width=tk_lw)
-    draw.line([(s-m, m),   (s-m-tick, m)], fill=tc, width=tk_lw)
-    draw.line([(s-m, m),   (s-m, m+tick)], fill=tc, width=tk_lw)
-    draw.line([(m, s-m),   (m+tick, s-m)], fill=tc, width=tk_lw)
-    draw.line([(m, s-m),   (m, s-m-tick)], fill=tc, width=tk_lw)
-    draw.line([(s-m, s-m), (s-m-tick, s-m)], fill=tc, width=tk_lw)
-    draw.line([(s-m, s-m), (s-m, s-m-tick)], fill=tc, width=tk_lw)
+    tick  = int(s * 0.09)
+    tk_lw = max(2, s // 70)
+    tc    = (r, g, b, 160)
+    m     = int(s * 0.04)
+    draw.line([(m, m),     (m + tick, m)],     fill=tc, width=tk_lw)
+    draw.line([(m, m),     (m, m + tick)],     fill=tc, width=tk_lw)
+    draw.line([(s-m, m),   (s-m-tick, m)],     fill=tc, width=tk_lw)
+    draw.line([(s-m, m),   (s-m, m+tick)],     fill=tc, width=tk_lw)
+    draw.line([(m, s-m),   (m+tick, s-m)],     fill=tc, width=tk_lw)
+    draw.line([(m, s-m),   (m, s-m-tick)],     fill=tc, width=tk_lw)
+    draw.line([(s-m, s-m), (s-m-tick, s-m)],   fill=tc, width=tk_lw)
+    draw.line([(s-m, s-m), (s-m, s-m-tick)],   fill=tc, width=tk_lw)
 
     img = img.resize((size, size), Image.LANCZOS)
 

@@ -73,49 +73,69 @@ def _generate_build_icon(ico_path: str) -> None:
         img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
 
-        # Chamfered square background
-        cut = int(s * 0.16)
-        pts = [(cut,0),(s-cut,0),(s,cut),(s,s-cut),(s-cut,s),(cut,s),(0,s-cut),(0,cut)]
-        d.polygon(pts, fill=(8, 13, 20, 255))
+        # Rounded dark panel
+        rad = int(s * 0.18)
+        d.rounded_rectangle([0, 0, s - 1, s - 1], radius=rad, fill=(5, 7, 13, 255))
 
-        # Border glow
-        lw = max(2, s // 50)
-        glow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-        gd = ImageDraw.Draw(glow)
-        gd.polygon(pts, outline=(228, 37, 53, 110), width=lw * 3)
-        glow = glow.filter(ImageFilter.GaussianBlur(radius=max(3, s // 80)))
-        img.alpha_composite(glow)
-        d.polygon(pts, outline=(228, 37, 53, 200), width=lw)
+        # Scan-line texture
+        for y in range(0, s, max(3, s // 80)):
+            d.line([(0, y), (s, y)], fill=(255, 255, 255, 6), width=1)
 
-        # Geometric A glyph
-        cx  = s // 2
-        gw  = max(8, s // 12)
-        top = (cx,            int(s * 0.15))
-        bl  = (int(s * 0.12), int(s * 0.87))
-        br  = (int(s * 0.88), int(s * 0.87))
-        ins = int(s * 0.28)
-        cb_l = (ins,     int(s * 0.56))
-        cb_r = (s - ins, int(s * 0.56))
+        # Oversized geometric A
+        cx   = s // 2
+        gw   = max(10, s // 10)
+        top  = (cx,            int(s * 0.07))
+        bl   = (int(s * 0.05), int(s * 0.93))
+        br   = (int(s * 0.95), int(s * 0.93))
+        ins  = int(s * 0.27)
+        cb_l = (ins,      int(s * 0.57))
+        cb_r = (s - ins,  int(s * 0.57))
+        R, G, B = 228, 37, 53
 
-        # Glyph bloom
-        ag = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-        agd = ImageDraw.Draw(ag)
-        agd.line([top, bl],    fill=(228,37,53,90), width=gw * 2)
-        agd.line([top, br],    fill=(228,37,53,90), width=gw * 2)
-        agd.line([cb_l, cb_r], fill=(228,37,53,90), width=max(6,s//16) * 2)
-        ag = ag.filter(ImageFilter.GaussianBlur(radius=max(3, s // 50)))
-        img.alpha_composite(ag)
+        # Wide outer bloom
+        b1 = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+        b1d = ImageDraw.Draw(b1)
+        b1d.line([top, bl],    fill=(R,G,B,70), width=gw * 5)
+        b1d.line([top, br],    fill=(R,G,B,70), width=gw * 5)
+        b1d.line([cb_l, cb_r], fill=(R,G,B,70), width=gw * 4)
+        b1 = b1.filter(ImageFilter.GaussianBlur(radius=max(6, s // 18)))
+        img.alpha_composite(b1)
 
-        glyph = (228, 37, 53, 255)
+        # Medium glow
+        b2 = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+        b2d = ImageDraw.Draw(b2)
+        b2d.line([top, bl],    fill=(R,G,B,130), width=gw * 2)
+        b2d.line([top, br],    fill=(R,G,B,130), width=gw * 2)
+        b2d.line([cb_l, cb_r], fill=(R,G,B,130), width=gw + gw // 2)
+        b2 = b2.filter(ImageFilter.GaussianBlur(radius=max(3, s // 36)))
+        img.alpha_composite(b2)
+
+        # Crisp neon stroke
+        glyph = (R, G, B, 255)
         d.line([top, bl],    fill=glyph, width=gw)
         d.line([top, br],    fill=glyph, width=gw)
-        d.line([cb_l, cb_r], fill=glyph, width=max(6, s // 16))
+        d.line([cb_l, cb_r], fill=glyph, width=max(7, s // 14))
+
+        # Hot white core
+        core_lw = max(2, gw // 3)
+        d.line([top, bl], fill=(255, 210, 210, 160), width=core_lw)
+        d.line([top, br], fill=(255, 210, 210, 160), width=core_lw)
+
+        # Border neon rim
+        rim = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+        rd = ImageDraw.Draw(rim)
+        rd.rounded_rectangle([0, 0, s-1, s-1], radius=rad,
+                             outline=(R,G,B,90), width=max(2, s // 40))
+        rim = rim.filter(ImageFilter.GaussianBlur(radius=max(2, s // 55)))
+        img.alpha_composite(rim)
+        d.rounded_rectangle([1, 1, s-2, s-2], radius=rad,
+                            outline=(R,G,B,130), width=max(1, s // 60))
 
         # Corner HUD ticks
-        tick = int(s * 0.10)
-        tk_lw = max(2, s // 60)
-        tc = (228, 37, 53, 175)
-        m  = int(s * 0.04)
+        tick  = int(s * 0.09)
+        tk_lw = max(2, s // 70)
+        tc    = (R, G, B, 160)
+        m     = int(s * 0.04)
         d.line([(m,m),     (m+tick,m)],     fill=tc, width=tk_lw)
         d.line([(m,m),     (m,m+tick)],     fill=tc, width=tk_lw)
         d.line([(s-m,m),   (s-m-tick,m)],   fill=tc, width=tk_lw)
