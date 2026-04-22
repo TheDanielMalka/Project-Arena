@@ -2406,7 +2406,8 @@ async def match_status(
         with SessionLocal() as session:
             row = session.execute(
                 text("""
-                    SELECT status, winner_id, on_chain_match_id, stake_per_player
+                    SELECT status, winner_id, on_chain_match_id, stake_per_player,
+                           game_password
                     FROM matches
                     WHERE id = :mid
                 """),
@@ -2455,6 +2456,8 @@ async def match_status(
                     "your_team":         your_team,
                     "result":            result_val,
                     "score":             score_val,
+                    # Only revealed once match is in_progress — never exposed while waiting
+                    "game_password":     row[4] if match_status_val == "in_progress" else None,
                 }
     except Exception:
         pass
@@ -4948,13 +4951,18 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
                 {"mid": match_id},
             ).fetchone()
             match_started = False
+            game_password: str | None = None
             if count_row and int(count_row[0]) >= (max_players or 2):
+                import secrets as _sec, string as _str
+                _pwchars = _str.ascii_letters + _str.digits
+                game_password = "".join(_sec.choice(_pwchars) for _ in range(8))
                 session.execute(
                     text(
-                        "UPDATE matches SET status = 'in_progress', started_at = NOW() "
+                        "UPDATE matches "
+                        "SET status = 'in_progress', started_at = NOW(), game_password = :pw "
                         "WHERE id = :mid AND status = 'waiting'"
                     ),
-                    {"mid": match_id},
+                    {"mid": match_id, "pw": game_password},
                 )
                 match_started = True
 
@@ -4971,8 +4979,9 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
         "match_id":       match_id,
         "game":           game,
         "stake_currency": stake_currency,
-        "team":           assigned_team,  # "A" or "B" — assigned based on current roster
-        "started":        match_started,  # True when room just filled and transitioned to in_progress
+        "team":           assigned_team,   # "A" or "B" — assigned based on current roster
+        "started":        match_started,   # True when room just filled → in_progress
+        "game_password":  game_password,   # set only when this join triggered ACTIVE; None otherwise
     }
 
 
