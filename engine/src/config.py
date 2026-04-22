@@ -94,9 +94,9 @@ FRONTEND_URL    = os.getenv("FRONTEND_URL",    "http://localhost:5173")
 # ── Public Match Pool ────────────────────────────────────────
 # UUID of the system user that owns auto-created public rooms.
 # Must match the UUID inserted in migration 041-public-match-pool.sql.
-ARENA_SYSTEM_USER_ID = os.getenv(
-    "ARENA_SYSTEM_USER_ID", "00000000-0000-0000-0000-000000000001"
-)
+ARENA_SYSTEM_USER_ID = (
+    os.getenv("ARENA_SYSTEM_USER_ID") or "00000000-0000-0000-0000-000000000001"
+).strip()
 # How often (seconds) the pool manager checks and refills open rooms.
 POOL_MANAGER_INTERVAL = int(os.getenv("POOL_MANAGER_INTERVAL", "30"))
 
