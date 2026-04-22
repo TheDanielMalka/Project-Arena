@@ -49,7 +49,7 @@ import {
   type LobbySlot,
 } from "@/lib/lobbyRosterDisplay";
 import { createFailureMessage, inviteFailureMessage, joinFailureMessage } from "@/lib/stakeErrors";
-import { createMatchOnChain, getBnbBalance } from "@/lib/metamaskBsc";
+import { createMatchOnChain, fetchBnbUsdPrice, getBnbBalance } from "@/lib/metamaskBsc";
 import { ArenaPageShell } from "@/components/visual";
 
 // ─── Game configs ─────────────────────────────────────────────────────────────
@@ -2060,8 +2060,25 @@ const MatchLobby = () => {
                               });
                               return;
                             }
+                            // For the TEST tier ($0.1), convert to live BNB equivalent.
+                            // All other tiers use the raw BNB amount directly.
+                            // TODO: replace with Chainlink oracle on mainnet.
+                            let stakeForChain = newMatchBet;
+                            if (newMatchBet === TEST_STAKE_USDT) {
+                              try {
+                                const bnbPrice = await fetchBnbUsdPrice();
+                                stakeForChain = TEST_STAKE_USDT / bnbPrice;
+                              } catch {
+                                useNotificationStore.getState().addNotification({
+                                  type: "system",
+                                  title: "Price fetch failed",
+                                  message: "Could not fetch BNB/USD price. Check your internet connection and try again.",
+                                });
+                                return;
+                              }
+                            }
                             try {
-                              await createMatchOnChain(teamSize, newMatchBet);
+                              await createMatchOnChain(teamSize, stakeForChain);
                             } catch (e: unknown) {
                               useNotificationStore.getState().addNotification({
                                 type: "system",

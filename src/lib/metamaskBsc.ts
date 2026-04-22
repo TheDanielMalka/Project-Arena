@@ -1,5 +1,26 @@
 import { BrowserProvider, Contract, formatEther, getAddress, parseEther } from "ethers";
 
+/**
+ * Fetch live BNB/USD price from Binance (primary) with CoinGecko fallback.
+ * Used only for the TEST_STAKE_USDT tier to convert $0.1 → equivalent tBNB.
+ * TODO: remove after mainnet launch (replace with Chainlink oracle).
+ */
+export async function fetchBnbUsdPrice(): Promise<number> {
+  try {
+    const r = await fetch("https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT");
+    const d = await r.json() as { price?: string };
+    const p = parseFloat(d.price ?? "");
+    if (Number.isFinite(p) && p > 0) return p;
+  } catch { /* ignore */ }
+  try {
+    const r = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=binancecoin&vs_currencies=usd");
+    const d = await r.json() as { binancecoin?: { usd?: number } };
+    const p = d?.binancecoin?.usd;
+    if (p && Number.isFinite(p) && p > 0) return p;
+  } catch { /* ignore */ }
+  throw new Error("Cannot fetch BNB/USD price — check network connection");
+}
+
 /** EIP-155 chain id — default BSC Testnet (97). Override with `VITE_CHAIN_ID`. */
 export function getArenaTargetChainId(): number {
   const raw = import.meta.env.VITE_CHAIN_ID;
