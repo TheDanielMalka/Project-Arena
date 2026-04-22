@@ -56,14 +56,20 @@ type SectionId = typeof SECTIONS[number]["id"];
 
 // ─── Row helpers ───────────────────────────────────────────────
 const SettingRow = ({
-  label, desc, children, last = false,
-}: { label: string; desc?: string; children: React.ReactNode; last?: boolean }) => (
-  <div className={cn("flex items-center justify-between py-3 gap-4", !last && "border-b border-border/50")}>
+  label, desc, children, last = false, stack = false,
+}: { label: string; desc?: string; children: React.ReactNode; last?: boolean; stack?: boolean }) => (
+  <div className={cn(
+    "py-3 gap-3",
+    !last && "border-b border-border/50",
+    stack
+      ? "flex flex-col sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+      : "flex items-center justify-between gap-4",
+  )}>
     <div className="min-w-0">
       <p className="text-sm font-medium leading-tight">{label}</p>
       {desc && <p className="text-[11px] text-muted-foreground mt-0.5 leading-tight">{desc}</p>}
     </div>
-    <div className="shrink-0">{children}</div>
+    <div className={stack ? "w-full sm:w-auto sm:shrink-0" : "shrink-0"}>{children}</div>
   </div>
 );
 
@@ -114,8 +120,8 @@ function ForumSettingsSection() {
     <div>
       <SectionTitle icon={MessageSquare} label="Forum" color="text-arena-cyan" />
       <div className="space-y-4">
-        <SettingRow label="Forum Signature" desc="Appears below every post you make (max 200 chars)">
-          <div className="w-full max-w-xs">
+        <SettingRow label="Forum Signature" desc="Appears below every post you make (max 200 chars)" stack>
+          <div className="w-full">
             <input
               value={signature}
               onChange={(e) => setSignature(e.target.value.slice(0, 200))}
@@ -127,8 +133,8 @@ function ForumSettingsSection() {
             </p>
           </div>
         </SettingRow>
-        <SettingRow label="Forum Badge" desc="Custom badge shown on your user card (max 40 chars)" last>
-          <div className="w-full max-w-xs">
+        <SettingRow label="Forum Badge" desc="Custom badge shown on your user card (max 40 chars)" last stack>
+          <div className="w-full">
             <input
               value={badge}
               onChange={(e) => setBadge(e.target.value.slice(0, 40))}
@@ -482,7 +488,7 @@ const SettingsPage = () => {
       </nav>
 
       {/* ── Right panel ── */}
-      <div className="flex-1 pl-6 flex flex-col">
+      <div className="flex-1 pl-3 sm:pl-6 flex flex-col min-w-0">
         <div className="flex-1">
 
           {/* ── ACCOUNT ── */}
@@ -499,6 +505,7 @@ const SettingsPage = () => {
                 <SettingRow
                   label="Email"
                   desc={isGoogleAccount ? "Managed by Google — cannot be changed here" : "Used for login & alerts"}
+                  stack
                 >
                   {isGoogleAccount ? (
                     <div className="flex items-center gap-2">
@@ -523,7 +530,7 @@ const SettingsPage = () => {
                     </div>
                   )}
                 </SettingRow>
-                <SettingRow label="Region" desc="Affects matchmaking pool (saved to your account)" last>
+                <SettingRow label="Region" desc="Affects matchmaking pool (saved to your account)" last stack>
                   <Select
                     value={(user?.region as UserSettingsRegion) || "EU"}
                     onValueChange={async (v) => {
@@ -542,7 +549,7 @@ const SettingsPage = () => {
                       toast({ title: "Region saved", description: `Your region is set to ${r.region}.` });
                     }}
                   >
-                    <SelectTrigger className="h-8 w-44 bg-secondary/60 border-border text-xs">
+                    <SelectTrigger className="h-8 w-full sm:w-44 bg-secondary/60 border-border text-xs">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -617,7 +624,7 @@ const SettingsPage = () => {
 
                 <div className="pt-3 mt-1">
                   <p className="text-[11px] text-muted-foreground uppercase tracking-wider mb-2 font-display">Change Password</p>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div className="relative">
                       <Input
                         type={showCurrentPw ? "text" : "password"}
@@ -692,8 +699,8 @@ const SettingsPage = () => {
             <div>
               <SectionTitle icon={Wallet} label="Betting" color="text-arena-gold" />
               <div className="space-y-1">
-                <SettingRow label="Daily Betting Limit" desc={`Used today: $${dailyBettingUsed} · Platform max: $${platformBettingMax}`}>
-                  <div className="flex items-center gap-3 w-48">
+                <SettingRow label="Daily Betting Limit" desc={`Used today: $${dailyBettingUsed} · Platform max: $${platformBettingMax}`} stack>
+                  <div className="flex items-center gap-3 w-full sm:w-48">
                     <Slider
                       min={50} max={platformBettingMax} step={50}
                       value={[bettingLimit]}
@@ -766,9 +773,9 @@ const SettingsPage = () => {
               </div>
               <SectionTitle icon={Gamepad2} label="Game Preferences" color="text-primary" />
               <div className="space-y-1">
-                <SettingRow label="Default Game" desc="Pre-selected when creating a match">
+                <SettingRow label="Default Game" desc="Pre-selected when creating a match" stack>
                   <Select value={game.defaultGame} onValueChange={(v) => setGame((p) => ({ ...p, defaultGame: v }))}>
-                    <SelectTrigger className="h-8 w-36 bg-secondary/60 border-border text-xs">
+                    <SelectTrigger className="h-8 w-full sm:w-36 bg-secondary/60 border-border text-xs">
                       <SelectValue />
                     </SelectTrigger>
                     {/* DB-ready: options driven by games.enabled — Coming Soon games disabled until Client supports them */}
@@ -815,7 +822,7 @@ const SettingsPage = () => {
               <div className="pt-3 flex justify-end">
                 <Button
                   size="sm"
-                  className="arena-hud-btn gap-1.5"
+                  className="arena-hud-btn gap-1.5 w-full sm:w-auto"
                   disabled={gameSaving}
                   onClick={async () => {
                     if (!token) return;
@@ -952,7 +959,7 @@ const SettingsPage = () => {
             <Button
               onClick={handleSave}
               size="sm"
-              className={cn("font-display text-xs transition-all", saved ? "bg-primary/80" : "glow-green")}
+              className={cn("font-display text-xs transition-all w-full sm:w-auto", saved ? "bg-primary/80" : "glow-green")}
             >
               {saved
                 ? <><CheckCircle2 className="mr-1.5 h-3.5 w-3.5" /> Saved</>
