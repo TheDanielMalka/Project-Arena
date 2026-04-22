@@ -143,7 +143,7 @@ export async function createMatchOnChain(
   await ensureTargetChain(eth);
   const provider = new BrowserProvider(eth);
   const signer = await provider.getSigner();
-  const stakeWei = parseEther(String(stakeEther));
+  const stakeWei = parseEther(stakeEther.toFixed(8));
   const contract = new Contract(
     addr,
     [
