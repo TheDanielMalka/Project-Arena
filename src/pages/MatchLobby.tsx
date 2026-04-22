@@ -881,7 +881,7 @@ const MatchLobby = () => {
     } else {
       doServerCancel();
     }
-  }, [myActiveRoom, user, token, cancelEscrow, deleteMatch]);
+  }, [myActiveRoom, user, token, cancelEscrow, deleteMatch, activeRoomOnChainId]);
 
   const handleOpenInviteModal = useCallback(async () => {
     if (!token) return;
@@ -2079,6 +2079,7 @@ const MatchLobby = () => {
                           (newMatchGame === "CS2" || newMatchGame === "Valorant");
 
                         if (useServerApi) {
+                          let capturedOnChainMatchId: bigint | null = null;
                           if (createStakeCurrency === "CRYPTO") {
                             if (
                               dailyUsdtStaked !== null &&
@@ -2112,6 +2113,7 @@ const MatchLobby = () => {
                             }
                             try {
                               const { onChainMatchId } = await createMatchOnChain(teamSize, stakeForChain);
+                              capturedOnChainMatchId = onChainMatchId;
                               setActiveRoomOnChainId(onChainMatchId);
                             } catch (e: unknown) {
                               useNotificationStore.getState().addNotification({
@@ -2124,12 +2126,13 @@ const MatchLobby = () => {
                           }
 
                           const apiRes = await apiCreateMatch(token, {
-                            game:           newMatchGame,
-                            stake_amount:   newMatchBet,
-                            stake_currency: createStakeCurrency,
-                            mode:           newMatchMode ?? "1v1",
-                            match_type:     "custom",
-                            password:       newMatchPassword,
+                            game:               newMatchGame,
+                            stake_amount:       newMatchBet,
+                            stake_currency:     createStakeCurrency,
+                            mode:               newMatchMode ?? "1v1",
+                            match_type:         "custom",
+                            password:           newMatchPassword,
+                            on_chain_match_id:  capturedOnChainMatchId !== null ? capturedOnChainMatchId.toString() : undefined,
                           });
                           if (apiRes.ok === false) {
                             if (apiRes.status === 429) {

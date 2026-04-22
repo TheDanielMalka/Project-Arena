@@ -1142,13 +1142,15 @@ export type ApiMatchMutationResult =
 export async function apiCreateMatch(
   token: string,
   body: {
-    game:            string;
-    stake_amount:    number;
-    stake_currency?: "CRYPTO" | "AT";
-    mode?:           string;        // "1v1" | "2v2" | "4v4" | "5v5" — MUST be sent
-    match_type?:     string;        // "public" | "custom" — MUST be sent
+    game:               string;
+    stake_amount:       number;
+    stake_currency?:    "CRYPTO" | "AT";
+    mode?:              string;        // "1v1" | "2v2" | "4v4" | "5v5" — MUST be sent
+    match_type?:        string;        // "public" | "custom" — MUST be sent
     /** Optional room password; engine stores and verifies — never echo in GET /matches. */
-    password?:       string;
+    password?:          string;
+    /** on_chain_match_id from ArenaEscrow.createMatch — set immediately so server doesn't rely on EscrowClient event lag. */
+    on_chain_match_id?: string;
   },
 ): Promise<ApiMatchMutationResult> {
   try {
