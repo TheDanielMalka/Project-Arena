@@ -191,6 +191,21 @@ export async function getBnbBalance(address: string): Promise<number> {
   return parseFloat(formatEther(raw));
 }
 
+/** ArenaEscrow.cancelMatch — creator cancels a WAITING match and refunds all depositors. */
+export async function cancelMatchOnChain(onChainMatchId: bigint): Promise<string> {
+  const addr = import.meta.env.VITE_CONTRACT_ADDRESS;
+  if (!addr?.trim() || !String(addr).startsWith("0x")) throw new Error("VITE_CONTRACT_ADDRESS is not set or invalid");
+  const eth = getInjectedEthereum();
+  if (!eth) throw new Error("MetaMask not found");
+  await ensureTargetChain(eth);
+  const provider = new BrowserProvider(eth);
+  const signer = await provider.getSigner();
+  const contract = new Contract(addr, ["function cancelMatch(uint256 matchId)"], signer);
+  const tx = await contract.cancelMatch(onChainMatchId);
+  await tx.wait();
+  return tx.hash;
+}
+
 /** ArenaEscrow.claimRefund — called by a player after match cancellation to recover their stake. */
 export async function claimRefundFromEscrow(onChainMatchId: bigint): Promise<string> {
   const addr = import.meta.env.VITE_CONTRACT_ADDRESS;
