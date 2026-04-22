@@ -54,6 +54,7 @@ describe("MatchLobby page", () => {
 
     expect(screen.getByText("Lobby Details")).toBeInTheDocument();
     expect(screen.getByText("10/10 players in lobby")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /join this lobby/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /team a/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /team b/i })).toBeDisabled();
   }, 15_000);
 });

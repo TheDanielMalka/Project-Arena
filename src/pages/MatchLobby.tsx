@@ -365,6 +365,7 @@ const MatchLobby = () => {
   }, [token]);
 
   const [selectedBet, setSelectedBet] = useState<number | null>(null);
+  const [selectedBetCurrency, setSelectedBetCurrency] = useState<"CRYPTO" | "AT" | null>(null);
   const [customCode, setCustomCode] = useState("");
   const [selectedGame, setSelectedGame] = useState<string>("");
   const [createMode, setCreateMode] = useState(false);
@@ -471,18 +472,14 @@ const MatchLobby = () => {
     return false;
   }, [clientStatus, websiteUserId]);
 
-  const handleJoinPublic = (matchId: string, betAmount?: number) => {
+  const handleJoinPublic = (matchId: string, betAmount?: number, team?: "A" | "B") => {
     if (!user) return;
     if (!guardNotInRoom()) return;
-    const bet = betAmount ?? selectedBet;
-    if (!bet) return;
-    setSelectedBet(bet);
     const match = publicMatches.find(m => m.id === matchId);
     if (!match) return;
     if (matchStakeCurrency(match) !== "AT" && !guardWalletConnected()) return;
     if (!guardCanPlay()) return;
-    // No team for public matches — deposit modal handles both public and custom
-    setDepositConfirm({ match });
+    setDepositConfirm({ match, team });
     setDepositStep("idle");
     setCheckResults(null);
   };
@@ -751,10 +748,8 @@ const MatchLobby = () => {
 
   const filteredCustom = customMatches.filter(m => !selectedGame || m.game === selectedGame);
   const filteredPublicMatches = publicMatches.filter(m => {
-    if (selectedBet !== null) {
-      if (matchStakeCurrency(m) === "AT") return false;
-      if (m.betAmount !== selectedBet) return false;
-    }
+    if (selectedBet !== null && m.betAmount !== selectedBet) return false;
+    if (selectedBetCurrency !== null && matchStakeCurrency(m) !== selectedBetCurrency) return false;
     if (filterGame && m.game !== filterGame) return false;
     if (filterMode && m.mode !== filterMode) return false;
     return true;
@@ -1340,14 +1335,22 @@ const MatchLobby = () => {
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-border">
                   <p className="text-xs text-muted-foreground">{totalInLobby}/{selectedPublicLobby.maxPlayers} players in lobby</p>
-                  <Button
-                    disabled={isInActiveRoom || selectedPublicLobby.status !== "waiting" || totalInLobby >= selectedPublicLobby.maxPlayers || !(matchStakeCurrency(selectedPublicLobby) === "AT" ? canJoinAtStake : canPlayStaked)}
-                    onClick={() => { setSelectedPublicLobbyId(null); handleJoinPublic(selectedPublicLobby.id, selectedPublicLobby.betAmount); }}
-                    className="font-display"
-                    title={matchStakeCurrency(selectedPublicLobby) === "AT" ? (!canPlay ? "Arena Client not connected" : undefined) : stakedActionTitle}
-                    style={cfg ? { boxShadow: `0 0 16px ${cfg.color}40` } : {}}>
-                    <Swords className="mr-1.5 h-4 w-4" /> Join This Lobby
-                  </Button>
+                  <div className="flex gap-2">
+                    {(["A", "B"] as const).map((team) => {
+                      const teamFull = team === "A" ? roster.filledA >= roster.maxPerTeam : roster.filledB >= roster.maxPerTeam;
+                      const canJoinTeam = !isInActiveRoom && selectedPublicLobby.status === "waiting" && !teamFull && (matchStakeCurrency(selectedPublicLobby) === "AT" ? canJoinAtStake : canPlayStaked);
+                      return (
+                        <Button key={team}
+                          disabled={!canJoinTeam}
+                          onClick={() => { setSelectedPublicLobbyId(null); handleJoinPublic(selectedPublicLobby.id, selectedPublicLobby.betAmount, team); }}
+                          className={`font-display ${team === "A" ? "" : "border border-arena-orange/60 bg-arena-orange/10 text-arena-orange hover:bg-arena-orange/20"}`}
+                          title={teamFull ? `Team ${team} is full` : (matchStakeCurrency(selectedPublicLobby) === "AT" ? (!canPlay ? "Arena Client not connected" : undefined) : stakedActionTitle)}
+                          style={!teamFull && cfg ? { boxShadow: `0 0 12px ${team === "A" ? cfg.color : "#f97316"}30` } : {}}>
+                          <Swords className="mr-1.5 h-3.5 w-3.5" /> Team {team}
+                        </Button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1758,37 +1761,68 @@ const MatchLobby = () => {
           </div>
 
           {/* Bet selector */}
-          <div className="rounded-2xl border border-border bg-card p-4">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-[0.18em] mb-3 flex items-center gap-1.5">
+          <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-[0.18em] flex items-center gap-1.5">
               <span className="w-1 h-3 rounded-full bg-arena-gold inline-block" /> Select Bet Amount
             </p>
-            <div className="flex gap-2 flex-wrap">
-              {BET_AMOUNTS.map((amount) => {
-                const matchCount = publicMatches.filter(m => m.status === "waiting" && m.betAmount === amount).length;
-                const isTest = amount === TEST_STAKE_USDT;
-                return (
-                  <button key={amount} disabled={depositConfirm !== null}
-                    onClick={() => setSelectedBet(selectedBet === amount ? null : amount)}
-                    className={`relative px-4 py-1.5 rounded-xl border font-display text-sm font-bold transition-all ${
-                      selectedBet === amount
-                        ? "border-primary bg-primary/15 text-primary shadow-[0_0_18px_rgba(var(--primary-rgb),0.4)]"
-                        : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"
-                    }`}>
-                    ${amount}
-                    {isTest && <span className="ml-1 text-[8px] font-bold text-arena-gold opacity-80">TEST</span>}
-                    {matchCount > 0 && (
-                      <span className={`absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center ${
-                        selectedBet === amount ? "bg-primary text-primary-foreground" : "bg-arena-gold text-black"
-                      }`}>{matchCount}</span>
-                    )}
-                  </button>
-                );
-              })}
+            {/* CRYPTO row */}
+            <div>
+              <p className="text-[9px] uppercase tracking-widest text-muted-foreground/50 mb-1.5">BNB · Crypto</p>
+              <div className="flex gap-2 flex-wrap">
+                {BET_AMOUNTS.map((amount) => {
+                  const matchCount = publicMatches.filter(m => m.status === "waiting" && m.betAmount === amount && matchStakeCurrency(m) === "CRYPTO").length;
+                  const isTest = amount === TEST_STAKE_USDT;
+                  const active = selectedBet === amount && selectedBetCurrency === "CRYPTO";
+                  return (
+                    <button key={amount} disabled={depositConfirm !== null}
+                      onClick={() => { if (active) { setSelectedBet(null); setSelectedBetCurrency(null); } else { setSelectedBet(amount); setSelectedBetCurrency("CRYPTO"); } }}
+                      className={`relative px-4 py-1.5 rounded-xl border font-display text-sm font-bold transition-all ${
+                        active
+                          ? "border-primary bg-primary/15 text-primary shadow-[0_0_18px_rgba(var(--primary-rgb),0.4)]"
+                          : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                      }`}>
+                      ${amount}
+                      {isTest && <span className="ml-1 text-[8px] font-bold text-arena-gold opacity-80">TEST</span>}
+                      {matchCount > 0 && (
+                        <span className={`absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center ${
+                          active ? "bg-primary text-primary-foreground" : "bg-arena-gold text-black"
+                        }`}>{matchCount}</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            {selectedBet && (
-              <p className="text-xs text-primary mt-2.5 flex items-center gap-1.5">
+            {/* AT row */}
+            <div>
+              <p className="text-[9px] uppercase tracking-widest text-muted-foreground/50 mb-1.5">Arena Tokens · AT</p>
+              <div className="flex gap-2 flex-wrap">
+                {[100, 500].map((amount) => {
+                  const matchCount = publicMatches.filter(m => m.status === "waiting" && m.betAmount === amount && matchStakeCurrency(m) === "AT").length;
+                  const active = selectedBet === amount && selectedBetCurrency === "AT";
+                  return (
+                    <button key={amount} disabled={depositConfirm !== null}
+                      onClick={() => { if (active) { setSelectedBet(null); setSelectedBetCurrency(null); } else { setSelectedBet(amount); setSelectedBetCurrency("AT"); } }}
+                      className={`relative px-4 py-1.5 rounded-xl border font-display text-sm font-bold transition-all ${
+                        active
+                          ? "border-arena-gold bg-arena-gold/15 text-arena-gold shadow-[0_0_18px_rgba(251,191,36,0.3)]"
+                          : "border-border bg-secondary/40 text-muted-foreground hover:border-arena-gold/40 hover:text-foreground"
+                      }`}>
+                      {amount.toLocaleString()} AT
+                      {matchCount > 0 && (
+                        <span className={`absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center ${
+                          active ? "bg-arena-gold text-black" : "bg-arena-gold text-black"
+                        }`}>{matchCount}</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            {(selectedBet !== null) && (
+              <p className="text-xs text-primary flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-                ${selectedBet} selected — showing {filteredPublicMatches.length} matching {filteredPublicMatches.length === 1 ? "lobby" : "lobbies"}
+                {selectedBetCurrency === "AT" ? `${selectedBet.toLocaleString()} AT` : `$${selectedBet}`} selected — showing {filteredPublicMatches.length} matching {filteredPublicMatches.length === 1 ? "lobby" : "lobbies"}
               </p>
             )}
           </div>
@@ -1880,7 +1914,9 @@ const MatchLobby = () => {
                 <div className="px-4 py-8 text-center space-y-3">
                   <Swords className="h-8 w-8 mx-auto text-muted-foreground/25" />
                   <p className="text-sm text-muted-foreground">
-                    {selectedBet ? `No open lobbies for $${selectedBet}.` : "No public lobbies right now."}
+                    {selectedBet !== null
+                      ? `No open lobbies for ${selectedBetCurrency === "AT" ? `${selectedBet.toLocaleString()} AT` : `$${selectedBet}`}.`
+                      : "No public lobbies right now."}
                   </p>
                   <p className="text-xs text-muted-foreground/70 max-w-xs mx-auto leading-relaxed">
                     Create a room or check back soon. Staked play needs the{" "}

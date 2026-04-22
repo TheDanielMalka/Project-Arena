@@ -99,7 +99,8 @@ describe("MatchLobby — tab labels & public tab after mode changes", () => {
     fireEvent.click(screen.getByRole("button", { name: /\$5/ }));
     fireEvent.click(screen.getByText("NightHawk's Match"));
     expect(screen.getByText("Lobby Details")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /join this lobby/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /team a/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /team b/i })).toBeDisabled();
   });
 
   // ── Seed matches with new modes ───────────────────────────────────────────
