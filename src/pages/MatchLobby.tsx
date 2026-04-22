@@ -33,7 +33,6 @@ import {
   apiKickPlayer,
   apiListFriends,
   apiGetMe,
-  apiGetMatchStatus,
   mapApiMatchRowToMatch,
   type ApiFriendRow,
 } from "@/lib/engine-api";
@@ -370,6 +369,7 @@ const MatchLobby = () => {
   const [selectedGame, setSelectedGame] = useState<string>("");
   const [createMode, setCreateMode] = useState(false);
   const [newMatchBet, setNewMatchBet] = useState<number | null>(null);
+  const [activeRoomOnChainId, setActiveRoomOnChainId] = useState<bigint | null>(null);
   const [createStakeCurrency, setCreateStakeCurrency] = useState<StakeCurrency>("CRYPTO");
   const [newMatchGame, setNewMatchGame] = useState<Game | "">("");
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
@@ -748,6 +748,7 @@ const MatchLobby = () => {
         updateMatchStatus(myActiveRoom.id, "in_progress");
         markInMatch(myActiveRoom.id);
         setMyRoomMatchId(null);
+        setActiveRoomOnChainId(null);
         setRoomLocked(true);
         useNotificationStore.getState().addNotification({
           type: "system",
@@ -770,11 +771,13 @@ const MatchLobby = () => {
       // DB-ready: Vision Engine called declareWinner → funds released by contract
       markIdle();
       setMyRoomMatchId(null);
+      setActiveRoomOnChainId(null);
       setRoomLocked(false);
     } else if (myActiveRoom.status === "cancelled") {
       markIdle();
       cancelEscrow(myActiveRoom.id);
       setMyRoomMatchId(null);
+      setActiveRoomOnChainId(null);
       setRoomLocked(false);
     }
   }, [myActiveRoom?.status]);
@@ -787,6 +790,7 @@ const MatchLobby = () => {
       if (myRoomMatchId && expiredIds.includes(myRoomMatchId)) {
         cancelEscrow(myRoomMatchId);
         setMyRoomMatchId(null);
+        setActiveRoomOnChainId(null);
         setCountdown(null);
         useNotificationStore.getState().addNotification({
           type: "system",
@@ -808,6 +812,7 @@ const MatchLobby = () => {
     // before any in-flight heartbeat returns in_match=false — avoids spurious
     // "removed by the host" toast after voluntary leave.
     setMyRoomMatchId(null);
+    setActiveRoomOnChainId(null);
     setCountdown(null);
     // Must pass user.username — joinMatch adds username to players,
     // so leaveMatch must use the same key to find and remove the player.
@@ -841,7 +846,7 @@ const MatchLobby = () => {
     useNotificationStore.getState().addNotification({
       type: "system",
       title: "🗑️ Room Deleted",
-      message: `Match room closed.${isCrypto ? " Sending refund transaction to your wallet…" : ` Your ${stakeLabel} deposit has been refunded.`}`,
+      message: `Match room closed. Your ${stakeLabel} deposit has been refunded.`,
     });
     const doServerCancel = () => {
       if (token && looksLikeServerMatchId(matchId)) {
@@ -852,23 +857,22 @@ const MatchLobby = () => {
         void useMatchStore.getState().refreshMatchesFromServer(token ?? null);
       }
     };
-    if (isCrypto && token && looksLikeServerMatchId(matchId)) {
+    const onChainId = activeRoomOnChainId;
+    setActiveRoomOnChainId(null);
+    if (isCrypto && onChainId != null) {
       void (async () => {
         try {
-          const status = await apiGetMatchStatus(matchId, token);
-          if (status?.on_chain_match_id != null) {
-            await cancelMatchOnChain(BigInt(String(status.on_chain_match_id)));
-            useNotificationStore.getState().addNotification({
-              type: "system",
-              title: "Refund sent",
-              message: "On-chain cancelMatch confirmed — tBNB is back in your wallet.",
-            });
-          }
+          await cancelMatchOnChain(onChainId);
+          useNotificationStore.getState().addNotification({
+            type: "system",
+            title: "Refund sent",
+            message: "cancelMatch confirmed on-chain — tBNB is back in your wallet.",
+          });
         } catch {
           useNotificationStore.getState().addNotification({
             type: "system",
             title: "On-chain cancel failed",
-            message: "Could not call cancelMatch on-chain. Your stake will auto-refund after 1 hour via cancelWaiting.",
+            message: "Could not refund on-chain. Stake auto-refunds after 1 hour via cancelWaiting.",
           });
         } finally {
           doServerCancel();
@@ -2107,7 +2111,8 @@ const MatchLobby = () => {
                               }
                             }
                             try {
-                              await createMatchOnChain(teamSize, stakeForChain);
+                              const { onChainMatchId } = await createMatchOnChain(teamSize, stakeForChain);
+                              setActiveRoomOnChainId(onChainMatchId);
                             } catch (e: unknown) {
                               useNotificationStore.getState().addNotification({
                                 type: "system",
