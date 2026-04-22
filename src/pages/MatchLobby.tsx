@@ -1987,7 +1987,7 @@ const MatchLobby = () => {
                     className="font-mono bg-secondary border-border placeholder:text-muted-foreground/40" maxLength={20} />
                   <p className="text-xs text-muted-foreground mt-1">Share with teammates to join</p>
                 </div>
-                <div className="flex gap-2 pt-1">
+                <div className="flex flex-wrap gap-2 pt-1">
                   <Button
                     disabled={
                       !newMatchGame ||
