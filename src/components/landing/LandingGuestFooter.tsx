@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
-import { Download, Facebook, Instagram, Monitor, Swords, Youtube } from "lucide-react";
+import { Download, Facebook, Instagram, Monitor, Youtube } from "lucide-react";
+import { ArenaLogo } from "@/components/shared/ArenaLogo";
 
 /** Matches landing download CTA (Index). */
 const ARENA_CLIENT_SETUP_URL =
@@ -47,10 +48,7 @@ export function LandingGuestFooter() {
       <div className="border-t border-white/[0.06] bg-[hsl(220_22%_4%/0.6)] px-5 py-12 sm:px-8">
         <div className="mx-auto grid max-w-6xl grid-cols-1 gap-10 sm:grid-cols-3 sm:gap-8">
           <div className="flex flex-col gap-3">
-            <div className="flex items-center gap-2">
-              <Swords className="h-5 w-5 text-primary" />
-              <span className="font-display text-sm font-bold tracking-[0.2em] text-primary">ARENA</span>
-            </div>
+            <ArenaLogo variant="full" markSize={30} />
             <p className="max-w-[260px] text-xs leading-relaxed text-muted-foreground/65">
               Compete. Earn. Rise. Skill-based wagering for competitive gamers.
             </p>
@@ -112,10 +110,7 @@ export function LandingGuestFooter() {
 
       <footer className="border-t border-border/50 px-5 py-5 sm:px-6">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 md:flex-row">
-          <div className="flex items-center gap-2">
-            <Swords className="h-4 w-4 text-primary" />
-            <span className="font-display text-sm font-bold tracking-[0.2em] text-primary">ARENA</span>
-          </div>
+          <ArenaLogo variant="compact" markSize={22} />
           <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-[11px] text-muted-foreground/55 sm:text-xs">
             <Link to={{ pathname: "/", hash: "#download" }} className="hover:text-muted-foreground transition-colors">
               Download

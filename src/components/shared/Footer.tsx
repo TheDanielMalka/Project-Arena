@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { Swords } from "lucide-react";
+import { ArenaLogo } from "@/components/shared/ArenaLogo";
 
 const footerLinks = [
   {
@@ -37,9 +37,8 @@ export function Footer() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
           {/* Brand */}
           <div className="col-span-2 md:col-span-1">
-            <div className="flex items-center gap-2 mb-3">
-              <Swords className="h-5 w-5 text-primary" />
-              <span className="font-display text-lg font-bold text-primary text-glow-green tracking-wider">ARENA</span>
+            <div className="mb-3">
+              <ArenaLogo variant="full" markSize={30} />
             </div>
             <p className="text-xs text-muted-foreground leading-relaxed">
               Competitive gaming meets real stakes. Play, compete, and earn.

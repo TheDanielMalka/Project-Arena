@@ -1373,7 +1373,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     ctk.set_default_color_theme("dark-blue")
 
     win = ctk.CTk()
-    win.title("Arena Client")
+    win.title("PROJECT ARENA")
     # AAA HUD layout needs real space (wide, slightly taller)
     win.geometry("1400x690")
     win.minsize(1200, 660)
@@ -1543,12 +1543,12 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     wordmark = ctk.CTkFrame(header, fg_color="transparent")
     wordmark.pack(side="left", padx=18, pady=8)
-    ctk.CTkLabel(wordmark, text="ARENA",
+    ctk.CTkLabel(wordmark, text="PROJECT",
+                 font=ctk.CTkFont(family=FONT_MONO, size=9, weight="bold"),
+                 text_color=BRAND["cyan"]).pack(side="left", pady=(6, 0))
+    ctk.CTkLabel(wordmark, text="  ARENA",
                  font=ctk.CTkFont(family=FONT_DISPLAY, size=20, weight="bold"),
-                 text_color=BRAND["text"]).pack(side="left")
-    ctk.CTkLabel(wordmark, text="  CLIENT",
-                 font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
-                 text_color=BRAND["cyan"]).pack(side="left", pady=(4, 0))
+                 text_color=BRAND["accent"]).pack(side="left")
 
     # Subtle cyan underline at bottom of header
     ctk.CTkFrame(header, height=1, fg_color=BRAND["hud_border"], corner_radius=0).pack(
