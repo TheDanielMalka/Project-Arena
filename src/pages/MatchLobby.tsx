@@ -623,12 +623,16 @@ const MatchLobby = () => {
       }
     }
 
+    let joinedGamePassword: string | null = null;
     if (token && looksLikeServerMatchId(match.id)) {
       const jr = await apiJoinMatch(token, match.id, {
         password,
         team,
         on_chain_match_id: publicCryptoFirstJoinerOnChainId?.toString(),
       });
+      if (jr.ok === true) {
+        joinedGamePassword = jr.data.game_password ?? null;
+      }
       if (jr.ok === false) {
         if (publicCryptoFirstJoinerOnChainId !== null) {
           // on-chain match created but server join failed — clear the stored ID
@@ -714,6 +718,13 @@ const MatchLobby = () => {
       title: "🔒 Deposit Confirmed",
       message: `${match.betAmount} BNB locked in escrow for ${match.game} ${match.mode}. Waiting for all players.`,
     });
+    if (joinedGamePassword) {
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "🎮 Match Started — Room Password",
+        message: `Game room password: ${joinedGamePassword} — open CS2, create a lobby and share this password with your team.`,
+      });
+    }
     setDepositConfirm(null);
     setDepositStep("idle");
     setCheckResults(null);
