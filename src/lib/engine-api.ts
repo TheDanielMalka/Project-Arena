@@ -1344,14 +1344,13 @@ export async function apiJoinMatch(
     if (password) bodyFields[MATCH_JOIN_PASSWORD_FIELD] = password;
     if (team) bodyFields.team = team;
     if (opts?.on_chain_match_id !== undefined) bodyFields.on_chain_match_id = Number(opts.on_chain_match_id);
-    const hasBody = Object.keys(bodyFields).length > 0;
     const res = await arenaUserFetch(
       `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/join`,
       token,
       {
         method: "POST",
-        headers: hasBody ? { "Content-Type": "application/json" } : undefined,
-        body: hasBody ? JSON.stringify(bodyFields) : undefined,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(bodyFields),
       },
     );
     const raw = (await res.json().catch(() => ({}))) as {

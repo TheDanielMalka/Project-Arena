@@ -885,6 +885,8 @@ const MatchLobby = () => {
     if (!myActiveRoom || !user) return;
     const matchId    = myActiveRoom.id;
     const stakeLabel = formatMatchStakeShort(myActiveRoom);
+    const isCrypto   = matchStakeCurrency(myActiveRoom) === "CRYPTO";
+    const onChainId  = activeRoomOnChainId;
     // Clear active room FIRST so useActiveRoomServerSync tears down (cancelled=true)
     // before any in-flight heartbeat returns in_match=false — avoids spurious
     // "removed by the host" toast after voluntary leave.
@@ -900,20 +902,44 @@ const MatchLobby = () => {
       title: "↩️ Left Room",
       message: `You left the match room. Your ${stakeLabel} stake has been refunded.`,
     });
-    if (token && looksLikeServerMatchId(matchId)) {
-      void apiLeaveMatch(token, matchId).finally(() => {
-        void useMatchStore.getState().refreshMatchesFromServer(token);
-      });
+    const doServerLeave = () => {
+      if (token && looksLikeServerMatchId(matchId)) {
+        void apiLeaveMatch(token, matchId).finally(() => {
+          void useMatchStore.getState().refreshMatchesFromServer(token);
+        });
+      } else {
+        void useMatchStore.getState().refreshMatchesFromServer(token ?? null);
+      }
+    };
+    if (isCrypto && onChainId != null) {
+      void (async () => {
+        try {
+          await cancelMatchOnChain(onChainId);
+          useNotificationStore.getState().addNotification({
+            type: "system",
+            title: "Refund sent",
+            message: "cancelMatch confirmed on-chain — tBNB is back in your wallet.",
+          });
+        } catch {
+          useNotificationStore.getState().addNotification({
+            type: "system",
+            title: "On-chain cancel failed",
+            message: "Could not refund on-chain. Stake auto-refunds after 1 hour via cancelWaiting.",
+          });
+        } finally {
+          doServerLeave();
+        }
+      })();
     } else {
-      void useMatchStore.getState().refreshMatchesFromServer(token ?? null);
+      doServerLeave();
     }
-  }, [myActiveRoom, user, token, leaveMatch, cancelEscrow]);
+  }, [myActiveRoom, user, token, leaveMatch, cancelEscrow, activeRoomOnChainId]);
 
   const handleDeleteRoom = useCallback(() => {
     if (!myActiveRoom || !user) return;
     const matchId    = myActiveRoom.id;
     const stakeLabel = formatMatchStakeShort(myActiveRoom);
-    const isCrypto   = myActiveRoom.stakeCurrency === "CRYPTO";
+    const isCrypto   = matchStakeCurrency(myActiveRoom) === "CRYPTO";
     // Drop activeRoomId first so heartbeat polling stops immediately.
     setMyRoomMatchId(null);
     setDeleteRoomConfirmOpen(false);
@@ -1895,7 +1921,7 @@ const MatchLobby = () => {
                       <span className="font-display text-sm font-bold text-arena-gold">{formatMatchStakeShort(match)}</span>
                       {canJoin ? (
                         <Button size="sm" disabled={isInActiveRoom || depositConfirm !== null || !(matchStakeCurrency(match) === "AT" ? canJoinAtStake : canPlayStaked)}
-                          onClick={(e) => { e.stopPropagation(); handleJoinPublic(match.id, match.betAmount); }}
+                          onClick={(e) => { e.stopPropagation(); handleOpenPublicLobby(match.id); }}
                           className="font-display text-xs"
                           title={isInActiveRoom ? "Leave your current room first" : matchStakeCurrency(match) === "AT" ? (!canPlay ? "Arena Client not connected" : undefined) : stakedActionTitle}
                           style={glowing && cfg ? { boxShadow: `0 0 12px ${cfg.color}60` } : {}}>
