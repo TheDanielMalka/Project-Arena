@@ -754,7 +754,7 @@ export default function Hub() {
     >
 
       {/* ── Header ── */}
-      <div className="px-6 pt-6 pb-4 shrink-0">
+      <div className="px-4 sm:px-6 pt-5 sm:pt-6 pb-4 shrink-0">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
             <h1 className="font-display text-2xl font-bold flex items-center gap-2">
@@ -784,7 +784,7 @@ export default function Hub() {
               key={key}
               onClick={() => setTab(key)}
               className={cn(
-                "px-4 py-2.5 text-sm font-medium font-display capitalize transition-all border-b-2 -mb-px flex items-center gap-1.5",
+                "px-2.5 sm:px-4 py-2.5 text-xs sm:text-sm font-medium font-display capitalize transition-all border-b-2 -mb-px flex items-center gap-1.5",
                 tab === key
                   ? "border-primary text-foreground"
                   : "border-transparent text-muted-foreground hover:text-foreground"
@@ -818,7 +818,7 @@ export default function Hub() {
 
       {/* ── Community Tab ── */}
       {tab === "community" && (
-        <div className="flex-1 flex flex-col px-6 pb-4 overflow-hidden">
+        <div className="flex-1 flex flex-col px-4 sm:px-6 pb-4 overflow-hidden">
 
           {/* Search + game filters (fixed, no scroll) */}
           <div className="space-y-2.5 mb-3 shrink-0">
@@ -880,7 +880,7 @@ export default function Hub() {
             </div>
           ) : (
             <div className={cn(
-              "grid grid-cols-3 gap-2",
+              "grid grid-cols-2 sm:grid-cols-3 gap-2",
               (query || gameFilter) && "overflow-y-auto flex-1"
             )}>
               {displayedPlayers.map((player) => {

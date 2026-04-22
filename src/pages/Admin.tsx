@@ -1765,7 +1765,7 @@ const Admin = () => {
                   label: "Platform Fee",
                   desc: `ArenaEscrow FEE_PERCENT — currently ${platform.feePercent}%`,
                   control: (
-                    <div className="flex items-center gap-3 w-48">
+                    <div className="flex items-center gap-3 w-full sm:w-48">
                       <Slider min={1} max={25} step={0.5} value={[platform.feePercent]}
                         onValueChange={([v]) => setPlatform((p) => ({ ...p, feePercent: v }))} className="flex-1" />
                       <span className="text-xs font-mono text-primary w-10 text-right">{platform.feePercent}%</span>
@@ -1776,7 +1776,7 @@ const Admin = () => {
                   label: "Daily Betting Max (AT)",
                   desc: `Platform-wide hard cap — currently ${platform.platformBettingMax} AT/day`,
                   control: (
-                    <div className="flex items-center gap-3 w-48">
+                    <div className="flex items-center gap-3 w-full sm:w-48">
                       <Slider min={50} max={2000} step={50} value={[platform.platformBettingMax]}
                         onValueChange={([v]) => setPlatform((p) => ({ ...p, platformBettingMax: v }))} className="flex-1" />
                       <span className="text-xs font-mono text-arena-gold w-14 text-right">{platform.platformBettingMax} AT</span>
@@ -1787,7 +1787,7 @@ const Admin = () => {
                   label: "Daily Betting Max (USDT)",
                   desc: `Crypto escrow — ${platform.platformCryptoBettingMax} USDT / 24h per user (completed CRYPTO matches only)`,
                   control: (
-                    <div className="flex items-center gap-3 w-48">
+                    <div className="flex items-center gap-3 w-full sm:w-48">
                       <Slider min={10} max={5000} step={10} value={[platform.platformCryptoBettingMax]}
                         onValueChange={([v]) => setPlatform((p) => ({ ...p, platformCryptoBettingMax: v }))} className="flex-1" />
                       <span className="text-xs font-mono text-arena-cyan w-16 text-right">{platform.platformCryptoBettingMax} USDT</span>
@@ -1878,12 +1878,12 @@ const Admin = () => {
                   ),
                 },
               ].map(({ label, desc, control }, i, arr) => (
-                <div key={label} className={cn("flex items-center justify-between py-3 gap-4", i < arr.length - 1 && "border-b border-border/50")}>
+                <div key={label} className={cn("flex flex-col sm:flex-row sm:items-center sm:justify-between py-3 gap-2 sm:gap-4", i < arr.length - 1 && "border-b border-border/50")}>
                   <div>
                     <p className="text-sm font-medium">{label}</p>
                     <p className="text-[11px] text-muted-foreground mt-0.5">{desc}</p>
                   </div>
-                  <div className="shrink-0">{control}</div>
+                  <div className="w-full sm:w-auto sm:shrink-0">{control}</div>
                 </div>
               ))}
 

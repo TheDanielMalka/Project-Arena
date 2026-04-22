@@ -575,13 +575,13 @@ export default function Creators() {
       <div className="flex flex-col gap-0 min-h-screen text-foreground">
 
         {/* ── Page header ── */}
-        <div className="relative border-b border-border/30 bg-gray-950/60 px-6 py-5">
-          <div className="absolute top-3 left-4 text-[9px] font-mono text-muted-foreground/30 tracking-widest">SYS_REF_CRTX</div>
-          <div className="absolute top-3 right-4 text-[9px] font-mono text-muted-foreground/30 tracking-widest">ARENA_CREATORS · SYNC OK</div>
+        <div className="relative border-b border-border/30 bg-gray-950/60 px-4 sm:px-6 py-4 sm:py-5">
+          <div className="hidden sm:block absolute top-3 left-4 text-[9px] font-mono text-muted-foreground/30 tracking-widest">SYS_REF_CRTX</div>
+          <div className="hidden sm:block absolute top-3 right-4 text-[9px] font-mono text-muted-foreground/30 tracking-widest">ARENA_CREATORS · SYNC OK</div>
           <p className="text-[10px] font-mono text-muted-foreground/40 uppercase tracking-widest mb-1">CREATOR NETWORK</p>
           <div className="flex items-end gap-4">
-            <h1 className="text-4xl font-extrabold tracking-tight text-foreground uppercase font-mono flex items-center gap-3">
-              <Trophy className="h-8 w-8 text-arena-gold" />
+            <h1 className="text-2xl sm:text-4xl font-extrabold tracking-tight text-foreground uppercase font-mono flex items-center gap-2 sm:gap-3">
+              <Trophy className="h-6 w-6 sm:h-8 sm:w-8 text-arena-gold" />
               CREATORS
             </h1>
           </div>
@@ -595,56 +595,59 @@ export default function Creators() {
         <div className="flex flex-1">
 
           {/* Left nav */}
-          <div className="w-48 shrink-0 border-r border-border/30 bg-gray-950/40 py-4 flex flex-col gap-1 px-2">
+          <div className="w-12 sm:w-48 shrink-0 border-r border-border/30 bg-gray-950/40 py-4 flex flex-col gap-1 px-1 sm:px-2">
             {CREATOR_NAV.map(({ id, icon: Icon, label, desc }) => (
               <button
                 key={id}
                 onClick={() => setSection(id)}
+                title={label}
                 className={cn(
-                  "w-full text-left px-3 py-2.5 rounded-md transition-all duration-150 group",
+                  "w-full text-left px-2 sm:px-3 py-2.5 rounded-md transition-all duration-150 group",
                   section === id
                     ? "bg-arena-cyan/8 border border-arena-cyan/20 text-foreground"
                     : "text-muted-foreground hover:text-foreground hover:bg-secondary/60 border border-transparent",
                 )}>
                 <div className="flex items-center gap-2">
                   <Icon className={cn("h-3.5 w-3.5 shrink-0", section === id ? "text-arena-cyan" : "text-muted-foreground/60 group-hover:text-muted-foreground")} />
-                  <span className="text-[11px] font-semibold uppercase tracking-wide">{label}</span>
+                  <span className="hidden sm:inline text-[11px] font-semibold uppercase tracking-wide">{label}</span>
                   {section === id && <ChevronRight className="hidden md:block h-3 w-3 ml-auto opacity-40" />}
                 </div>
-                <p className="text-[9px] font-mono text-muted-foreground/40 mt-0.5 pl-5">{desc}</p>
+                <p className="hidden sm:block text-[9px] font-mono text-muted-foreground/40 mt-0.5 pl-5">{desc}</p>
               </button>
             ))}
 
             {/* edit / apply CTAs */}
-            <div className="mt-auto flex flex-col gap-1 mx-1">
+            <div className="mt-auto flex flex-col gap-1 mx-0 sm:mx-1">
               {myProfile && (
                 <button
                   onClick={() => setShowEdit(true)}
-                  className="px-3 py-2 rounded-md border border-arena-cyan/25 bg-arena-cyan/5 text-arena-cyan/80 hover:bg-arena-cyan/10 hover:text-arena-cyan transition-colors text-[10px] font-mono uppercase tracking-widest flex items-center gap-1.5">
-                  <Pencil className="h-3 w-3" />
-                  EDIT PROFILE
+                  title="Edit Profile"
+                  className="px-2 sm:px-3 py-2 rounded-md border border-arena-cyan/25 bg-arena-cyan/5 text-arena-cyan/80 hover:bg-arena-cyan/10 hover:text-arena-cyan transition-colors text-[10px] font-mono uppercase tracking-widest flex items-center gap-1.5">
+                  <Pencil className="h-3 w-3 shrink-0" />
+                  <span className="hidden sm:inline">EDIT PROFILE</span>
                 </button>
               )}
               {user && !myProfile && section !== "apply" && (
                 <button
                   onClick={() => setShowApply(true)}
-                  className="px-3 py-2 rounded-md border border-arena-cyan/25 bg-arena-cyan/5 text-arena-cyan/80 hover:bg-arena-cyan/10 hover:text-arena-cyan transition-colors text-[10px] font-mono uppercase tracking-widest flex items-center gap-1.5">
-                  <Radio className="h-3 w-3" />
-                  APPLY NOW
+                  title="Apply Now"
+                  className="px-2 sm:px-3 py-2 rounded-md border border-arena-cyan/25 bg-arena-cyan/5 text-arena-cyan/80 hover:bg-arena-cyan/10 hover:text-arena-cyan transition-colors text-[10px] font-mono uppercase tracking-widest flex items-center gap-1.5">
+                  <Radio className="h-3 w-3 shrink-0" />
+                  <span className="hidden sm:inline">APPLY NOW</span>
                 </button>
               )}
             </div>
           </div>
 
           {/* Content */}
-          <div className="flex-1 p-6">
+          <div className="flex-1 p-3 sm:p-6 min-w-0">
 
             {/* filter bar */}
             {(section === "by_game" || section === "by_tier" || section === "all") && (
               <div className="flex items-center gap-3 mb-5 flex-wrap">
                 {(section === "by_game" || section === "all") && (
                   <Select value={gameFilter} onValueChange={(v) => setGameFilter(v)}>
-                    <SelectTrigger className="w-40 h-7 text-xs bg-secondary/40 border-border/40 font-mono">
+                    <SelectTrigger className="w-32 sm:w-40 h-7 text-xs bg-secondary/40 border-border/40 font-mono">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="bg-gray-900 border-border/50">
@@ -654,7 +657,7 @@ export default function Creators() {
                 )}
                 {(section === "by_tier" || section === "all") && (
                   <Select value={tierFilter} onValueChange={(v) => setTierFilter(v)}>
-                    <SelectTrigger className="w-36 h-7 text-xs bg-secondary/40 border-border/40 font-mono">
+                    <SelectTrigger className="w-28 sm:w-36 h-7 text-xs bg-secondary/40 border-border/40 font-mono">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="bg-gray-900 border-border/50">
