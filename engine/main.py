@@ -23,7 +23,10 @@ from sqlalchemy.orm import sessionmaker
 
 import jwt as _jwt
 
-from src.config import DATABASE_URL, ENVIRONMENT, MIN_CLIENT_VERSION, STEAM_API_KEY, ENGINE_BASE_URL, FRONTEND_URL
+from src.config import (
+    DATABASE_URL, ENVIRONMENT, MIN_CLIENT_VERSION, STEAM_API_KEY,
+    ENGINE_BASE_URL, FRONTEND_URL, POOL_MANAGER_INTERVAL, ARENA_SYSTEM_USER_ID,
+)
 from src.forum import router as forum_router
 from src.vision.capture import capture_screen, crop_roi
 from src.vision.engine import VisionEngine, VisionEngineConfig
@@ -335,8 +338,8 @@ async def _public_pool_manager_loop() -> None:
 
     _CHARS = _string.ascii_uppercase + _string.digits
     _MODE_SIZES = {"1v1": 1, "2v2": 2, "4v4": 4, "5v5": 5}
-    interval = config.POOL_MANAGER_INTERVAL
-    system_uid = config.ARENA_SYSTEM_USER_ID
+    interval = POOL_MANAGER_INTERVAL
+    system_uid = ARENA_SYSTEM_USER_ID
 
     # Stagger 10s so DB is fully ready after other boot tasks.
     await _asyncio.sleep(10)

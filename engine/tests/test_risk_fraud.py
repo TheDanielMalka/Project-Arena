@@ -323,8 +323,8 @@ class TestPenaltySystem:
         match_id = str(uuid.uuid4())
         session = MagicMock()
         session.execute.return_value.fetchone.side_effect = [
-            # 1. match lookup (7 fields: game, status, bet_amount, stake_currency, password, max_players, max_per_team)
-            ("CS2", "waiting", 10, "AT", None, 2, 1),
+            # 1. match lookup (9 fields: game, status, bet_amount, stake_currency, password, max_players, max_per_team, type, on_chain_match_id)
+            ("CS2", "waiting", 10, "AT", None, 2, 1, "custom", None),
             # 2. user row (5 fields: steam_id, riot_id, wallet_address, steam_verified, riot_verified)
             (VALID_STEAM, None, "0xABC", True, False),
             # 3. penalty row → permanently banned

@@ -63,9 +63,10 @@ def _make_session(fetchone=None, fetchall=None):
 def _mock_match_row(
     game="CS2", status="waiting", bet=10, currency="AT",
     password=None, max_players=2, max_per_team=1,
+    match_type="custom", on_chain_match_id=None,
 ):
-    """7-element tuple matching the SELECT in join_match (+max_per_team)."""
-    return (game, status, bet, currency, password, max_players, max_per_team)
+    """9-element tuple matching the SELECT in join_match."""
+    return (game, status, bet, currency, password, max_players, max_per_team, match_type, on_chain_match_id)
 
 
 def _steam_user(wallet="0xABC"):
