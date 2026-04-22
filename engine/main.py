@@ -3862,9 +3862,15 @@ class JoinMatchRequest(BaseModel):
       When provided, the server honors the preference if that team still has a free
       slot (returns 409 if full so the client can show "Team X is full").
       When omitted, the server auto-assigns (fills A first, then B).
+
+    on_chain_match_id: provided ONLY by the first joiner of a public CRYPTO room.
+      The system user created the DB room with no on-chain ID. The first player
+      calls createMatch on-chain and passes the resulting matchId here so the
+      server can link the contract match to this DB room immediately (no EscrowClient lag).
     """
     password: str | None = None
     team: str | None = None  # "A" | "B" — optional; honored if slot available
+    on_chain_match_id: int | None = None  # public CRYPTO rooms only — first joiner sets this
 
 
 _VALID_CURRENCIES = {"CRYPTO", "AT"}
@@ -4771,7 +4777,7 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
             match_row = session.execute(
                 text(
                     "SELECT game, status, bet_amount, stake_currency, password, "
-                    "       max_players, max_per_team "
+                    "       max_players, max_per_team, type, on_chain_match_id "
                     "FROM matches WHERE id = :mid"
                 ),
                 {"mid": match_id},
@@ -4780,7 +4786,7 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
             if not match_row:
                 raise HTTPException(404, "Match not found")
 
-            game, status, stake_amount, stake_currency, match_password, max_players, max_per_team = match_row
+            game, status, stake_amount, stake_currency, match_password, max_players, max_per_team, match_type_val, existing_ocmid = match_row
             game = _normalize_game(game or "CS2")
             stake_currency = (stake_currency or "CRYPTO").upper()
 
@@ -4909,6 +4915,31 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
             # ── Lock joiner's AT stake ────────────────────────────────────────
             if stake_currency == "AT":
                 _deduct_at(session, user_id, int(stake_amount or 0), match_id, "escrow_lock")
+
+            # ── Public CRYPTO: first joiner links the on-chain match ──────────
+            # Pool manager creates public CRYPTO rooms with no on_chain_match_id.
+            # The first player calls createMatch on-chain, gets a matchId, and
+            # passes it here. We store it and make this player the effective host
+            # so they can call cancelMatch if the room never fills.
+            if (
+                match_type_val == "public"
+                and stake_currency == "CRYPTO"
+                and req.on_chain_match_id is not None
+                and existing_ocmid is None
+                and team_a_count == 0  # this player is the first joiner (team A slot 0)
+            ):
+                session.execute(
+                    text(
+                        "UPDATE matches "
+                        "SET on_chain_match_id = :ocmid, host_id = :uid "
+                        "WHERE id = :mid AND on_chain_match_id IS NULL"
+                    ),
+                    {"ocmid": req.on_chain_match_id, "uid": user_id, "mid": match_id},
+                )
+                logger.info(
+                    "Public CRYPTO room %s linked on_chain_match_id=%s by user %s",
+                    match_id, req.on_chain_match_id, user_id,
+                )
 
             # ── Auto-start: transition waiting → in_progress when room fills ──
             # Count includes the newly inserted row (same session, uncommitted).
