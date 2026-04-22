@@ -3745,6 +3745,7 @@ class CreateMatchRequest(BaseModel):
     match_type: str = "custom"       # "public" | "custom"
     stake_currency: str = "CRYPTO"   # "CRYPTO" (ETH/BNB via escrow) | "AT" (Arena Tokens)
     password: str | None = None      # optional room password (stored in matches.password)
+    on_chain_match_id: int | None = None  # ArenaEscrow matchId — sent immediately from frontend receipt
 
 
 class JoinMatchRequest(BaseModel):
@@ -4579,8 +4580,8 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
             match_row = session.execute(
                 text(
                     "INSERT INTO matches "
-                    "  (type, game, host_id, mode, bet_amount, stake_currency, code, password, max_players, max_per_team) "
-                    "VALUES (:mtype, :g, :host, :mode, :bet, :sc, :code, :pw, :maxp, :mpt) "
+                    "  (type, game, host_id, mode, bet_amount, stake_currency, code, password, max_players, max_per_team, on_chain_match_id) "
+                    "VALUES (:mtype, :g, :host, :mode, :bet, :sc, :code, :pw, :maxp, :mpt, :ocmid) "
                     "RETURNING id"
                 ),
                 {
@@ -4594,6 +4595,7 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
                     "pw":    (auth.hash_password(req.password) if req.password else None),
                     "maxp":  max_players,
                     "mpt":   team_size,
+                    "ocmid": req.on_chain_match_id,
                 },
             ).fetchone()
             match_id = str(match_row[0])
