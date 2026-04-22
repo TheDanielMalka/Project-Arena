@@ -1,22 +1,17 @@
 import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { GoogleLogin } from "@react-oauth/google";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Swords, Mail, Lock, Eye, EyeOff, User, Gamepad2, Chrome, Check, X } from "lucide-react";
+import { Swords, Mail, Lock, Eye, EyeOff, User, Gamepad2, Check, X, Home } from "lucide-react";
 import { useUserStore } from "@/stores/userStore";
 import { useToast } from "@/hooks/use-toast";
 import { PASSWORD_RULES, isPasswordValid } from "@/lib/passwordValidation";
 import { cn } from "@/lib/utils";
 import { ArenaGlobalStarfield } from "@/components/visual/ArenaGlobalStarfield";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { ArenaLogo } from "@/components/shared/ArenaLogo";
 
 const Auth = () => {
   const navigate = useNavigate();
@@ -174,9 +169,9 @@ const Auth = () => {
       <div className="relative min-h-screen flex items-center justify-center bg-background px-4">
         <ArenaGlobalStarfield className="fixed inset-0 z-0" />
         <Card className="relative z-[1] w-full max-w-md bg-card border-border">
-          <CardHeader className="text-center">
-            <h1 className="font-display text-3xl font-bold text-primary text-glow-green tracking-wider mb-1">ARENA</h1>
-            <CardTitle className="font-display text-xl">Reset Password</CardTitle>
+          <CardHeader className="text-center flex flex-col items-center gap-1">
+            <ArenaLogo variant="compact" markSize={30} className="mb-1" />
+            <p className="font-display text-xl font-bold text-foreground tracking-wide">Reset Password</p>
             <p className="text-sm text-muted-foreground">Enter your email to receive a reset link</p>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -202,6 +197,13 @@ const Auth = () => {
             <Button variant="ghost" className="w-full text-muted-foreground" onClick={() => setForgotMode(false)}>
               Back to Login
             </Button>
+            <Button
+              type="button"
+              className="w-full glow-green font-display text-base"
+              onClick={() => navigate("/")}
+            >
+              <Home className="mr-2 h-4 w-4" /> Back to Site
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -209,12 +211,11 @@ const Auth = () => {
   }
 
   return (
-    <TooltipProvider delayDuration={200}>
     <div className="relative min-h-screen flex flex-col items-center justify-center bg-background px-4 gap-4">
       <ArenaGlobalStarfield className="fixed inset-0 z-0" />
       <Card className="relative z-[1] w-full max-w-md bg-card border-border">
-        <CardHeader className="text-center">
-          <h1 className="font-display text-3xl font-bold text-primary text-glow-green tracking-wider mb-1">ARENA</h1>
+        <CardHeader className="text-center flex flex-col items-center gap-1">
+          <ArenaLogo variant="compact" markSize={32} className="mb-1" />
           <p className="text-sm text-muted-foreground">Play for Stakes</p>
         </CardHeader>
         <CardContent>
@@ -325,48 +326,13 @@ const Auth = () => {
                   <Swords className="mr-2 h-4 w-4" /> {loginRateLimited ? "Please wait…" : "Enter Arena"}
                 </Button>
 
-                <div className="flex items-center gap-3 my-2">
-                  <div className="h-px flex-1 bg-border" />
-                  <span className="text-xs text-muted-foreground uppercase tracking-widest">or</span>
-                  <div className="h-px flex-1 bg-border" />
-                </div>
-
-                {hasGoogleClient ? (
-                  <div className="flex w-full justify-center [&>div]:w-full [&>div>div]:w-full">
-                    <GoogleLogin
-                      theme="filled_black"
-                      size="large"
-                      text="continue_with"
-                      shape="rectangular"
-                      onSuccess={(c) => void handleGoogleCredential(c.credential ?? undefined)}
-                      onError={() =>
-                        toast({
-                          title: "Google sign-in failed",
-                          description: "Try again or use email and password.",
-                          variant: "destructive",
-                        })
-                      }
-                    />
-                  </div>
-                ) : (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="w-full block">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="w-full border-border hover:bg-secondary font-display"
-                          disabled
-                        >
-                          <Chrome className="mr-2 h-4 w-4" /> Continue with Google
-                        </Button>
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      <p>Set VITE_GOOGLE_CLIENT_ID to enable Google sign-in.</p>
-                    </TooltipContent>
-                  </Tooltip>
-                )}
+                <Button
+                  type="button"
+                  className="w-full glow-green font-display text-base"
+                  onClick={() => navigate("/")}
+                >
+                  <Home className="mr-2 h-4 w-4" /> Back to Site
+                </Button>
               </form>
               )}
             </TabsContent>
@@ -514,52 +480,13 @@ const Auth = () => {
                   <Swords className="mr-2 h-4 w-4" /> {signupRateLimited ? "Please wait…" : "Create Account"}
                 </Button>
 
-                <div className="flex items-center gap-3 my-2">
-                  <div className="h-px flex-1 bg-border" />
-                  <span className="text-xs text-muted-foreground uppercase tracking-widest">or</span>
-                  <div className="h-px flex-1 bg-border" />
-                </div>
-
-                {hasGoogleClient && confirmedAge && agreedToTerms ? (
-                  <div className="flex w-full justify-center [&>div]:w-full [&>div>div]:w-full">
-                    <GoogleLogin
-                      theme="filled_black"
-                      size="large"
-                      text="signup_with"
-                      shape="rectangular"
-                      onSuccess={(c) => void handleGoogleCredential(c.credential ?? undefined)}
-                      onError={() =>
-                        toast({
-                          title: "Google sign-up failed",
-                          description: "Try again or create an account with email.",
-                          variant: "destructive",
-                        })
-                      }
-                    />
-                  </div>
-                ) : hasGoogleClient ? (
-                  <p className="text-xs text-center text-muted-foreground">
-                    Confirm age and accept the Terms above to enable Google sign-up.
-                  </p>
-                ) : (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="w-full block">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="w-full border-border hover:bg-secondary font-display"
-                          disabled
-                        >
-                          <Chrome className="mr-2 h-4 w-4" /> Sign up with Google
-                        </Button>
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      <p>Set VITE_GOOGLE_CLIENT_ID to enable Google sign-in.</p>
-                    </TooltipContent>
-                  </Tooltip>
-                )}
+                <Button
+                  type="button"
+                  className="w-full glow-green font-display text-base"
+                  onClick={() => navigate("/")}
+                >
+                  <Home className="mr-2 h-4 w-4" /> Back to Site
+                </Button>
               </form>
             </TabsContent>
           </Tabs>
@@ -581,7 +508,6 @@ const Auth = () => {
         </Link>
       </div>
     </div>
-    </TooltipProvider>
   );
 };
 

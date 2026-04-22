@@ -1139,79 +1139,102 @@ class MatchMonitor:
 def _draw_arena_icon(size: int = 64, state: str = "idle",
                      badge_count: int = 0) -> Image.Image:
     """
-    Arena 'A' tray icon.
-    Drawn at 4× resolution then downscaled for smooth anti-aliasing at small sizes.
+    PROJECT ARENA HUD icon.
+    Rounded dark panel, oversized neon A with triple-layer bloom,
+    hot white core, scan-line texture, corner ticks.
+    Drawn at 4× then downscaled for crisp edges at every size.
 
     States:
-      active → red 'A'   (monitoring ON)
-      match  → gold 'A'  (match in progress)
-      error  → dim red   (engine offline)
-      idle   → gray 'A'  (monitoring OFF)
-
-    badge_count: unread messages — red dot with digit (1–9, 9+) bottom-right.
-
-    Background is transparent so Windows tray colour shows through cleanly.
-    A small filled circle behind the glyph ensures the 'A' is always legible.
+      active → red    (monitoring ON)
+      match  → gold   (match in progress)
+      error  → dim red (engine offline)
+      idle   → gray   (monitoring OFF)
     """
     colors = {
         "active": BRAND["accent_pil"],
         "match":  BRAND["match_pil"],
-        "error":  (239, 68, 68, 220),
+        "error":  (220, 50, 50, 200),
         "idle":   BRAND["idle_pil"],
     }
     glyph_color = colors.get(state, colors["idle"])
+    r, g, b, a = glyph_color
 
-    # Draw at 4× then downscale → smooth edges at any size
     draw_size = size * 4
-    img  = Image.new("RGBA", (draw_size, draw_size), (0, 0, 0, 0))
+    s = draw_size
+    img  = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    s = draw_size
-    cx = s // 2
+    # ── Rounded dark panel ───────────────────────────────────────────────────
+    rad = int(s * 0.18)
+    draw.rounded_rectangle([0, 0, s - 1, s - 1], radius=rad, fill=(5, 7, 13, 255))
 
-    # AAA icon base: matte panel + neon ring glow
-    pad_bg = int(s * 0.08)
-    ring_box = [pad_bg, pad_bg, s - pad_bg, s - pad_bg]
-    draw.ellipse(ring_box, fill=(12, 12, 12, 235))
+    # Subtle scan-line texture
+    for y in range(0, s, max(3, s // 80)):
+        draw.line([(0, y), (s, y)], fill=(255, 255, 255, 6), width=1)
 
-    lw_ring = max(2, s // 44)
+    # ── Geometric A — oversized, nearly full panel ────────────────────────────
+    cx   = s // 2
+    lw   = max(10, s // 10)
+    top  = (cx,            int(s * 0.07))
+    bl   = (int(s * 0.05), int(s * 0.93))
+    br   = (int(s * 0.95), int(s * 0.93))
+    cb_y = int(s * 0.57)
+    ins  = int(s * 0.27)
+    cb_l = (ins,      cb_y)
+    cb_r = (s - ins,  cb_y)
 
-    glow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    gdraw = ImageDraw.Draw(glow)
-    gdraw.ellipse(ring_box, outline=(34, 211, 238, 110), width=lw_ring * 3)
-    gdraw.ellipse(ring_box, outline=(167, 139, 250, 80), width=lw_ring * 2)
-    glow = glow.filter(ImageFilter.GaussianBlur(radius=max(2, s // 120)))
-    img.alpha_composite(glow)
+    # Layer 1 — wide outer bloom
+    b1  = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    b1d = ImageDraw.Draw(b1)
+    b1d.line([top, bl],    fill=(r, g, b, 70), width=lw * 5)
+    b1d.line([top, br],    fill=(r, g, b, 70), width=lw * 5)
+    b1d.line([cb_l, cb_r], fill=(r, g, b, 70), width=lw * 4)
+    b1 = b1.filter(ImageFilter.GaussianBlur(radius=max(6, s // 18)))
+    img.alpha_composite(b1)
 
-    draw.ellipse(ring_box, outline=glyph_color, width=lw_ring)
+    # Layer 2 — medium glow
+    b2  = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    b2d = ImageDraw.Draw(b2)
+    b2d.line([top, bl],    fill=(r, g, b, 130), width=lw * 2)
+    b2d.line([top, br],    fill=(r, g, b, 130), width=lw * 2)
+    b2d.line([cb_l, cb_r], fill=(r, g, b, 130), width=lw + lw // 2)
+    b2 = b2.filter(ImageFilter.GaussianBlur(radius=max(3, s // 36)))
+    img.alpha_composite(b2)
 
-    # 'A' glyph — thick, bold, centred with subtle shadow
-    lw  = max(8, s // 12)
-    pad = int(s * 0.18)
+    # Layer 3 — crisp neon stroke
+    draw.line([top, bl],    fill=(r, g, b, 255), width=lw)
+    draw.line([top, br],    fill=(r, g, b, 255), width=lw)
+    draw.line([cb_l, cb_r], fill=(r, g, b, 255), width=max(7, s // 14))
 
-    top  = (cx,          int(s * 0.12))
-    bl   = (int(s * 0.1), int(s * 0.88))
-    br   = (int(s * 0.9), int(s * 0.88))
-    cb_y = int(s * 0.55)
-    ins  = int(s * 0.28)
-    cb_l = (ins,     cb_y)
-    cb_r = (s - ins, cb_y)
+    # Hot white core on main strokes
+    core_lw = max(2, lw // 3)
+    draw.line([top, bl], fill=(255, 210, 210, 160), width=core_lw)
+    draw.line([top, br], fill=(255, 210, 210, 160), width=core_lw)
 
-    sh = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    shd = ImageDraw.Draw(sh)
-    shadow = (0, 0, 0, 160)
-    off = max(2, s // 120)
-    shd.line([(top[0] + off, top[1] + off), (bl[0] + off, bl[1] + off)], fill=shadow, width=lw)
-    shd.line([(top[0] + off, top[1] + off), (br[0] + off, br[1] + off)], fill=shadow, width=lw)
-    shd.line([(cb_l[0] + off, cb_l[1] + off), (cb_r[0] + off, cb_r[1] + off)], fill=shadow, width=max(6, s // 16))
-    sh = sh.filter(ImageFilter.GaussianBlur(radius=max(1, s // 200)))
-    img.alpha_composite(sh)
+    # ── Border neon rim ───────────────────────────────────────────────────────
+    rim = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    rd  = ImageDraw.Draw(rim)
+    rd.rounded_rectangle([0, 0, s - 1, s - 1], radius=rad,
+                         outline=(r, g, b, 90), width=max(2, s // 40))
+    rim = rim.filter(ImageFilter.GaussianBlur(radius=max(2, s // 55)))
+    img.alpha_composite(rim)
+    draw.rounded_rectangle([1, 1, s - 2, s - 2], radius=rad,
+                           outline=(r, g, b, 130), width=max(1, s // 60))
 
-    draw.line([top, bl],    fill=glyph_color, width=lw)
-    draw.line([top, br],    fill=glyph_color, width=lw)
-    draw.line([cb_l, cb_r], fill=glyph_color, width=max(6, s // 16))
+    # ── Corner HUD ticks ─────────────────────────────────────────────────────
+    tick  = int(s * 0.09)
+    tk_lw = max(2, s // 70)
+    tc    = (r, g, b, 160)
+    m     = int(s * 0.04)
+    draw.line([(m, m),     (m + tick, m)],     fill=tc, width=tk_lw)
+    draw.line([(m, m),     (m, m + tick)],     fill=tc, width=tk_lw)
+    draw.line([(s-m, m),   (s-m-tick, m)],     fill=tc, width=tk_lw)
+    draw.line([(s-m, m),   (s-m, m+tick)],     fill=tc, width=tk_lw)
+    draw.line([(m, s-m),   (m+tick, s-m)],     fill=tc, width=tk_lw)
+    draw.line([(m, s-m),   (m, s-m-tick)],     fill=tc, width=tk_lw)
+    draw.line([(s-m, s-m), (s-m-tick, s-m)],   fill=tc, width=tk_lw)
+    draw.line([(s-m, s-m), (s-m, s-m-tick)],   fill=tc, width=tk_lw)
 
-    # Downscale with LANCZOS for smooth anti-aliasing
     img = img.resize((size, size), Image.LANCZOS)
 
     if badge_count and badge_count > 0:
@@ -1373,7 +1396,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     ctk.set_default_color_theme("dark-blue")
 
     win = ctk.CTk()
-    win.title("Arena Client")
+    win.title("PROJECT ARENA")
     # AAA HUD layout needs real space (wide, slightly taller)
     win.geometry("1400x690")
     win.minsize(1200, 660)
@@ -1543,12 +1566,12 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     wordmark = ctk.CTkFrame(header, fg_color="transparent")
     wordmark.pack(side="left", padx=18, pady=8)
-    ctk.CTkLabel(wordmark, text="ARENA",
+    ctk.CTkLabel(wordmark, text="PROJECT",
+                 font=ctk.CTkFont(family=FONT_MONO, size=9, weight="bold"),
+                 text_color=BRAND["cyan"]).pack(side="left", pady=(6, 0))
+    ctk.CTkLabel(wordmark, text="  ARENA",
                  font=ctk.CTkFont(family=FONT_DISPLAY, size=20, weight="bold"),
-                 text_color=BRAND["text"]).pack(side="left")
-    ctk.CTkLabel(wordmark, text="  CLIENT",
-                 font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
-                 text_color=BRAND["cyan"]).pack(side="left", pady=(4, 0))
+                 text_color=BRAND["accent"]).pack(side="left")
 
     # Subtle cyan underline at bottom of header
     ctk.CTkFrame(header, height=1, fg_color=BRAND["hud_border"], corner_radius=0).pack(
