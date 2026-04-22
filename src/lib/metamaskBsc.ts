@@ -102,7 +102,7 @@ export function buildWalletOwnershipMessage(walletAddress: string): string {
   ].join("\n");
 }
 
-/** ArenaEscrow.deposit — native BNB/tBNB `value` must match stake for this match/team. */
+/** ArenaEscrow.joinMatch — native BNB/tBNB `value` must match stake for this match/team. */
 export async function depositToEscrow(
   onChainMatchId: bigint,
   team: 0 | 1,
@@ -119,10 +119,10 @@ export async function depositToEscrow(
   const signer = await provider.getSigner();
   const contract = new Contract(
     addr,
-    ["function deposit(uint256 matchId, uint8 team) payable"],
+    ["function joinMatch(uint256 matchId, uint8 team) payable"],
     signer,
   );
-  const tx = await contract.deposit(onChainMatchId, team, { value: stakeWei });
+  const tx = await contract.joinMatch(onChainMatchId, team, { value: stakeWei });
   await tx.wait();
   return tx.hash;
 }
