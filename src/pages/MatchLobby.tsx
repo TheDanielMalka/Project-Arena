@@ -576,9 +576,64 @@ const MatchLobby = () => {
     if (matchStakeCurrency(match) !== "AT" && !guardWalletConnected()) return;
     if (!guardCanPlay()) return;
     const bumpList = () => void useMatchStore.getState().refreshMatchesFromServer(token ?? null);
+    // ── Public CRYPTO first-joiner: createMatch on-chain before joining ──────
+    // Pool manager created this room with no on_chain_match_id.
+    // The first real player must call createMatch (deposits stake + gets ID),
+    // then pass it to apiJoinMatch so the server links it immediately.
+    // Subsequent joiners skip this and go straight to lockEscrow (depositToEscrow/joinMatch).
+    let publicCryptoFirstJoinerOnChainId: bigint | null = null;
+    const isPublicCrypto =
+      match.type === "public" &&
+      matchStakeCurrency(match) === "CRYPTO" &&
+      (match.filledPlayerCount ?? match.players.length) === 0;
+
+    if (isPublicCrypto) {
+      let stakeForChain = match.betAmount;
+      if (match.betAmount === TEST_STAKE_USDT) {
+        try {
+          const bnbPrice = await fetchBnbUsdPrice();
+          stakeForChain = TEST_STAKE_USDT / bnbPrice;
+        } catch {
+          useNotificationStore.getState().addNotification({
+            type: "system",
+            title: "Price fetch failed",
+            message: "Could not fetch BNB/USD price. Check your internet connection and try again.",
+          });
+          setDepositConfirm(null);
+          setDepositStep("idle");
+          setCheckResults(null);
+          return;
+        }
+      }
+      const teamSize = match.teamSize ?? 1;
+      try {
+        const { onChainMatchId } = await createMatchOnChain(teamSize, stakeForChain);
+        publicCryptoFirstJoinerOnChainId = onChainMatchId;
+        setActiveRoomOnChainId(onChainMatchId);
+      } catch (e: unknown) {
+        useNotificationStore.getState().addNotification({
+          type: "system",
+          title: "Could not create match on-chain",
+          message: friendlyChainErrorMessage(e),
+        });
+        setDepositConfirm(null);
+        setDepositStep("idle");
+        setCheckResults(null);
+        return;
+      }
+    }
+
     if (token && looksLikeServerMatchId(match.id)) {
-      const jr = await apiJoinMatch(token, match.id, { password, team });
+      const jr = await apiJoinMatch(token, match.id, {
+        password,
+        team,
+        on_chain_match_id: publicCryptoFirstJoinerOnChainId?.toString(),
+      });
       if (jr.ok === false) {
+        if (publicCryptoFirstJoinerOnChainId !== null) {
+          // on-chain match created but server join failed — clear the stored ID
+          setActiveRoomOnChainId(null);
+        }
         if (jr.status === 403) {
           setPasswordPrompt({ matchId: match.id, bet: match.betAmount, team });
           setPasswordGateError(joinPasswordFailureMessage(jr.detail));
@@ -612,6 +667,22 @@ const MatchLobby = () => {
         type: "system",
         title: "🔒 Stake confirmed",
         message: `${match.betAmount.toLocaleString()} AT locked for ${match.game} ${match.mode}. Waiting for all players.`,
+      });
+      setDepositConfirm(null);
+      setDepositStep("idle");
+      setCheckResults(null);
+      bumpList();
+      return;
+    }
+    // First joiner of public CRYPTO room already deposited via createMatchOnChain — skip lockEscrow.
+    if (publicCryptoFirstJoinerOnChainId !== null) {
+      joinMatch(match.id, user.username, team);
+      setMyRoomMatchId(match.id);
+      setRoomLocked(false);
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "🔒 Deposit Confirmed",
+        message: `${match.betAmount} BNB locked in escrow for ${match.game} ${match.mode}. Waiting for all players.`,
       });
       setDepositConfirm(null);
       setDepositStep("idle");
