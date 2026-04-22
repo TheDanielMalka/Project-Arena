@@ -502,8 +502,8 @@ const Index = () => {
         </div>
         <div className="absolute top-1/3 right-0 h-[min(80vw,500px)] w-[min(80vw,500px)] -translate-y-1/2 translate-x-1/4 rounded-full bg-primary/[0.06] blur-[120px] pointer-events-none z-[1]" />
 
-        <div className="relative z-10 mx-auto grid w-full max-w-7xl grid-cols-1 gap-12 px-5 sm:px-8 lg:grid-cols-12 lg:items-center lg:gap-6">
-          <div className="space-y-6 text-center lg:col-span-6 lg:text-left">
+        <div className="relative z-10 mx-auto grid w-full max-w-7xl grid-cols-1 gap-8 px-5 sm:px-8 lg:grid-cols-12 lg:items-center lg:gap-6">
+          <div className="space-y-5 text-center lg:col-span-6 lg:text-left">
             <div
               className="relative inline-flex items-center gap-2.5 border border-primary/30 bg-gradient-to-r from-primary/[0.09] via-black/25 to-arena-cyan/[0.06] px-3.5 py-2 font-hud text-[9px] uppercase tracking-[0.44em] text-primary/95 shadow-[0_0_28px_-8px_hsl(var(--primary)/0.35),inset_0_1px_0_hsl(0_0%_100%/0.05)] lg:mx-0 mx-auto sm:px-4 sm:text-[10px] sm:tracking-[0.4em]"
               style={{ clipPath: "polygon(0 6px, 6px 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%)" }}
@@ -540,7 +540,7 @@ const Index = () => {
             </div>
           </div>
 
-          <div className="flex justify-center lg:col-span-6 lg:justify-end">
+          <div className="hidden lg:flex lg:col-span-6 lg:justify-end">
             <LandingHeroHud />
           </div>
         </div>

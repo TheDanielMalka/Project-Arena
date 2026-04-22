@@ -35,7 +35,7 @@ export function LandingPublicNav({
             </span>
           </Link>
           {showMarketingLinks && (
-            <div className="ml-1 flex min-w-0 flex-wrap items-center gap-1 sm:ml-3 sm:gap-2">
+            <div className="ml-1 hidden sm:flex min-w-0 flex-wrap items-center gap-1 sm:ml-3 sm:gap-2">
               <Link
                 to="/why-arena"
                 className={cn(chip, active === "why" && "border-primary/55 text-primary shadow-[0_0_20px_-6px_hsl(var(--primary)/0.35)]")}
