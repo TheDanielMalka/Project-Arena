@@ -46,7 +46,7 @@ ENV VITE_LEGAL_REGISTERED_ADDRESS=$VITE_LEGAL_REGISTERED_ADDRESS
 ENV VITE_LEGAL_DPO_DETAILS=$VITE_LEGAL_DPO_DETAILS
 ENV VITE_LEGAL_DPO_CONTACT=$VITE_LEGAL_DPO_CONTACT
 
-RUN npm run build
+RUN NODE_OPTIONS="--max-old-space-size=4096" npm run build
 
 # ── Stage 2: Serve ────────────────────────────────────────────
 FROM nginx:alpine AS production
