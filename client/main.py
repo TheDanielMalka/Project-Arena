@@ -1139,79 +1139,97 @@ class MatchMonitor:
 def _draw_arena_icon(size: int = 64, state: str = "idle",
                      badge_count: int = 0) -> Image.Image:
     """
-    Arena 'A' tray icon.
-    Drawn at 4× resolution then downscaled for smooth anti-aliasing at small sizes.
+    PROJECT ARENA icon — chamfered square + geometric A + corner HUD ticks.
+    Matches the brand mark used on the website and in the favicon.
+    Drawn at 4× resolution then downscaled for smooth edges at any size.
 
     States:
-      active → red 'A'   (monitoring ON)
-      match  → gold 'A'  (match in progress)
+      active → purple A  (monitoring ON)
+      match  → gold A    (match in progress)
       error  → dim red   (engine offline)
-      idle   → gray 'A'  (monitoring OFF)
+      idle   → gray A    (monitoring OFF)
 
-    badge_count: unread messages — red dot with digit (1–9, 9+) bottom-right.
-
-    Background is transparent so Windows tray colour shows through cleanly.
-    A small filled circle behind the glyph ensures the 'A' is always legible.
+    badge_count: unread messages — red dot with digit (1-9, 9+) bottom-right.
     """
     colors = {
-        "active": BRAND["accent_pil"],
+        "active": (167, 139, 250, 255),
         "match":  BRAND["match_pil"],
         "error":  (239, 68, 68, 220),
         "idle":   BRAND["idle_pil"],
     }
     glyph_color = colors.get(state, colors["idle"])
+    r, g, b, a = glyph_color
 
-    # Draw at 4× then downscale → smooth edges at any size
     draw_size = size * 4
-    img  = Image.new("RGBA", (draw_size, draw_size), (0, 0, 0, 0))
+    s = draw_size
+    img  = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    s = draw_size
-    cx = s // 2
+    # ── Chamfered square background ──────────────────────────────────────────
+    cut = int(s * 0.16)
+    pts = [(cut,0),(s-cut,0),(s,cut),(s,s-cut),(s-cut,s),(cut,s),(0,s-cut),(0,cut)]
+    draw.polygon(pts, fill=(8, 13, 20, 245))
 
-    # AAA icon base: matte panel + neon ring glow
-    pad_bg = int(s * 0.08)
-    ring_box = [pad_bg, pad_bg, s - pad_bg, s - pad_bg]
-    draw.ellipse(ring_box, fill=(12, 12, 12, 235))
-
-    lw_ring = max(2, s // 44)
-
+    # Border glow layer
+    border_lw = max(2, s // 50)
     glow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     gdraw = ImageDraw.Draw(glow)
-    gdraw.ellipse(ring_box, outline=(34, 211, 238, 110), width=lw_ring * 3)
-    gdraw.ellipse(ring_box, outline=(167, 139, 250, 80), width=lw_ring * 2)
-    glow = glow.filter(ImageFilter.GaussianBlur(radius=max(2, s // 120)))
+    gdraw.polygon(pts, outline=(r, g, b, 110), width=border_lw * 3)
+    glow = glow.filter(ImageFilter.GaussianBlur(radius=max(3, s // 80)))
     img.alpha_composite(glow)
 
-    draw.ellipse(ring_box, outline=glyph_color, width=lw_ring)
+    # Crisp border
+    draw.polygon(pts, outline=(r, g, b, 185), width=border_lw)
 
-    # 'A' glyph — thick, bold, centred with subtle shadow
-    lw  = max(8, s // 12)
-    pad = int(s * 0.18)
-
-    top  = (cx,          int(s * 0.12))
-    bl   = (int(s * 0.1), int(s * 0.88))
-    br   = (int(s * 0.9), int(s * 0.88))
-    cb_y = int(s * 0.55)
+    # ── Geometric A glyph ────────────────────────────────────────────────────
+    cx   = s // 2
+    lw   = max(8, s // 12)
+    top  = (cx,           int(s * 0.15))
+    bl   = (int(s * 0.12), int(s * 0.87))
+    br   = (int(s * 0.88), int(s * 0.87))
+    cb_y = int(s * 0.56)
     ins  = int(s * 0.28)
-    cb_l = (ins,     cb_y)
-    cb_r = (s - ins, cb_y)
+    cb_l = (ins,      cb_y)
+    cb_r = (s - ins,  cb_y)
 
-    sh = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    # Shadow
+    sh  = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     shd = ImageDraw.Draw(sh)
-    shadow = (0, 0, 0, 160)
-    off = max(2, s // 120)
-    shd.line([(top[0] + off, top[1] + off), (bl[0] + off, bl[1] + off)], fill=shadow, width=lw)
-    shd.line([(top[0] + off, top[1] + off), (br[0] + off, br[1] + off)], fill=shadow, width=lw)
-    shd.line([(cb_l[0] + off, cb_l[1] + off), (cb_r[0] + off, cb_r[1] + off)], fill=shadow, width=max(6, s // 16))
-    sh = sh.filter(ImageFilter.GaussianBlur(radius=max(1, s // 200)))
+    off = max(2, s // 100)
+    shd.line([(top[0]+off, top[1]+off), (bl[0]+off, bl[1]+off)],   fill=(0,0,0,150), width=lw)
+    shd.line([(top[0]+off, top[1]+off), (br[0]+off, br[1]+off)],   fill=(0,0,0,150), width=lw)
+    shd.line([(cb_l[0]+off, cb_l[1]+off),(cb_r[0]+off,cb_r[1]+off)], fill=(0,0,0,150), width=max(6,s//16))
+    sh = sh.filter(ImageFilter.GaussianBlur(radius=max(1, s // 150)))
     img.alpha_composite(sh)
 
-    draw.line([top, bl],    fill=glyph_color, width=lw)
-    draw.line([top, br],    fill=glyph_color, width=lw)
-    draw.line([cb_l, cb_r], fill=glyph_color, width=max(6, s // 16))
+    # Glyph bloom
+    ag  = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    agd = ImageDraw.Draw(ag)
+    agd.line([top, bl],    fill=(r,g,b,90), width=lw * 2)
+    agd.line([top, br],    fill=(r,g,b,90), width=lw * 2)
+    agd.line([cb_l, cb_r], fill=(r,g,b,90), width=max(6,s//16) * 2)
+    ag = ag.filter(ImageFilter.GaussianBlur(radius=max(3, s // 50)))
+    img.alpha_composite(ag)
 
-    # Downscale with LANCZOS for smooth anti-aliasing
+    # Crisp glyph
+    draw.line([top, bl],    fill=(r,g,b,255), width=lw)
+    draw.line([top, br],    fill=(r,g,b,255), width=lw)
+    draw.line([cb_l, cb_r], fill=(r,g,b,255), width=max(6, s // 16))
+
+    # ── Corner HUD ticks ─────────────────────────────────────────────────────
+    tick   = int(s * 0.10)
+    tk_lw  = max(2, s // 60)
+    tc     = (r, g, b, 175)
+    m      = int(s * 0.04)
+    draw.line([(m, m),     (m+tick, m)],   fill=tc, width=tk_lw)
+    draw.line([(m, m),     (m, m+tick)],   fill=tc, width=tk_lw)
+    draw.line([(s-m, m),   (s-m-tick, m)], fill=tc, width=tk_lw)
+    draw.line([(s-m, m),   (s-m, m+tick)], fill=tc, width=tk_lw)
+    draw.line([(m, s-m),   (m+tick, s-m)], fill=tc, width=tk_lw)
+    draw.line([(m, s-m),   (m, s-m-tick)], fill=tc, width=tk_lw)
+    draw.line([(s-m, s-m), (s-m-tick, s-m)], fill=tc, width=tk_lw)
+    draw.line([(s-m, s-m), (s-m, s-m-tick)], fill=tc, width=tk_lw)
+
     img = img.resize((size, size), Image.LANCZOS)
 
     if badge_count and badge_count > 0:

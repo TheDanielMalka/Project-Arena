@@ -73,36 +73,57 @@ def _generate_build_icon(ico_path: str) -> None:
         img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
 
-        pad = int(s * 0.08)
-        ring = [pad, pad, s - pad, s - pad]
-        d.ellipse(ring, fill=(12, 12, 12, 255))
+        # Chamfered square background
+        cut = int(s * 0.16)
+        pts = [(cut,0),(s-cut,0),(s,cut),(s,s-cut),(s-cut,s),(cut,s),(0,s-cut),(0,cut)]
+        d.polygon(pts, fill=(8, 13, 20, 255))
 
-        lw = max(2, s // 44)
+        # Border glow
+        lw = max(2, s // 50)
         glow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
         gd = ImageDraw.Draw(glow)
-        gd.ellipse(ring, outline=(34, 211, 238, 110), width=lw * 3)
-        gd.ellipse(ring, outline=(167, 139, 250, 80), width=lw * 2)
-        glow = glow.filter(ImageFilter.GaussianBlur(radius=max(2, s // 120)))
+        gd.polygon(pts, outline=(228, 37, 53, 110), width=lw * 3)
+        glow = glow.filter(ImageFilter.GaussianBlur(radius=max(3, s // 80)))
         img.alpha_composite(glow)
+        d.polygon(pts, outline=(228, 37, 53, 200), width=lw)
 
-        # Outer ring (Arena red)
-        d.ellipse(ring, outline=(228, 37, 53, 255), width=lw)
-
-        # "A" glyph
-        cx = s // 2
-        top = (cx, int(s * 0.12))
-        bl = (int(s * 0.1), int(s * 0.88))
-        br = (int(s * 0.9), int(s * 0.88))
-        cb_y = int(s * 0.55)
+        # Geometric A glyph
+        cx  = s // 2
+        gw  = max(8, s // 12)
+        top = (cx,            int(s * 0.15))
+        bl  = (int(s * 0.12), int(s * 0.87))
+        br  = (int(s * 0.88), int(s * 0.87))
         ins = int(s * 0.28)
-        cb_l = (ins, cb_y)
-        cb_r = (s - ins, cb_y)
+        cb_l = (ins,     int(s * 0.56))
+        cb_r = (s - ins, int(s * 0.56))
+
+        # Glyph bloom
+        ag = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+        agd = ImageDraw.Draw(ag)
+        agd.line([top, bl],    fill=(228,37,53,90), width=gw * 2)
+        agd.line([top, br],    fill=(228,37,53,90), width=gw * 2)
+        agd.line([cb_l, cb_r], fill=(228,37,53,90), width=max(6,s//16) * 2)
+        ag = ag.filter(ImageFilter.GaussianBlur(radius=max(3, s // 50)))
+        img.alpha_composite(ag)
 
         glyph = (228, 37, 53, 255)
-        gw = max(8, s // 12)
-        d.line([top, bl], fill=glyph, width=gw)
-        d.line([top, br], fill=glyph, width=gw)
+        d.line([top, bl],    fill=glyph, width=gw)
+        d.line([top, br],    fill=glyph, width=gw)
         d.line([cb_l, cb_r], fill=glyph, width=max(6, s // 16))
+
+        # Corner HUD ticks
+        tick = int(s * 0.10)
+        tk_lw = max(2, s // 60)
+        tc = (228, 37, 53, 175)
+        m  = int(s * 0.04)
+        d.line([(m,m),     (m+tick,m)],     fill=tc, width=tk_lw)
+        d.line([(m,m),     (m,m+tick)],     fill=tc, width=tk_lw)
+        d.line([(s-m,m),   (s-m-tick,m)],   fill=tc, width=tk_lw)
+        d.line([(s-m,m),   (s-m,m+tick)],   fill=tc, width=tk_lw)
+        d.line([(m,s-m),   (m+tick,s-m)],   fill=tc, width=tk_lw)
+        d.line([(m,s-m),   (m,s-m-tick)],   fill=tc, width=tk_lw)
+        d.line([(s-m,s-m), (s-m-tick,s-m)], fill=tc, width=tk_lw)
+        d.line([(s-m,s-m), (s-m,s-m-tick)], fill=tc, width=tk_lw)
 
         return img.resize((size, size), Image.LANCZOS)
 
