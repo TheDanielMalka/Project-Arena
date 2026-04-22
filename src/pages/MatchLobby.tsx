@@ -1169,9 +1169,9 @@ const MatchLobby = () => {
         ];
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-            <div className="w-full max-w-md rounded-2xl border border-arena-gold/30 bg-card shadow-2xl overflow-hidden">
-              <div className="h-0.5 w-full bg-gradient-to-r from-arena-gold via-primary to-arena-purple" />
-              <div className="p-6 space-y-5">
+            <div className="w-full max-w-md rounded-2xl border border-arena-gold/30 bg-card shadow-2xl overflow-hidden flex flex-col max-h-[calc(100dvh-2rem)]">
+              <div className="h-0.5 w-full bg-gradient-to-r from-arena-gold via-primary to-arena-purple shrink-0" />
+              <div className="p-6 space-y-5 overflow-y-auto">
                 {/* Header */}
                 <div className="flex items-center gap-3">
                   <div className="w-11 h-11 rounded-xl bg-arena-gold/10 flex items-center justify-center shrink-0">
@@ -1299,9 +1299,9 @@ const MatchLobby = () => {
         const totalInLobby = lobbyFilledTotal(selectedPublicLobby);
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-            <div className="w-full max-w-5xl rounded-2xl border border-border bg-card shadow-2xl overflow-hidden">
-              {isLive && <div className="h-0.5 w-full bg-gradient-to-r from-arena-cyan via-primary to-arena-purple animate-pulse" />}
-              <div className="p-4 space-y-3">
+            <div className="w-full max-w-5xl rounded-2xl border border-border bg-card shadow-2xl overflow-hidden flex flex-col max-h-[calc(100dvh-2rem)]">
+              {isLive && <div className="h-0.5 w-full bg-gradient-to-r from-arena-cyan via-primary to-arena-purple animate-pulse shrink-0" />}
+              <div className="p-4 space-y-3 overflow-y-auto">
                 <div className="flex items-start justify-between gap-2.5">
                   <div className="flex items-center gap-2.5 min-w-0">
                     <GameLogo game={selectedPublicLobby.game} size={29} />
@@ -1796,7 +1796,7 @@ const MatchLobby = () => {
               <p className="text-[9px] uppercase tracking-widest text-muted-foreground/50 mb-1.5">BNB · Crypto</p>
               <div className="flex gap-2 flex-wrap">
                 {BET_AMOUNTS.map((amount) => {
-                  const matchCount = publicMatches.filter(m => m.status === "waiting" && m.betAmount === amount && matchStakeCurrency(m) === "CRYPTO").length;
+                  const matchCount = publicMatches.filter(m => m.betAmount === amount && matchStakeCurrency(m) === "CRYPTO").length;
                   const isTest = amount === TEST_STAKE_USDT;
                   const active = selectedBet === amount && selectedBetCurrency === "CRYPTO";
                   return (
@@ -1824,7 +1824,7 @@ const MatchLobby = () => {
               <p className="text-[9px] uppercase tracking-widest text-muted-foreground/50 mb-1.5">Arena Tokens · AT</p>
               <div className="flex gap-2 flex-wrap">
                 {[100, 500].map((amount) => {
-                  const matchCount = publicMatches.filter(m => m.status === "waiting" && m.betAmount === amount && matchStakeCurrency(m) === "AT").length;
+                  const matchCount = publicMatches.filter(m => m.betAmount === amount && matchStakeCurrency(m) === "AT").length;
                   const active = selectedBet === amount && selectedBetCurrency === "AT";
                   return (
                     <button key={amount} disabled={depositConfirm !== null}
