@@ -147,12 +147,12 @@ export async function createMatchOnChain(
   const contract = new Contract(
     addr,
     [
-      "function createMatch(uint8 teamSize, uint256 stakePerPlayer) payable",
+      "function createMatch(uint8 teamSize) payable",
       "event MatchCreated(uint256 indexed matchId, address indexed creator, uint8 teamSize, uint256 stakePerPlayer)",
     ],
     signer,
   );
-  const tx = await contract.createMatch(teamSize, stakeWei, { value: stakeWei });
+  const tx = await contract.createMatch(teamSize, { value: stakeWei });
   const receipt = await tx.wait();
   if (!receipt) throw new Error("Transaction receipt not available");
 
