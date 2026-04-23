@@ -7196,7 +7196,7 @@ async def leaderboard(
                             COALESCE(s.total_earnings, 0) AS total_earnings
                         FROM users u
                         LEFT JOIN user_stats s ON s.user_id = u.id
-                        WHERE TRUE {game_filter}
+                        WHERE u.id != '00000000-0000-0000-0000-000000000001' {game_filter}
                         ORDER BY wins DESC, xp DESC
                         LIMIT :lim
                     """),
@@ -7253,7 +7253,7 @@ async def leaderboard(
                               {inner_game}
                             GROUP BY mp.user_id
                         ) ps ON ps.user_id = u.id
-                        WHERE TRUE {game_filter}
+                        WHERE u.id != '00000000-0000-0000-0000-000000000001' {game_filter}
                         ORDER BY wins DESC, xp DESC
                         LIMIT :lim
                     """),
@@ -7307,7 +7307,7 @@ async def search_players(
     Returns public profile fields + summary stats (no email, no wallet).
     DB-ready: users LEFT JOIN user_stats WHERE username ILIKE or arena_id ILIKE.
     """
-    conditions: list[str] = []
+    conditions: list[str] = ["u.id != '00000000-0000-0000-0000-000000000001'"]
     params: dict = {"lim": limit}
 
     if q and q.strip():
@@ -7387,6 +7387,8 @@ async def get_player_profile(
     Returns public fields only — no email, no wallet address.
     DB-ready: users LEFT JOIN user_stats.
     """
+    if user_id == "00000000-0000-0000-0000-000000000001":
+        raise HTTPException(404, "Player not found")
     try:
         with SessionLocal() as session:
             row = session.execute(
