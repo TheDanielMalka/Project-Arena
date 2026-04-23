@@ -55,9 +55,13 @@ function WagmiAutoSync() {
   const setConnected = useWalletStore((s) => s.setConnectedAddress);
 
   useEffect(() => {
-    if (address && user?.walletAddress?.toLowerCase() === address.toLowerCase()) {
+    if (!address) {
+      setConnected(null);
+      return;
+    }
+    if (user?.walletAddress?.toLowerCase() === address.toLowerCase()) {
       setConnected(address);
-    } else if (!address) {
+    } else {
       setConnected(null);
     }
   }, [address, user?.walletAddress, setConnected]);
