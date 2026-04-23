@@ -44,27 +44,37 @@ import { ForumLayout } from "./components/forum/ForumLayout";
 
 const queryClient = new QueryClient();
 
-/**
- * Silently syncs a wagmi auto-reconnected wallet address into walletStore
- * when it already matches what the backend has on file.
- * Only runs when the address changes — no sign prompt, no API call.
- */
 function WagmiAutoSync() {
   const { address } = useAccount();
   const user = useUserStore((s) => s.user);
+  const token = useUserStore((s) => s.token);
   const setConnected = useWalletStore((s) => s.setConnectedAddress);
+  const refreshProfile = useUserStore((s) => s.refreshProfileFromServer);
 
+  // 1. Only promote the wagmi address into walletStore when it matches the DB.
   useEffect(() => {
-    if (!address) {
-      setConnected(null);
-      return;
-    }
+    if (!address) { setConnected(null); return; }
     if (user?.walletAddress?.toLowerCase() === address.toLowerCase()) {
       setConnected(address);
     } else {
       setConnected(null);
     }
   }, [address, user?.walletAddress, setConnected]);
+
+  // 2. Pull fresh profile on every wagmi account event (connect/disconnect/switch).
+  //    refreshProfile is stable; intentionally omitted to prevent double-fire.
+  useEffect(() => {
+    if (!token) return;
+    void refreshProfile();
+  }, [address, token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 3. Global 30 s poll — propagates cross-device changes (phone connects
+  //    while desktop tab is open) without a WebSocket infrastructure.
+  useEffect(() => {
+    if (!token) return;
+    const id = setInterval(() => void refreshProfile(), 30_000);
+    return () => clearInterval(id);
+  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return null;
 }
