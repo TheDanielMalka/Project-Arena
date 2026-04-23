@@ -8,7 +8,7 @@ import { useEngineStatus } from "@/hooks/useEngineStatus";
 import { useClientStore } from "@/stores/clientStore";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
-import { useWeb3Modal } from "@web3modal/wagmi/react";
+import { web3modal } from "@/lib/wagmiConfig";
 import { useAccount, useDisconnect } from "wagmi";
 import {
   DropdownMenu,
@@ -39,7 +39,6 @@ export function ArenaHeader() {
   const storeAddress = useWalletStore((s) => s.connectedAddress);
   const disconnectStore = useWalletStore((s) => s.disconnectWallet);
   const switchWallet = useWalletStore((s) => s.switchWallet);
-  const { open: openModal } = useWeb3Modal();
   const { address: wagmiAddress } = useAccount();
   const { disconnect: wagmiDisconnect } = useDisconnect();
   const chainConnectedAddress = wagmiAddress ?? storeAddress;

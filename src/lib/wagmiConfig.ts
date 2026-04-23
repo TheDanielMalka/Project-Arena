@@ -52,13 +52,24 @@ export const wagmiConfig = createConfig({
  * Web3Modal singleton — initialised once at module load.
  * Provides QR-code modal on desktop and deep-link on mobile.
  * Opened via web3modal.open() or the useWeb3Modal() hook.
+ *
+ * When VITE_WALLETCONNECT_PROJECT_ID is unset (local dev / CI), we fall back
+ * to a no-op stub so the app boots and injected MetaMask still works.
  */
-export const web3modal = createWeb3Modal({
-  wagmiConfig,
-  projectId,
-  themeMode: "dark",
-  themeVariables: {
-    "--w3m-accent":               "hsl(220 100% 60%)",
-    "--w3m-border-radius-master": "2px",
+const _modal = projectId
+  ? createWeb3Modal({
+      wagmiConfig,
+      projectId,
+      themeMode: "dark",
+      themeVariables: {
+        "--w3m-accent":               "hsl(220 100% 60%)",
+        "--w3m-border-radius-master": "2px",
+      },
+    })
+  : null;
+
+export const web3modal = {
+  open: async (options?: { view?: string }) => {
+    await _modal?.open(options as Parameters<NonNullable<typeof _modal>["open"]>[0]);
   },
-});
+};
