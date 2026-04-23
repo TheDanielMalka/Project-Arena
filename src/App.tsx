@@ -5,8 +5,11 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { NotificationToastListener } from "@/components/notifications/NotificationToast";
 import { useUserStore } from "@/stores/userStore";
+import { useWalletStore } from "@/stores/walletStore";
 import { registerAuth401Handler, clearAuth401Handler } from "@/lib/authSession";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { WagmiProvider, useAccount } from "wagmi";
+import { wagmiConfig } from "@/lib/wagmiConfig";
 import { BrowserRouter, Navigate, Routes, Route } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ArenaGlobalStarfield } from "@/components/visual/ArenaGlobalStarfield";
@@ -40,6 +43,27 @@ import SearchPage from "./pages/forum/SearchPage";
 import { ForumLayout } from "./components/forum/ForumLayout";
 
 const queryClient = new QueryClient();
+
+/**
+ * Silently syncs a wagmi auto-reconnected wallet address into walletStore
+ * when it already matches what the backend has on file.
+ * Only runs when the address changes — no sign prompt, no API call.
+ */
+function WagmiAutoSync() {
+  const { address } = useAccount();
+  const user = useUserStore((s) => s.user);
+  const setConnected = useWalletStore((s) => s.setConnectedAddress);
+
+  useEffect(() => {
+    if (address && user?.walletAddress?.toLowerCase() === address.toLowerCase()) {
+      setConnected(address);
+    } else if (!address) {
+      setConnected(null);
+    }
+  }, [address, user?.walletAddress, setConnected]);
+
+  return null;
+}
 
 const PublicLegal = ({ children }: { children: React.ReactNode }) => (
   <div className="min-h-screen bg-background text-foreground relative">
@@ -86,13 +110,15 @@ function SessionGate({ children }: { children: ReactNode }) {
 const googleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID ?? "").trim();
 
 const AppShell = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <NotificationToastListener />
-      <BrowserRouter>
-        <SessionGate>
+  <WagmiProvider config={wagmiConfig}>
+    <QueryClientProvider client={queryClient}>
+      <WagmiAutoSync />
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <NotificationToastListener />
+        <BrowserRouter>
+          <SessionGate>
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/why-arena" element={<WhyArena />} />
@@ -126,10 +152,11 @@ const AppShell = () => (
             <Route path="/admin" element={<AdminRoute />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
-        </SessionGate>
-      </BrowserRouter>
-    </TooltipProvider>
-  </QueryClientProvider>
+          </SessionGate>
+        </BrowserRouter>
+      </TooltipProvider>
+    </QueryClientProvider>
+  </WagmiProvider>
 );
 
 const App = () => {

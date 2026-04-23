@@ -8,6 +8,8 @@ import { useEngineStatus } from "@/hooks/useEngineStatus";
 import { useClientStore } from "@/stores/clientStore";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
+import { web3modal } from "@/lib/wagmiConfig";
+import { useAccount, useDisconnect } from "wagmi";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,10 +36,12 @@ const CLIENT_STATUS_CONFIG = {
 export function ArenaHeader() {
   const { toast } = useToast();
   const { user, isAuthenticated, walletConnected, connectWallet: connectUserWalletFlag, unlinkWalletFromProfile, logout } = useUserStore();
-  const chainConnectedAddress = useWalletStore((s) => s.connectedAddress);
-  const connectMetaMaskWallet = useWalletStore((s) => s.connectWallet);
-  const disconnectMetaMaskWallet = useWalletStore((s) => s.disconnectWallet);
-  const switchMetaMaskWallet = useWalletStore((s) => s.switchWallet);
+  const storeAddress = useWalletStore((s) => s.connectedAddress);
+  const disconnectStore = useWalletStore((s) => s.disconnectWallet);
+  const switchWallet = useWalletStore((s) => s.switchWallet);
+  const { address: wagmiAddress } = useAccount();
+  const { disconnect: wagmiDisconnect } = useDisconnect();
+  const chainConnectedAddress = wagmiAddress ?? storeAddress;
   // DB-ready: wagmi useBalance() — live on-chain USDT balance
   const totalBalance = useWalletStore((s) => s.usdtBalance);
   const clientStatus = useClientStore((s) => s.status);
@@ -209,13 +213,21 @@ export function ArenaHeader() {
                 <DropdownMenuItem
                   onClick={() => {
                     void (async () => {
-                      const r = await connectMetaMaskWallet();
-                      if (r.ok === false) {
-                        toast({ variant: "destructive", title: "Wallet", description: r.error });
-                        return;
+                      try {
+                        const { connectMetaMaskAndSignOwnership } = await import("@/lib/metamaskBsc");
+                        const { apiPatchMeWalletAddress } = await import("@/lib/engine-api");
+                        const token = useUserStore.getState().token;
+                        if (!token) { toast({ variant: "destructive", title: "Wallet", description: "Sign in first." }); return; }
+                        const { address } = await connectMetaMaskAndSignOwnership();
+                        const r = await apiPatchMeWalletAddress(token, address);
+                        if (r.ok === false) { toast({ variant: "destructive", title: "Wallet", description: r.error }); return; }
+                        useWalletStore.getState().setConnectedAddress(address);
+                        connectUserWalletFlag();
+                        toast({ title: "Wallet linked", description: "Your wallet is connected and saved to your profile." });
+                      } catch (e: unknown) {
+                        const msg = e instanceof Error ? e.message : "Could not connect wallet.";
+                        toast({ variant: "destructive", title: "Wallet", description: msg });
                       }
-                      connectUserWalletFlag();
-                      toast({ title: "Wallet linked", description: "Your wallet is connected and saved to your profile." });
                     })();
                   }}
                   className="cursor-pointer"
@@ -227,11 +239,9 @@ export function ArenaHeader() {
                   <DropdownMenuItem
                     onClick={() => {
                       void (async () => {
-                        const r = await switchMetaMaskWallet();
-                        if (r.ok === false) {
-                          toast({ variant: "destructive", title: "Switch Wallet", description: r.error });
-                          return;
-                        }
+                        wagmiDisconnect();
+                        const r = await switchWallet();
+                        if (r.ok === false) { toast({ variant: "destructive", title: "Switch Wallet", description: r.error }); return; }
                         connectUserWalletFlag();
                         toast({ title: "Wallet switched", description: "New wallet connected and saved." });
                       })();
@@ -243,11 +253,9 @@ export function ArenaHeader() {
                   <DropdownMenuItem
                     onClick={() => {
                       void (async () => {
-                        const r = await disconnectMetaMaskWallet();
-                        if (r.ok === false) {
-                          toast({ variant: "destructive", title: "Disconnect Wallet", description: r.error });
-                          return;
-                        }
+                        wagmiDisconnect();
+                        const r = await disconnectStore();
+                        if (r.ok === false) { toast({ variant: "destructive", title: "Disconnect Wallet", description: r.error }); return; }
                         toast({ title: "Wallet disconnected", description: "Wallet unlinked from your account." });
                       })();
                     }}

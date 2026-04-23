@@ -79,6 +79,8 @@ interface WalletState {
   switchWallet: () => Promise<ConnectWalletResult>;
   /** Until POST /wallet/buy-at: local mock only; then refreshProfileFromServer */
   buyArenaTokens: (atAmount: number, totalUsdtCost: number) => boolean;
+  /** Called by WagmiAutoSync when wagmi reconnects on page reload. */
+  setConnectedAddress: (address: string | null) => void;
 }
 
 let txCounter = 100;
@@ -297,6 +299,12 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       matchId,
       note: `Match ${matchId} — ${won ? "Victory! (×2 − 5% fee)" : "Defeat"}`,
     });
+  },
+
+  setConnectedAddress: (address) => {
+    set({ connectedAddress: address });
+    if (address) useUserStore.getState().setLinkedWalletAddress(address);
+    else useUserStore.getState().unlinkWalletFromProfile();
   },
 
   buyArenaTokens: (atAmount, totalUsdtCost) => {
