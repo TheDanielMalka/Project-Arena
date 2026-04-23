@@ -4978,6 +4978,87 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
 
             session.commit()
 
+        # ── Match just went LIVE: generate team passwords + notify all players ──
+        if match_started:
+            import secrets as _sec2, string as _str2, json as _json2
+            _pwchars2 = _str2.ascii_letters + _str2.digits
+            team_a_password = "".join(_sec2.choice(_pwchars2) for _ in range(8))
+            team_b_password = "".join(_sec2.choice(_pwchars2) for _ in range(8))
+
+            try:
+                with SessionLocal() as _ms:
+                    _ms.execute(
+                        text(
+                            "UPDATE matches "
+                            "SET team_a_password = :pa, team_b_password = :pb "
+                            "WHERE id = :mid"
+                        ),
+                        {"mid": match_id, "pa": team_a_password, "pb": team_b_password},
+                    )
+
+                    _match_info = _ms.execute(
+                        text("SELECT mode, code FROM matches WHERE id = :mid"),
+                        {"mid": match_id},
+                    ).fetchone()
+                    _mode = _match_info[0] if _match_info else "?"
+                    _code = _match_info[1] if _match_info else match_id[:8]
+
+                    _players = _ms.execute(
+                        text(
+                            "SELECT u.id, u.username, mp.team "
+                            "FROM match_players mp "
+                            "JOIN users u ON u.id = mp.user_id "
+                            "WHERE mp.match_id = :mid AND mp.user_id IS NOT NULL"
+                        ),
+                        {"mid": match_id},
+                    ).fetchall()
+
+                    for _pid, _uname, _team in _players:
+                        _team_pw     = team_a_password if _team == "A" else team_b_password
+                        _discord_ch  = f"Arena-Match-Team-{_team}"
+                        _ms.execute(
+                            text(
+                                "INSERT INTO notifications "
+                                "  (user_id, type, title, message, metadata) "
+                                "VALUES (:uid, 'system', :title, :msg, :meta::jsonb)"
+                            ),
+                            {
+                                "uid":   str(_pid),
+                                "title": "⚔️ Match is LIVE!",
+                                "msg": (
+                                    f"{game} {_mode} · Team {_team} · "
+                                    f"CS2 password: {game_password} · "
+                                    f"Discord channel: {_discord_ch} · "
+                                    f"Team code: {_team_pw}"
+                                ),
+                                "meta": _json2.dumps({
+                                    "match_id":        match_id,
+                                    "match_code":      _code,
+                                    "game":            game,
+                                    "mode":            _mode,
+                                    "team":            _team,
+                                    "game_password":   game_password,
+                                    "team_password":   _team_pw,
+                                    "discord_channel": _discord_ch,
+                                    "discord_invite":  "https://discord.gg/arena",
+                                }),
+                            },
+                        )
+
+                    _ms.commit()
+
+                _a_count = sum(1 for p in _players if p[2] == "A")
+                _b_count = sum(1 for p in _players if p[2] == "B")
+                discord_post(
+                    f"⚔️ **Match LIVE** | {game} {_mode} "
+                    f"| {float(stake_amount):g} {stake_currency} "
+                    f"| Code: `{_code}` "
+                    f"| Team A ({_a_count}) vs Team B ({_b_count}) "
+                    f"| https://project-arena.com/lobby"
+                )
+            except Exception as _ne:
+                logger.error("match_start notifications failed (non-fatal): %s", _ne)
+
     except HTTPException:
         raise
     except Exception as exc:
@@ -4989,9 +5070,9 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
         "match_id":       match_id,
         "game":           game,
         "stake_currency": stake_currency,
-        "team":           assigned_team,   # "A" or "B" — assigned based on current roster
-        "started":        match_started,   # True when room just filled → in_progress
-        "game_password":  game_password,   # set only when this join triggered ACTIVE; None otherwise
+        "team":           assigned_team,
+        "started":        match_started,
+        "game_password":  game_password,
     }
 
 
