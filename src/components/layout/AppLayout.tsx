@@ -51,11 +51,13 @@ export function AppLayout({ children }: AppLayoutProps) {
           <ArenaGlobalStarfield className="absolute inset-0 z-0" />
           <div className="relative z-[1] flex min-h-0 min-w-0 flex-1 flex-col">
             <ArenaHeader />
-            <main className="arena-main-scroll relative flex-1 overflow-auto border-t border-arena-cyan/[0.07] p-6 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.03)]">
+            <main className="arena-main-scroll relative flex-1 overflow-auto border-t border-arena-cyan/[0.07] p-6 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.03)] flex flex-col">
               <Breadcrumbs />
-              {children}
+              <div className="flex-1 min-h-0">
+                {children}
+              </div>
+              <Footer />
             </main>
-            <Footer />
           </div>
         </div>
       </div>
