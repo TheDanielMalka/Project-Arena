@@ -481,7 +481,9 @@ jobs:
             docker image prune -f
 
             echo "=== start all services ==="
-            docker-compose up -d
+            docker-compose build arena-engine
+            docker-compose build arena-db
+            docker-compose up -d 
 
             echo "=== daily fraud report cron ==="
             sudo cp ~/Project-Arena/infra/scripts/daily-fraud-report.py /usr/local/bin/arena-fraud-report.py

@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac as _hmac
 import httpx
@@ -33,6 +34,7 @@ from src.vision.engine import VisionEngine, VisionEngineConfig
 from src.vision.rage_quit import RageQuitDetector
 from src.slack_alerts import slack_post
 from src.discord_alerts import discord_post
+from src.discord_bot import create_match_channels
 from src.risk.limits import count_completed_high_stakes_matches, sum_daily_match_losses
 try:
     from src.contract import build_escrow_client
@@ -4978,14 +4980,18 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
 
             session.commit()
 
-        # ── Match just went LIVE: generate team passwords + notify all players ──
+        # ── Match just went LIVE ──────────────────────────────────────────────
         if match_started:
-            import secrets as _sec2, string as _str2, json as _json2
-            _pwchars2 = _str2.ascii_letters + _str2.digits
-            team_a_password = "".join(_sec2.choice(_pwchars2) for _ in range(8))
-            team_b_password = "".join(_sec2.choice(_pwchars2) for _ in range(8))
+            import json as _json2, string as _str2
+            _pwchars2       = _str2.ascii_letters + _str2.digits
+            team_a_password = "".join(secrets.choice(_pwchars2) for _ in range(8))
+            team_b_password = "".join(secrets.choice(_pwchars2) for _ in range(8))
 
             try:
+                # Phase 1 — persist team passwords + fetch match info and players
+                _mode    = "?"
+                _code    = match_id[:8]
+                _players = []
                 with SessionLocal() as _ms:
                     _ms.execute(
                         text(
@@ -4995,14 +5001,13 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
                         ),
                         {"mid": match_id, "pa": team_a_password, "pb": team_b_password},
                     )
-
-                    _match_info = _ms.execute(
+                    _info = _ms.execute(
                         text("SELECT mode, code FROM matches WHERE id = :mid"),
                         {"mid": match_id},
                     ).fetchone()
-                    _mode = _match_info[0] if _match_info else "?"
-                    _code = _match_info[1] if _match_info else match_id[:8]
-
+                    if _info:
+                        _mode = _info[0] or "?"
+                        _code = _info[1] or match_id[:8]
                     _players = _ms.execute(
                         text(
                             "SELECT u.id, u.username, mp.team "
@@ -5012,10 +5017,51 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
                         ),
                         {"mid": match_id},
                     ).fetchall()
+                    _ms.commit()
 
+                # Phase 2 — create Discord channels (blocking I/O → thread pool)
+                _team_size   = max_per_team or max(1, (max_players or 2) // 2)
+                _discord_chs = await asyncio.to_thread(
+                    create_match_channels,
+                    match_id, _code, _team_size, _team_size,
+                )
+
+                # Phase 3 — persist Discord channel IDs if bot succeeded
+                if _discord_chs:
+                    with SessionLocal() as _ms:
+                        _ms.execute(
+                            text(
+                                "UPDATE matches "
+                                "SET discord_team_a_channel_id = :ca, "
+                                "    discord_team_b_channel_id = :cb "
+                                "WHERE id = :mid"
+                            ),
+                            {
+                                "mid": match_id,
+                                "ca":  _discord_chs.team_a_channel_id,
+                                "cb":  _discord_chs.team_b_channel_id,
+                            },
+                        )
+                        _ms.commit()
+
+                # Phase 4 — send per-player notifications with real invite links
+                with SessionLocal() as _ms:
                     for _pid, _uname, _team in _players:
-                        _team_pw     = team_a_password if _team == "A" else team_b_password
-                        _discord_ch  = f"Arena-Match-Team-{_team}"
+                        _team_pw = (
+                            team_a_password if _team == "A" else team_b_password
+                        )
+                        if _discord_chs:
+                            _discord_ch  = (
+                                f"match-{_code.lower()}-team-{_team.lower()}"
+                            )
+                            _discord_inv = (
+                                _discord_chs.team_a_invite
+                                if _team == "A"
+                                else _discord_chs.team_b_invite
+                            )
+                        else:
+                            _discord_ch  = f"Arena-Match-Team-{_team}"
+                            _discord_inv = ""
                         _ms.execute(
                             text(
                                 "INSERT INTO notifications "
@@ -5028,8 +5074,7 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
                                 "msg": (
                                     f"{game} {_mode} · Team {_team} · "
                                     f"CS2 password: {game_password} · "
-                                    f"Discord channel: {_discord_ch} · "
-                                    f"Team code: {_team_pw}"
+                                    f"Discord: #{_discord_ch}"
                                 ),
                                 "meta": _json2.dumps({
                                     "match_id":        match_id,
@@ -5040,13 +5085,13 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
                                     "game_password":   game_password,
                                     "team_password":   _team_pw,
                                     "discord_channel": _discord_ch,
-                                    "discord_invite":  "https://discord.gg/arena",
+                                    "discord_invite":  _discord_inv,
                                 }),
                             },
                         )
-
                     _ms.commit()
 
+                # Phase 5 — announce in Discord lobby webhook
                 _a_count = sum(1 for p in _players if p[2] == "A")
                 _b_count = sum(1 for p in _players if p[2] == "B")
                 discord_post(
@@ -5056,6 +5101,7 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
                     f"| Team A ({_a_count}) vs Team B ({_b_count}) "
                     f"| https://project-arena.com/lobby"
                 )
+
             except Exception as _ne:
                 logger.error("match_start notifications failed (non-fatal): %s", _ne)
 
