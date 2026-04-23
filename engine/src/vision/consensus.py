@@ -158,7 +158,38 @@ class MatchConsensus:
             key = sub.result or "unknown"
             vote_counts[key] = vote_counts.get(key, 0) + 1
 
-        # Find the majority result
+        # CS2 complementary-pair fast path.
+        # "victory" and "defeat" are opposite perspectives of the same event —
+        # winning-team players report "victory", losing-team players report "defeat".
+        # An exact 50/50 split is the NORMAL outcome for any equal-team format
+        # (1v1, 2v2, 5v5) and must NOT be treated as a disagreement.
+        # Only apply when ALL expected votes are in and the split is perfectly even;
+        # any asymmetry falls through to the standard majority check so cheaters
+        # (who submit "victory" when they should submit "defeat") are still flagged.
+        _v = vote_counts.get("victory", 0)
+        _d = vote_counts.get("defeat",  0)
+        if (
+            frozenset(vote_counts.keys()) <= {"victory", "defeat"}
+            and _v > 0
+            and _d > 0
+            and _v == _d
+            and total == self.expected_players
+        ):
+            log.info(
+                "consensus | match=%s REACHED (complementary pair) — "
+                "victory=%d defeat=%d",
+                self.match_id, _v, _d,
+            )
+            return ConsensusResult(
+                status=ConsensusStatus.REACHED,
+                agreed_result="victory",
+                total_players=total,
+                agreeing_players=_v,
+                flagged_wallets=[],
+                submissions=submissions,
+            )
+
+        # Standard majority check (handles non-CS2 games and cheat detection).
         majority_result = max(vote_counts, key=lambda k: vote_counts[k])
         majority_count = vote_counts[majority_result]
         majority_fraction = majority_count / total
