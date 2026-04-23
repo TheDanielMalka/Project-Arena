@@ -33,6 +33,8 @@ import type { ClientStatus, ClientSession } from "@/types";
 import type { EngineHealth, ClientStatusResponse } from "@/lib/engine-api";
 
 interface ClientState extends ClientSession {
+  /** Timestamp (ms) when markInMatch was last called — used for grace-period logic in syncFromClientStatus. */
+  inMatchSince?: number;
   // ── Actions ──────────────────────────────────────────────────────────────
 
   /**
@@ -116,6 +118,7 @@ export const useClientStore = create<ClientState>((set, get) => ({
   uptime:        undefined,
   lastCheckedAt: undefined,
   matchId:       undefined,
+  inMatchSince:  undefined,
   // Phase 4 fields
   sessionId:     undefined,
   versionOk:     false,
@@ -148,8 +151,10 @@ export const useClientStore = create<ClientState>((set, get) => ({
     // Only syncFromClientStatus (GET /client/status) can promote to "ready".
     // This prevents the header from showing "Client Ready" just because the
     // engine container is running, even when no desktop client is connected.
+    const { inMatchSince } = get();
+    const withinGrace = inMatchSince !== undefined && Date.now() - inMatchSince < 15_000;
     set((s) => ({
-      status:        s.status === "in_match" ? "in_match" : "connected",
+      status: s.status === "in_match" && withinGrace ? "in_match" : "connected",
       version:       health.version ?? s.version,
       uptime:        health.uptime  ?? s.uptime,
       lastCheckedAt: now,
@@ -178,9 +183,15 @@ export const useClientStore = create<ClientState>((set, get) => ({
       case "in_game":
       default:           mapped = "ready";    break;
     }
-    // Never downgrade "in_match" via polling (match capture must not be interrupted)
+    // Grace-period: if we just entered in_match locally (within 15s), keep it
+    // even if the backend hasn't updated yet. After that window the backend is authoritative.
+    const { inMatchSince } = get();
+    const withinGracePeriod =
+      inMatchSince !== undefined && Date.now() - inMatchSince < 15_000;
     set((s) => ({
-      status:        s.status === "in_match" && mapped !== "in_match" ? "in_match" : mapped,
+      status: s.status === "in_match" && mapped !== "in_match" && withinGracePeriod
+        ? "in_match"
+        : mapped,
       version:       data.version       ?? s.version,
       versionOk:     data.version_ok,
       sessionId:     data.session_id    ?? undefined,
@@ -192,10 +203,10 @@ export const useClientStore = create<ClientState>((set, get) => ({
   },
 
   markInMatch: (matchId) =>
-    set({ status: "in_match", matchId, lastCheckedAt: new Date().toISOString() }),
+    set({ status: "in_match", matchId, inMatchSince: Date.now(), lastCheckedAt: new Date().toISOString() }),
 
   markIdle: () =>
-    set({ status: "ready", matchId: undefined, lastCheckedAt: new Date().toISOString() }),
+    set({ status: "ready", matchId: undefined, inMatchSince: undefined, lastCheckedAt: new Date().toISOString() }),
 
   // ── Computed ──────────────────────────────────────────────────────────
 

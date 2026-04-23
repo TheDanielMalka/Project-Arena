@@ -213,7 +213,7 @@ export function PlayerCardPopover({
   };
 
   return (
-    <div className="w-56 rounded-xl border border-border/60 bg-card shadow-2xl overflow-hidden">
+    <div className="w-56 rounded-xl border border-border/60 bg-card shadow-2xl overflow-y-auto max-h-[min(28rem,calc(100dvh-2rem))]">
       <div className="px-3 py-2.5 bg-secondary/40 border-b border-border/40 flex items-center gap-2">
         <div className="flex items-center gap-1.5 shrink-0">
           <div className="w-7 h-7 rounded-lg bg-primary/20 border border-primary/30 flex items-center justify-center font-display text-[10px] font-bold text-primary">
@@ -492,8 +492,8 @@ export function PlayerPopoverLayer({
   const POPOVER_W = 232;
   const POPOVER_H = 300;
   const gutter = 8;
-  const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
-  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const vw = typeof window !== "undefined" ? (window.visualViewport?.width ?? window.innerWidth) : 1200;
+  const vh = typeof window !== "undefined" ? (window.visualViewport?.height ?? window.innerHeight) : 800;
 
   let top = rect.bottom + gutter;
   if (top + POPOVER_H > vh - gutter) {

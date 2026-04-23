@@ -893,6 +893,7 @@ const MatchLobby = () => {
     setMyRoomMatchId(null);
     setActiveRoomOnChainId(null);
     setCountdown(null);
+    markIdle();
     // Must pass user.username — joinMatch adds username to players,
     // so leaveMatch must use the same key to find and remove the player.
     leaveMatch(matchId, user.username);
@@ -944,6 +945,7 @@ const MatchLobby = () => {
     setMyRoomMatchId(null);
     setDeleteRoomConfirmOpen(false);
     setCountdown(null);
+    markIdle();
     cancelEscrow(matchId);
     deleteMatch(matchId);
     useNotificationStore.getState().addNotification({
@@ -1083,8 +1085,8 @@ const MatchLobby = () => {
 
       {/* ── Password Prompt ── */}
       {passwordPrompt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
-          <div className="w-full max-w-md mx-4 rounded-2xl border border-arena-cyan/30 bg-card shadow-2xl p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-arena-cyan/30 bg-card shadow-2xl p-6 max-h-[calc(100dvh-2rem)] overflow-y-auto">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 rounded-xl bg-arena-cyan/10 flex items-center justify-center">
                 <KeyRound className="h-5 w-5 text-arena-cyan" />
@@ -2559,7 +2561,7 @@ const MatchLobby = () => {
       {/* ── Leave Room Confirmation — only non-host players ──────────── */}
       {leaveConfirmOpen && myActiveRoom && myActiveRoom.hostId !== user?.id && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-          <div className="w-full max-w-sm rounded-2xl border border-destructive/40 bg-card shadow-2xl p-6 space-y-4">
+          <div className="w-full max-w-sm rounded-2xl border border-destructive/40 bg-card shadow-2xl p-6 space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0">
                 <LogOut className="h-5 w-5 text-destructive" />
@@ -2593,7 +2595,7 @@ const MatchLobby = () => {
       {/* ── Delete Room Confirmation ───────────────────────────────── */}
       {deleteRoomConfirmOpen && myActiveRoom && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-          <div className="w-full max-w-sm rounded-2xl border border-destructive/40 bg-card shadow-2xl p-6 space-y-4">
+          <div className="w-full max-w-sm rounded-2xl border border-destructive/40 bg-card shadow-2xl p-6 space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0">
                 <Trash2 className="h-5 w-5 text-destructive" />
@@ -2645,7 +2647,7 @@ const MatchLobby = () => {
           <div
             ref={inviteModalPanelRef}
             tabIndex={-1}
-            className="w-full max-w-sm rounded-2xl border border-border bg-card shadow-2xl p-5 space-y-4 outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-arena-cyan/40"
+            className="w-full max-w-sm rounded-2xl border border-border bg-card shadow-2xl p-5 space-y-4 outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-arena-cyan/40 max-h-[calc(100dvh-2rem)] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
