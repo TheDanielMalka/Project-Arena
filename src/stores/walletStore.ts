@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { parseEther } from "ethers";
+import { parseEther } from "viem";
 import type { Transaction, TransactionType, TransactionStatus, Network } from "@/types";
 import { useUserStore } from "@/stores/userStore";
 import { apiGetMatchStatus, apiPatchMeWalletAddress, apiUnlinkWallet } from "@/lib/engine-api";
