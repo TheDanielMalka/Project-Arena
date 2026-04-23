@@ -9,7 +9,7 @@ import { useClientStore } from "@/stores/clientStore";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { web3modal } from "@/lib/wagmiConfig";
-import { useAccount, useDisconnect } from "wagmi";
+import { useDisconnect } from "wagmi";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,12 +36,10 @@ const CLIENT_STATUS_CONFIG = {
 export function ArenaHeader() {
   const { toast } = useToast();
   const { user, isAuthenticated, walletConnected, connectWallet: connectUserWalletFlag, unlinkWalletFromProfile, logout } = useUserStore();
-  const storeAddress = useWalletStore((s) => s.connectedAddress);
   const disconnectStore = useWalletStore((s) => s.disconnectWallet);
   const switchWallet = useWalletStore((s) => s.switchWallet);
-  const { address: wagmiAddress } = useAccount();
   const { disconnect: wagmiDisconnect } = useDisconnect();
-  const chainConnectedAddress = wagmiAddress ?? storeAddress;
+  const chainConnectedAddress = user?.walletAddress ?? null;
   // DB-ready: wagmi useBalance() — live on-chain USDT balance
   const totalBalance = useWalletStore((s) => s.usdtBalance);
   const clientStatus = useClientStore((s) => s.status);
@@ -214,6 +212,7 @@ export function ArenaHeader() {
                   onClick={() => {
                     void (async () => {
                       try {
+                        wagmiDisconnect();
                         const { connectMetaMaskAndSignOwnership } = await import("@/lib/metamaskBsc");
                         const { apiPatchMeWalletAddress } = await import("@/lib/engine-api");
                         const token = useUserStore.getState().token;

@@ -1,7 +1,9 @@
 import { create } from "zustand";
 import { parseEther } from "viem";
+import { disconnect as wagmiCoreDisconnect } from "@wagmi/core";
 import type { Transaction, TransactionType, TransactionStatus, Network } from "@/types";
 import { useUserStore } from "@/stores/userStore";
+import { wagmiConfig } from "@/lib/wagmiConfig";
 import { apiGetMatchStatus, apiPatchMeWalletAddress, apiUnlinkWallet } from "@/lib/engine-api";
 import { friendlyChainErrorMessage } from "@/lib/friendlyChainError";
 import { connectMetaMaskAndSignOwnership, depositToEscrow } from "@/lib/metamaskBsc";
@@ -131,6 +133,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
 
   disconnectWallet: async (): Promise<ConnectWalletResult> => {
     try {
+      wagmiCoreDisconnect(wagmiConfig).catch(() => {});
       const token = useUserStore.getState().token;
       if (!token) return { ok: false as const, error: "Sign in to manage your wallet." };
       const result = await apiUnlinkWallet(token);
