@@ -461,15 +461,21 @@ jobs:
               echo "  swap already active: $(free -h | awk '/Swap/{print $2}')"
             fi
 
-            echo "=== tear down + prune ==="
+            echo "=== tear down ==="
             docker-compose down
-            docker system prune -af --volumes
 
-            echo "=== build frontend (no-cache, isolated — avoids OOM on shared build) ==="
-            docker-compose build --no-cache --parallel=false arena-frontend
+            echo "=== prune stopped containers + dangling images (keeps layer cache) ==="
+            docker container prune -f
+            docker image prune -f
+
+            echo "=== build frontend (incremental — npm ci layer cached when package.json unchanged) ==="
+            docker-compose build --parallel=false arena-frontend
 
             echo "=== build remaining services ==="
             docker-compose build arena-engine
+
+            echo "=== post-build prune dangling layers ==="
+            docker image prune -f
 
             echo "=== start all services ==="
             docker-compose up -d
