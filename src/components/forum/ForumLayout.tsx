@@ -11,9 +11,9 @@ interface Props {
 export function ForumLayout({ children }: Props) {
   return (
     <AppLayout>
-      <div className="flex flex-col h-full overflow-hidden">
+      <div className="flex flex-col h-full min-h-0">
         <ForumHeader />
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-1 min-h-0 overflow-hidden">
           <ForumSidebar />
           <main className="flex-1 overflow-y-auto min-w-0 pb-16 lg:pb-0">
             {children}

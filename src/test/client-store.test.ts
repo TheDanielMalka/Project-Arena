@@ -37,6 +37,7 @@ beforeEach(() => {
     bindUserId:    undefined,
     game:          undefined,
     matchId:       undefined,
+    inMatchSince:  undefined,
     lastCheckedAt: undefined,
   });
 });
@@ -106,12 +107,26 @@ describe("syncFromClientStatus", () => {
     expect(useClientStore.getState().matchId).toBe("match-999");
   });
 
-  it("does not downgrade in_match to ready via polling", () => {
-    // Simulate: match is in progress, then a poll returns "idle"
-    useClientStore.setState({ status: "in_match", versionOk: true });
-    useClientStore.getState().syncFromClientStatus(makeStatus({ status: "idle" }));
-    // in_match must be preserved — match capture should not be interrupted
+  it("does not downgrade in_match to ready within 15-second grace period", () => {
+    // markInMatch sets inMatchSince so the grace period applies
+    useClientStore.getState().markInMatch("match-gp");
+    useClientStore.getState().syncFromClientStatus(makeStatus({ status: "idle", version_ok: true }));
+    // in_match must be preserved while the backend hasn't yet confirmed the new status
     expect(useClientStore.getState().status).toBe("in_match");
+  });
+
+  it("downgrades in_match to ready via polling when grace period has expired", () => {
+    // Simulate an expired grace: inMatchSince set to 20 seconds ago
+    useClientStore.setState({ status: "in_match", versionOk: true, inMatchSince: Date.now() - 20_000 });
+    useClientStore.getState().syncFromClientStatus(makeStatus({ status: "idle", version_ok: true }));
+    expect(useClientStore.getState().status).toBe("ready");
+  });
+
+  it("downgrades in_match to ready when explicitly marked idle", () => {
+    useClientStore.getState().markInMatch("match-idle");
+    useClientStore.getState().markIdle();
+    expect(useClientStore.getState().status).toBe("ready");
+    expect(useClientStore.getState().inMatchSince).toBeUndefined();
   });
 
   it("version is stored", () => {

@@ -78,7 +78,7 @@ export function WithdrawATModal({ open, onClose, onSuccess }: WithdrawATModalPro
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-      <div className="w-full max-w-sm rounded-2xl border border-border bg-card shadow-2xl p-6 space-y-5">
+      <div className="w-full max-w-sm rounded-2xl border border-border bg-card shadow-2xl p-6 space-y-5 max-h-[calc(100dvh-2rem)] overflow-y-auto">
 
         {/* Header */}
         <div className="flex items-center gap-3">

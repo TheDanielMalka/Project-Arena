@@ -105,7 +105,7 @@ function ReportModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="arena-hud-panel w-full max-w-sm mx-4 p-5 space-y-4">
+      <div className="arena-hud-panel w-full max-w-sm mx-4 p-5 space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <div className="flex items-center justify-between">
           <span className="font-hud text-[11px] uppercase tracking-widest text-arena-cyan/70">
             Report Post

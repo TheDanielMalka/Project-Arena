@@ -38,12 +38,12 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   return (
     <SidebarProvider>
-      <div className="relative min-h-screen flex w-full">
+      <div className="relative h-dvh flex w-full overflow-hidden">
         <ArenaAmbientBackground />
         {/* Stars must live INSIDE each z-10 column — a sibling at z-[1] sits under the whole column and is invisible */}
         <div className="relative z-10 flex shrink-0 self-stretch">
           <ArenaGlobalStarfield className="absolute inset-0 z-0" />
-          <div className="relative z-[1] min-h-screen">
+          <div className="relative z-[1] h-full">
             <ArenaSidebar />
           </div>
         </div>
