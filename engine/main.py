@@ -32,6 +32,7 @@ from src.vision.capture import capture_screen, crop_roi
 from src.vision.engine import VisionEngine, VisionEngineConfig
 from src.vision.rage_quit import RageQuitDetector
 from src.slack_alerts import slack_post
+from src.discord_alerts import discord_post
 from src.risk.limits import count_completed_high_stakes_matches, sum_daily_match_losses
 try:
     from src.contract import build_escrow_client
@@ -398,6 +399,12 @@ async def _public_pool_manager_loop() -> None:
                         logger.info(
                             "Pool: created public room code=%s game=%s mode=%s %s %.4f",
                             code, game_val, mode_val, sc, amount,
+                        )
+                        currency_label = "tBNB" if sc == "CRYPTO" else "AT"
+                        discord_post(
+                            f"🎮 **New room open** | {game_val} {mode_val} "
+                            f"| {amount:g} {currency_label} | Code: `{code}` "
+                            f"| https://project-arena.com/lobby"
                         )
 
                 session.commit()
@@ -10094,6 +10101,43 @@ class PlatformConfigUpdate(BaseModel):
     fraud_pair_window_hours:          str | None = None  # rolling window for pair query
     fraud_intentional_loss_min_count: str | None = None  # HAVING COUNT(*) >= this
     fraud_intentional_loss_days:      str | None = None  # lookback for intentional losing
+
+
+@app.get("/config/public-pool", status_code=200)
+async def get_public_pool_config():
+    """
+    Return all active public match pool configurations.
+
+    Public endpoint — no auth required (frontend reads this to populate lobby
+    filter options and stake-amount selectors instead of hardcoding values).
+
+    Response: list of { game, mode, stake_currency, stake_amount, min_open_rooms }
+    DB-ready: public_match_pool_config (migration 041).
+    """
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(
+                text(
+                    "SELECT game, mode, stake_currency, stake_amount, min_open_rooms "
+                    "FROM public_match_pool_config WHERE is_active = TRUE "
+                    "ORDER BY game, mode, stake_currency, stake_amount"
+                )
+            ).fetchall()
+        return {
+            "configs": [
+                {
+                    "game":           r[0],
+                    "mode":           r[1],
+                    "stake_currency": r[2],
+                    "stake_amount":   float(r[3]),
+                    "min_open_rooms": r[4],
+                }
+                for r in rows
+            ]
+        }
+    except Exception as exc:
+        logger.error("get_public_pool_config error: %s", exc)
+        raise HTTPException(500, "Failed to fetch pool config")
 
 
 @app.get("/platform/config", status_code=200)
