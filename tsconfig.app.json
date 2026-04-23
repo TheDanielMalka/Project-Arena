@@ -19,6 +19,12 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "@wagmi/core": [
+        "./node_modules/wagmi/node_modules/@wagmi/core"
+      ],
+      "@wagmi/core/*": [
+        "./node_modules/wagmi/node_modules/@wagmi/core/*"
       ]
     },
     "skipLibCheck": true,

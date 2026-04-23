@@ -13,9 +13,9 @@ import {
   getAccount,
   signMessage,
   switchChain,
-  writeContract,
   waitForTransactionReceipt,
   getBalance,
+  getWalletClient,
 } from "@wagmi/core";
 import { getAddress, parseEther, formatEther } from "viem";
 import { parseEventLogs } from "viem";
@@ -65,15 +65,25 @@ export function buildWalletOwnershipMessage(walletAddress: string): string {
 }
 
 /**
- * Ensure the connected wallet is on the target Arena chain.
- * Triggers a "switch network" prompt in the wallet if needed.
+ * Ensure the connected wallet is on the target Arena chain, then return a
+ * ready-to-use viem WalletClient + the connected address.
+ *
+ * Using the viem WalletClient for contract writes sidesteps a TypeScript
+ * structural mismatch between wagmi@2's createConfig return type and the
+ * WriteContractParameters overloads in @wagmi/core@2.  The address is
+ * passed explicitly to writeContract (required when the WalletClient's
+ * chain generic is a union — viem forces opt-in to disambiguate overloads).
  */
-async function ensureTargetChain(): Promise<void> {
+async function ensureTargetChain(): Promise<{ client: Awaited<ReturnType<typeof getWalletClient>>; address: `0x${string}` }> {
   const targetId = getArenaTargetChainId();
-  const account  = getAccount(wagmiConfig);
-  if (account.chainId === targetId) return;
-  const chain = targetId === 56 ? bscMainnet : bscTestnet;
-  await switchChain(wagmiConfig, { chainId: chain.id });
+  const state    = getAccount(wagmiConfig);
+  if (!state.address) throw new Error("No wallet connected");
+  if (state.chainId !== targetId) {
+    const chain = targetId === 56 ? bscMainnet : bscTestnet;
+    await switchChain(wagmiConfig, { chainId: chain.id });
+  }
+  const client = await getWalletClient(wagmiConfig);
+  return { client, address: state.address };
 }
 
 function getContractAddress(): `0x${string}` {
@@ -120,13 +130,15 @@ export async function depositToEscrow(
   team: 0 | 1,
   stakeWei: bigint,
 ): Promise<string> {
-  await ensureTargetChain();
-  const hash = await writeContract(wagmiConfig, {
+  const { client, address } = await ensureTargetChain();
+  const hash = await client.writeContract({
     address:      getContractAddress(),
     abi:          ARENA_ESCROW_ABI,
     functionName: "joinMatch",
     args:         [onChainMatchId, team],
     value:        stakeWei,
+    chain:        undefined,
+    account:      address,
   });
   await waitForTransactionReceipt(wagmiConfig, { hash });
   return hash;
@@ -140,14 +152,16 @@ export async function createMatchOnChain(
   teamSize: number,
   stakeEther: number,
 ): Promise<{ txHash: string; onChainMatchId: bigint }> {
-  await ensureTargetChain();
+  const { client, address } = await ensureTargetChain();
   const stakeWei = parseEther(stakeEther.toFixed(8) as `${number}`);
-  const hash = await writeContract(wagmiConfig, {
+  const hash = await client.writeContract({
     address:      getContractAddress(),
     abi:          ARENA_ESCROW_ABI,
     functionName: "createMatch",
     args:         [teamSize],
     value:        stakeWei,
+    chain:        undefined,
+    account:      address,
   });
   const receipt = await waitForTransactionReceipt(wagmiConfig, { hash });
 
@@ -166,12 +180,14 @@ export async function createMatchOnChain(
 
 /** ArenaEscrow.cancelMatch — creator refunds all WAITING depositors. */
 export async function cancelMatchOnChain(onChainMatchId: bigint): Promise<string> {
-  await ensureTargetChain();
-  const hash = await writeContract(wagmiConfig, {
+  const { client, address } = await ensureTargetChain();
+  const hash = await client.writeContract({
     address:      getContractAddress(),
     abi:          ARENA_ESCROW_ABI,
     functionName: "cancelMatch",
     args:         [onChainMatchId],
+    chain:        undefined,
+    account:      address,
   });
   await waitForTransactionReceipt(wagmiConfig, { hash });
   return hash;
@@ -179,12 +195,14 @@ export async function cancelMatchOnChain(onChainMatchId: bigint): Promise<string
 
 /** ArenaEscrow.cancelWaiting — any depositor after WAITING_TIMEOUT (1 hour). */
 export async function cancelWaitingOnChain(onChainMatchId: bigint): Promise<string> {
-  await ensureTargetChain();
-  const hash = await writeContract(wagmiConfig, {
+  const { client, address } = await ensureTargetChain();
+  const hash = await client.writeContract({
     address:      getContractAddress(),
     abi:          ARENA_ESCROW_ABI,
     functionName: "cancelWaiting",
     args:         [onChainMatchId],
+    chain:        undefined,
+    account:      address,
   });
   await waitForTransactionReceipt(wagmiConfig, { hash });
   return hash;
@@ -192,12 +210,14 @@ export async function cancelWaitingOnChain(onChainMatchId: bigint): Promise<stri
 
 /** ArenaEscrow.claimRefund — any player after 2-hour ACTIVE timeout. */
 export async function claimRefundFromEscrow(onChainMatchId: bigint): Promise<string> {
-  await ensureTargetChain();
-  const hash = await writeContract(wagmiConfig, {
+  const { client, address } = await ensureTargetChain();
+  const hash = await client.writeContract({
     address:      getContractAddress(),
     abi:          ARENA_ESCROW_ABI,
     functionName: "claimRefund",
     args:         [onChainMatchId],
+    chain:        undefined,
+    account:      address,
   });
   await waitForTransactionReceipt(wagmiConfig, { hash });
   return hash;
@@ -209,7 +229,7 @@ export async function claimRefundFromEscrow(onChainMatchId: bigint): Promise<str
 export async function getBnbBalance(address: string): Promise<number> {
   const data = await getBalance(wagmiConfig, {
     address: getAddress(address as `0x${string}`),
-    chainId: getArenaTargetChainId(),
+    chainId: getArenaTargetChainId() as 97 | 56,
   });
   return parseFloat(formatEther(data.value));
 }
