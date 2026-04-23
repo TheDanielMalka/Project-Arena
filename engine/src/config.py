@@ -100,8 +100,17 @@ ARENA_SYSTEM_USER_ID = (
 # How often (seconds) the pool manager checks and refills open rooms.
 POOL_MANAGER_INTERVAL = int(os.getenv("POOL_MANAGER_INTERVAL", "30"))
 
-# ── Discord (optional — lobby room alerts) ───────────────────
+# ── Discord (optional) ───────────────────────────────────────
+# Incoming Webhook — posts match-live summaries to #match-lobby.
 DISCORD_LOBBY_WEBHOOK_URL = os.getenv("DISCORD_LOBBY_WEBHOOK_URL", "")
+# Bot Token — creates/deletes private per-team channels at match start/end.
+# Get from: Discord Developer Portal → your app → Bot → Token
+DISCORD_BOT_TOKEN          = os.getenv("DISCORD_BOT_TOKEN", "")
+# Numeric server (guild) ID — right-click server icon → Copy Server ID
+DISCORD_GUILD_ID           = os.getenv("DISCORD_GUILD_ID", "")
+# Numeric category ID under which match channels are created (optional).
+# Right-click a category → Copy Channel ID.  Leave blank to use root.
+DISCORD_MATCH_CATEGORY_ID  = os.getenv("DISCORD_MATCH_CATEGORY_ID", "")
 
 # ── App Settings ─────────────────────────────────────────────
 API_SECRET = os.getenv("API_SECRET", "change_me_in_production")
