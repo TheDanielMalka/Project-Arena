@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bell, Check, CheckCheck, Loader2, Trash2, X } from "lucide-react";
+import { Bell, Check, CheckCheck, Copy, ExternalLink, Loader2, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -47,6 +47,93 @@ function timeAgo(date: Date): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+type MatchStartMeta = {
+  team: string;
+  mode: string;
+  game_password: string;
+  team_password: string;
+  discord_channel: string;
+  discord_invite: string;
+  match_id: string;
+};
+
+function isMatchStartMeta(m: Record<string, unknown> | undefined): m is MatchStartMeta {
+  return !!m && typeof m.game_password === "string" && typeof m.team_password === "string";
+}
+
+function MatchStartCard({ meta }: { meta: MatchStartMeta }) {
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const copy = (key: string, val: string) => {
+    navigator.clipboard.writeText(val).then(() => {
+      setCopied(key);
+      setTimeout(() => setCopied(null), 1500);
+    });
+  };
+
+  const rows: { label: string; key: string; val: string }[] = [
+    { label: "CS2 password", key: "game_pw", val: meta.game_password },
+    { label: `Discord channel`,  key: "channel",  val: meta.discord_channel },
+    { label: "Team code",        key: "team_pw",  val: meta.team_password },
+  ].filter((r) => r.val);
+
+  return (
+    <div className="mt-2 space-y-1.5">
+      <div className="flex items-center gap-2">
+        <span
+          className={cn(
+            "text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded border",
+            meta.team === "A"
+              ? "border-arena-cyan/50 text-arena-cyan bg-arena-cyan/10"
+              : "border-arena-purple/50 text-arena-purple bg-arena-purple/10",
+          )}
+        >
+          Team {meta.team}
+        </span>
+        {meta.mode && (
+          <span className="text-[10px] text-muted-foreground">{meta.mode}</span>
+        )}
+      </div>
+
+      {rows.map(({ label, key, val }) => (
+        <div
+          key={key}
+          className="flex items-center justify-between gap-2 bg-background/50 rounded px-2 py-1 border border-border/50"
+        >
+          <div className="min-w-0">
+            <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wider block">
+              {label}
+            </span>
+            <span className="text-xs font-mono font-bold text-foreground">{val}</span>
+          </div>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); copy(key, val); }}
+            className="shrink-0 p-1 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+          >
+            {copied === key
+              ? <Check className="h-3 w-3 text-arena-neon" />
+              : <Copy className="h-3 w-3" />}
+          </button>
+        </div>
+      ))}
+
+      {meta.discord_invite && (
+        <a
+          href={meta.discord_invite}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-arena-purple/30 bg-arena-purple/10 text-arena-purple text-[10px] font-bold hover:bg-arena-purple/20 transition-colors w-full justify-center"
+        >
+          <ExternalLink className="h-3 w-3" />
+          Join Discord Channel
+        </a>
+      )}
+    </div>
+  );
+}
+
 function NotificationItem({
   notification,
   onRead,
@@ -62,7 +149,8 @@ function NotificationItem({
   onAcceptInvite?: (notifId: string) => void;
   acceptingId?: string | null;
 }) {
-  const isInvite = notification.type === "match_invite";
+  const isInvite    = notification.type === "match_invite";
+  const isMatchStart = isMatchStartMeta(notification.metadata);
   const isAccepting = acceptingId === notification.id;
 
   return (
@@ -78,6 +166,10 @@ function NotificationItem({
       onClick={() => {
         if (isInvite) return;
         if (!notification.read) onRead(notification.id);
+        if (isMatchStart && notification.metadata?.match_id) {
+          onNavigate("match_invite");
+          return;
+        }
         onNavigate(notification.type);
       }}
     >
@@ -94,6 +186,9 @@ function NotificationItem({
           <p className="text-xs text-muted-foreground mt-0.5 line-clamp-4 break-words [overflow-wrap:anywhere] leading-snug">
             {notification.message}
           </p>
+          {isMatchStartMeta(notification.metadata) && (
+            <MatchStartCard meta={notification.metadata} />
+          )}
           <span className="text-[10px] text-muted-foreground/60 mt-1 block">
             {timeAgo(notification.timestamp)}
           </span>
