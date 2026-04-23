@@ -53,7 +53,7 @@ export function AppLayout({ children }: AppLayoutProps) {
             <ArenaHeader />
             <main className="arena-main-scroll relative flex-1 overflow-auto border-t border-arena-cyan/[0.07] p-6 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.03)] flex flex-col">
               <Breadcrumbs />
-              <div className="flex-1 min-h-0">
+              <div className="flex-1">
                 {children}
               </div>
               <Footer />
