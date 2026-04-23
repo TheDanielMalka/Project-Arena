@@ -1,10 +1,30 @@
-import { BrowserProvider, Contract, formatEther, getAddress, parseEther } from "ethers";
-
 /**
- * Fetch live BNB/USD price from Binance (primary) with CoinGecko fallback.
- * Used only for the TEST_STAKE_USDT tier to convert $0.1 → equivalent tBNB.
- * TODO: remove after mainnet launch (replace with Chainlink oracle).
+ * Blockchain interaction layer — MetaMask extension (desktop) AND
+ * WalletConnect / MetaMask Mobile / Trust Wallet / Coinbase Wallet (mobile).
+ *
+ * Public API is identical to the old ethers-only version so all callers
+ * (walletStore, MatchLobby) import without changes.
+ *
+ * Internally uses wagmi @wagmi/core actions that work outside React
+ * (no hooks, no context) — safe to call from Zustand store actions.
  */
+
+import {
+  getAccount,
+  signMessage,
+  switchChain,
+  writeContract,
+  waitForTransactionReceipt,
+  getBalance,
+} from "@wagmi/core";
+import { getAddress, parseEther, formatEther } from "viem";
+import { parseEventLogs } from "viem";
+import { wagmiConfig, web3modal, bscTestnet, bscMainnet } from "./wagmiConfig";
+import { ARENA_ESCROW_ABI } from "./contractAbi";
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+/** Fetch live BNB/USD price — Binance primary, CoinGecko fallback. */
 export async function fetchBnbUsdPrice(): Promise<number> {
   try {
     const r = await fetch("https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT");
@@ -21,77 +41,19 @@ export async function fetchBnbUsdPrice(): Promise<number> {
   throw new Error("Cannot fetch BNB/USD price — check network connection");
 }
 
-/** EIP-155 chain id — default BSC Testnet (97). Override with `VITE_CHAIN_ID`. */
+/** EIP-155 chain id — default 97 (BSC Testnet). Override with `VITE_CHAIN_ID`. */
 export function getArenaTargetChainId(): number {
   const raw = import.meta.env.VITE_CHAIN_ID;
   const n = raw !== undefined && raw !== "" ? Number.parseInt(String(raw), 10) : 97;
   return Number.isFinite(n) && n > 0 ? n : 97;
 }
 
-const BSC_TESTNET_ADD_CHAIN = {
-  chainName: "BNB Smart Chain Testnet",
-  nativeCurrency: { name: "tBNB", symbol: "tBNB", decimals: 18 },
-  rpcUrls: ["https://data-seed-prebsc-1-s1.binance.org:8545/"],
-  blockExplorerUrls: ["https://testnet.bscscan.com"],
-} as const;
-
-export interface EthereumProvider {
-  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
-  isMetaMask?: boolean;
-  providers?: EthereumProvider[];
-}
-
-export function getInjectedEthereum(): EthereumProvider | null {
-  const g = globalThis as unknown as { ethereum?: EthereumProvider & { providers?: EthereumProvider[] } };
-  const eth = g.ethereum;
-  if (!eth?.request) return null;
-  if (Array.isArray(eth.providers) && eth.providers.length > 0) {
-    const mm = eth.providers.find((p) => p.isMetaMask);
-    return mm ?? eth.providers[0]!;
-  }
-  return eth;
-}
-
-function toChainIdHex(chainId: number): string {
-  return `0x${chainId.toString(16)}`;
-}
-
-/**
- * Switch MetaMask to the configured chain (BSC Testnet by default).
- * Adds the chain if missing (code 4902).
- */
-export async function ensureTargetChain(ethereum: EthereumProvider): Promise<void> {
-  const target = getArenaTargetChainId();
-  const hex = toChainIdHex(target);
-  try {
-    await ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: hex }] });
-  } catch (e: unknown) {
-    const code = (e as { code?: number })?.code;
-    if (code === 4902) {
-      await ethereum.request({
-        method: "wallet_addEthereumChain",
-        params: [
-          {
-            chainId: hex,
-            chainName: BSC_TESTNET_ADD_CHAIN.chainName,
-            nativeCurrency: BSC_TESTNET_ADD_CHAIN.nativeCurrency,
-            rpcUrls: [...BSC_TESTNET_ADD_CHAIN.rpcUrls],
-            blockExplorerUrls: [...BSC_TESTNET_ADD_CHAIN.blockExplorerUrls],
-          },
-        ],
-      });
-      return;
-    }
-    throw e;
-  }
-}
-
-/** Human-readable message signed with personal_sign (EIP-191) — proves key ownership; safer than raw eth_sign. */
+/** Human-readable EIP-191 ownership message — signed by user to prove key control. */
 export function buildWalletOwnershipMessage(walletAddress: string): string {
   const contract = import.meta.env.VITE_CONTRACT_ADDRESS ?? "";
-  const chainId = getArenaTargetChainId();
-  const nonce = `${Date.now()}`;
-  const checksummed = getAddress(walletAddress);
+  const chainId  = getArenaTargetChainId();
+  const nonce    = `${Date.now()}`;
+  const checksummed = getAddress(walletAddress as `0x${string}`);
   return [
     "ProjectArena — prove wallet ownership",
     "",
@@ -102,157 +64,165 @@ export function buildWalletOwnershipMessage(walletAddress: string): string {
   ].join("\n");
 }
 
-/** ArenaEscrow.joinMatch — native BNB/tBNB `value` must match stake for this match/team. */
+/**
+ * Ensure the connected wallet is on the target Arena chain.
+ * Triggers a "switch network" prompt in the wallet if needed.
+ */
+async function ensureTargetChain(): Promise<void> {
+  const targetId = getArenaTargetChainId();
+  const account  = getAccount(wagmiConfig);
+  if (account.chainId === targetId) return;
+  const chain = targetId === 56 ? bscMainnet : bscTestnet;
+  await switchChain(wagmiConfig, { chainId: chain.id });
+}
+
+function getContractAddress(): `0x${string}` {
+  const addr = import.meta.env.VITE_CONTRACT_ADDRESS as string | undefined;
+  if (!addr?.trim() || !addr.startsWith("0x")) {
+    throw new Error("VITE_CONTRACT_ADDRESS is not set or invalid");
+  }
+  return addr as `0x${string}`;
+}
+
+// ─── Connect & Sign ─────────────────────────────────────────────────────────
+
+/**
+ * Open wallet selection modal (QR on desktop, deep-link on mobile),
+ * wait for the user to connect, then sign an EIP-191 ownership message.
+ *
+ * On desktop MetaMask extension: no QR — MetaMask pops up directly.
+ * On mobile: WalletConnect QR / deep-link → MetaMask Mobile / Trust Wallet etc.
+ */
+export async function connectMetaMaskAndSignOwnership(): Promise<{ address: string; signature: string }> {
+  await web3modal.open({ view: "Connect" });
+
+  const account = getAccount(wagmiConfig);
+  if (!account.address) {
+    throw new Error("No wallet connected — modal was dismissed.");
+  }
+
+  await ensureTargetChain();
+
+  const message   = buildWalletOwnershipMessage(account.address);
+  const signature = await signMessage(wagmiConfig, {
+    account: account.address,
+    message,
+  });
+
+  return { address: account.address, signature };
+}
+
+// ─── Contract writes ─────────────────────────────────────────────────────────
+
+/** ArenaEscrow.joinMatch — pay stakeWei as native BNB/tBNB. */
 export async function depositToEscrow(
   onChainMatchId: bigint,
   team: 0 | 1,
   stakeWei: bigint,
 ): Promise<string> {
-  const addr = import.meta.env.VITE_CONTRACT_ADDRESS;
-  if (!addr || String(addr).trim() === "") {
-    throw new Error("VITE_CONTRACT_ADDRESS is not set");
-  }
-  const eth = getInjectedEthereum();
-  if (!eth) throw new Error("MetaMask not found");
-  await ensureTargetChain(eth);
-  const provider = new BrowserProvider(eth);
-  const signer = await provider.getSigner();
-  const contract = new Contract(
-    addr,
-    ["function joinMatch(uint256 matchId, uint8 team) payable"],
-    signer,
-  );
-  const tx = await contract.joinMatch(onChainMatchId, team, { value: stakeWei });
-  await tx.wait();
-  return tx.hash;
+  await ensureTargetChain();
+  const hash = await writeContract(wagmiConfig, {
+    address:      getContractAddress(),
+    abi:          ARENA_ESCROW_ABI,
+    functionName: "joinMatch",
+    args:         [onChainMatchId, team],
+    value:        stakeWei,
+  });
+  await waitForTransactionReceipt(wagmiConfig, { hash });
+  return hash;
 }
 
 /**
- * ArenaEscrow.createMatch — host creates the match on-chain and pays their stake.
- * teamSize: 1 | 2 | 4 | 5   stakeEther: e.g. 0.1 (BNB)
- * Returns txHash + the on-chain matchId extracted from the MatchCreated event.
+ * ArenaEscrow.createMatch — host creates on-chain room, pays stake.
+ * Returns txHash + the matchId extracted from the MatchCreated event.
  */
 export async function createMatchOnChain(
   teamSize: number,
   stakeEther: number,
 ): Promise<{ txHash: string; onChainMatchId: bigint }> {
-  const addr = import.meta.env.VITE_CONTRACT_ADDRESS;
-  if (!addr?.trim() || !String(addr).startsWith("0x")) {
-    throw new Error("VITE_CONTRACT_ADDRESS is not set or invalid — expected a 0x… address");
-  }
-  const eth = getInjectedEthereum();
-  if (!eth) throw new Error("MetaMask not found");
-  await ensureTargetChain(eth);
-  const provider = new BrowserProvider(eth);
-  const signer = await provider.getSigner();
-  const stakeWei = parseEther(stakeEther.toFixed(8));
-  const contract = new Contract(
-    addr,
-    [
-      "function createMatch(uint8 teamSize) payable",
-      "event MatchCreated(uint256 indexed matchId, address indexed creator, uint8 teamSize, uint256 stakePerPlayer)",
-    ],
-    signer,
-  );
-  const tx = await contract.createMatch(teamSize, { value: stakeWei });
-  const receipt = await tx.wait();
-  if (!receipt) throw new Error("Transaction receipt not available");
+  await ensureTargetChain();
+  const stakeWei = parseEther(stakeEther.toFixed(8) as `${number}`);
+  const hash = await writeContract(wagmiConfig, {
+    address:      getContractAddress(),
+    abi:          ARENA_ESCROW_ABI,
+    functionName: "createMatch",
+    args:         [teamSize],
+    value:        stakeWei,
+  });
+  const receipt = await waitForTransactionReceipt(wagmiConfig, { hash });
 
-  let onChainMatchId = 0n;
-  for (const log of receipt.logs) {
-    try {
-      const parsed = contract.interface.parseLog(log);
-      if (parsed?.name === "MatchCreated") {
-        const arg0 = parsed.args[0];
-        onChainMatchId = typeof arg0 === "bigint" ? arg0 : BigInt(String(arg0));
-        break;
-      }
-    } catch {
-      /* not our event */
-    }
-  }
-  if (onChainMatchId === 0n) {
+  const logs = parseEventLogs({
+    abi:       ARENA_ESCROW_ABI,
+    eventName: "MatchCreated",
+    logs:      receipt.logs,
+  });
+
+  if (!logs.length || logs[0].args.matchId === undefined) {
     throw new Error("MatchCreated event not found in transaction receipt");
   }
-  return { txHash: String(tx.hash), onChainMatchId };
+
+  return { txHash: hash, onChainMatchId: logs[0].args.matchId };
 }
 
-/**
- * Native BNB balance of `address` on the current MetaMask chain (ether units, e.g. 0.5).
- * Used by the deposit modal before lock — must match `ensureTargetChain` (BSC testnet by default).
- */
-export async function getBnbBalance(address: string): Promise<number> {
-  const eth = getInjectedEthereum();
-  if (!eth) throw new Error("MetaMask not found");
-  await ensureTargetChain(eth);
-  const provider = new BrowserProvider(eth);
-  const checksummed = getAddress(address);
-  const raw = await provider.getBalance(checksummed);
-  return parseFloat(formatEther(raw));
-}
-
-/**
- * ArenaEscrow.cancelWaiting — any depositor calls this after WAITING_TIMEOUT (1 hour)
- * to recover funds when a match never filled. Useful for stuck test matches.
- */
-export async function cancelWaitingOnChain(onChainMatchId: bigint): Promise<string> {
-  const addr = import.meta.env.VITE_CONTRACT_ADDRESS;
-  if (!addr?.trim() || !String(addr).startsWith("0x")) throw new Error("VITE_CONTRACT_ADDRESS is not set or invalid");
-  const eth = getInjectedEthereum();
-  if (!eth) throw new Error("MetaMask not found");
-  await ensureTargetChain(eth);
-  const provider = new BrowserProvider(eth);
-  const signer = await provider.getSigner();
-  const contract = new Contract(addr, ["function cancelWaiting(uint256 matchId)"], signer);
-  const tx = await contract.cancelWaiting(onChainMatchId);
-  await tx.wait();
-  return tx.hash;
-}
-
-/** ArenaEscrow.cancelMatch — creator cancels a WAITING match and refunds all depositors. */
+/** ArenaEscrow.cancelMatch — creator refunds all WAITING depositors. */
 export async function cancelMatchOnChain(onChainMatchId: bigint): Promise<string> {
-  const addr = import.meta.env.VITE_CONTRACT_ADDRESS;
-  if (!addr?.trim() || !String(addr).startsWith("0x")) throw new Error("VITE_CONTRACT_ADDRESS is not set or invalid");
-  const eth = getInjectedEthereum();
-  if (!eth) throw new Error("MetaMask not found");
-  await ensureTargetChain(eth);
-  const provider = new BrowserProvider(eth);
-  const signer = await provider.getSigner();
-  const contract = new Contract(addr, ["function cancelMatch(uint256 matchId)"], signer);
-  const tx = await contract.cancelMatch(onChainMatchId);
-  await tx.wait();
-  return tx.hash;
+  await ensureTargetChain();
+  const hash = await writeContract(wagmiConfig, {
+    address:      getContractAddress(),
+    abi:          ARENA_ESCROW_ABI,
+    functionName: "cancelMatch",
+    args:         [onChainMatchId],
+  });
+  await waitForTransactionReceipt(wagmiConfig, { hash });
+  return hash;
 }
 
-/** ArenaEscrow.claimRefund — called by a player after match cancellation to recover their stake. */
+/** ArenaEscrow.cancelWaiting — any depositor after WAITING_TIMEOUT (1 hour). */
+export async function cancelWaitingOnChain(onChainMatchId: bigint): Promise<string> {
+  await ensureTargetChain();
+  const hash = await writeContract(wagmiConfig, {
+    address:      getContractAddress(),
+    abi:          ARENA_ESCROW_ABI,
+    functionName: "cancelWaiting",
+    args:         [onChainMatchId],
+  });
+  await waitForTransactionReceipt(wagmiConfig, { hash });
+  return hash;
+}
+
+/** ArenaEscrow.claimRefund — any player after 2-hour ACTIVE timeout. */
 export async function claimRefundFromEscrow(onChainMatchId: bigint): Promise<string> {
-  const addr = import.meta.env.VITE_CONTRACT_ADDRESS;
-  if (!addr?.trim()) throw new Error("VITE_CONTRACT_ADDRESS is not set");
-  const eth = getInjectedEthereum();
-  if (!eth) throw new Error("MetaMask not found");
-  await ensureTargetChain(eth);
-  const provider = new BrowserProvider(eth);
-  const signer = await provider.getSigner();
-  const contract = new Contract(
-    addr,
-    ["function claimRefund(uint256 matchId)"],
-    signer,
-  );
-  const tx = await contract.claimRefund(onChainMatchId);
-  await tx.wait();
-  return tx.hash;
+  await ensureTargetChain();
+  const hash = await writeContract(wagmiConfig, {
+    address:      getContractAddress(),
+    abi:          ARENA_ESCROW_ABI,
+    functionName: "claimRefund",
+    args:         [onChainMatchId],
+  });
+  await waitForTransactionReceipt(wagmiConfig, { hash });
+  return hash;
 }
 
-export async function connectMetaMaskAndSignOwnership(): Promise<{ address: string; signature: string }> {
-  const eth = getInjectedEthereum();
-  if (!eth) {
-    throw new Error("No injected wallet found. Install MetaMask (or another EIP-1193 wallet).");
-  }
-  await ensureTargetChain(eth);
-  const provider = new BrowserProvider(eth);
-  const signer = await provider.getSigner();
-  const address = getAddress(await signer.getAddress());
-  const message = buildWalletOwnershipMessage(address);
-  const signature = await signer.signMessage(message);
-  return { address, signature };
+// ─── Read ────────────────────────────────────────────────────────────────────
+
+/** Native BNB/tBNB balance of address on the Arena target chain. */
+export async function getBnbBalance(address: string): Promise<number> {
+  const data = await getBalance(wagmiConfig, {
+    address: getAddress(address as `0x${string}`),
+    chainId: getArenaTargetChainId(),
+  });
+  return parseFloat(formatEther(data.value));
+}
+
+// ─── Legacy type exports (kept for backwards-compat with any type imports) ──
+
+export interface EthereumProvider {
+  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
+  isMetaMask?: boolean;
+}
+
+/** @deprecated Use wagmiConfig directly — only kept for old type references. */
+export function getInjectedEthereum(): EthereumProvider | null {
+  const g = globalThis as unknown as { ethereum?: EthereumProvider };
+  return g.ethereum?.request ? g.ethereum : null;
 }
