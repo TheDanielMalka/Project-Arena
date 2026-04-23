@@ -378,3 +378,97 @@ class TestDbRoundTrip:
         verdict = c.evaluate()
         assert verdict.status == ConsensusStatus.REACHED
         assert verdict.agreed_result == "T_WIN"
+
+
+# ================================================================== #
+#  CS2 complementary-pair consensus (1v1, 2v2, 5v5)                  #
+#  winning team → "victory", losing team → "defeat"                  #
+# ================================================================== #
+
+def test_cs2_1v1_complementary_pair_reaches_consensus():
+    """1v1: one player sees VICTORY, the other sees DEFEAT — should REACH consensus."""
+    c = MatchConsensus(match_id="cs2_1v1", expected_players=2)
+    c.submit(wallet(1), make_output("victory"))
+    c.submit(wallet(2), make_output("defeat"))
+    verdict = c.evaluate()
+    assert verdict.status == ConsensusStatus.REACHED
+    assert verdict.agreed_result == "victory"
+    assert verdict.agreeing_players == 1
+    assert verdict.flagged_wallets == []
+
+
+def test_cs2_2v2_complementary_pair_reaches_consensus():
+    """2v2: two players see VICTORY, two see DEFEAT — should REACH consensus."""
+    c = MatchConsensus(match_id="cs2_2v2", expected_players=4)
+    for i in range(1, 3):
+        c.submit(wallet(i), make_output("victory"))
+    for i in range(3, 5):
+        c.submit(wallet(i), make_output("defeat"))
+    verdict = c.evaluate()
+    assert verdict.status == ConsensusStatus.REACHED
+    assert verdict.agreed_result == "victory"
+    assert verdict.agreeing_players == 2
+    assert verdict.flagged_wallets == []
+
+
+def test_cs2_5v5_complementary_pair_reaches_consensus():
+    """5v5: five players see VICTORY, five see DEFEAT — should REACH consensus."""
+    c = MatchConsensus(match_id="cs2_5v5", expected_players=10)
+    for i in range(1, 6):
+        c.submit(wallet(i), make_output("victory"))
+    for i in range(6, 11):
+        c.submit(wallet(i), make_output("defeat"))
+    verdict = c.evaluate()
+    assert verdict.status == ConsensusStatus.REACHED
+    assert verdict.agreed_result == "victory"
+    assert verdict.agreeing_players == 5
+    assert verdict.flagged_wallets == []
+
+
+def test_cs2_1v1_submit_returns_reached_after_second_vote():
+    """submit() return value reflects REACHED once the complementary pair is complete."""
+    c = MatchConsensus(match_id="cs2_1v1_submit", expected_players=2)
+    first  = c.submit(wallet(1), make_output("victory"))
+    second = c.submit(wallet(2), make_output("defeat"))
+    assert first  == ConsensusStatus.PENDING
+    assert second == ConsensusStatus.REACHED
+
+
+def test_cs2_both_claim_victory_falls_through_to_standard_logic():
+    """
+    If both 1v1 players submit 'victory' (one is lying), the complementary-pair
+    fast path is NOT taken (no 'defeat' vote). Standard majority gives 100% →
+    REACHED, which is handled normally (admin can audit evidence if needed).
+    """
+    c = MatchConsensus(match_id="cs2_both_victory", expected_players=2)
+    c.submit(wallet(1), make_output("victory"))
+    c.submit(wallet(2), make_output("victory"))
+    verdict = c.evaluate()
+    assert verdict.status == ConsensusStatus.REACHED
+    assert verdict.agreed_result == "victory"
+    assert verdict.flagged_wallets == []
+
+
+def test_cs2_2v2_cheat_detected_via_standard_path():
+    """
+    2v2 where one losing player submits 'victory' instead of 'defeat'.
+    Split is 3 victory / 1 defeat — NOT equal, so complementary-pair fast path
+    is skipped. Standard majority (3/4 = 75% ≥ 60%) flags the honest loser
+    who submitted 'defeat' as the outlier.
+    """
+    c = MatchConsensus(match_id="cs2_cheat_2v2", expected_players=4)
+    for i in range(1, 4):   # 3 submit "victory" (2 winners + 1 cheating loser)
+        c.submit(wallet(i), make_output("victory"))
+    c.submit(wallet(4), make_output("defeat"))  # honest loser
+    verdict = c.evaluate()
+    assert verdict.status == ConsensusStatus.REACHED
+    assert verdict.agreed_result == "victory"
+    assert wallet(4) in verdict.flagged_wallets
+
+
+def test_cs2_partial_votes_not_yet_complete_stays_pending():
+    """Complementary-pair fast path requires ALL expected votes — partial set stays PENDING."""
+    c = MatchConsensus(match_id="cs2_partial", expected_players=4)
+    c.submit(wallet(1), make_output("victory"))
+    c.submit(wallet(2), make_output("defeat"))
+    assert c._current_status() == ConsensusStatus.PENDING

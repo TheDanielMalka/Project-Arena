@@ -5,6 +5,7 @@ import { useUserStore } from "@/stores/userStore";
 import { useMatchStore } from "@/stores/matchStore";
 import { consumeLastLockEscrowFailureMessage, useWalletStore } from "@/stores/walletStore";
 import { useMatchPolling } from "@/hooks/useMatchPolling";
+import { usePublicRoomAlert } from "@/hooks/usePublicRoomAlert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -320,6 +321,7 @@ const MatchLobby = () => {
   const markInMatch  = useClientStore((s) => s.markInMatch);
   const markIdle     = useClientStore((s) => s.markIdle);
   useMatchPolling({ interval: 5000 });
+  usePublicRoomAlert();
   useMatchListLivePoll(user && token ? token : null);
   useActiveRoomServerSync(user && token ? token : null, myRoomMatchId);
 

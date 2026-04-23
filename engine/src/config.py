@@ -100,6 +100,9 @@ ARENA_SYSTEM_USER_ID = (
 # How often (seconds) the pool manager checks and refills open rooms.
 POOL_MANAGER_INTERVAL = int(os.getenv("POOL_MANAGER_INTERVAL", "30"))
 
+# ── Discord (optional — lobby room alerts) ───────────────────
+DISCORD_LOBBY_WEBHOOK_URL = os.getenv("DISCORD_LOBBY_WEBHOOK_URL", "")
+
 # ── App Settings ─────────────────────────────────────────────
 API_SECRET = os.getenv("API_SECRET", "change_me_in_production")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")

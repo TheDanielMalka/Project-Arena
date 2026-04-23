@@ -32,6 +32,7 @@ from src.vision.capture import capture_screen, crop_roi
 from src.vision.engine import VisionEngine, VisionEngineConfig
 from src.vision.rage_quit import RageQuitDetector
 from src.slack_alerts import slack_post
+from src.discord_alerts import discord_post
 from src.risk.limits import count_completed_high_stakes_matches, sum_daily_match_losses
 try:
     from src.contract import build_escrow_client
@@ -398,6 +399,12 @@ async def _public_pool_manager_loop() -> None:
                         logger.info(
                             "Pool: created public room code=%s game=%s mode=%s %s %.4f",
                             code, game_val, mode_val, sc, amount,
+                        )
+                        currency_label = "tBNB" if sc == "CRYPTO" else "AT"
+                        discord_post(
+                            f"🎮 **New room open** | {game_val} {mode_val} "
+                            f"| {amount:g} {currency_label} | Code: `{code}` "
+                            f"| https://project-arena.com/lobby"
                         )
 
                 session.commit()
@@ -4971,6 +4978,87 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
 
             session.commit()
 
+        # ── Match just went LIVE: generate team passwords + notify all players ──
+        if match_started:
+            import secrets as _sec2, string as _str2, json as _json2
+            _pwchars2 = _str2.ascii_letters + _str2.digits
+            team_a_password = "".join(_sec2.choice(_pwchars2) for _ in range(8))
+            team_b_password = "".join(_sec2.choice(_pwchars2) for _ in range(8))
+
+            try:
+                with SessionLocal() as _ms:
+                    _ms.execute(
+                        text(
+                            "UPDATE matches "
+                            "SET team_a_password = :pa, team_b_password = :pb "
+                            "WHERE id = :mid"
+                        ),
+                        {"mid": match_id, "pa": team_a_password, "pb": team_b_password},
+                    )
+
+                    _match_info = _ms.execute(
+                        text("SELECT mode, code FROM matches WHERE id = :mid"),
+                        {"mid": match_id},
+                    ).fetchone()
+                    _mode = _match_info[0] if _match_info else "?"
+                    _code = _match_info[1] if _match_info else match_id[:8]
+
+                    _players = _ms.execute(
+                        text(
+                            "SELECT u.id, u.username, mp.team "
+                            "FROM match_players mp "
+                            "JOIN users u ON u.id = mp.user_id "
+                            "WHERE mp.match_id = :mid AND mp.user_id IS NOT NULL"
+                        ),
+                        {"mid": match_id},
+                    ).fetchall()
+
+                    for _pid, _uname, _team in _players:
+                        _team_pw     = team_a_password if _team == "A" else team_b_password
+                        _discord_ch  = f"Arena-Match-Team-{_team}"
+                        _ms.execute(
+                            text(
+                                "INSERT INTO notifications "
+                                "  (user_id, type, title, message, metadata) "
+                                "VALUES (:uid, 'system', :title, :msg, :meta::jsonb)"
+                            ),
+                            {
+                                "uid":   str(_pid),
+                                "title": "⚔️ Match is LIVE!",
+                                "msg": (
+                                    f"{game} {_mode} · Team {_team} · "
+                                    f"CS2 password: {game_password} · "
+                                    f"Discord channel: {_discord_ch} · "
+                                    f"Team code: {_team_pw}"
+                                ),
+                                "meta": _json2.dumps({
+                                    "match_id":        match_id,
+                                    "match_code":      _code,
+                                    "game":            game,
+                                    "mode":            _mode,
+                                    "team":            _team,
+                                    "game_password":   game_password,
+                                    "team_password":   _team_pw,
+                                    "discord_channel": _discord_ch,
+                                    "discord_invite":  "https://discord.gg/arena",
+                                }),
+                            },
+                        )
+
+                    _ms.commit()
+
+                _a_count = sum(1 for p in _players if p[2] == "A")
+                _b_count = sum(1 for p in _players if p[2] == "B")
+                discord_post(
+                    f"⚔️ **Match LIVE** | {game} {_mode} "
+                    f"| {float(stake_amount):g} {stake_currency} "
+                    f"| Code: `{_code}` "
+                    f"| Team A ({_a_count}) vs Team B ({_b_count}) "
+                    f"| https://project-arena.com/lobby"
+                )
+            except Exception as _ne:
+                logger.error("match_start notifications failed (non-fatal): %s", _ne)
+
     except HTTPException:
         raise
     except Exception as exc:
@@ -4982,9 +5070,9 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
         "match_id":       match_id,
         "game":           game,
         "stake_currency": stake_currency,
-        "team":           assigned_team,   # "A" or "B" — assigned based on current roster
-        "started":        match_started,   # True when room just filled → in_progress
-        "game_password":  game_password,   # set only when this join triggered ACTIVE; None otherwise
+        "team":           assigned_team,
+        "started":        match_started,
+        "game_password":  game_password,
     }
 
 
@@ -10094,6 +10182,43 @@ class PlatformConfigUpdate(BaseModel):
     fraud_pair_window_hours:          str | None = None  # rolling window for pair query
     fraud_intentional_loss_min_count: str | None = None  # HAVING COUNT(*) >= this
     fraud_intentional_loss_days:      str | None = None  # lookback for intentional losing
+
+
+@app.get("/config/public-pool", status_code=200)
+async def get_public_pool_config():
+    """
+    Return all active public match pool configurations.
+
+    Public endpoint — no auth required (frontend reads this to populate lobby
+    filter options and stake-amount selectors instead of hardcoding values).
+
+    Response: list of { game, mode, stake_currency, stake_amount, min_open_rooms }
+    DB-ready: public_match_pool_config (migration 041).
+    """
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(
+                text(
+                    "SELECT game, mode, stake_currency, stake_amount, min_open_rooms "
+                    "FROM public_match_pool_config WHERE is_active = TRUE "
+                    "ORDER BY game, mode, stake_currency, stake_amount"
+                )
+            ).fetchall()
+        return {
+            "configs": [
+                {
+                    "game":           r[0],
+                    "mode":           r[1],
+                    "stake_currency": r[2],
+                    "stake_amount":   float(r[3]),
+                    "min_open_rooms": r[4],
+                }
+                for r in rows
+            ]
+        }
+    except Exception as exc:
+        logger.error("get_public_pool_config error: %s", exc)
+        raise HTTPException(500, "Failed to fetch pool config")
 
 
 @app.get("/platform/config", status_code=200)
