@@ -304,10 +304,15 @@ const MatchLobby = () => {
   } = useMatchStore();
   const { lockEscrow, cancelEscrow, connectedAddress, connectWallet: linkMetaMaskForMatch } = useWalletStore();
   const canPlay      = useClientStore((s) => s.canPlayForUser(websiteUserId));
-  /** CRYPTO matches need MetaMask; AT stakes use server AT balance (still need client for play). */
+  /** CRYPTO matches need an active wagmi session; AT stakes use server AT balance. */
   const canPlayStaked = canPlay && !!connectedAddress;
+  /** Address to display in UI — active session preferred, falls back to DB-linked address. */
+  const displayAddr = connectedAddress ?? user?.walletAddress ?? null;
   const stakedActionTitle =
-    !connectedAddress ? "Connect Wallet (MetaMask, BSC Testnet)" : !canPlay ? "Arena Client not connected" : undefined;
+    !user?.walletAddress ? "Connect Wallet (MetaMask, BSC Testnet)"
+    : !connectedAddress  ? "Reconnect wallet session to sign transactions"
+    : !canPlay           ? "Arena Client not connected"
+    : undefined;
   const canJoinAtStake = canPlay;
   const clientStatus = useClientStore((s) => s.status);
   const clientVersion = useClientStore((s) => s.version);
@@ -1148,11 +1153,11 @@ const MatchLobby = () => {
             icon: Wallet,
             label: stakeIsAt ? "Wallet (optional for AT)" : "Wallet connected",
             detail: stakeIsAt
-              ? connectedAddress
-                ? `${connectedAddress.slice(0, 6)}...${connectedAddress.slice(-4)}`
+              ? displayAddr
+                ? `${displayAddr.slice(0, 6)}...${displayAddr.slice(-4)}`
                 : "AT stake uses your Arena balance"
-              : connectedAddress
-                ? `${connectedAddress.slice(0, 6)}...${connectedAddress.slice(-4)}`
+              : displayAddr
+                ? `${displayAddr.slice(0, 6)}...${displayAddr.slice(-4)}`
                 : "Not connected",
             ok: checkResults?.wallet ?? null,
           },
@@ -1963,7 +1968,7 @@ const MatchLobby = () => {
             <p className="text-[10px] text-muted-foreground uppercase tracking-[0.18em] flex items-center gap-1.5">
               <span className="w-1 h-3 rounded-full bg-arena-cyan inline-block" /> Join or Create
             </p>
-            {user && !connectedAddress && (
+            {user && !user.walletAddress && (
               <div className="rounded-xl border border-arena-gold/30 bg-arena-gold/5 px-3 py-2.5 flex flex-col sm:flex-row sm:items-center gap-2">
                 <div className="flex items-start gap-2 flex-1 min-w-0">
                   <Wallet className="h-4 w-4 text-arena-gold shrink-0 mt-0.5" />

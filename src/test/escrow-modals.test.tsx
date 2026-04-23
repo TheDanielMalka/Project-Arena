@@ -218,6 +218,9 @@ describe("WithdrawATModal", () => {
 
   it("disables the withdraw button when no wallet is connected", () => {
     resetWalletStore({ connectedAddress: null });
+    useUserStore.setState((s) =>
+      s.user ? { user: { ...s.user, walletAddress: null, walletShort: "" } } : {}
+    );
     render(<WithdrawATModal open onClose={() => {}} />);
     expect(screen.getByText(/no wallet connected/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /withdraw/i })).toBeDisabled();

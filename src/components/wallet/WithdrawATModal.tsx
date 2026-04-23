@@ -31,7 +31,7 @@ interface WithdrawATModalProps {
 
 // ── Component ──────────────────────────────────────────────────────────────
 export function WithdrawATModal({ open, onClose, onSuccess }: WithdrawATModalProps) {
-  const { token } = useUserStore();
+  const { token, user } = useUserStore();
   const { connectedAddress, atBalance } = useWalletStore();
 
   const [atInput, setAtInput] = useState("");
@@ -39,15 +39,17 @@ export function WithdrawATModal({ open, onClose, onSuccess }: WithdrawATModalPro
 
   if (!open) return null;
 
-  const atParsed  = parseInt(atInput, 10) || 0;
-  const usdtValue = atParsed > 0 && atParsed % AT_UNIT === 0 ? atParsed / AT_RATE_PER_DOLLAR : null;
+  const walletAddr  = user?.walletAddress ?? connectedAddress ?? null;
+  const atParsed    = parseInt(atInput, 10) || 0;
+  const usdtValue   = atParsed > 0 && atParsed % AT_UNIT === 0 ? atParsed / AT_RATE_PER_DOLLAR : null;
 
   const validAmount = atParsed >= AT_UNIT && atParsed % AT_UNIT === 0 && atParsed <= AT_DAILY_LIMIT;
   const hasBalance  = atParsed <= (atBalance ?? 0);
-  const canSubmit   = validAmount && hasBalance && !!connectedAddress && !!token && !busy;
+  // AT withdrawal is server-to-wallet — only destination address (DB) required, no active signing session.
+  const canSubmit   = validAmount && hasBalance && !!walletAddr && !!token && !busy;
 
-  const shortAddr = connectedAddress
-    ? `${connectedAddress.slice(0, 8)}...${connectedAddress.slice(-6)}`
+  const shortAddr = walletAddr
+    ? `${walletAddr.slice(0, 8)}...${walletAddr.slice(-6)}`
     : null;
 
   const handleWithdraw = async () => {

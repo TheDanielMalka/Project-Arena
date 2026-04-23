@@ -79,8 +79,9 @@ const WalletPage = () => {
 
   // Derived
   const networkCfg      = NETWORKS[selectedNetwork];
-  const shortAddr       = connectedAddress
-    ? `${connectedAddress.slice(0, 8)}...${connectedAddress.slice(-6)}`
+  const walletAddr      = user?.walletAddress ?? connectedAddress ?? null;
+  const shortAddr       = walletAddr
+    ? `${walletAddr.slice(0, 8)}...${walletAddr.slice(-6)}`
     : null;
 
   const filteredTx = transactions.filter((tx) => {
@@ -108,8 +109,8 @@ const WalletPage = () => {
   const totalLost   = transactions.filter((t) => t.type === "match_loss").reduce((s, t) => s + t.usdValue, 0);
 
   const copyAddress = async () => {
-    if (!connectedAddress) return;
-    const ok = await copyTextToClipboard(connectedAddress);
+    if (!walletAddr) return;
+    const ok = await copyTextToClipboard(walletAddr);
     if (ok) {
       setCopiedAddress(true);
       toast({ title: "Address Copied", description: "Wallet address copied to clipboard." });
@@ -136,7 +137,7 @@ const WalletPage = () => {
       {/* DB-ready: wagmi useBalance({ address, token: USDT_CONTRACT }) provides usdtBalance */}
 
       {/* ── Not connected banner ── */}
-      {!connectedAddress && (
+      {!walletAddr && (
         <div className="rounded-xl border border-arena-gold/30 bg-arena-gold/5 px-4 py-3 flex items-center gap-3">
           <WifiOff className="h-4 w-4 text-arena-gold shrink-0" />
           <div className="flex-1">
@@ -192,7 +193,7 @@ const WalletPage = () => {
             </CardHeader>
             <CardContent className="px-4 pb-4 space-y-3">
               {/* Address */}
-              {connectedAddress ? (
+              {walletAddr ? (
                 <>
                 <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-secondary/40 px-3 py-2">
                   <div className="flex-1 min-w-0">
@@ -310,8 +311,8 @@ const WalletPage = () => {
                 size="sm"
                 variant="outline"
                 className="w-full text-xs font-display border-arena-cyan/30 text-arena-cyan hover:bg-arena-cyan/10"
-                disabled={!connectedAddress}
-                title={!connectedAddress ? "Connect wallet to withdraw" : undefined}
+                disabled={!walletAddr}
+                title={!walletAddr ? "Connect wallet to withdraw" : undefined}
                 onClick={() => setWithdrawATOpen(true)}
               >
                 <Flame className="mr-1.5 h-3.5 w-3.5" /> Withdraw (AT → BNB)
