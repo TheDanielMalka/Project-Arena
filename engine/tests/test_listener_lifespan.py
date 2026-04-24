@@ -66,7 +66,7 @@ class TestListenerLifespan:
         with (
             patch("main.build_escrow_client", return_value=mock_client),
             patch("asyncio.to_thread", return_value=_never_end()),
-            patch("main.RageQuitDetector") as MockRQ,
+            patch("main.DisconnectMonitor") as MockRQ,
         ):
             MockRQ.return_value.run = AsyncMock()
             _run(_drain_lifespan(main.app))
@@ -79,7 +79,7 @@ class TestListenerLifespan:
 
         with (
             patch("main.build_escrow_client", return_value=None),
-            patch("main.RageQuitDetector") as MockRQ,
+            patch("main.DisconnectMonitor") as MockRQ,
         ):
             MockRQ.return_value.run = AsyncMock()
             _run(_drain_lifespan(main.app))
@@ -115,7 +115,7 @@ class TestListenerLifespan:
 
         def _fake_create_task(coro, **kw):
             call_count[0] += 1
-            # 1st call = RageQuitDetector task (keep real)
+            # 1st call = DisconnectMonitor task (keep real)
             # 2nd call = listener task → return fake so we can spy on .cancel()
             if call_count[0] == 2:
                 coro.close()  # discard coroutine cleanly
@@ -126,7 +126,7 @@ class TestListenerLifespan:
             patch("main.build_escrow_client", return_value=mock_client),
             patch("asyncio.to_thread", return_value=_never_end()),
             patch("asyncio.create_task", side_effect=_fake_create_task),
-            patch("main.RageQuitDetector") as MockRQ,
+            patch("main.DisconnectMonitor") as MockRQ,
         ):
             MockRQ.return_value.run = AsyncMock()
             _run(_drain_lifespan(main.app))
