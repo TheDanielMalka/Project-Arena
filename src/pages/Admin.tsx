@@ -2341,7 +2341,7 @@ const Admin = () => {
                         )}>{h.status}</Badge>
                         {h.status === "pending" && (
                           <Button size="sm" variant="outline" className="h-6 px-2.5 text-[10px] font-display border-primary/40 text-primary hover:bg-primary/10"
-                            onClick={() => { setSelectedHolding(h); setHoldingResolution("resolved"); setHoldingNotes(""); }}>
+                            onClick={() => { setSelectedHolding(h); setHoldingResolution("award_a"); setHoldingNotes(""); }}>
                             <Gavel className="mr-1 h-3 w-3" /> Resolve
                           </Button>
                         )}
