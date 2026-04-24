@@ -125,6 +125,7 @@ const STATUS_CONFIG: Record<MatchStatus, { label: string; pillClass: string }> =
   completed:   { label: "Completed", pillClass: "bg-muted text-muted-foreground border-border" },
   cancelled:   { label: "Cancelled", pillClass: "bg-destructive/20 text-destructive border-destructive/40" },
   disputed:    { label: "Disputed",  pillClass: "bg-arena-orange/20 text-arena-orange border-arena-orange/40" },
+  tied:        { label: "Tie",       pillClass: "bg-arena-gold/20 text-arena-gold border-arena-gold/40" },
 };
 
 // ── Dropdown component ────────────────────────────────────────────────────
@@ -315,7 +316,7 @@ const History = () => {
     s === "all" ? rangedMatches.length : rangedMatches.filter((m) => m.status === s).length;
 
   // No "waiting" in history status filters
-  const STATUSES: (MatchStatus | "all")[] = ["all", "completed", "cancelled", "disputed"];
+  const STATUSES: (MatchStatus | "all")[] = ["all", "completed", "tied", "cancelled", "disputed"];
 
   const openPlayerPopover = (e: React.MouseEvent, slotValue: string) => {
     e.stopPropagation();
@@ -509,6 +510,7 @@ const History = () => {
           {paged.map((m) => {
             const isWin  = m.status === "completed" && m.winnerId === myId;
             const isLoss = m.status === "completed" && !!m.winnerId && m.winnerId !== myId;
+            const isTie  = m.status === "tied";
             const isLive = m.status === "in_progress";
             const isExpanded = expandedMatchId === m.id;
             const maxPerTeam = m.maxPerTeam ?? Math.max(1, Math.ceil(m.maxPlayers / 2));
@@ -521,6 +523,8 @@ const History = () => {
               ? "border-l-primary"
               : isLoss
               ? "border-l-destructive"
+              : isTie
+              ? "border-l-arena-gold"
               : isLive
               ? "border-l-arena-cyan"
               : "border-l-border";
@@ -553,12 +557,17 @@ const History = () => {
                               LOSS
                             </span>
                           )}
+                          {isTie && (
+                            <span className="text-[10px] font-display font-bold px-1.5 py-0.5 rounded bg-arena-gold/20 text-arena-gold border border-arena-gold/30">
+                              TIE
+                            </span>
+                          )}
                           {isLive && (
                             <span className="text-[10px] font-display font-bold px-1.5 py-0.5 rounded bg-arena-cyan/20 text-arena-cyan border border-arena-cyan/30 animate-pulse">
                               LIVE
                             </span>
                           )}
-                          {!isWin && !isLoss && !isLive && (
+                          {!isWin && !isLoss && !isTie && !isLive && (
                             <Badge variant="outline" className={`text-[10px] ${statusCfg.pillClass}`}>
                               {statusCfg.label}
                             </Badge>
@@ -593,7 +602,7 @@ const History = () => {
 
                     <div className="text-right flex items-center gap-2 shrink-0">
                       <div>
-                        <p className={`font-display text-lg font-bold ${isWin ? "text-primary" : isLoss ? "text-destructive" : "text-arena-gold"}`}>
+                        <p className={`font-display text-lg font-bold ${isWin ? "text-primary" : isLoss ? "text-destructive" : isTie ? "text-arena-gold" : "text-arena-gold"}`}>
                           {fmtBet(m)}
                         </p>
                         <p className="text-[10px] text-muted-foreground font-mono">{m.id.slice(0, 8)}</p>
@@ -611,12 +620,13 @@ const History = () => {
                       <div className={`rounded-lg p-3 flex items-center justify-between ${
                         isWin  ? "bg-primary/10 border border-primary/20"
                         : isLoss ? "bg-destructive/10 border border-destructive/20"
+                        : isTie ? "bg-arena-gold/10 border border-arena-gold/20"
                         : "bg-secondary/30 border border-border"
                       }`}>
                         <div className="flex items-center gap-2">
-                          <Trophy className={`h-4 w-4 ${isWin ? "text-primary" : isLoss ? "text-destructive" : "text-arena-gold"}`} />
+                          <Trophy className={`h-4 w-4 ${isWin ? "text-primary" : isLoss ? "text-destructive" : isTie ? "text-arena-gold" : "text-arena-gold"}`} />
                           <span className="text-sm font-display font-bold">
-                            {isWin ? "Victory" : isLoss ? "Defeat" : m.status === "in_progress" ? "In Progress" : m.status.replace("_", " ")}
+                            {isWin ? "Victory" : isLoss ? "Defeat" : isTie ? "Draw" : m.status === "in_progress" ? "In Progress" : m.status.replace("_", " ")}
                           </span>
                         </div>
                         <div className="text-xs text-muted-foreground">

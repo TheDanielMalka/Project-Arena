@@ -1048,8 +1048,8 @@ class MatchMonitor:
                             logger.debug(f"Match status: {_match_status}")
                         _last_status_poll = now
 
-                    # ── Completed / cancelled — 60s cooldown then clear ───────
-                    if _match_status in ("completed", "cancelled"):
+                    # ── Completed / tied / cancelled — 60s cooldown then clear ──
+                    if _match_status in ("completed", "cancelled", "tied"):
                         if _match_completed_at is None:
                             _match_completed_at = time.time()
                             logger.info(
@@ -2624,6 +2624,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             "starting":    BRAND["warning"],
             "in_progress": BRAND["accent"],
             "completed":   BRAND["text_muted"],
+            "tied":        BRAND["warning"],
         }
         status_color = status_colors.get(status, BRAND["text_muted"])
         status_text  = status.replace("_", " ").upper() + "  ·  PLAYERS"
@@ -2637,6 +2638,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             "starting":    "YOU'RE IN THE ROOM",
             "in_progress": "MATCH IN PROGRESS",
             "completed":   "MATCH ENDED",
+            "tied":        "MATCH DRAW",
         }
         ctk.CTkLabel(
             hdr_row, text=ctx_map.get(status, "MATCH_SESSION · LIVE"),
@@ -2786,7 +2788,11 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         if result:
             res_val   = (result.get("result") or "").upper()
             score_val = result.get("score") or ""
-            res_color = BRAND["warning"] if res_val == "VICTORY" else BRAND["accent"]
+            res_color = (
+                BRAND["warning"] if res_val == "VICTORY"
+                else BRAND["warning"] if res_val == "TIE"
+                else BRAND["accent"]
+            )
             tail = f"{res_val}" + (f" ({score_val})" if score_val else "")
             res_text = f"Match ended — result: {tail}"
             res_banner = ctk.CTkLabel(lobby_outer, text=res_text,
@@ -2794,10 +2800,13 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                                       text_color=res_color)
             res_banner.pack(anchor="w", padx=0, pady=(0, 10))
             lobby_body_ref.append(res_banner)
-        elif status == "completed":
-            wait_lbl = ctk.CTkLabel(lobby_outer, text="Match ended — fetching result…",
-                                     font=ctk.CTkFont(size=11),
-                                     text_color=BRAND["text_muted"])
+        elif status in ("completed", "tied"):
+            wait_lbl = ctk.CTkLabel(
+                lobby_outer,
+                text="Match ended — fetching result…" if status == "completed" else "Draw — fetching result…",
+                font=ctk.CTkFont(size=11),
+                text_color=BRAND["text_muted"],
+            )
             wait_lbl.pack(anchor="w", padx=0, pady=(0, 10))
             lobby_body_ref.append(wait_lbl)
 
@@ -3183,10 +3192,10 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             _rebuild_lobby_body(data, _lobby_result_cache[0])
 
             clear_mid = data.get("match_id") or mid
-            if st_hb == "completed":
+            if st_hb in ("completed", "tied"):
                 _schedule_completed_lobby_clear(clear_mid)
 
-            if data.get("status") == "completed" and _lobby_result_cache[0] is None:
+            if data.get("status") in ("completed", "tied") and _lobby_result_cache[0] is None:
                 def _fetch_result():
                     res = monitor.engine.get_match_status(mid, token)
                     if res:

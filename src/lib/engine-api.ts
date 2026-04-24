@@ -73,7 +73,7 @@ export interface EngineReadiness {
 
 export interface EngineMatchStatus {
   id:        string;
-  status:    "waiting" | "in_progress" | "completed" | "cancelled" | "disputed";
+  status:    "waiting" | "in_progress" | "completed" | "cancelled" | "disputed" | "tied";
   winnerId?: string;
 }
 
@@ -474,6 +474,7 @@ function normalizeEngineMatchStatus(status: string): EngineMatchStatus["status"]
     "completed",
     "cancelled",
     "disputed",
+    "tied",
   ];
   return (allowed.includes(status as EngineMatchStatus["status"])
     ? status
@@ -1926,7 +1927,7 @@ function normalizeClientGame(g: string | undefined): Game {
 function normalizeMatchListStatus(s: string | undefined): MatchStatus {
   const x = (s ?? "waiting").toLowerCase();
   if (x === "pending") return "in_progress";
-  const allowed: MatchStatus[] = ["waiting", "in_progress", "completed", "cancelled", "disputed"];
+  const allowed: MatchStatus[] = ["waiting", "in_progress", "completed", "cancelled", "disputed", "tied"];
   return (allowed.includes(x as MatchStatus) ? x : "waiting") as MatchStatus;
 }
 

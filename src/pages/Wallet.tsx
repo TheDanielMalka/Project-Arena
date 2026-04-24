@@ -41,6 +41,8 @@ const txTypeConfig: Record<TransactionType, { label: string; color: string; sign
   at_purchase:    { label: "AT Purchased",    color: "text-arena-purple",  sign: "−", icon: "⚡" },
   at_spend:       { label: "AT Spent",        color: "text-arena-orange",  sign: "−", icon: "🛒" },
   at_withdrawal:  { label: "AT Withdrawal",   color: "text-arena-cyan",    sign: "−", icon: "🔥" },
+  tie_refund:     { label: "Tie Refund",      color: "text-arena-cyan",    sign: "+", icon: "🤝" },
+
 };
 
 const txStatusConfig: Record<TransactionStatus, { label: string; color: string }> = {

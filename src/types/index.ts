@@ -1,12 +1,12 @@
 // ─── Core Enums ──────────────────────────────────────────────
 
-export type MatchStatus = "waiting" | "in_progress" | "completed" | "cancelled" | "disputed";
+export type MatchStatus = "waiting" | "in_progress" | "completed" | "cancelled" | "disputed" | "tied";
 export type MatchType = "public" | "custom";
 export type MatchMode = "1v1" | "2v2" | "4v4" | "5v5";
 export type Game = "CS2" | "Valorant" | "Fortnite" | "Apex Legends" | "PUBG" | "COD" | "League of Legends";
 
 // at_purchase = bought AT with USDT | at_spend = spent AT in Forge | at_withdrawal = burned AT → BNB sent to wallet
-export type TransactionType = "match_win" | "match_loss" | "fee" | "refund" | "escrow_lock" | "escrow_release" | "at_purchase" | "at_spend" | "at_withdrawal";
+export type TransactionType = "match_win" | "match_loss" | "fee" | "refund" | "tie_refund" | "escrow_lock" | "escrow_release" | "at_purchase" | "at_spend" | "at_withdrawal";
 export type TransactionStatus = "completed" | "pending" | "failed" | "cancelled";
 
 export type DisputeStatus = "open" | "reviewing" | "resolved" | "escalated";

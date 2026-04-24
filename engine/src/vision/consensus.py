@@ -44,7 +44,7 @@ class ConsensusStatus(Enum):
 @dataclass
 class PlayerSubmission:
     wallet_address: str
-    result:         Optional[str]       # "victory" | "defeat" | None
+    result:         Optional[str]       # "victory" | "defeat" | "tie" | None
     confidence:     float
     players:        list[str]
     agents:         list[str]           = field(default_factory=list)
@@ -56,7 +56,7 @@ class PlayerSubmission:
 @dataclass
 class ConsensusResult:
     status:           ConsensusStatus
-    agreed_result:    Optional[str]     # "victory" (Team A) | "defeat" (Team A) | None
+    agreed_result:    Optional[str]     # "victory" (Team A) | "defeat" (Team A) | "tie" | None
     winning_team:     Optional[str]     # "team_a" | "team_b" | None
     is_cross_validated: bool            # True when both teams confirmed the outcome
     total_players:    int
@@ -207,16 +207,42 @@ class MatchConsensus:
 
         a_victory = sum(1 for s in a_subs if s.result == "victory")
         a_defeat  = sum(1 for s in a_subs if s.result == "defeat")
+        a_tie     = sum(1 for s in a_subs if s.result == "tie")
         b_victory = sum(1 for s in b_subs if s.result == "victory")
         b_defeat  = sum(1 for s in b_subs if s.result == "defeat")
+        b_tie     = sum(1 for s in b_subs if s.result == "tie")
 
         a_total = len(a_subs) or 1   # avoid div/0
         b_total = len(b_subs) or 1
 
         a_maj_victory = a_victory / a_total > 0.5
         a_maj_defeat  = a_defeat  / a_total > 0.5
+        a_maj_tie     = a_tie     / a_total > 0.5
         b_maj_victory = b_victory / b_total > 0.5
         b_maj_defeat  = b_defeat  / b_total > 0.5
+        b_maj_tie     = b_tie     / b_total > 0.5
+
+        # Both teams reported a draw — cross-validated tie
+        if a_maj_tie and b_maj_tie:
+            flagged = [
+                s.wallet_address for s in submissions
+                if s.result != "tie"
+            ]
+            log.info(
+                "consensus | match=%s REACHED (cross-validated) TIE "
+                "a_tie=%d/%d b_tie=%d/%d flagged=%s",
+                self.match_id, a_tie, len(a_subs), b_tie, len(b_subs), flagged,
+            )
+            return ConsensusResult(
+                status=ConsensusStatus.REACHED,
+                agreed_result="tie",
+                winning_team=None,
+                is_cross_validated=True,
+                total_players=len(submissions),
+                agreeing_players=a_tie + b_tie,
+                flagged_wallets=flagged,
+                submissions=submissions,
+            )
 
         # Both teams confirmed — strongest signal
         if a_maj_victory and b_maj_defeat:

@@ -550,3 +550,95 @@ def test_cs2_partial_without_teams_stays_pending():
     c.submit(wallet(1), make_output("victory"))
     c.submit(wallet(2), make_output("defeat"))
     assert c._current_status() == ConsensusStatus.PENDING
+
+
+# ── TIE detection — cross-team and majority ──────────────────────── #
+
+def test_cross_1v1_tie_both_submit_tie():
+    """1v1 draw: both players submit 'tie' → cross-validated TIE."""
+    c, a, b = _cross("1v1_tie", 1, 1)
+    c.submit(a[0], make_output("tie"))
+    c.submit(b[0], make_output("tie"))
+    verdict = c.evaluate()
+    assert verdict.status == ConsensusStatus.REACHED
+    assert verdict.agreed_result == "tie"
+    assert verdict.winning_team is None
+    assert verdict.is_cross_validated is True
+    assert verdict.agreeing_players == 2
+    assert verdict.flagged_wallets == []
+
+
+def test_cross_2v2_tie_all_four_submit_tie():
+    """2v2 draw: all 4 players submit 'tie' → cross-validated TIE."""
+    c, a, b = _cross("2v2_tie", 2, 2)
+    for w in a + b:
+        c.submit(w, make_output("tie"))
+    verdict = c.evaluate()
+    assert verdict.status == ConsensusStatus.REACHED
+    assert verdict.agreed_result == "tie"
+    assert verdict.winning_team is None
+    assert verdict.is_cross_validated is True
+    assert verdict.flagged_wallets == []
+
+
+def test_cross_5v5_tie_majority_both_teams():
+    """5v5: 3/5 of each team submit 'tie' (>50%) → cross-validated TIE."""
+    c, a, b = _cross("5v5_tie", 5, 5)
+    for w in a[:3]:
+        c.submit(w, make_output("tie"))
+    for w in a[3:]:
+        c.submit(w, make_output("victory"))  # minority
+    for w in b[:3]:
+        c.submit(w, make_output("tie"))
+    for w in b[3:]:
+        c.submit(w, make_output("defeat"))  # minority
+    verdict = c.evaluate()
+    assert verdict.status == ConsensusStatus.REACHED
+    assert verdict.agreed_result == "tie"
+    assert verdict.winning_team is None
+    assert verdict.is_cross_validated is True
+    # Players who didn't vote 'tie' are flagged
+    assert len(verdict.flagged_wallets) == 4
+
+
+def test_cross_tie_with_one_dissenter_still_reaches():
+    """2v2: 1 player per side dissents but majority (2/2 on each... wait, 1v1 per team: 1/1 is tie).
+    Revisited: 3v3 where 2/3 of each team vote 'tie' → majority (2/3 > 50%) → TIE reached."""
+    c, a, b = _cross("3v3_tie_majority", 3, 3)
+    c.submit(a[0], make_output("tie"))
+    c.submit(a[1], make_output("tie"))
+    c.submit(a[2], make_output("victory"))  # dissenter
+    c.submit(b[0], make_output("tie"))
+    c.submit(b[1], make_output("tie"))
+    c.submit(b[2], make_output("defeat"))   # dissenter
+    verdict = c.evaluate()
+    assert verdict.status == ConsensusStatus.REACHED
+    assert verdict.agreed_result == "tie"
+    assert verdict.winning_team is None
+    assert verdict.is_cross_validated is True
+    # The two dissenters are flagged
+    assert a[2] in verdict.flagged_wallets
+    assert b[2] in verdict.flagged_wallets
+
+
+def test_cross_tie_split_team_b_stays_pending():
+    """2v2: Team A all 'tie', Team B 1/2 'tie' 1/2 'victory' → not majority → PENDING."""
+    c, a, b = _cross("2v2_tie_split", 2, 2)
+    for w in a:
+        c.submit(w, make_output("tie"))
+    c.submit(b[0], make_output("tie"))
+    c.submit(b[1], make_output("victory"))   # breaks Team B tie majority
+    verdict = c.evaluate()
+    assert verdict.status == ConsensusStatus.PENDING
+
+
+def test_majority_fallback_tie_reaches_with_75_pct():
+    """Without team wallets: 3/4 vote 'tie' (75%) → REACHED via majority fallback."""
+    c = MatchConsensus(match_id="fallback_tie", expected_players=4)
+    for i in range(3):
+        c.submit(wallet(i + 1), make_output("tie"))
+    c.submit(wallet(4), make_output("victory"))  # minority
+    verdict = c.evaluate()
+    assert verdict.status == ConsensusStatus.REACHED
+    assert verdict.agreed_result == "tie"
+    assert verdict.winning_team is None  # no team info in majority fallback

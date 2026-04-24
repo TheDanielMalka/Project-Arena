@@ -57,6 +57,7 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
  *   MatchState.FINISHED  → 'completed'
  *   MatchState.REFUNDED  → 'cancelled'   (timeout — vision engine offline)
  *   MatchState.CANCELLED → 'cancelled'   (creator cancelled OR waiting timeout)
+ *   MatchState.TIED      → 'tied'        (draw — both sides refunded minus fee)
  *
  * ── DB alignment (transactions.tx_type) ────────────────────────────────────────
  *   MatchCreated    event → 'crypto_escrow_lock'  for creator (teamA[0])
@@ -64,6 +65,7 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
  *   WinnerDeclared  event → 'match_win'           for each winner + 'fee' for platform
  *   MatchRefunded   event → 'refund'              for all players
  *   MatchCancelled  event → 'refund'              for all depositors
+ *   TieDeclared     event → 'tie_refund'          for each player + 'fee' for platform
  *
  * NOTE: 'crypto_escrow_lock' is intentionally distinct from AT's 'escrow_lock'.
  *   _check_daily_stake_limit() in engine/main.py must count BOTH types toward the daily cap.
@@ -115,7 +117,8 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
         ACTIVE,     // all players deposited, match in progress       → DB: 'in_progress'
         FINISHED,   // winner declared, funds paid out               → DB: 'completed'
         REFUNDED,   // timeout — stakes returned to all players      → DB: 'cancelled'
-        CANCELLED   // creator cancelled OR waiting timeout          → DB: 'cancelled'
+        CANCELLED,  // creator cancelled OR waiting timeout          → DB: 'cancelled'
+        TIED        // draw — all players refunded minus fee         → DB: 'tied'
     }
 
     // ── Match data ───────────────────────────────────────────────────────────
@@ -183,6 +186,11 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
     event WinnerDeclared (uint256 indexed matchId, uint8 winningTeam, uint256 payoutPerWinner, uint256 fee);
     event MatchRefunded  (uint256 indexed matchId);
     event MatchCancelled (uint256 indexed matchId, address indexed cancelledBy);
+    // Emitted when Vision Engine confirms a draw (8-8 Wingman / 12-12 Competitive / 15-15 Premier).
+    // DB sync: UPDATE matches SET status='tied', ended_at=NOW()
+    //          For each player: INSERT transactions(type='tie_refund', amount=refundPerPlayer)
+    //          INSERT transactions(type='fee', amount=fee) for owner
+    event TieDeclared    (uint256 indexed matchId, uint256 refundPerPlayer, uint256 fee);
     event OracleUpdated  (address indexed oldOracle, address indexed newOracle);
     // Oracle rotation (2-step). Listener: platform ops dashboard should
     // alert on any OracleProposed that it did not itself initiate.
@@ -473,6 +481,60 @@ contract ArenaEscrow is ReentrancyGuard, Ownable, Pausable {
             uint256 amount = (i == 0) ? payoutPerWinner + dust : payoutPerWinner;
             _payOrCredit(winners[i], amount);
         }
+        _payOrCredit(owner(), fee);
+    }
+
+    /**
+     * @notice Vision Engine declares a draw after the match ends in a tie
+     *         (Wingman 8-8 / Competitive 12-12 / Premier 15-15).
+     *         Refunds all players their stake minus the platform fee.
+     *         Fee math mirrors declareWinner: feePercent% of the total pot
+     *         goes to the owner; the remainder is split equally among all
+     *         players. Integer dust goes to teamA[0].
+     *
+     * DB side (Vision Engine handles on TieDeclared event):
+     *   UPDATE matches SET status='tied', winner_id=NULL, ended_at=NOW()
+     *   For each player: INSERT INTO transactions (type='tie_refund', amount=refundPerPlayer)
+     *                    UPDATE user_stats SET ties=ties+1, matches_played=matches_played+1
+     *                    UPDATE user_balances: release in_escrow, credit refund
+     *   INSERT INTO transactions (type='fee', amount=fee)
+     *
+     * @param matchId  on_chain_match_id of the tied match.
+     */
+    function declareTie(uint256 matchId)
+        external
+        onlyOracle
+        nonReentrant
+        whenNotPaused
+        matchExists(matchId)
+    {
+        Match storage m = matches[matchId];
+
+        require(m.state == MatchState.ACTIVE, "Match not active");
+
+        uint256 totalPlayers    = uint256(m.teamSize) * 2;
+        uint256 totalPot        = m.stakePerPlayer * totalPlayers;
+        uint256 fee             = (totalPot * feePercent) / 100;
+        uint256 refundPool      = totalPot - fee;
+        uint256 refundPerPlayer = refundPool / totalPlayers;
+        // Integer dust (from division) goes to teamA[0] — avoids locked wei
+        uint256 dust            = refundPool - (refundPerPlayer * totalPlayers);
+
+        // Checks-Effects-Interactions: update state and emit before transfers
+        m.state       = MatchState.TIED;
+        m.winningTeam = 255; // 255 = no winner (same sentinel as undecided)
+        emit TieDeclared(matchId, refundPerPlayer, fee);
+
+        // Refund teamA
+        for (uint8 i = 0; i < m.teamSize; i++) {
+            uint256 amount = (i == 0) ? refundPerPlayer + dust : refundPerPlayer;
+            _payOrCredit(m.teamA[i], amount);
+        }
+        // Refund teamB
+        for (uint8 i = 0; i < m.teamSize; i++) {
+            _payOrCredit(m.teamB[i], refundPerPlayer);
+        }
+        // Fee to platform owner (same recipient as declareWinner)
         _payOrCredit(owner(), fee);
     }
 
