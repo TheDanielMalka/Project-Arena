@@ -756,7 +756,7 @@ const Admin = () => {
   const [holdingsLoading, setHoldingsLoading] = useState(false);
   const [holdingFilter,   setHoldingFilter]   = useState<"pending" | "resolved" | "refunded" | "all">("pending");
   const [selectedHolding, setSelectedHolding] = useState<DisputeHolding | null>(null);
-  const [holdingResolution, setHoldingResolution] = useState<"resolved" | "refunded">("resolved");
+  const [holdingResolution, setHoldingResolution] = useState<"award_a" | "award_b" | "refund_all">("award_a");
   const [holdingNotes,    setHoldingNotes]    = useState("");
 
   // ─────────────────────────────────────────────────────────────
@@ -1005,10 +1005,10 @@ const Admin = () => {
       return;
     }
     setHoldings((prev) => prev.map((h) =>
-      h.id === selectedHolding.id ? { ...h, status: holdingResolution, admin_notes: holdingNotes || h.admin_notes } : h
+      h.id === selectedHolding.id ? { ...h, status: "resolved", admin_notes: holdingNotes || h.admin_notes } : h
     ));
     setSelectedHolding(null);
-    toast({ title: "Holding resolved", description: `Marked as ${holdingResolution}.` });
+    toast({ title: "Holding resolved", description: `Action: ${holdingResolution}.` });
   };
 
   // ── Platform settings save ──
@@ -2437,11 +2437,12 @@ const Admin = () => {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-1">
-            <Select value={holdingResolution} onValueChange={(v) => setHoldingResolution(v as "resolved" | "refunded")}>
+            <Select value={holdingResolution} onValueChange={(v) => setHoldingResolution(v as "award_a" | "award_b" | "refund_all")}>
               <SelectTrigger className="h-8 bg-secondary/60 border-border text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="resolved">Resolved — Winner Paid Manually</SelectItem>
-                <SelectItem value="refunded">Refunded — Both Players Returned</SelectItem>
+                <SelectItem value="award_a">Team A Wins — Award Team A</SelectItem>
+                <SelectItem value="award_b">Team B Wins — Award Team B</SelectItem>
+                <SelectItem value="refund_all">Refund All — Both Players Returned</SelectItem>
               </SelectContent>
             </Select>
             <Textarea value={holdingNotes} onChange={(e) => setHoldingNotes(e.target.value)}

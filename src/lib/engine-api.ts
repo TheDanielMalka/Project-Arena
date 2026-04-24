@@ -4006,8 +4006,8 @@ export async function apiGetDisputeHoldings(
 export async function apiResolveDisputeHolding(
   token: string,
   holdingId: string,
-  resolution: "resolved" | "refunded",
-  adminNotes?: string,
+  action: "award_a" | "award_b" | "refund_all",
+  notes?: string,
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     const res = await arenaUserFetch(
@@ -4016,7 +4016,7 @@ export async function apiResolveDisputeHolding(
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ resolution, admin_notes: adminNotes ?? null }),
+        body: JSON.stringify({ action, notes: notes ?? "" }),
       },
     );
     if (!res.ok) {
