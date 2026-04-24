@@ -126,19 +126,28 @@ export function RecentMatches({ showViewAll = true, limit = 5 }: RecentMatchesPr
           {recentMatches.map((m) => {
             const isWin  = m.status === "completed" && m.winnerId === myId;
             const isLoss = m.status === "completed" && !!m.winnerId && m.winnerId !== myId;
+            const isTie  = m.status === "tied";
             const cfg = GAME_CONFIG[m.game];
 
-            const borderColor = isWin ? "#22C55E" : isLoss ? "#EF4444" : "#6B7280";
+            const borderColor = isWin ? "#22C55E" : isLoss ? "#EF4444" : isTie ? "#F59E0B" : "#6B7280";
             const badgeClass  = isWin
               ? "bg-primary/15 text-primary border-primary/30"
               : isLoss
               ? "bg-destructive/15 text-destructive border-destructive/30"
+              : isTie
+              ? "bg-arena-gold/15 text-arena-gold border-arena-gold/30"
               : "bg-muted text-muted-foreground border-border";
-            const badgeLabel  = isWin ? "Win" : isLoss ? "Loss" : m.status.replace("_", " ");
+            const badgeLabel  = isWin ? "Win" : isLoss ? "Loss" : isTie ? "Tie" : m.status.replace("_", " ");
             const amountColor = isWin ? "text-primary" : isLoss ? "text-destructive" : "text-arena-gold";
             const unit = m.stakeCurrency === "AT" ? " AT" : "";
             const sym  = m.stakeCurrency === "AT" ? "" : "$";
-            const amountLabel = isWin ? `+${sym}${m.betAmount}${unit}` : isLoss ? `-${sym}${m.betAmount}${unit}` : `${sym}${m.betAmount}${unit}`;
+            const amountLabel = isWin
+              ? `+${sym}${m.betAmount}${unit}`
+              : isLoss
+              ? `-${sym}${m.betAmount}${unit}`
+              : isTie
+              ? `~${sym}${m.betAmount}${unit}`
+              : `${sym}${m.betAmount}${unit}`;
             const oppSlot =
               m.type === "custom"
                 ? m.host

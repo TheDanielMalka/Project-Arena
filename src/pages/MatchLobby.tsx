@@ -107,6 +107,7 @@ const statusConfig: Record<MatchStatus, { label: string; color: string; icon: Re
   completed:   { label: "Completed", color: "bg-muted text-muted-foreground border-border",                icon: CheckCircle },
   cancelled:   { label: "Cancelled", color: "bg-destructive/15 text-destructive border-destructive/30",    icon: CheckCircle },
   disputed:    { label: "Disputed",  color: "bg-arena-orange/15 text-arena-orange border-arena-orange/30", icon: AlertCircle },
+  tied:        { label: "Tie",       color: "bg-arena-gold/15 text-arena-gold border-arena-gold/30",       icon: CheckCircle },
 };
 
 // ─── AvatarStack — player pile shown inline on match rows ─────────────────────
@@ -853,6 +854,12 @@ const MatchLobby = () => {
       setRoomLocked(true);
     } else if (myActiveRoom.status === "completed") {
       // DB-ready: Vision Engine called declareWinner → funds released by contract
+      markIdle();
+      setMyRoomMatchId(null);
+      setActiveRoomOnChainId(null);
+      setRoomLocked(false);
+    } else if (myActiveRoom.status === "tied") {
+      // DB-ready: Vision Engine called declareTie → 95% refunded to all players
       markIdle();
       setMyRoomMatchId(null);
       setActiveRoomOnChainId(null);
