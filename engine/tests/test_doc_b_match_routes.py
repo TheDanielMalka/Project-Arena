@@ -1033,7 +1033,7 @@ class TestGetActiveMatch:
     )
 
     _PLAYERS = [
-        (_USER_ID, "HostPlayer", None, "ARENA-HH", "A"),
+        (_USER_ID, "HostPlayer", None, "ARENA-HH", "A", False),
     ]
 
     def _make_active_session(self, match_row=None, players=None):
