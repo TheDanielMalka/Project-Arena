@@ -3897,3 +3897,41 @@ export async function apiAdminDeleteCreatorProfile(
   return raw;
 }
 
+// ── Live match score ───────────────────────────────────────────────────────────
+
+/** Shape returned by GET /matches/:id/live-state */
+export interface MatchLiveState {
+  match_id:        string;
+  ct_score:        number;
+  t_score:         number;
+  round_confirmed: boolean;   // true once 0-0 was seen from any client
+  first_round_at:  string | null;
+  submissions:     number;
+  updated_at:      string | null;
+}
+
+/**
+ * Fetch the latest live HUD score for an in-progress match.
+ * Returns null when the engine returns 404 (no HUD data yet) or on error.
+ */
+export async function apiGetLiveState(
+  token: string,
+  matchId: string,
+): Promise<MatchLiveState | null> {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8_000);
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/live-state`,
+      token,
+      { signal: controller.signal },
+    );
+    clearTimeout(tid);
+    if (res.status === 404) return null;
+    if (!res.ok) return null;
+    return (await res.json()) as MatchLiveState;
+  } catch {
+    return null;
+  }
+}
+
