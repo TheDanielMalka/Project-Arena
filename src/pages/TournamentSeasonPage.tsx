@@ -119,7 +119,7 @@ export default function TournamentSeasonPage() {
   const { slug } = useParams<{ slug: string }>();
   const token = useUserStore((s) => s.token);
   const user = useUserStore((s) => s.user);
-  const wConnected = useWalletStore((s) => s.isConnected);
+  const wConnected = useWalletStore((s) => s.connectedAddress !== null);
   const [season, setSeason] = useState<TournamentSeason | null>(null);
   const [loading, setLoading] = useState(true);
   const [ackClient, setAckClient] = useState(false);
