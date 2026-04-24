@@ -20,7 +20,7 @@ import {
   ShieldAlert, Gavel, Users, Ban, CheckCircle2, XCircle, AlertTriangle,
   Activity, DollarSign, Eye, Clock, Search, ArrowUpDown, ArrowUp, ArrowDown,
   Download, Power, Settings, Radio, ChevronRight, Zap, Flag, RefreshCw,
-  TrendingUp, Shield, Tv2, Star, Pencil, Trash2,
+  TrendingUp, Shield, Tv2, Star, Pencil, Trash2, Wallet,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useNotificationStore } from "@/stores/notificationStore";
@@ -28,6 +28,7 @@ import { PLATFORM_BETTING_MAX } from "@/stores/walletStore";
 import { useUserStore } from "@/stores/userStore";
 import type {
   Dispute, DisputeStatus, DisputeResolution,
+  DisputeHolding,
   FlaggedUser, AuditLog, AdminActivityEvent, PlatformSettings,
   SupportTicket,
   SupportTicketCategory,
@@ -59,6 +60,8 @@ import {
   apiPostSupportTicketAttachment,
   apiAdminListSupportTickets,
   apiAdminPatchSupportTicket,
+  apiGetDisputeHoldings,
+  apiResolveDisputeHolding,
   type AdminTicketAttachmentMeta,
   type ApiAdminSupportTicketRow,
 } from "@/lib/engine-api";
@@ -634,6 +637,7 @@ const NAV = [
   { id: "fraud",    icon: AlertTriangle,  label: "Fraud"      },
   { id: "oracle",   icon: Activity,       label: "Oracle"     },
   { id: "creators", icon: Tv2,            label: "Creators"   },
+  { id: "holdings", icon: Wallet,         label: "Holdings"   },
 ] as const;
 type NavId = typeof NAV[number]["id"];
 
@@ -747,6 +751,14 @@ const Admin = () => {
   // ── Kill switch ──
   const [killConfirm, setKillConfirm] = useState(false);
 
+  // ── Dispute Holdings ──
+  const [holdings,        setHoldings]        = useState<DisputeHolding[]>([]);
+  const [holdingsLoading, setHoldingsLoading] = useState(false);
+  const [holdingFilter,   setHoldingFilter]   = useState<"pending" | "resolved" | "refunded" | "all">("pending");
+  const [selectedHolding, setSelectedHolding] = useState<DisputeHolding | null>(null);
+  const [holdingResolution, setHoldingResolution] = useState<"resolved" | "refunded">("resolved");
+  const [holdingNotes,    setHoldingNotes]    = useState("");
+
   // ─────────────────────────────────────────────────────────────
   // Data loaders
   // ─────────────────────────────────────────────────────────────
@@ -828,6 +840,20 @@ const Admin = () => {
     if (!token || section !== "reports") return;
     void loadReportTickets();
   }, [token, section, loadReportTickets]);
+
+  const loadHoldings = useCallback(async () => {
+    if (!token) return;
+    setHoldingsLoading(true);
+    const filter = holdingFilter === "all" ? undefined : holdingFilter;
+    const r = await apiGetDisputeHoldings(token, filter);
+    setHoldingsLoading(false);
+    if (r) setHoldings(r);
+  }, [token, holdingFilter]);
+
+  useEffect(() => {
+    if (!token || section !== "holdings") return;
+    void loadHoldings();
+  }, [token, section, loadHoldings]);
 
   // ── Initial load + audit polling ──
   useEffect(() => {
@@ -968,6 +994,21 @@ const Admin = () => {
     addNotification({ type: "system",
       title: r.frozen ? "🚨 KILL SWITCH" : "✅ Payouts Resumed",
       message: r.frozen ? "All payouts frozen by admin." : "Kill switch deactivated. Payouts processing." });
+  };
+
+  // ── Dispute Holdings resolve ──
+  const handleResolveHolding = async () => {
+    if (!selectedHolding || !token) return;
+    const r = await apiResolveDisputeHolding(token, selectedHolding.id, holdingResolution, holdingNotes || undefined);
+    if (!r.ok) {
+      toast({ title: "Error", description: r.error ?? "Failed to resolve holding", variant: "destructive" });
+      return;
+    }
+    setHoldings((prev) => prev.map((h) =>
+      h.id === selectedHolding.id ? { ...h, status: holdingResolution, admin_notes: holdingNotes || h.admin_notes } : h
+    ));
+    setSelectedHolding(null);
+    toast({ title: "Holding resolved", description: `Marked as ${holdingResolution}.` });
   };
 
   // ── Platform settings save ──
@@ -2243,6 +2284,91 @@ const Admin = () => {
           {/* ══ CREATORS ══ */}
           {section === "creators" && <AdminCreatorsSection token={token} />}
 
+          {/* ══ HOLDINGS ══ */}
+          {section === "holdings" && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                {(["pending","resolved","refunded","all"] as const).map((f) => (
+                  <button key={f} onClick={() => setHoldingFilter(f)}
+                    className={cn(
+                      "px-3 py-1 rounded-full text-[10px] font-display uppercase tracking-wider border transition-colors",
+                      holdingFilter === f
+                        ? f === "pending"  ? "bg-arena-orange/20 border-arena-orange/40 text-arena-orange"
+                        : f === "resolved" ? "bg-primary/20 border-primary/40 text-primary"
+                        : f === "refunded" ? "bg-arena-cyan/20 border-arena-cyan/40 text-arena-cyan"
+                        : "bg-secondary border-border text-foreground"
+                        : "border-border/40 text-muted-foreground hover:text-foreground"
+                    )}>
+                    {f}
+                  </button>
+                ))}
+                <Button size="sm" variant="outline" className="h-7 text-xs border-border ml-auto"
+                  onClick={() => void loadHoldings()} disabled={holdingsLoading}>
+                  <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", holdingsLoading && "animate-spin")} /> Refresh
+                </Button>
+              </div>
+
+              {holdings.length === 0 && !holdingsLoading && (
+                <div className="text-center py-12 text-muted-foreground">
+                  <Wallet className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                  <p className="text-sm">No dispute holdings</p>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                {holdings.map((h) => (
+                  <div key={h.id} className={cn(
+                    "rounded-lg border border-border/60 bg-secondary/20 border-l-2 px-4 py-3 hover:bg-secondary/40 transition-colors",
+                    h.status === "pending"  ? "border-l-arena-orange"
+                    : h.status === "resolved" ? "border-l-primary"
+                    : "border-l-arena-cyan"
+                  )}>
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono text-[10px] text-muted-foreground">{h.id.slice(0, 8)}…</span>
+                        <span className="text-[10px] text-muted-foreground">·</span>
+                        <span className="font-mono text-[10px] text-muted-foreground">match {h.match_id.slice(0, 8)}…</span>
+                        {h.game && <Badge variant="outline" className="text-[9px] px-1 py-0 border-border/50 text-muted-foreground">{h.game}</Badge>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-arena-gold">
+                          {(BigInt(h.amount_wei) / 10n ** 15n).toString()} mBNB
+                        </span>
+                        <Badge className={cn("text-[10px] border px-1.5 py-0",
+                          h.status === "pending"  ? "bg-arena-orange/15 text-arena-orange border-arena-orange/30"
+                          : h.status === "resolved" ? "bg-primary/15 text-primary border-primary/30"
+                          : "bg-arena-cyan/15 text-arena-cyan border-arena-cyan/30"
+                        )}>{h.status}</Badge>
+                        {h.status === "pending" && (
+                          <Button size="sm" variant="outline" className="h-6 px-2.5 text-[10px] font-display border-primary/40 text-primary hover:bg-primary/10"
+                            onClick={() => { setSelectedHolding(h); setHoldingResolution("resolved"); setHoldingNotes(""); }}>
+                            <Gavel className="mr-1 h-3 w-3" /> Resolve
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 mt-2 flex-wrap">
+                      <span className="text-[10px] text-muted-foreground">Reason:</span>
+                      <span className="text-[11px]">{h.reason}</span>
+                      <span className="text-[10px] text-muted-foreground ml-auto">{h.created_at.slice(0, 16).replace("T", " ")}</span>
+                    </div>
+
+                    {h.on_chain_tx_hash && (
+                      <div className="mt-1 flex items-center gap-1.5">
+                        <span className="text-[10px] text-muted-foreground">Tx:</span>
+                        <span className="font-mono text-[10px] text-arena-cyan">{h.on_chain_tx_hash.slice(0, 20)}…</span>
+                      </div>
+                    )}
+                    {h.admin_notes && (
+                      <p className="mt-1 text-[10px] text-muted-foreground italic">Notes: {h.admin_notes}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
         </div>
       </div>
 
@@ -2298,6 +2424,37 @@ const Admin = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ── Resolve Holdings Dialog ── */}
+      <Dialog open={!!selectedHolding} onOpenChange={(o) => !o && setSelectedHolding(null)}>
+        <DialogContent className="max-w-md bg-card border-border">
+          <DialogHeader>
+            <DialogTitle className="font-display text-sm flex items-center gap-2">
+              <Wallet className="h-4 w-4 text-arena-orange" /> Resolve Holding
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Match {selectedHolding?.match_id.slice(0, 8)}… · {selectedHolding?.reason}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <Select value={holdingResolution} onValueChange={(v) => setHoldingResolution(v as "resolved" | "refunded")}>
+              <SelectTrigger className="h-8 bg-secondary/60 border-border text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="resolved">Resolved — Winner Paid Manually</SelectItem>
+                <SelectItem value="refunded">Refunded — Both Players Returned</SelectItem>
+              </SelectContent>
+            </Select>
+            <Textarea value={holdingNotes} onChange={(e) => setHoldingNotes(e.target.value)}
+              placeholder="Admin notes (optional)…" className="bg-secondary/60 border-border text-xs min-h-[60px] resize-none" />
+          </div>
+          <DialogFooter>
+            <Button size="sm" variant="ghost" className="text-xs" onClick={() => setSelectedHolding(null)}>Cancel</Button>
+            <Button size="sm" className="font-display text-xs" onClick={() => void handleResolveHolding()}>
+              <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" /> Confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Kill Switch Confirm ── */}
       <AlertDialog open={killConfirm} onOpenChange={setKillConfirm}>
