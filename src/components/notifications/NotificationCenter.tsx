@@ -18,23 +18,29 @@ import { apiRespondToNotification, apiJoinMatch } from "@/lib/engine-api";
 import { cn } from "@/lib/utils";
 
 const typeStyles: Record<NotificationType, string> = {
-  match_result:   "border-l-arena-neon",
-  payout:         "border-l-arena-gold",
-  system:         "border-l-arena-cyan",
-  dispute:        "border-l-arena-orange",
-  match_invite:   "border-l-arena-purple",
-  escrow:         "border-l-arena-gold",
-  friend_request: "border-l-primary",
+  match_result:    "border-l-arena-neon",
+  payout:          "border-l-arena-gold",
+  system:          "border-l-arena-cyan",
+  dispute:         "border-l-arena-orange",
+  match_invite:    "border-l-arena-purple",
+  escrow:          "border-l-arena-gold",
+  friend_request:  "border-l-primary",
+  forfeit_warning: "border-l-red-500",
+  forfeit_result:  "border-l-arena-neon",
+  holding_dispute: "border-l-yellow-500",
 };
 
 const typeRoutes: Record<NotificationType, string> = {
-  match_result:   "/history",
-  payout:         "/wallet",
-  system:         "/dashboard",
-  dispute:        "/admin",
-  match_invite:   "/lobby",
-  escrow:         "/wallet",
-  friend_request: "/hub",   // DB-ready: routes to Hub → Friends tab
+  match_result:    "/history",
+  payout:          "/wallet",
+  system:          "/dashboard",
+  dispute:         "/admin",
+  match_invite:    "/lobby",
+  escrow:          "/wallet",
+  friend_request:  "/hub",
+  forfeit_warning: "/lobby",
+  forfeit_result:  "/history",
+  holding_dispute: "/admin",
 };
 
 function timeAgo(date: Date): string {

@@ -29,6 +29,7 @@
 
 import type {
   ArenaId,
+  DisputeHolding,
   Game,
   InboxMessage,
   LeaderboardPlayerRow,
@@ -3982,6 +3983,49 @@ export async function apiGetLiveState(
     return (await res.json()) as MatchLiveState;
   } catch {
     return null;
+  }
+}
+
+// ─── Admin: Dispute Holdings ──────────────────────────────────
+
+export async function apiGetDisputeHoldings(
+  token: string,
+  status?: "pending" | "resolved" | "refunded",
+): Promise<DisputeHolding[] | null> {
+  try {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+    const res = await arenaUserFetch(`${ENGINE_BASE}/admin/dispute-holdings${qs}`, token);
+    if (!res.ok) return null;
+    const body = await res.json();
+    return body.holdings as DisputeHolding[];
+  } catch {
+    return null;
+  }
+}
+
+export async function apiResolveDisputeHolding(
+  token: string,
+  holdingId: string,
+  action: "award_a" | "award_b" | "refund_all",
+  notes?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/admin/dispute-holdings/${encodeURIComponent(holdingId)}/resolve`,
+      token,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, notes: notes ?? "" }),
+      },
+    );
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, error: (body as { detail?: string }).detail ?? "Failed" };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
   }
 }
 

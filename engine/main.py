@@ -31,7 +31,7 @@ from src.config import (
 from src.forum import router as forum_router
 from src.vision.capture import capture_screen, crop_roi
 from src.vision.engine import VisionEngine, VisionEngineConfig
-from src.vision.rage_quit import RageQuitDetector
+from src.vision.disconnect_monitor import DisconnectMonitor
 from src.slack_alerts import slack_post
 from src.discord_alerts import discord_post
 from src.discord_bot import create_match_channels
@@ -1043,11 +1043,22 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("ℹ️  EscrowClient disabled — blockchain env vars not set")
 
-    # Rage-quit detector — runs as background task; works with or without EscrowClient
-    _rage_quit_detector = RageQuitDetector(SessionLocal, _escrow_client)
+    # Disconnect monitor — grace-period rage-quit detector; works with or without EscrowClient.
+    # Replaces RageQuitDetector with 2-phase WARNING → FORFEIT / HOLDING state machine.
+    # AT forfeit:   _settle_at_match (pay winner from DB)
+    # AT holding:   _refund_at_match (refund all, no winner)
+    # CRYPTO forfeit:  escrow_client.declare_winner (on-chain)
+    # CRYPTO holding:  escrow_client.transfer_to_holding (pending contract upgrade)
     import asyncio
-    _rq_task = asyncio.create_task(_rage_quit_detector.run())
-    logger.info("✅ RageQuitDetector started")
+    _rq_task = asyncio.create_task(
+        DisconnectMonitor(
+            session_factory=SessionLocal,
+            escrow_client=_escrow_client,
+            settle_at_fn=_settle_at_match,
+            refund_at_fn=_refund_at_match,
+        ).run()
+    )
+    logger.info("✅ DisconnectMonitor started")
 
     # EscrowClient event listener — only when escrow is available.
     # listen() is a blocking loop (time.sleep) so it runs in a thread pool.
@@ -10939,6 +10950,165 @@ async def update_platform_config(
 
 
 # ── Admin — Audit Log ─────────────────────────────────────────────────────────
+
+
+@app.get("/admin/dispute-holdings", status_code=200)
+async def admin_list_dispute_holdings(
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    payload: dict = Depends(require_admin),
+):
+    """
+    GET /admin/dispute-holdings — list matches where funds were moved to holding wallet.
+    These require manual admin review: either award a team or refund all players.
+    """
+    try:
+        with SessionLocal() as session:
+            filters = "WHERE dh.status = :status" if status else ""
+            params: dict = {"limit": limit, "offset": offset}
+            if status:
+                params["status"] = status
+            rows = session.execute(text(f"""
+                SELECT
+                    dh.id,
+                    dh.match_id,
+                    dh.on_chain_tx_hash,
+                    dh.holding_wallet,
+                    dh.amount_wei::text,
+                    dh.reason,
+                    dh.status,
+                    dh.admin_notes,
+                    dh.created_at,
+                    dh.resolved_at,
+                    m.game,
+                    m.stake_per_player,
+                    COUNT(mp.user_id) FILTER (WHERE mp.has_deposited) AS player_count
+                FROM dispute_holdings dh
+                JOIN matches m ON m.id = dh.match_id
+                LEFT JOIN match_players mp ON mp.match_id = dh.match_id
+                {filters}
+                GROUP BY dh.id, m.game, m.stake_per_player
+                ORDER BY dh.created_at DESC
+                LIMIT :limit OFFSET :offset
+            """), params).fetchall()
+            return {
+                "holdings": [
+                    {
+                        "id":               str(r[0]),
+                        "match_id":         str(r[1]),
+                        "on_chain_tx_hash": r[2],
+                        "holding_wallet":   r[3],
+                        "amount_wei":       r[4],
+                        "reason":           r[5],
+                        "status":           r[6],
+                        "admin_notes":      r[7],
+                        "created_at":       r[8].isoformat() if r[8] else None,
+                        "resolved_at":      r[9].isoformat() if r[9] else None,
+                        "game":             r[10],
+                        "stake_per_player": str(r[11]) if r[11] else None,
+                        "player_count":     r[12],
+                    }
+                    for r in rows
+                ]
+            }
+    except Exception as exc:
+        logger.error("admin_list_dispute_holdings error: %s", exc)
+        raise HTTPException(500, "Failed to fetch dispute holdings")
+
+
+class DisputeHoldingResolveRequest(BaseModel):
+    action: str      # "award_a" | "award_b" | "refund_all"
+    notes:  str = ""
+
+
+@app.post("/admin/dispute-holdings/{holding_id}/resolve", status_code=200)
+async def admin_resolve_dispute_holding(
+    holding_id: str,
+    req: DisputeHoldingResolveRequest,
+    payload: dict = Depends(require_admin),
+):
+    """
+    POST /admin/dispute-holdings/{id}/resolve
+
+    Admin reviews match screenshots and resolves a pending holding:
+      award_a     — Team A wins: mark match completed, update winner_id
+      award_b     — Team B wins: same
+      refund_all  — Draw/unresolvable: mark match cancelled, refund AT players
+                    (CRYPTO: admin must manually send from holding wallet)
+
+    Writes audit_logs entry. Idempotent guard: only resolves 'pending' holdings.
+    """
+    admin_id = str(payload.get("sub") or payload.get("user_id", ""))
+    if req.action not in ("award_a", "award_b", "refund_all"):
+        raise HTTPException(400, "action must be award_a, award_b, or refund_all")
+    try:
+        with SessionLocal() as session:
+            holding = session.execute(text("""
+                SELECT dh.id, dh.match_id, dh.status, m.stake_currency
+                FROM dispute_holdings dh
+                JOIN matches m ON m.id = dh.match_id
+                WHERE dh.id = CAST(:hid AS uuid) AND dh.status = 'pending'
+                FOR UPDATE
+            """), {"hid": holding_id}).fetchone()
+            if not holding:
+                raise HTTPException(404, "Holding not found or already resolved")
+
+            match_id       = str(holding[1])
+            stake_currency = holding[3]
+
+            if req.action in ("award_a", "award_b"):
+                team = "A" if req.action == "award_a" else "B"
+                winner_row = session.execute(text("""
+                    SELECT user_id FROM match_players
+                    WHERE match_id = :mid AND team = :team AND has_deposited = TRUE
+                    LIMIT 1
+                """), {"mid": match_id, "team": team}).fetchone()
+                if not winner_row:
+                    raise HTTPException(400, f"No deposited player found on team {team}")
+                winner_id = str(winner_row[0])
+
+                session.execute(text("""
+                    UPDATE matches
+                    SET status = 'completed', winner_id = :wid, ended_at = NOW()
+                    WHERE id = :mid AND status IN ('in_progress', 'disputed')
+                """), {"wid": winner_id, "mid": match_id})
+
+                if stake_currency == "AT":
+                    _settle_at_match(match_id, winner_id)
+
+            else:  # refund_all
+                session.execute(text("""
+                    UPDATE matches
+                    SET status = 'cancelled', ended_at = NOW()
+                    WHERE id = :mid AND status IN ('in_progress', 'disputed')
+                """), {"mid": match_id})
+                if stake_currency == "AT":
+                    _refund_at_match(match_id)
+
+            session.execute(text("""
+                UPDATE dispute_holdings
+                SET status = 'resolved', admin_notes = :notes,
+                    resolved_at = NOW(), resolved_by = CAST(:admin AS uuid)
+                WHERE id = CAST(:hid AS uuid)
+            """), {"notes": req.notes, "admin": admin_id, "hid": holding_id})
+
+            session.execute(text("""
+                INSERT INTO audit_logs (admin_id, action, target_id, metadata, created_at)
+                VALUES (CAST(:aid AS uuid), 'resolve_dispute_holding',
+                        :hid, :meta, NOW())
+            """), {
+                "aid":  admin_id,
+                "hid":  holding_id,
+                "meta": f"action={req.action} currency={stake_currency} notes={req.notes}",
+            })
+            session.commit()
+        return {"ok": True, "resolved": holding_id, "action": req.action}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("admin_resolve_dispute_holding error: %s", exc)
+        raise HTTPException(500, "Failed to resolve dispute holding")
 
 
 @app.get("/admin/audit-log", status_code=200)
