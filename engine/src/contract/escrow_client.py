@@ -336,6 +336,45 @@ class EscrowClient:
             gas=_GAS_CANCEL_MATCH,
         )
 
+    def transfer_to_holding(
+        self,
+        match_id: str,
+        holding_wallet: str,
+        reason: str,
+    ) -> str:
+        """
+        Oracle transfers all escrow funds to a platform holding wallet when the
+        match outcome is ambiguous (both teams disconnected / private server crash).
+
+        Requires ArenaEscrow.transferToHolding() to be deployed.
+        Raises NotImplementedError until the contract is redeployed with that function.
+
+        Returns tx_hash hex string.
+        """
+        with self._session_factory() as session:
+            row = session.execute(
+                text("SELECT on_chain_match_id FROM matches WHERE id = :mid"),
+                {"mid": match_id},
+            ).fetchone()
+            if not row or row[0] is None:
+                raise ValueError(f"Match {match_id} has no on_chain_match_id")
+            on_chain_id = int(row[0])
+
+        if not hasattr(self._contract.functions, "transferToHolding"):
+            raise NotImplementedError(
+                "ArenaEscrow.transferToHolding() not deployed yet — "
+                "redeploy contract with the new function before calling this."
+            )
+
+        return self._send_tx(
+            self._contract.functions.transferToHolding(
+                on_chain_id,
+                holding_wallet,
+                reason,
+            ),
+            gas=250_000,
+        )
+
     def declare_tie(self, match_id: str) -> str:
         """
         Called from _auto_payout_on_tie() after Vision Engine confirms a draw.
