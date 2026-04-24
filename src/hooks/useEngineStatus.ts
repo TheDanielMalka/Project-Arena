@@ -20,6 +20,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { getEngineHealth, getClientStatus, type EngineHealth } from "@/lib/engine-api";
 import { useClientStore } from "@/stores/clientStore";
 import { useUserStore } from "@/stores/userStore";
+import { useWsEvent } from "@/lib/ws-client";
 
 const BURST_DELAYS_MS = [0, 1_500, 4_000] as const;
 
@@ -66,6 +67,12 @@ export function useEngineStatus(pollInterval = 15_000) {
       }
     }
   }, [syncFromHealth, syncFromClientStatus, walletAddress, isAuthenticated, token]);
+
+  // WS fast-path — re-check immediately when the desktop client changes state.
+  // The polling intervals remain active as fallback (WS disabled or down).
+  useWsEvent("client:status_changed", () => {
+    void check();
+  });
 
   // Burst after mount — badge updates quickly after client starts.
   useEffect(() => {
