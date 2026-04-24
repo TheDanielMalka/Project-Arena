@@ -38,11 +38,16 @@ from src.discord_bot import create_match_channels
 from src.risk.limits import count_completed_high_stakes_matches, sum_daily_match_losses
 try:
     from src.contract import build_escrow_client
+    from src.contract.reconciliation import ContractReconciler
 except ImportError:
     # web3 C extensions not available in this environment (e.g. Windows without MSVC).
     # Engine runs without escrow client — build_escrow_client returns None gracefully.
     def build_escrow_client(_session_factory):  # type: ignore[misc]
         return None
+
+    class ContractReconciler:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs): pass
+        def run(self, *args, **kwargs): pass
 import src.auth as auth
 
 import pyotp
@@ -72,7 +77,8 @@ SessionLocal = sessionmaker(bind=db_engine)
 # (local dev / CI without blockchain config) — engine runs without escrow.
 # CONTRACT-ready: EscrowClient.declare_winner() releases payout on-chain.
 _escrow_client = None
-_listener_task = None  # background thread task — EscrowClient.listen()
+_listener_task = None     # background thread task — EscrowClient.listen()
+_reconciler_task = None   # ContractReconciler background loop
 _slack_oracle_task = None  # Slack watchdog (escrow + SLACK_ALERTS_WEBHOOK_URL only)
 _pii_retention_task = None  # GDPR daily purge — see migration 036
 _pool_manager_task = None  # Public match pool — keeps N open rooms per config row
@@ -1052,6 +1058,14 @@ async def lifespan(app: FastAPI):
             asyncio.to_thread(_escrow_client.listen, 15)
         )
         logger.info("✅ EscrowClient event listener started")
+
+    # Contract reconciler — monitors CRYPTO matches for DB vs on-chain divergence,
+    # logs stuck WAITING matches past the 1-hour timeout, and expires stale pending_leaves.
+    # Does NOT auto-cancel on-chain — oracle is not a depositor.
+    global _reconciler_task
+    _reconciler = ContractReconciler(SessionLocal, _escrow_client)
+    _reconciler_task = asyncio.create_task(asyncio.to_thread(_reconciler.run, 300))
+    logger.info("✅ ContractReconciler started")
 
     # Expired match cleanup — runs every 5 minutes.
     # Cancels 'waiting' rooms whose expires_at has passed (1 hour after creation).
