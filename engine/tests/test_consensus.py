@@ -1,13 +1,13 @@
 """
 Tests for engine/src/vision/consensus.py
 
-Split into two sections:
-  1. Pure in-memory tests (no DB) — all existing tests, unchanged.
-  2. DB-backed tests — use MagicMock session_factory to verify persistence
-     and restore behaviour added in Step 3 (013-match-consensus.sql).
+Sections:
+  1. Pure in-memory majority-fallback tests (no team wallets, no DB).
+  2. DB-backed tests — MagicMock session_factory (persist + restore).
+  3. Cross-team dual-validation tests (1v1, 2v2, 5v5 with team wallets).
 """
 import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock
 from src.vision.consensus import MatchConsensus, ConsensusStatus, PlayerSubmission, CONSENSUS_THRESHOLD
 from src.vision.engine import VisionEngineOutput
 
@@ -80,16 +80,16 @@ def test_consensus_reached_unanimous():
 
 
 def test_consensus_reached_majority():
-    """7 agree, 3 disagree → threshold 60% met."""
+    """8 agree, 2 disagree → threshold 75% met (8/10 = 80%)."""
     c = MatchConsensus(match_id="m1", expected_players=10)
-    for i in range(7):
+    for i in range(8):
         c.submit(wallet(i), make_output("CT_WIN"))
-    for i in range(7, 10):
+    for i in range(8, 10):
         c.submit(wallet(i), make_output("T_WIN"))
     verdict = c.evaluate()
     assert verdict.status == ConsensusStatus.REACHED
     assert verdict.agreed_result == "CT_WIN"
-    assert verdict.agreeing_players == 7
+    assert verdict.agreeing_players == 8
 
 
 def test_consensus_reached_flags_minority():
@@ -104,11 +104,11 @@ def test_consensus_reached_flags_minority():
 
 
 def test_consensus_exactly_at_threshold():
-    """Exactly 60% agree (6/10) → REACHED."""
-    c = MatchConsensus(match_id="m1", expected_players=10)
-    for i in range(6):
+    """Exactly 75% agree (9/12) → REACHED."""
+    c = MatchConsensus(match_id="m1", expected_players=12)
+    for i in range(9):
         c.submit(wallet(i), make_output("CT_WIN"))
-    for i in range(6, 10):
+    for i in range(9, 12):
         c.submit(wallet(i), make_output("T_WIN"))
     verdict = c.evaluate()
     assert verdict.status == ConsensusStatus.REACHED
@@ -381,94 +381,172 @@ class TestDbRoundTrip:
 
 
 # ================================================================== #
-#  CS2 complementary-pair consensus (1v1, 2v2, 5v5)                  #
-#  winning team → "victory", losing team → "defeat"                  #
+#  Cross-team dual-validation (1v1, 2v2, 5v5 with team wallets)      #
 # ================================================================== #
 
-def test_cs2_1v1_complementary_pair_reaches_consensus():
-    """1v1: one player sees VICTORY, the other sees DEFEAT — should REACH consensus."""
-    c = MatchConsensus(match_id="cs2_1v1", expected_players=2)
-    c.submit(wallet(1), make_output("victory"))
-    c.submit(wallet(2), make_output("defeat"))
+def _cross(match_id, team_a_size, team_b_size):
+    """Return a MatchConsensus configured for cross-team mode."""
+    a = [wallet(i)               for i in range(1, team_a_size + 1)]
+    b = [wallet(i + team_a_size) for i in range(1, team_b_size + 1)]
+    c = MatchConsensus(
+        match_id=match_id,
+        expected_players=team_a_size + team_b_size,
+        team_a_wallets=a,
+        team_b_wallets=b,
+    )
+    return c, a, b
+
+
+def test_cross_1v1_team_a_wins():
+    """1v1: Team A → victory, Team B → defeat → REACHED, winning_team=team_a."""
+    c, a, b = _cross("1v1", 1, 1)
+    c.submit(a[0], make_output("victory"))
+    verdict_status = c.submit(b[0], make_output("defeat"))
+
+    assert verdict_status == ConsensusStatus.REACHED
     verdict = c.evaluate()
     assert verdict.status == ConsensusStatus.REACHED
-    assert verdict.agreed_result == "victory"
-    assert verdict.agreeing_players == 1
+    assert verdict.winning_team == "team_a"
+    assert verdict.is_cross_validated is True
     assert verdict.flagged_wallets == []
 
 
-def test_cs2_2v2_complementary_pair_reaches_consensus():
-    """2v2: two players see VICTORY, two see DEFEAT — should REACH consensus."""
-    c = MatchConsensus(match_id="cs2_2v2", expected_players=4)
-    for i in range(1, 3):
-        c.submit(wallet(i), make_output("victory"))
-    for i in range(3, 5):
-        c.submit(wallet(i), make_output("defeat"))
+def test_cross_1v1_team_b_wins():
+    """1v1: Team A → defeat, Team B → victory → REACHED, winning_team=team_b."""
+    c, a, b = _cross("1v1_b", 1, 1)
+    c.submit(a[0], make_output("defeat"))
+    c.submit(b[0], make_output("victory"))
     verdict = c.evaluate()
     assert verdict.status == ConsensusStatus.REACHED
-    assert verdict.agreed_result == "victory"
-    assert verdict.agreeing_players == 2
+    assert verdict.winning_team == "team_b"
+    assert verdict.is_cross_validated is True
+
+
+def test_cross_2v2_team_a_wins():
+    """2v2: both Team A say victory, both Team B say defeat → REACHED."""
+    c, a, b = _cross("2v2", 2, 2)
+    for w in a:
+        c.submit(w, make_output("victory"))
+    for w in b:
+        c.submit(w, make_output("defeat"))
+    verdict = c.evaluate()
+    assert verdict.status == ConsensusStatus.REACHED
+    assert verdict.winning_team == "team_a"
+    assert verdict.is_cross_validated is True
     assert verdict.flagged_wallets == []
 
 
-def test_cs2_5v5_complementary_pair_reaches_consensus():
-    """5v5: five players see VICTORY, five see DEFEAT — should REACH consensus."""
-    c = MatchConsensus(match_id="cs2_5v5", expected_players=10)
-    for i in range(1, 6):
-        c.submit(wallet(i), make_output("victory"))
-    for i in range(6, 11):
-        c.submit(wallet(i), make_output("defeat"))
+def test_cross_5v5_team_a_wins():
+    """5v5: all ten players submit correctly → REACHED."""
+    c, a, b = _cross("5v5", 5, 5)
+    for w in a:
+        c.submit(w, make_output("victory"))
+    for w in b:
+        c.submit(w, make_output("defeat"))
     verdict = c.evaluate()
     assert verdict.status == ConsensusStatus.REACHED
-    assert verdict.agreed_result == "victory"
-    assert verdict.agreeing_players == 5
-    assert verdict.flagged_wallets == []
+    assert verdict.winning_team == "team_a"
+    assert verdict.is_cross_validated is True
 
 
-def test_cs2_1v1_submit_returns_reached_after_second_vote():
-    """submit() return value reflects REACHED once the complementary pair is complete."""
-    c = MatchConsensus(match_id="cs2_1v1_submit", expected_players=2)
-    first  = c.submit(wallet(1), make_output("victory"))
-    second = c.submit(wallet(2), make_output("defeat"))
-    assert first  == ConsensusStatus.PENDING
-    assert second == ConsensusStatus.REACHED
+def test_cross_5v5_with_one_disconnect_still_reaches():
+    """5v5 where one Team B player never submits — 5/5 Team A + 4/5 Team B (80% > 50%)."""
+    c, a, b = _cross("5v5_disc", 5, 5)
+    for w in a:
+        c.submit(w, make_output("victory"))
+    for w in b[:4]:            # only 4 of 5 Team B players submit
+        c.submit(w, make_output("defeat"))
+    verdict = c.evaluate()
+    assert verdict.status == ConsensusStatus.REACHED
+    assert verdict.winning_team == "team_a"
+    assert verdict.is_cross_validated is True
 
 
-def test_cs2_both_claim_victory_falls_through_to_standard_logic():
+def test_cross_eager_fires_before_all_players_submitted():
     """
-    If both 1v1 players submit 'victory' (one is lying), the complementary-pair
-    fast path is NOT taken (no 'defeat' vote). Standard majority gives 100% →
-    REACHED, which is handled normally (admin can audit evidence if needed).
+    In cross-team mode evaluate() fires as soon as each team's majority is clear,
+    even before is_complete(). Test 2v2: after just 1 from each team, both majorities
+    are 100% → REACHED without waiting for the 2nd player of each team.
     """
-    c = MatchConsensus(match_id="cs2_both_victory", expected_players=2)
+    c, a, b = _cross("2v2_eager", 2, 2)
+    s1 = c.submit(a[0], make_output("victory"))   # Team A: 1/1 in so far
+    s2 = c.submit(b[0], make_output("defeat"))    # Team B: 1/1 in so far
+    # At this point a_victory=1/1>0.5, b_defeat=1/1>0.5 → REACHED eagerly
+    assert s1 == ConsensusStatus.PENDING   # Team B hasn't submitted yet
+    assert s2 == ConsensusStatus.REACHED   # Both teams' majorities confirmed
+
+
+def test_cross_cheat_team_b_split_gives_pending():
+    """
+    2v2: Team B is split 1-defeat / 1-victory (one cheater).
+    Cross-team: b_defeat = 1/2 = 50%, NOT > 50% → cannot confirm Team A wins.
+    Result: PENDING (admin must resolve dispute manually).
+    """
+    c, a, b = _cross("2v2_cheat", 2, 2)
+    for w in a:
+        c.submit(w, make_output("victory"))
+    c.submit(b[0], make_output("defeat"))    # honest loser
+    c.submit(b[1], make_output("victory"))   # cheater
+    verdict = c.evaluate()
+    # Team B is evenly split — cross-team cannot resolve
+    assert verdict.status == ConsensusStatus.PENDING
+
+
+def test_cross_cheat_3v3_majority_still_flagged():
+    """
+    3v3: Team B has 2 honest losers + 1 cheater (2/3 = 67% say defeat > 50%).
+    Cross-team resolves: Team A wins. The cheating Team B player is flagged.
+    """
+    c, a, b = _cross("3v3_cheat", 3, 3)
+    for w in a:
+        c.submit(w, make_output("victory"))
+    c.submit(b[0], make_output("defeat"))    # honest loser
+    c.submit(b[1], make_output("defeat"))    # honest loser
+    c.submit(b[2], make_output("victory"))   # cheater
+    verdict = c.evaluate()
+    assert verdict.status == ConsensusStatus.REACHED
+    assert verdict.winning_team == "team_a"
+    assert verdict.is_cross_validated is True
+    assert b[2] in verdict.flagged_wallets
+
+
+def test_cross_both_claim_victory_stays_pending():
+    """
+    Both 1v1 players submit 'victory' (lying cheater scenario).
+    Neither team majority is 'defeat' for the other side → PENDING / unresolvable.
+    """
+    c, a, b = _cross("1v1_both_win", 1, 1)
+    c.submit(a[0], make_output("victory"))
+    c.submit(b[0], make_output("victory"))
+    verdict = c.evaluate()
+    # Cross-team can't confirm a winner — neither condition is satisfied.
+    assert verdict.status == ConsensusStatus.PENDING
+
+
+def test_cross_team_b_only_never_submits_single_team_fallback():
+    """If Team B never submits, Team A majority alone is enough (weak signal)."""
+    c, a, b = _cross("fallback", 1, 1)
+    c.submit(a[0], make_output("victory"))
+    verdict = c.evaluate()
+    # expected_per_team = 1, len(a_subs) = 1 >= 1, len(b_subs) = 0
+    assert verdict.status == ConsensusStatus.REACHED
+    assert verdict.winning_team == "team_a"
+    assert verdict.is_cross_validated is False  # weak — only one team submitted
+
+
+def test_cs2_both_claim_victory_majority_fallback():
+    """Without team wallets: both claim victory → 100% majority → REACHED."""
+    c = MatchConsensus(match_id="no_teams_both_win", expected_players=2)
     c.submit(wallet(1), make_output("victory"))
     c.submit(wallet(2), make_output("victory"))
     verdict = c.evaluate()
     assert verdict.status == ConsensusStatus.REACHED
     assert verdict.agreed_result == "victory"
-    assert verdict.flagged_wallets == []
 
 
-def test_cs2_2v2_cheat_detected_via_standard_path():
-    """
-    2v2 where one losing player submits 'victory' instead of 'defeat'.
-    Split is 3 victory / 1 defeat — NOT equal, so complementary-pair fast path
-    is skipped. Standard majority (3/4 = 75% ≥ 60%) flags the honest loser
-    who submitted 'defeat' as the outlier.
-    """
-    c = MatchConsensus(match_id="cs2_cheat_2v2", expected_players=4)
-    for i in range(1, 4):   # 3 submit "victory" (2 winners + 1 cheating loser)
-        c.submit(wallet(i), make_output("victory"))
-    c.submit(wallet(4), make_output("defeat"))  # honest loser
-    verdict = c.evaluate()
-    assert verdict.status == ConsensusStatus.REACHED
-    assert verdict.agreed_result == "victory"
-    assert wallet(4) in verdict.flagged_wallets
-
-
-def test_cs2_partial_votes_not_yet_complete_stays_pending():
-    """Complementary-pair fast path requires ALL expected votes — partial set stays PENDING."""
-    c = MatchConsensus(match_id="cs2_partial", expected_players=4)
+def test_cs2_partial_without_teams_stays_pending():
+    """Without team wallets: partial set stays PENDING until expected_players is met."""
+    c = MatchConsensus(match_id="partial_no_teams", expected_players=4)
     c.submit(wallet(1), make_output("victory"))
     c.submit(wallet(2), make_output("defeat"))
     assert c._current_status() == ConsensusStatus.PENDING
