@@ -17,6 +17,7 @@ import {
   getBalance,
   getWalletClient,
   readContract,
+  getPublicClient,
 } from "@wagmi/core";
 import { getAddress, parseEther, formatEther } from "viem";
 import { parseEventLogs } from "viem";
@@ -249,12 +250,13 @@ export async function withdrawPendingOnChain(): Promise<string> {
  */
 export async function readPendingWithdrawalsOnChain(walletAddress: string): Promise<bigint> {
   const chainId = getArenaTargetChainId() as 97 | 56;
-  const result = await readContract(wagmiConfig, {
+  const publicClient = getPublicClient(wagmiConfig, { chainId });
+  if (!publicClient) return 0n;
+  const result = await publicClient.readContract({
     address:      getContractAddress(),
     abi:          ARENA_ESCROW_ABI,
     functionName: "pendingWithdrawals",
     args:         [getAddress(walletAddress as `0x${string}`)],
-    chainId,
   });
   return result as bigint;
 }
