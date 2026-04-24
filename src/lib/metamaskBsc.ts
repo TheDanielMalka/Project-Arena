@@ -19,7 +19,7 @@ import {
   readContract,
   getPublicClient,
 } from "@wagmi/core";
-import { getAddress, parseEther, formatEther } from "viem";
+import { getAddress, parseEther, formatEther, encodeFunctionData, decodeFunctionResult } from "viem";
 import { parseEventLogs } from "viem";
 import { wagmiConfig, web3modal, bscTestnet, bscMainnet } from "./wagmiConfig";
 import { ARENA_ESCROW_ABI } from "./contractAbi";
@@ -252,13 +252,18 @@ export async function readPendingWithdrawalsOnChain(walletAddress: string): Prom
   const chainId = getArenaTargetChainId() as 97 | 56;
   const publicClient = getPublicClient(wagmiConfig, { chainId });
   if (!publicClient) return 0n;
-  const result = await publicClient.readContract({
-    address:      getContractAddress(),
+  const data = encodeFunctionData({
     abi:          ARENA_ESCROW_ABI,
     functionName: "pendingWithdrawals",
     args:         [getAddress(walletAddress as `0x${string}`)],
   });
-  return result as bigint;
+  const { data: raw } = await publicClient.call({ to: getContractAddress(), data });
+  if (!raw) return 0n;
+  return decodeFunctionResult({
+    abi:          ARENA_ESCROW_ABI,
+    functionName: "pendingWithdrawals",
+    data:         raw,
+  }) as bigint;
 }
 
 // ─── Read ────────────────────────────────────────────────────────────────────
