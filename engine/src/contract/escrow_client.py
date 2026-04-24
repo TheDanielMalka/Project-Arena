@@ -9,7 +9,9 @@ Responsibilities:
 
 Sync contract:
   declare_winner()       ↔ POST /match/result  CONTRACT-ready marker (main.py)
+  declare_tie()          ↔ _auto_payout_on_tie() in main.py (draw outcome)
   WinnerDeclared event   ↔ transactions table  tx_type='match_win' / 'fee'
+  TieDeclared event      ↔ transactions table  tx_type='tie_refund' / 'fee', matches.status='tied'
   PlayerDeposited event  ↔ match_players       has_deposited=TRUE
   MatchActive event      ↔ matches             status='in_progress'
   MatchRefunded event    ↔ matches             status='cancelled' + tx_type='refund'
@@ -90,6 +92,14 @@ ARENA_ESCROW_ABI = [
             {"name": "cancelledBy", "type": "address", "indexed": True},
         ],
     },
+    {
+        "type": "event", "name": "TieDeclared",
+        "inputs": [
+            {"name": "matchId",         "type": "uint256", "indexed": True},
+            {"name": "refundPerPlayer", "type": "uint256", "indexed": False},
+            {"name": "fee",             "type": "uint256", "indexed": False},
+        ],
+    },
     # ── Functions ────────────────────────────────────────────────────────────
     {
         "type": "function", "name": "declareWinner",
@@ -97,6 +107,11 @@ ARENA_ESCROW_ABI = [
             {"name": "matchId",     "type": "uint256"},
             {"name": "winningTeam", "type": "uint8"},
         ],
+        "outputs": [], "stateMutability": "nonpayable",
+    },
+    {
+        "type": "function", "name": "declareTie",
+        "inputs": [{"name": "matchId", "type": "uint256"}],
         "outputs": [], "stateMutability": "nonpayable",
     },
     {
@@ -149,6 +164,7 @@ _TEAM_SIZE_TO_MODE = {1: "1v1", 2: "2v2", 4: "4v4", 5: "5v5"}
 
 # ── Gas budget ───────────────────────────────────────────────────────────────
 _GAS_DECLARE_WINNER = 300_000   # 5v5 worst case
+_GAS_DECLARE_TIE    = 350_000   # 5v5 tie — two full team loops + fee
 _GAS_CANCEL_MATCH   = 200_000
 _GAS_ADMIN          =  80_000   # pause() / unpause() — simple state flip
 
@@ -296,6 +312,34 @@ class EscrowClient:
             gas=_GAS_CANCEL_MATCH,
         )
 
+    def declare_tie(self, match_id: str) -> str:
+        """
+        Called from _auto_payout_on_tie() after Vision Engine confirms a draw.
+
+        Looks up on_chain_match_id from the DB, then calls
+        ArenaEscrow.declareTie(on_chain_match_id).
+
+        Returns tx_hash (hex string).
+        """
+        with self._session_factory() as session:
+            row = session.execute(
+                text("SELECT on_chain_match_id FROM matches WHERE id = :mid"),
+                {"mid": match_id},
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Match not found in DB: {match_id}")
+            on_chain_id = row[0]
+            if on_chain_id is None:
+                raise ValueError(
+                    f"Match {match_id} has no on_chain_match_id — "
+                    "contract not yet linked to this match"
+                )
+
+        return self._send_tx(
+            self._contract.functions.declareTie(int(on_chain_id)),
+            gas=_GAS_DECLARE_TIE,
+        )
+
     def pause_contract(self) -> Optional[str]:
         """
         Call ArenaEscrow.pause() from the owner wallet (onlyOwner).
@@ -354,6 +398,7 @@ class EscrowClient:
             "PlayerDeposited": self._handle_player_deposited,
             "MatchActive":     self._handle_match_active,
             "WinnerDeclared":  self._handle_winner_declared,
+            "TieDeclared":     self._handle_tie_declared,
             "MatchRefunded":   self._handle_match_refunded,
             "MatchCancelled":  self._handle_match_cancelled,
         }
@@ -865,6 +910,112 @@ class EscrowClient:
         logger.info(
             "WinnerDeclared: match=%s winner_team=%s payout=%.4f BNB fee=%.4f BNB",
             db_match_id, winning_letter, payout_eth, fee_eth,
+        )
+
+    def _handle_tie_declared(self, event) -> None:
+        """
+        TieDeclared(matchId, refundPerPlayer, fee)
+
+        DB-ready:
+          UPDATE matches SET status='tied', ended_at=NOW()
+          For each player:
+            INSERT transactions (type='tie_refund', amount=refundPerPlayer)
+            UPDATE user_stats   SET ties += 1
+            UPDATE user_balances SET available += refundPerPlayer, in_escrow -= stake
+          INSERT transactions (type='fee', amount=fee) [platform fee]
+        """
+        args            = event["args"]
+        on_chain_id     = args["matchId"]
+        refund_wei      = args["refundPerPlayer"]
+        fee_wei         = args["fee"]
+        refund_eth      = float(Web3.from_wei(refund_wei, "ether"))
+        fee_eth         = float(Web3.from_wei(fee_wei, "ether"))
+        tx_hash         = _event_tx_hash(event)
+
+        with self._session_factory() as session:
+            match_row = session.execute(
+                text(
+                    "SELECT id, stake_per_player, status "
+                    "FROM matches WHERE on_chain_match_id = :oid FOR UPDATE"
+                ),
+                {"oid": on_chain_id},
+            ).fetchone()
+            if not match_row:
+                logger.warning(
+                    "_handle_tie_declared: no DB match for on_chain_id=%s", on_chain_id
+                )
+                return
+
+            db_match_id    = str(match_row[0])
+            current_status = match_row[2]
+
+            if current_status == "tied":
+                logger.info(
+                    "_handle_tie_declared: match=%s already tied — skipping (replay guard)",
+                    db_match_id,
+                )
+                return
+
+            players = session.execute(
+                text("SELECT user_id FROM match_players WHERE match_id = :mid"),
+                {"mid": db_match_id},
+            ).fetchall()
+
+            for (player_id,) in players:
+                player_id = str(player_id)
+                session.execute(
+                    text("""
+                        INSERT INTO transactions
+                            (id, user_id, type, amount, token, status, match_id, tx_hash)
+                        VALUES (:id, :uid, 'tie_refund', :amount, 'BNB', 'completed', :mid, :tx)
+                        ON CONFLICT DO NOTHING
+                    """),
+                    {
+                        "id": str(uuid.uuid4()), "uid": player_id,
+                        "amount": refund_eth, "mid": db_match_id,
+                        "tx": tx_hash,
+                    },
+                )
+                session.execute(
+                    text("UPDATE user_stats SET ties = ties + 1 WHERE user_id = :uid"),
+                    {"uid": player_id},
+                )
+                session.execute(
+                    text("SELECT 1 FROM user_balances WHERE user_id = :uid FOR UPDATE"),
+                    {"uid": player_id},
+                )
+                session.execute(
+                    text("""
+                        UPDATE user_balances
+                        SET available = available + :refund,
+                            in_escrow = GREATEST(0, in_escrow - :refund)
+                        WHERE user_id = :uid
+                    """),
+                    {"refund": refund_eth, "uid": player_id},
+                )
+
+            session.execute(
+                text("""
+                    INSERT INTO transactions
+                        (id, type, amount, token, status, match_id, tx_hash)
+                    VALUES (:id, 'fee', :amount, 'BNB', 'completed', :mid, :tx)
+                    ON CONFLICT DO NOTHING
+                """),
+                {
+                    "id": str(uuid.uuid4()), "amount": fee_eth,
+                    "mid": db_match_id, "tx": tx_hash,
+                },
+            )
+
+            session.execute(
+                text("UPDATE matches SET status = 'tied', ended_at = NOW() WHERE id = :mid"),
+                {"mid": db_match_id},
+            )
+            session.commit()
+
+        logger.info(
+            "_handle_tie_declared: match=%s refund=%.4f BNB fee=%.4f BNB players=%d",
+            db_match_id, refund_eth, fee_eth, len(players),
         )
 
     def _handle_match_refunded(self, event) -> None:
