@@ -100,6 +100,20 @@ ARENA_ESCROW_ABI = [
             {"name": "fee",             "type": "uint256", "indexed": False},
         ],
     },
+    {
+        "type": "event", "name": "PayoutCredited",
+        "inputs": [
+            {"name": "recipient", "type": "address", "indexed": True},
+            {"name": "amount",    "type": "uint256", "indexed": False},
+        ],
+    },
+    {
+        "type": "event", "name": "Withdrawn",
+        "inputs": [
+            {"name": "recipient", "type": "address", "indexed": True},
+            {"name": "amount",    "type": "uint256", "indexed": False},
+        ],
+    },
     # ── Functions ────────────────────────────────────────────────────────────
     {
         "type": "function", "name": "declareWinner",
@@ -137,6 +151,16 @@ ARENA_ESCROW_ABI = [
     {
         "type": "function", "name": "isPaused",
         "inputs": [], "outputs": [{"name": "", "type": "bool"}],
+        "stateMutability": "view",
+    },
+    {
+        "type": "function", "name": "withdraw",
+        "inputs": [], "outputs": [], "stateMutability": "nonpayable",
+    },
+    {
+        "type": "function", "name": "pendingWithdrawals",
+        "inputs": [{"name": "account", "type": "address"}],
+        "outputs": [{"name": "", "type": "uint256"}],
         "stateMutability": "view",
     },
     # ── Owner-only pause / unpause (M8 kill switch) ──────────────────────────
@@ -401,6 +425,8 @@ class EscrowClient:
             "TieDeclared":     self._handle_tie_declared,
             "MatchRefunded":   self._handle_match_refunded,
             "MatchCancelled":  self._handle_match_cancelled,
+            "PayoutCredited":  self._handle_payout_credited,
+            "Withdrawn":       self._handle_withdrawn,
         }
         total = 0
         for event_name, handler in handlers.items():
@@ -533,6 +559,23 @@ class EscrowClient:
             "state":          result[6],
             "winningTeam":    result[7],
         }
+
+    def read_match_state(self, on_chain_match_id: int) -> int:
+        """
+        Returns the raw MatchState enum integer for a match (index [6] of getMatch()).
+        0=WAITING 1=ACTIVE 2=FINISHED 3=REFUNDED 4=CANCELLED 5=TIED
+        Raises if the match does not exist.
+        """
+        result = self._contract.functions.getMatch(on_chain_match_id).call()
+        return int(result[6])
+
+    def read_pending_withdrawals(self, wallet_address: str) -> int:
+        """
+        Returns the on-chain pendingWithdrawals[wallet] in wei.
+        Returns 0 when nothing is owed (normal case — direct ETH transfer succeeded).
+        """
+        checksum = Web3.to_checksum_address(wallet_address)
+        return int(self._contract.functions.pendingWithdrawals(checksum).call())
 
     # ── Event handlers ───────────────────────────────────────────────────────
 
@@ -1017,6 +1060,131 @@ class EscrowClient:
             "_handle_tie_declared: match=%s refund=%.4f BNB fee=%.4f BNB players=%d",
             db_match_id, refund_eth, fee_eth, len(players),
         )
+
+    def _handle_payout_credited(self, event) -> None:
+        """
+        PayoutCredited(recipient, amount) — direct ETH transfer failed inside a payout
+        loop (declareWinner / declareTie / cancelMatch / cancelWaiting / claimRefund).
+        Funds sit in pendingWithdrawals[recipient] until the user calls withdraw().
+
+        DB-ready:
+          UPSERT pending_withdrawals — amount_wei += credited amount (same wallet, same match).
+          INSERT transactions (type='pending_withdrawal_credit') for audit trail.
+        """
+        args      = event["args"]
+        recipient = args["recipient"].lower()
+        amount    = int(args["amount"])
+        tx_hash   = _event_tx_hash(event)
+
+        if amount == 0:
+            return
+
+        with self._session_factory() as session:
+            user = session.execute(
+                text("SELECT id FROM users WHERE LOWER(wallet_address) = :wallet"),
+                {"wallet": recipient},
+            ).fetchone()
+            if not user:
+                logger.warning("PayoutCredited: unknown wallet %s (amount=%d wei)", recipient, amount)
+                return
+            user_id = str(user[0])
+
+            # Try to link to the match that caused this credit via tx_hash
+            match_row = session.execute(
+                text("SELECT id FROM matches WHERE on_chain_match_id = ("
+                     "SELECT on_chain_match_id FROM matches m "
+                     "JOIN transactions t ON t.match_id = m.id "
+                     "WHERE t.tx_hash = :tx LIMIT 1)"),
+                {"tx": tx_hash},
+            ).fetchone()
+            match_id = str(match_row[0]) if match_row else None
+
+            session.execute(
+                text("""
+                    INSERT INTO pending_withdrawals
+                        (user_id, wallet_addr, amount_wei, match_id)
+                    VALUES (:uid, :wallet, :amt, :mid)
+                    ON CONFLICT (wallet_addr, match_id)
+                    DO UPDATE SET amount_wei = pending_withdrawals.amount_wei + EXCLUDED.amount_wei
+                """),
+                {"uid": user_id, "wallet": recipient, "amt": amount, "mid": match_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO transactions
+                        (id, user_id, type, amount, token, status, match_id, tx_hash)
+                    VALUES (:id, :uid, 'pending_withdrawal_credit', :amt_bnb, 'BNB', 'pending', :mid, :tx)
+                    ON CONFLICT DO NOTHING
+                """),
+                {
+                    "id": str(uuid.uuid4()), "uid": user_id,
+                    "amt_bnb": float(Web3.from_wei(amount, "ether")),
+                    "mid": match_id, "tx": tx_hash,
+                },
+            )
+            session.commit()
+
+        logger.info(
+            "PayoutCredited: wallet=%s amount=%d wei — funds held in contract pullPayment",
+            recipient, amount,
+        )
+
+    def _handle_withdrawn(self, event) -> None:
+        """
+        Withdrawn(recipient, amount) — user successfully called withdraw() to pull
+        their pendingWithdrawals credit.
+
+        DB-ready:
+          UPDATE pending_withdrawals SET claimed_at=NOW(), claim_tx=tx_hash
+          UPDATE transactions SET status='completed' WHERE type='pending_withdrawal_credit'
+        """
+        args      = event["args"]
+        recipient = args["recipient"].lower()
+        amount    = int(args["amount"])
+        tx_hash   = _event_tx_hash(event)
+
+        with self._session_factory() as session:
+            user = session.execute(
+                text("SELECT id FROM users WHERE LOWER(wallet_address) = :wallet"),
+                {"wallet": recipient},
+            ).fetchone()
+            if not user:
+                logger.warning("Withdrawn: unknown wallet %s", recipient)
+                return
+            user_id = str(user[0])
+
+            session.execute(
+                text("""
+                    UPDATE pending_withdrawals
+                    SET claimed_at = NOW(), claim_tx = :tx
+                    WHERE wallet_addr = :wallet AND claimed_at IS NULL
+                """),
+                {"tx": tx_hash, "wallet": recipient},
+            )
+            session.execute(
+                text("""
+                    UPDATE transactions
+                    SET status = 'completed'
+                    WHERE user_id = :uid AND type = 'pending_withdrawal_credit' AND status = 'pending'
+                """),
+                {"uid": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO transactions
+                        (id, user_id, type, amount, token, status, tx_hash)
+                    VALUES (:id, :uid, 'pending_withdrawal_claimed', :amt, 'BNB', 'completed', :tx)
+                    ON CONFLICT DO NOTHING
+                """),
+                {
+                    "id": str(uuid.uuid4()), "uid": user_id,
+                    "amt": float(Web3.from_wei(amount, "ether")),
+                    "tx": tx_hash,
+                },
+            )
+            session.commit()
+
+        logger.info("Withdrawn: wallet=%s amount=%d wei", recipient, amount)
 
     def _handle_match_refunded(self, event) -> None:
         """

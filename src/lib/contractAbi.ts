@@ -60,4 +60,42 @@ export const ARENA_ESCROW_ABI = [
       { name: "fee",             type: "uint256", indexed: false },
     ],
   },
+  {
+    type: "event",
+    name: "MatchCancelled",
+    inputs: [
+      { name: "matchId",     type: "uint256", indexed: true  },
+      { name: "cancelledBy", type: "address", indexed: true  },
+    ],
+  },
+  {
+    type: "event",
+    name: "PayoutCredited",
+    inputs: [
+      { name: "recipient", type: "address", indexed: true  },
+      { name: "amount",    type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "Withdrawn",
+    inputs: [
+      { name: "recipient", type: "address", indexed: true  },
+      { name: "amount",    type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "function",
+    name: "withdraw",
+    inputs: [],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "pendingWithdrawals",
+    inputs:  [{ name: "account", type: "address" }],
+    outputs: [{ name: "",        type: "uint256" }],
+    stateMutability: "view",
+  },
 ] as const;

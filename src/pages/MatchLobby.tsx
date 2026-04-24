@@ -30,6 +30,7 @@ import {
   apiGetActiveMatch,
   apiCancelMatch,
   apiLeaveMatch,
+  apiGetLeaveStatus,
   apiInviteToMatch,
   apiKickPlayer,
   apiListFriends,
@@ -50,7 +51,7 @@ import {
   type LobbySlot,
 } from "@/lib/lobbyRosterDisplay";
 import { createFailureMessage, inviteFailureMessage, joinFailureMessage } from "@/lib/stakeErrors";
-import { createMatchOnChain, cancelMatchOnChain, fetchBnbUsdPrice, getBnbBalance } from "@/lib/metamaskBsc";
+import { createMatchOnChain, cancelMatchOnChain, cancelWaitingOnChain, fetchBnbUsdPrice, getBnbBalance } from "@/lib/metamaskBsc";
 import { ArenaPageShell } from "@/components/visual";
 
 // ─── Game configs ─────────────────────────────────────────────────────────────
@@ -415,6 +416,9 @@ const MatchLobby = () => {
   const [invitedFriendIds,     setInvitedFriendIds]     = useState<Set<string>>(new Set());
   const [kickingUserId,        setKickingUserId]        = useState<string | null>(null);
   const [createRateLimited,    setCreateRateLimited]    = useState(false);
+  const [leavePending,         setLeavePending]         = useState(false);
+  const [rescuePending,        setRescuePending]        = useState(false);
+  const [rescueAvailable,      setRescueAvailable]      = useState(false);
   const [inviteRateLimitedIds, setInviteRateLimitedIds] = useState<Set<string>>(new Set());
   const inviteModalPanelRef = useRef<HTMLDivElement>(null);
   const [dailyAtStaked,        setDailyAtStaked]        = useState<number | null>(null);
@@ -886,7 +890,7 @@ const MatchLobby = () => {
         useNotificationStore.getState().addNotification({
           type: "system",
           title: "⏰ Room Expired",
-          message: "Your match room expired after 30 minutes. Deposit refunded.",
+          message: "Your match room expired after 1 hour. Funds refunded or rescuable via cancelWaiting.",
         });
       }
     };
@@ -895,29 +899,55 @@ const MatchLobby = () => {
     return () => clearInterval(id);
   }, [myRoomMatchId]);
 
+  // Poll leave-status every 60s for CRYPTO waiting rooms to show Rescue Funds button
+  useEffect(() => {
+    if (!token || !myRoomMatchId || !myActiveRoom) return;
+    if (matchStakeCurrency(myActiveRoom) !== "CRYPTO") return;
+    if (myActiveRoom.status !== "waiting") return;
+
+    const check = async () => {
+      const status = await apiGetLeaveStatus(token, myRoomMatchId);
+      if (status) setRescueAvailable(status.rescue_available);
+    };
+    void check();
+    const id = setInterval(() => void check(), 60_000);
+    return () => clearInterval(id);
+  }, [token, myRoomMatchId, myActiveRoom?.status, myActiveRoom?.stakeCurrency]);
+
   const handleLeaveRoom = useCallback(() => {
     if (!myActiveRoom || !user) return;
     const matchId    = myActiveRoom.id;
     const stakeLabel = formatMatchStakeShort(myActiveRoom);
     const isCrypto   = matchStakeCurrency(myActiveRoom) === "CRYPTO";
-    const onChainId  = activeRoomOnChainId;
-    // Clear active room FIRST so useActiveRoomServerSync tears down (cancelled=true)
-    // before any in-flight heartbeat returns in_match=false — avoids spurious
-    // "removed by the host" toast after voluntary leave.
-    setMyRoomMatchId(null);
-    setActiveRoomOnChainId(null);
-    setCountdown(null);
-    markIdle();
-    // Must pass user.username — joinMatch adds username to players,
-    // so leaveMatch must use the same key to find and remove the player.
-    leaveMatch(matchId, user.username);
-    cancelEscrow(matchId);
-    useNotificationStore.getState().addNotification({
-      type: "system",
-      title: "↩️ Left Room",
-      message: `You left the match room. Your ${stakeLabel} stake has been refunded.`,
-    });
-    const doServerLeave = () => {
+    const hasDeposited = myActiveRoom.yourHasDeposited ?? false;
+
+    // CRYPTO players who have already deposited cannot leave — funds are on-chain.
+    // Host must call cancelMatch() or they wait for WAITING_TIMEOUT (1h) → Rescue Funds.
+    if (isCrypto && hasDeposited) {
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "Funds locked on-chain",
+        message: "Your stake is locked in the ArenaEscrow contract. The host must cancel the room, or use Rescue Funds after 1 hour.",
+      });
+      setLeaveConfirmOpen(false);
+      return;
+    }
+
+    setLeavePending(true);
+
+    const doLeaveAndClear = () => {
+      setMyRoomMatchId(null);
+      setActiveRoomOnChainId(null);
+      setCountdown(null);
+      markIdle();
+      leaveMatch(matchId, user.username);
+      cancelEscrow(matchId);
+      setLeavePending(false);
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "↩️ Left Room",
+        message: `You left the match room. Your ${stakeLabel} stake has been refunded.`,
+      });
       if (token && looksLikeServerMatchId(matchId)) {
         void apiLeaveMatch(token, matchId).finally(() => {
           void useMatchStore.getState().refreshMatchesFromServer(token);
@@ -926,47 +956,30 @@ const MatchLobby = () => {
         void useMatchStore.getState().refreshMatchesFromServer(token ?? null);
       }
     };
-    if (isCrypto && onChainId != null) {
-      void (async () => {
-        try {
-          await cancelMatchOnChain(onChainId);
-          useNotificationStore.getState().addNotification({
-            type: "system",
-            title: "Refund sent",
-            message: "cancelMatch confirmed on-chain — tBNB is back in your wallet.",
-          });
-        } catch {
-          useNotificationStore.getState().addNotification({
-            type: "system",
-            title: "On-chain cancel failed",
-            message: "Could not refund on-chain. Stake auto-refunds after 1 hour via cancelWaiting.",
-          });
-        } finally {
-          doServerLeave();
-        }
-      })();
-    } else {
-      doServerLeave();
-    }
+
+    // CRYPTO without a deposit (joined the room but never called joinMatch on-chain):
+    // just clean up DB-side, no on-chain action needed.
+    doLeaveAndClear();
   }, [myActiveRoom, user, token, leaveMatch, cancelEscrow, activeRoomOnChainId]);
 
   const handleDeleteRoom = useCallback(() => {
     if (!myActiveRoom || !user) return;
-    const matchId    = myActiveRoom.id;
-    const stakeLabel = formatMatchStakeShort(myActiveRoom);
-    const isCrypto   = matchStakeCurrency(myActiveRoom) === "CRYPTO";
-    // Drop activeRoomId first so heartbeat polling stops immediately.
-    setMyRoomMatchId(null);
+    const matchId      = myActiveRoom.id;
+    const stakeLabel   = formatMatchStakeShort(myActiveRoom);
+    const isCrypto     = matchStakeCurrency(myActiveRoom) === "CRYPTO";
+    const depositsExist = (myActiveRoom.depositsReceived ?? 0) > 0;
+    const onChainId    = activeRoomOnChainId;
     setDeleteRoomConfirmOpen(false);
-    setCountdown(null);
-    markIdle();
-    cancelEscrow(matchId);
-    deleteMatch(matchId);
-    useNotificationStore.getState().addNotification({
-      type: "system",
-      title: "🗑️ Room Deleted",
-      message: `Match room closed. Your ${stakeLabel} deposit has been refunded.`,
-    });
+
+    const clearRoomState = () => {
+      setMyRoomMatchId(null);
+      setActiveRoomOnChainId(null);
+      setCountdown(null);
+      markIdle();
+      cancelEscrow(matchId);
+      deleteMatch(matchId);
+    };
+
     const doServerCancel = () => {
       if (token && looksLikeServerMatchId(matchId)) {
         void apiCancelMatch(token, matchId).finally(() => {
@@ -976,31 +989,71 @@ const MatchLobby = () => {
         void useMatchStore.getState().refreshMatchesFromServer(token ?? null);
       }
     };
-    const onChainId = activeRoomOnChainId;
-    setActiveRoomOnChainId(null);
-    if (isCrypto && onChainId != null) {
+
+    if (isCrypto && depositsExist && onChainId != null) {
+      // Confirm-then-clear: on-chain cancelMatch FIRST, then update UI.
+      // The MatchCancelled event listener will update DB automatically.
+      // Do NOT clear state until the tx is confirmed — otherwise the UI
+      // loses the onChainId needed for any retry.
+      setLeavePending(true);
       void (async () => {
         try {
           await cancelMatchOnChain(onChainId);
+          clearRoomState();
           useNotificationStore.getState().addNotification({
             type: "system",
-            title: "Refund sent",
-            message: "cancelMatch confirmed on-chain — tBNB is back in your wallet.",
+            title: "🗑️ Room Cancelled",
+            message: `cancelMatch confirmed on-chain — all ${stakeLabel} deposits refunded to each player.`,
           });
-        } catch {
+          doServerCancel();
+        } catch (err) {
           useNotificationStore.getState().addNotification({
             type: "system",
             title: "On-chain cancel failed",
-            message: "Could not refund on-chain. Stake auto-refunds after 1 hour via cancelWaiting.",
+            message: friendlyChainErrorMessage(err) ?? "MetaMask transaction rejected. Your tBNB is still in escrow — try again or wait 1h for cancelWaiting.",
           });
         } finally {
-          doServerCancel();
+          setLeavePending(false);
         }
       })();
     } else {
+      // AT match or CRYPTO with zero deposits — safe to clear and cancel in DB immediately.
+      clearRoomState();
+      useNotificationStore.getState().addNotification({
+        type: "system",
+        title: "🗑️ Room Deleted",
+        message: `Match room closed. Your ${stakeLabel} deposit has been refunded.`,
+      });
       doServerCancel();
     }
   }, [myActiveRoom, user, token, cancelEscrow, deleteMatch, activeRoomOnChainId]);
+
+  const handleRescueFunds = useCallback(() => {
+    if (!myActiveRoom || !activeRoomOnChainId) return;
+    const onChainId = activeRoomOnChainId;
+    setRescuePending(true);
+    void (async () => {
+      try {
+        await cancelWaitingOnChain(onChainId);
+        // State cleared by the MatchCancelled event handler in the backend —
+        // the event listener will mark the match cancelled and the heartbeat
+        // poll will return status='cancelled', triggering markIdle() + clear.
+        useNotificationStore.getState().addNotification({
+          type: "system",
+          title: "✅ Rescue confirmed",
+          message: "cancelWaiting confirmed on-chain — your tBNB will be refunded shortly.",
+        });
+      } catch (err) {
+        useNotificationStore.getState().addNotification({
+          type: "system",
+          title: "Rescue failed",
+          message: friendlyChainErrorMessage(err) ?? "cancelWaiting reverted — make sure 1 hour has passed since the match was created.",
+        });
+      } finally {
+        setRescuePending(false);
+      }
+    })();
+  }, [myActiveRoom, activeRoomOnChainId]);
 
   const handleOpenInviteModal = useCallback(async () => {
     if (!token) return;
@@ -1645,18 +1698,49 @@ const MatchLobby = () => {
           {/* Action row */}
           <div className="mt-0.5 flex flex-wrap items-center gap-1.5 border-t border-arena-cyan/15 pt-2.5">
             {myActiveRoom.hostId !== user?.id && (
-              <Button
-                size="sm"
-                variant="outline"
-                className={cn(
-                  "tactical-hud-action-btn border-destructive/45 text-destructive hover:bg-destructive/12 hover:border-destructive/75",
-                  countdown !== null && countdown <= 3 && "motion-safe:animate-pulse"
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={leavePending}
+                  className={cn(
+                    "tactical-hud-action-btn border-destructive/45 text-destructive hover:bg-destructive/12 hover:border-destructive/75",
+                    countdown !== null && countdown <= 3 && "motion-safe:animate-pulse"
+                  )}
+                  onClick={() => {
+                    const isCrypto = matchStakeCurrency(myActiveRoom) === "CRYPTO";
+                    const hasDeposited = myActiveRoom.yourHasDeposited ?? false;
+                    if (isCrypto && hasDeposited) {
+                      handleLeaveRoom();
+                    } else {
+                      setLeaveConfirmOpen(true);
+                    }
+                  }}
+                >
+                  {leavePending ? (
+                    <Loader2 className="mr-1 h-2.5 w-2.5 animate-spin" />
+                  ) : (
+                    <LogOut className="mr-1 h-2.5 w-2.5" />
+                  )}
+                  Leave Room
+                </Button>
+                {rescueAvailable && myActiveRoom.stakeCurrency === "CRYPTO" && activeRoomOnChainId != null && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={rescuePending}
+                    className="tactical-hud-action-btn border-amber-500/50 text-amber-400 hover:bg-amber-500/12 hover:border-amber-500/70"
+                    onClick={handleRescueFunds}
+                  >
+                    {rescuePending ? (
+                      <Loader2 className="mr-1 h-2.5 w-2.5 animate-spin" />
+                    ) : (
+                      <AlertTriangle className="mr-1 h-2.5 w-2.5" />
+                    )}
+                    Rescue Funds
+                  </Button>
                 )}
-                onClick={() => setLeaveConfirmOpen(true)}
-              >
-                <LogOut className="mr-1 h-2.5 w-2.5" />
-                Leave Room
-              </Button>
+              </>
             )}
 
             {token && myActiveRoom.status === "waiting" && (
@@ -1684,10 +1768,15 @@ const MatchLobby = () => {
               <Button
                 size="sm"
                 variant="outline"
+                disabled={leavePending}
                 className="tactical-hud-action-btn ml-auto border-destructive/50 text-destructive hover:bg-destructive/12"
                 onClick={() => setDeleteRoomConfirmOpen(true)}
               >
-                <Trash2 className="mr-1 h-2.5 w-2.5" />
+                {leavePending ? (
+                  <Loader2 className="mr-1 h-2.5 w-2.5 animate-spin" />
+                ) : (
+                  <Trash2 className="mr-1 h-2.5 w-2.5" />
+                )}
                 Delete Room
               </Button>
             )}
@@ -2623,18 +2712,37 @@ const MatchLobby = () => {
                 </p>
               </div>
             </div>
-            <p className="text-xs text-muted-foreground/70 bg-secondary/40 rounded-xl px-3 py-2">
-              This calls <span className="font-mono text-primary">ArenaEscrow.cancelMatch()</span> on-chain. Only available while the room is still waiting for players.
-            </p>
+            {matchStakeCurrency(myActiveRoom) === "CRYPTO" && (myActiveRoom.depositsReceived ?? 0) > 0 ? (
+              <p className="text-xs text-amber-400/80 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
+                <AlertTriangle className="inline h-3 w-3 mr-1" />
+                MetaMask will open to sign <span className="font-mono">ArenaEscrow.cancelMatch()</span>.
+                The transaction must confirm on-chain before the room is closed and all deposits are refunded.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground/70 bg-secondary/40 rounded-xl px-3 py-2">
+                This calls <span className="font-mono text-primary">ArenaEscrow.cancelMatch()</span> on-chain. Only available while the room is still waiting for players.
+              </p>
+            )}
             <div className="flex gap-2">
               <Button
                 variant="destructive"
+                disabled={leavePending}
                 className="flex-1 font-display text-sm"
                 onClick={handleDeleteRoom}
               >
-                <Trash2 className="mr-2 h-4 w-4" /> Delete Room
+                {leavePending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="mr-2 h-4 w-4" />
+                )}
+                {leavePending ? "Waiting for MetaMask…" : "Delete Room"}
               </Button>
-              <Button variant="outline" className="border-border/50" onClick={() => setDeleteRoomConfirmOpen(false)}>
+              <Button
+                variant="outline"
+                disabled={leavePending}
+                className="border-border/50"
+                onClick={() => setDeleteRoomConfirmOpen(false)}
+              >
                 Cancel
               </Button>
             </div>

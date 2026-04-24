@@ -34,6 +34,8 @@ import type {
   LeaderboardPlayerRow,
   Match,
   MatchStatus,
+  PendingWithdrawalResponse,
+  LeaveStatusResponse,
   PublicPlayerProfile,
   UserSettingsRegion,
   UserStatus,
@@ -430,6 +432,50 @@ export async function apiLeaveMatch(
   } catch (err) {
     reportEngineApiError(err);
     return { ok: false, detail: "Network error" };
+  }
+}
+
+/**
+ * GET /wallet/pending-withdrawals — check on-chain pendingWithdrawals balance.
+ * Returns on_chain_wei (bigint string) and db_tracked_wei for the caller's wallet.
+ * Only non-zero when a direct ETH transfer failed inside a payout loop (rare).
+ * CONTRACT-ready: reads ArenaEscrow.pendingWithdrawals(wallet) view.
+ */
+export async function apiGetPendingWithdrawals(
+  token: string,
+): Promise<PendingWithdrawalResponse | null> {
+  try {
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/wallet/pending-withdrawals`,
+      token,
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as PendingWithdrawalResponse;
+  } catch (err) {
+    reportEngineApiError(err);
+    return null;
+  }
+}
+
+/**
+ * GET /matches/{matchId}/leave-status — check leave/cancel eligibility.
+ * Returns can_leave_now, requires_cancel, rescue_available, has_deposited.
+ * Used by MatchLobby to decide which leave/rescue button to show.
+ */
+export async function apiGetLeaveStatus(
+  token: string,
+  matchId: string,
+): Promise<LeaveStatusResponse | null> {
+  try {
+    const res = await arenaUserFetch(
+      `${ENGINE_BASE}/matches/${encodeURIComponent(matchId)}/leave-status`,
+      token,
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as LeaveStatusResponse;
+  } catch (err) {
+    reportEngineApiError(err);
+    return null;
   }
 }
 
@@ -2081,6 +2127,9 @@ export function mapApiMatchRowToMatch(row: Record<string, unknown>): Match | nul
     ...(lockCountdownStart ? { lockCountdownStart } : {}),
     ...(expiresAt ? { expiresAt } : {}),
     ...(stakeCurrency ? { stakeCurrency } : {}),
+    ...(row.your_has_deposited !== undefined
+      ? { yourHasDeposited: Boolean(row.your_has_deposited) }
+      : {}),
   };
 
   return base;

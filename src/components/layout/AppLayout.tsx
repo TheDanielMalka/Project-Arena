@@ -8,6 +8,7 @@ import { ArenaAmbientBackground } from "./ArenaAmbientBackground";
 import { ArenaGlobalStarfield } from "@/components/visual/ArenaGlobalStarfield";
 import { Footer } from "@/components/shared/Footer";
 import { Breadcrumbs } from "@/components/shared/Breadcrumbs";
+import { PendingWithdrawalBanner } from "@/components/wallet/PendingWithdrawalBanner";
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -51,6 +52,7 @@ export function AppLayout({ children }: AppLayoutProps) {
           <ArenaGlobalStarfield className="absolute inset-0 z-0" />
           <div className="relative z-[1] flex min-h-0 min-w-0 flex-1 flex-col">
             <ArenaHeader />
+            <PendingWithdrawalBanner />
             <main className="arena-main-scroll relative flex-1 overflow-auto border-t border-arena-cyan/[0.07] p-6 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.03)] flex flex-col">
               <Breadcrumbs />
               <div className="flex-1">

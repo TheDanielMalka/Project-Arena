@@ -38,11 +38,16 @@ from src.discord_bot import create_match_channels
 from src.risk.limits import count_completed_high_stakes_matches, sum_daily_match_losses
 try:
     from src.contract import build_escrow_client
+    from src.contract.reconciliation import ContractReconciler
 except ImportError:
     # web3 C extensions not available in this environment (e.g. Windows without MSVC).
     # Engine runs without escrow client — build_escrow_client returns None gracefully.
     def build_escrow_client(_session_factory):  # type: ignore[misc]
         return None
+
+    class ContractReconciler:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs): pass
+        def run(self, *args, **kwargs): pass
 import src.auth as auth
 
 import pyotp
@@ -72,7 +77,8 @@ SessionLocal = sessionmaker(bind=db_engine)
 # (local dev / CI without blockchain config) — engine runs without escrow.
 # CONTRACT-ready: EscrowClient.declare_winner() releases payout on-chain.
 _escrow_client = None
-_listener_task = None  # background thread task — EscrowClient.listen()
+_listener_task = None     # background thread task — EscrowClient.listen()
+_reconciler_task = None   # ContractReconciler background loop
 _slack_oracle_task = None  # Slack watchdog (escrow + SLACK_ALERTS_WEBHOOK_URL only)
 _pii_retention_task = None  # GDPR daily purge — see migration 036
 _pool_manager_task = None  # Public match pool — keeps N open rooms per config row
@@ -1053,6 +1059,14 @@ async def lifespan(app: FastAPI):
         )
         logger.info("✅ EscrowClient event listener started")
 
+    # Contract reconciler — monitors CRYPTO matches for DB vs on-chain divergence,
+    # logs stuck WAITING matches past the 1-hour timeout, and expires stale pending_leaves.
+    # Does NOT auto-cancel on-chain — oracle is not a depositor.
+    global _reconciler_task
+    _reconciler = ContractReconciler(SessionLocal, _escrow_client)
+    _reconciler_task = asyncio.create_task(asyncio.to_thread(_reconciler.run, 300))
+    logger.info("✅ ContractReconciler started")
+
     # Expired match cleanup — runs every 5 minutes.
     # Cancels 'waiting' rooms whose expires_at has passed (1 hour after creation).
     # AT matches: refunds stake to all players. CRYPTO: non-deposited → no on-chain action.
@@ -1096,6 +1110,12 @@ async def lifespan(app: FastAPI):
     yield
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
+    _reconciler.stop()
+    _reconciler_task.cancel()
+    try:
+        await _reconciler_task
+    except asyncio.CancelledError:
+        pass
     _rq_task.cancel()
     _cleanup_task.cancel()
     _stale_task.cancel()
@@ -2552,7 +2572,8 @@ async def get_active_match(payload: dict = Depends(verify_token)):
             players = session.execute(
                 text(
                     "SELECT u.id, u.username, u.avatar, u.arena_id, "
-                    "       COALESCE(mp.team, 'A') AS team "
+                    "       COALESCE(mp.team, 'A') AS team, "
+                    "       mp.has_deposited "
                     "FROM match_players mp "
                     "JOIN users u ON u.id = mp.user_id "
                     "WHERE mp.match_id = :mid "
@@ -2562,29 +2583,27 @@ async def get_active_match(payload: dict = Depends(verify_token)):
             ).fetchall()
 
             # Identify the caller's own slot (avoids client-side duplication)
-            your_team = next(
-                (p[4] for p in players if str(p[0]) == user_id), None
-            )
+            your_team         = next((p[4] for p in players if str(p[0]) == user_id), None)
+            your_has_deposited = next((bool(p[5]) for p in players if str(p[0]) == user_id), False)
 
             return {
                 "match": {
-                    "match_id":       match_id,
-                    "game":           row[1],
-                    "status":         row[2],
-                    "bet_amount":     str(row[3]) if row[3] is not None else None,
-                    "stake_currency": row[4],
-                    "type":           row[5],
-                    "code":           row[6],
-                    "created_at":     row[7].isoformat() if row[7] else None,
-                    "mode":           row[8],
-                    "host_id":        str(row[9]) if row[9] else None,
-                    "host_username":  row[10],
-                    "max_players":    row[11],
-                    "max_per_team":   row[12],
-                    # your_user_id + your_team let the UI mark "me" without
-                    # duplicating from local state
-                    "your_user_id":   user_id,
-                    "your_team":      your_team,
+                    "match_id":          match_id,
+                    "game":              row[1],
+                    "status":            row[2],
+                    "bet_amount":        str(row[3]) if row[3] is not None else None,
+                    "stake_currency":    row[4],
+                    "type":              row[5],
+                    "code":              row[6],
+                    "created_at":        row[7].isoformat() if row[7] else None,
+                    "mode":              row[8],
+                    "host_id":           str(row[9]) if row[9] else None,
+                    "host_username":     row[10],
+                    "max_players":       row[11],
+                    "max_per_team":      row[12],
+                    "your_user_id":      user_id,
+                    "your_team":         your_team,
+                    "your_has_deposited": your_has_deposited,
                     "players": [
                         {"user_id": str(p[0]), "username": p[1], "avatar": p[2],
                          "arena_id": p[3], "team": p[4]}
@@ -5405,29 +5424,51 @@ async def cancel_match(match_id: str, payload: dict = Depends(verify_token)):
     Rules:
       - Match must exist and be in 'waiting' status.
       - Caller must be the host (host_id = user_id).
-      - Sets status → 'cancelled', refunds AT for all players.
+      - AT: refunds all players immediately via at_transactions.
+      - CRYPTO with deposits: returns 400 with requires_on_chain_cancel=true.
+        The frontend must call ArenaEscrow.cancelMatch(on_chain_match_id) first;
+        the MatchCancelled event listener will then update the DB automatically.
+      - CRYPTO with zero deposits: cancels the DB row directly (no on-chain needed).
 
     DB-ready: UPDATE matches SET status='cancelled'; refund AT via at_transactions.
+    CONTRACT-ready: CRYPTO with deposits must be resolved on-chain via cancelMatch().
     """
     user_id: str = payload["sub"]
     try:
         with SessionLocal() as session:
             match_row = session.execute(
                 text(
-                    "SELECT host_id, status, stake_currency FROM matches "
-                    "WHERE id = :mid"
+                    "SELECT host_id, status, stake_currency, "
+                    "       deposits_received, on_chain_match_id "
+                    "FROM matches WHERE id = :mid"
                 ),
                 {"mid": match_id},
             ).fetchone()
             if not match_row:
                 raise HTTPException(404, "Match not found")
-            host_id, status, stake_currency = match_row
+            host_id, status, stake_currency, deposits_received, on_chain_id = match_row
             if str(host_id) != user_id:
                 raise HTTPException(403, "Only the host can delete this room")
             if status != "waiting":
                 raise HTTPException(409, f"Cannot cancel a match with status '{status}'")
 
-            # Refund AT for all players if AT stake
+            # CRYPTO with any deposits locked on-chain → frontend must cancel on-chain first.
+            # The MatchCancelled event listener handles the DB update after the tx confirms.
+            if stake_currency == "CRYPTO" and (deposits_received or 0) > 0:
+                raise HTTPException(
+                    400,
+                    detail={
+                        "code": "requires_on_chain_cancel",
+                        "message": (
+                            "This CRYPTO match has deposits locked in escrow. "
+                            "Call ArenaEscrow.cancelMatch(on_chain_match_id) from your wallet first — "
+                            "the on-chain transaction will refund all depositors and update the DB automatically."
+                        ),
+                        "on_chain_match_id": str(on_chain_id) if on_chain_id is not None else None,
+                    },
+                )
+
+            # AT: refund all players
             if stake_currency == "AT":
                 _refund_at_match(match_id)
 
@@ -5457,9 +5498,14 @@ async def leave_match(match_id: str, payload: dict = Depends(verify_token)):
     Rules:
       - Match must be in 'waiting' status.
       - Caller must be a player (not the host — host should use DELETE /matches/{id}).
-      - Removes player from match_players, refunds their AT stake.
+      - AT: removes from match_players and refunds stake immediately.
+      - CRYPTO + has_deposited=TRUE: returns 400 — funds are on-chain and cannot be
+        reclaimed by the player directly. The host must call cancelMatch() or the player
+        must wait for WAITING_TIMEOUT (1 hour) and call cancelWaiting() from their wallet.
+      - CRYPTO + has_deposited=FALSE: removes from match_players (no on-chain action needed).
 
     DB-ready: DELETE FROM match_players WHERE match_id=:mid AND user_id=:uid.
+    CONTRACT-ready: CRYPTO depositors must resolve on-chain — no refund path exists via API.
     """
     user_id: str = payload["sub"]
     try:
@@ -5482,17 +5528,35 @@ async def leave_match(match_id: str, payload: dict = Depends(verify_token)):
             if status != "waiting":
                 raise HTTPException(409, f"Cannot leave a match with status '{status}'")
 
-            in_match = session.execute(
+            player_row = session.execute(
                 text(
-                    "SELECT 1 FROM match_players "
+                    "SELECT has_deposited FROM match_players "
                     "WHERE match_id = :mid AND user_id = :uid"
                 ),
                 {"mid": match_id, "uid": user_id},
             ).fetchone()
-            if not in_match:
+            if not player_row:
                 raise HTTPException(400, "You are not in this match")
 
-            # Remove player
+            has_deposited = bool(player_row[0])
+
+            # CRYPTO with an on-chain deposit cannot be refunded via API —
+            # the host must call cancelMatch() or the player waits 1h → cancelWaiting().
+            if stake_currency == "CRYPTO" and has_deposited:
+                raise HTTPException(
+                    400,
+                    detail={
+                        "code": "crypto_deposit_locked",
+                        "message": (
+                            "Your stake is locked in the ArenaEscrow contract. "
+                            "The host must cancel the room (cancelMatch) to refund you, "
+                            "or you can rescue your funds after 1 hour by calling "
+                            "cancelWaiting() from your wallet."
+                        ),
+                    },
+                )
+
+            # Remove player from the room
             session.execute(
                 text(
                     "DELETE FROM match_players "
@@ -5516,6 +5580,131 @@ async def leave_match(match_id: str, payload: dict = Depends(verify_token)):
         raise HTTPException(500, "Leave failed")
 
     return {"left": True, "match_id": match_id}
+
+
+@app.get("/wallet/pending-withdrawals", status_code=200)
+async def get_pending_withdrawals(payload: dict = Depends(verify_token)):
+    """
+    GET /wallet/pending-withdrawals — check on-chain pendingWithdrawals balance.
+
+    Returns the amount (in wei) that the caller's wallet has pending in the
+    ArenaEscrow pull-payment ledger (pendingWithdrawals[wallet]).
+    This is only non-zero when a direct ETH payout failed (rare DoS-guard case).
+
+    Also returns DB-tracked unclaimed credits from pending_withdrawals table.
+
+    CONTRACT-ready: reads pendingWithdrawals(address) view on ArenaEscrow.
+    DB-ready: pending_withdrawals table (migration 046).
+    """
+    user_id: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            user_row = session.execute(
+                text("SELECT wallet_address FROM users WHERE id = :uid"),
+                {"uid": user_id},
+            ).fetchone()
+            wallet = str(user_row[0]).lower() if user_row and user_row[0] else None
+
+            on_chain_wei = 0
+            if wallet and _escrow_client is not None:
+                try:
+                    on_chain_wei = _escrow_client.read_pending_withdrawals(wallet)
+                except Exception as exc:
+                    logger.warning("read_pending_withdrawals failed: %s", exc)
+
+            db_row = session.execute(
+                text(
+                    "SELECT COALESCE(SUM(amount_wei), 0) "
+                    "FROM pending_withdrawals "
+                    "WHERE user_id = :uid AND claimed_at IS NULL"
+                ),
+                {"uid": user_id},
+            ).fetchone()
+            db_wei = int(db_row[0]) if db_row else 0
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("get_pending_withdrawals error: %s", exc)
+        raise HTTPException(500, "Failed to fetch pending withdrawals")
+
+    return {
+        "on_chain_wei": str(on_chain_wei),
+        "db_tracked_wei": str(db_wei),
+        "has_pending": on_chain_wei > 0 or db_wei > 0,
+        "wallet": wallet,
+    }
+
+
+@app.get("/matches/{match_id}/leave-status", status_code=200)
+async def get_leave_status(match_id: str, payload: dict = Depends(verify_token)):
+    """
+    GET /matches/{match_id}/leave-status — check leave/cancel eligibility for a CRYPTO match.
+
+    Returns:
+      can_leave_now   — True when leave requires no on-chain action (AT or CRYPTO no deposit)
+      requires_cancel — True when the user is the host and has deposits → must cancelMatch()
+      rescue_available — True when WAITING_TIMEOUT (1h) has elapsed → user can cancelWaiting()
+      has_deposited   — True when this user has an on-chain deposit in this match
+      created_at      — ISO timestamp of match creation (for client-side timeout math)
+      on_chain_match_id — bigint as string, or null
+
+    DB-ready: matches + match_players.
+    """
+    user_id: str = payload["sub"]
+    try:
+        with SessionLocal() as session:
+            match_row = session.execute(
+                text(
+                    "SELECT host_id, status, stake_currency, created_at, "
+                    "       deposits_received, on_chain_match_id "
+                    "FROM matches WHERE id = :mid"
+                ),
+                {"mid": match_id},
+            ).fetchone()
+            if not match_row:
+                raise HTTPException(404, "Match not found")
+            host_id, status, stake_currency, created_at, deposits_received, on_chain_id = match_row
+
+            player_row = session.execute(
+                text(
+                    "SELECT has_deposited FROM match_players "
+                    "WHERE match_id = :mid AND user_id = :uid"
+                ),
+                {"mid": match_id, "uid": user_id},
+            ).fetchone()
+            has_deposited = bool(player_row[0]) if player_row else False
+
+            is_host = str(host_id) == user_id
+            is_crypto = stake_currency == "CRYPTO"
+
+            import datetime as _dt
+            now = _dt.datetime.now(_dt.timezone.utc)
+            created_utc = created_at.replace(tzinfo=_dt.timezone.utc) if created_at and not created_at.tzinfo else created_at
+            rescue_available = (
+                is_crypto
+                and has_deposited
+                and status == "waiting"
+                and created_utc is not None
+                and (now - created_utc).total_seconds() >= 3600
+            )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("get_leave_status error: %s", exc)
+        raise HTTPException(500, "Failed to fetch leave status")
+
+    return {
+        "can_leave_now":    not is_crypto or not has_deposited,
+        "requires_cancel":  is_host and is_crypto and (deposits_received or 0) > 0,
+        "rescue_available": rescue_available,
+        "has_deposited":    has_deposited,
+        "is_host":          is_host,
+        "stake_currency":   stake_currency,
+        "created_at":       created_at.isoformat() if created_at else None,
+        "on_chain_match_id": str(on_chain_id) if on_chain_id is not None else None,
+    }
 
 
 class KickPlayerRequest(BaseModel):

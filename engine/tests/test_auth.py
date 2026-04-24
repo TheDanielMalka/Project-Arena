@@ -881,11 +881,11 @@ class TestMatchGating:
     # ── DELETE /matches/{match_id} ────────────────────────────────────────────
 
     def test_cancel_match_by_host_returns_200(self):
-        """Host deletes a waiting room → 200 + cancelled:True."""
+        """Host deletes a waiting CRYPTO room with no deposits → 200 + cancelled:True."""
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.return_value = (
-            FAKE_UUID, "waiting", "CRYPTO"  # host_id, status, stake_currency
+            FAKE_UUID, "waiting", "CRYPTO", 0, None  # host_id, status, currency, deposits=0, on_chain_id=None
         )
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.delete(
@@ -910,7 +910,7 @@ class TestMatchGating:
         other_user = str(uuid.uuid4())  # different from FAKE_UUID
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.return_value = (
-            other_user, "waiting", "CRYPTO"
+            other_user, "waiting", "CRYPTO", 0, None
         )
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.delete(
@@ -925,7 +925,7 @@ class TestMatchGating:
         match_id = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.return_value = (
-            FAKE_UUID, "in_progress", "CRYPTO"
+            FAKE_UUID, "in_progress", "CRYPTO", 0, None
         )
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.delete(
@@ -941,13 +941,13 @@ class TestMatchGating:
     # ── POST /matches/{match_id}/leave ────────────────────────────────────────
 
     def test_leave_match_by_non_host_returns_200(self):
-        """Non-host player leaves a waiting room → 200 + left:True."""
+        """Non-host CRYPTO player without a deposit leaves → 200 + left:True."""
         match_id = str(uuid.uuid4())
         other_host = str(uuid.uuid4())  # different from FAKE_UUID
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
             (other_host, "waiting", "CRYPTO", "10"),  # match lookup
-            (1,),                                      # in_match check → player is in match
+            (False,),                                  # has_deposited=False → can leave
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
@@ -997,13 +997,13 @@ class TestMatchGating:
         assert resp.status_code == 409
 
     def test_leave_match_not_in_match_returns_400(self):
-        """Player tries to leave a match they are not in."""
+        """Player tries to leave a match they are not in (no match_players row)."""
         match_id = str(uuid.uuid4())
         other_host = str(uuid.uuid4())
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchone.side_effect = [
             (other_host, "waiting", "CRYPTO", "10"),  # match lookup
-            None,                                      # in_match check → not in match
+            None,                                      # player_row → not in match
         ]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
