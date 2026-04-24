@@ -1939,6 +1939,58 @@ async def validate_screenshot(
     )
 
 
+@app.get("/matches/{match_id}/live-state")
+async def get_live_state(match_id: str, token: dict = Depends(verify_token)):
+    """
+    Return the latest live HUD score for an in-progress match.
+
+    Response (200):
+      {
+        "match_id":        "<uuid>",
+        "ct_score":        <int>,
+        "t_score":         <int>,
+        "round_confirmed": <bool>,   # True once 0-0 was seen from any client
+        "first_round_at":  "<iso>" | null,
+        "submissions":     <int>,    # number of HUD screenshots received
+        "updated_at":      "<iso>"
+      }
+
+    404 when no live-score data exists yet for this match (e.g. still in
+    warmup, or all screenshots so far were non-HUD end-screens).
+
+    The frontend polls this endpoint every 5 seconds while match status is
+    "in_progress" and displays "CT <n> – T <n>" on the match card.
+    """
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("""
+                    SELECT ct_score, t_score, round_confirmed,
+                           first_round_at, submissions, updated_at
+                    FROM   match_live_state
+                    WHERE  match_id = :mid
+                """),
+                {"mid": match_id},
+            ).fetchone()
+    except Exception as exc:
+        logger.error("get_live_state DB error: match=%s error=%s", match_id, exc)
+        raise HTTPException(503, "Database unavailable")
+
+    if row is None:
+        raise HTTPException(404, f"No live score data for match {match_id}")
+
+    ct_score, t_score, round_confirmed, first_round_at, submissions, updated_at = row
+    return {
+        "match_id":        match_id,
+        "ct_score":        ct_score,
+        "t_score":         t_score,
+        "round_confirmed": bool(round_confirmed),
+        "first_round_at":  first_round_at.isoformat() if first_round_at else None,
+        "submissions":     submissions,
+        "updated_at":      updated_at.isoformat() if updated_at else None,
+    }
+
+
 @app.post("/match/result")
 async def submit_result(result: MatchResult, token: dict = Depends(verify_token)):
     """
