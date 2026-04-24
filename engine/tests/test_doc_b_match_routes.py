@@ -648,9 +648,10 @@ class TestMatchHeartbeat:
 
         Fetchone chain:
           1. UPDATE match_players RETURNING → player row (or None if not in match)
-          2. match_info SELECT → 11-column tuple
+          2. match_info SELECT → 13-column tuple
              (status, game, mode, code, max_players, max_per_team,
-              host_id, type, bet_amount, stake_currency, created_at)
+              host_id, type, bet_amount, stake_currency, created_at,
+              forfeit_warning_at, forfeit_warning_team)
         Fetchall chain:
           1. stale SELECT → stale rows
           2. players SELECT → roster
@@ -667,7 +668,7 @@ class TestMatchHeartbeat:
             (str(uuid.uuid4()), "Player2",    None, "ARENA-P2", "B"),
         ]
 
-        # 11-element tuple — must match the expanded SELECT in match_heartbeat
+        # 13-element tuple — must match the expanded SELECT in match_heartbeat
         match_info = (
             match_status,   # [0] status
             "CS2",          # [1] game
@@ -680,6 +681,8 @@ class TestMatchHeartbeat:
             bet_amount,     # [8] bet_amount
             stake_currency, # [9] stake_currency
             _CREATED_AT,    # [10] created_at
+            None,           # [11] forfeit_warning_at
+            None,           # [12] forfeit_warning_team
         )
 
         session.execute.return_value.fetchone.side_effect = [
