@@ -51,4 +51,13 @@ export const ARENA_ESCROW_ABI = [
       { name: "stakePerPlayer",type: "uint256", indexed: false },
     ],
   },
+  {
+    type: "event",
+    name: "TieDeclared",
+    inputs: [
+      { name: "matchId",         type: "uint256", indexed: true  },
+      { name: "refundPerPlayer", type: "uint256", indexed: false },
+      { name: "fee",             type: "uint256", indexed: false },
+    ],
+  },
 ] as const;
