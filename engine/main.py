@@ -15,7 +15,7 @@ from datetime import datetime, timezone, timedelta
 import time as _time
 from collections import defaultdict as _defaultdict
 
-from fastapi import FastAPI, HTTPException, Depends, Header, Query, UploadFile, File, Request, Response, Cookie
+from fastapi import FastAPI, HTTPException, Depends, Header, Query, UploadFile, File, Request, Response, Cookie, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -29,6 +29,7 @@ from src.config import (
     ENGINE_BASE_URL, FRONTEND_URL, POOL_MANAGER_INTERVAL, ARENA_SYSTEM_USER_ID,
 )
 from src.forum import router as forum_router
+from src.ws_manager import ConnectionManager
 from src.vision.capture import capture_screen, crop_roi
 from src.vision.engine import VisionEngine, VisionEngineConfig
 from src.vision.disconnect_monitor import DisconnectMonitor
@@ -1181,6 +1182,11 @@ app.add_middleware(
 
 app.include_router(forum_router)
 
+# ── Global WebSocket connection manager ──────────────────────────────────────
+# Single instance — Phase 1 (single Uvicorn worker). When scaling to multiple
+# workers, replace with Redis pub/sub in ws_manager.py before this changes.
+ws_manager = ConnectionManager()
+
 
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
@@ -1273,6 +1279,117 @@ async def optional_token(
         return auth.decode_token(token)
     except (_jwt.ExpiredSignatureError, _jwt.InvalidTokenError):
         return None
+
+
+# ── WebSocket endpoint ────────────────────────────────────────────────────────
+
+@app.websocket("/ws")
+async def websocket_endpoint(
+    ws: WebSocket,
+    token: str | None = Query(default=None),
+):
+    """
+    Authenticated WebSocket connection.
+
+    Auth: ?token=<JWT>  (same JWT the HTTP API uses)
+    Cookie auth is NOT supported over WS — pass token in query param.
+
+    On connect the server:
+      1. Validates JWT — closes with 4001 if invalid/expired
+      2. Looks up the user's active match — joins that room if found
+      3. Sends {"type": "ws:connected", "data": {"user_id": ..., "match_id": ...}}
+      4. Maintains with WebSocket ping/pong (Uvicorn/Starlette handles protocol)
+      5. Calls ws_manager.disconnect() on any close
+
+    Mid-session room changes (player joins a match after connect):
+      The server broadcasts match:status_changed which the client uses
+      to know a match is active; the client reconnects with the match_id
+      already cached from the REST call that created/joined the match.
+      No explicit room-join message is needed from the client.
+    """
+    # ── Validate JWT ─────────────────────────────────────────────────────────
+    if not token:
+        await ws.close(code=4001, reason="Missing token")
+        return
+    try:
+        payload = auth.decode_token(token)
+    except _jwt.ExpiredSignatureError:
+        await ws.close(code=4001, reason="Token expired")
+        return
+    except _jwt.InvalidTokenError:
+        await ws.close(code=4001, reason="Invalid token")
+        return
+    if payload.get("token_use") == "2fa_pending":
+        await ws.close(code=4001, reason="2FA pending")
+        return
+
+    user_id: str = payload["sub"]
+
+    # ── Resolve active match (join room if in one) ────────────────────────────
+    match_id: str | None = None
+    try:
+        with SessionLocal() as s:
+            row = s.execute(
+                text(
+                    "SELECT mp.match_id::text "
+                    "FROM match_players mp "
+                    "JOIN matches m ON m.id = mp.match_id "
+                    "WHERE mp.user_id = :uid "
+                    "  AND m.status IN ('waiting', 'in_progress') "
+                    "LIMIT 1"
+                ),
+                {"uid": user_id},
+            ).fetchone()
+            if row:
+                match_id = str(row[0])
+    except Exception as exc:
+        logger.warning("WS match lookup failed user=%s: %s", user_id, exc)
+
+    await ws_manager.connect(ws, user_id, match_id)
+
+    # ── Confirmation message ──────────────────────────────────────────────────
+    try:
+        await ws.send_json({
+            "type": "ws:connected",
+            "data": {"user_id": user_id, "match_id": match_id},
+        })
+    except Exception:
+        await ws_manager.disconnect(ws)
+        return
+
+    # ── Keep alive — receive loop ─────────────────────────────────────────────
+    try:
+        while True:
+            raw = await ws.receive_text()
+            try:
+                msg = __import__("json").loads(raw)
+            except Exception:
+                continue
+            # Client may send {"type": "ws:subscribe_match", "match_id": "<id>"}
+            # to join a match room after connecting (e.g. right after create/join).
+            if msg.get("type") == "ws:subscribe_match":
+                mid = msg.get("match_id") or ""
+                if mid:
+                    with SessionLocal() as s:
+                        allowed = s.execute(
+                            text(
+                                "SELECT 1 FROM match_players "
+                                "WHERE match_id = :mid AND user_id = :uid"
+                            ),
+                            {"mid": mid, "uid": user_id},
+                        ).fetchone()
+                    if allowed:
+                        await ws_manager.subscribe_match(ws, mid)
+                        await ws.send_json({
+                            "type": "ws:subscribed",
+                            "data": {"match_id": mid},
+                        })
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        logger.warning("WS error user=%s: %s", user_id, exc)
+    finally:
+        await ws_manager.disconnect(ws)
 
 
 # ── Auth models ───────────────────────────────────────────────────────────────
