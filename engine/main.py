@@ -254,6 +254,7 @@ def _try_cancel_waiting_match_host_client_timeout(match_id: str) -> bool:
         if stake_currency == "AT":
             _refund_at_match(match_id)
 
+        _ws_match_status(match_id, "cancelled")
         logger.info(
             "host_client_timeout: cancelled match_id=%s stake_currency=%s",
             match_id,
@@ -320,6 +321,7 @@ async def _expired_match_cleanup_loop(interval: int = 300) -> None:
                 logger.info("Expired match cancelled: match=%s currency=%s", mid, sc)
                 if sc == "AT":
                     _refund_at_match(mid)
+                _ws_match_status(mid, "cancelled")
         except Exception as exc:
             logger.error("_expired_match_cleanup_loop error: %s", exc)
 
@@ -592,6 +594,7 @@ def _try_cancel_inprogress_match_timeout(match_id: str, stake_currency: str) -> 
                 "inprogress_timeout: CRYPTO match=%s marked disputed — admin action required",
                 match_id,
             )
+        _ws_match_status(match_id, new_status)
         return True
     except Exception as exc:
         logger.error(
@@ -1188,6 +1191,37 @@ app.include_router(forum_router)
 ws_manager = ConnectionManager()
 
 
+# ── WS broadcast helpers ──────────────────────────────────────────────────────
+# Thin wrappers so routes stay readable. All use fire_* (thread-safe,
+# non-blocking) so they can be called from both async routes and sync bg tasks.
+
+def _ws_match_status(match_id: str, status: str, **extra) -> None:
+    """Broadcast match:status_changed to every socket in the match room."""
+    ws_manager.fire_match(match_id, "match:status_changed", {
+        "match_id": match_id,
+        "status":   status,
+        **extra,
+    })
+
+
+def _ws_roster_updated(match_id: str, players: list[dict]) -> None:
+    """Broadcast match:roster_updated when a player joins or leaves."""
+    ws_manager.fire_match(match_id, "match:roster_updated", {
+        "match_id": match_id,
+        "players":  players,
+    })
+
+
+def _ws_notification(user_id: str, notification: dict) -> None:
+    """Push a notification:new event to a specific user's sockets."""
+    ws_manager.fire_user(user_id, "notification:new", notification)
+
+
+def _ws_profile_updated(user_id: str, **fields) -> None:
+    """Push user:profile_updated (AT balance, XP, rank) to the user's sockets."""
+    ws_manager.fire_user(user_id, "user:profile_updated", {"user_id": user_id, **fields})
+
+
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
     import time as _time
@@ -1781,6 +1815,7 @@ def _auto_payout_on_consensus(
                     {"winner": winner_id, "mid": match_id},
                 )
                 session.commit()
+            _ws_match_status(match_id, "completed", winner_id=winner_id)
         except Exception as exc:
             logger.error(
                 "_auto_payout: match UPDATE failed (non-fatal): match=%s error=%s",
@@ -1860,6 +1895,7 @@ def _auto_payout_on_tie(match_id: str) -> None:
                     {"mid": match_id},
                 )
                 session.commit()
+            _ws_match_status(match_id, "tied")
         except Exception as exc:
             logger.error(
                 "_auto_payout_on_tie: match UPDATE failed (non-fatal): match=%s error=%s",
@@ -4896,6 +4932,7 @@ def _settle_at_match(match_id: str, winner_id: str) -> None:
                 {"uid": winner_id, "amt": fee, "mid": match_id},
             )
             session.commit()
+            _ws_profile_updated(winner_id)
             logger.info(
                 "_settle_at_match: match=%s winner=%s payout=%d AT fee=%d AT",
                 match_id, winner_id, winner_payout, fee,
@@ -4945,6 +4982,9 @@ def _refund_at_match(match_id: str) -> None:
                 refunded += 1
 
             session.commit()
+            for (uid,) in player_rows:
+                if uid is not None:
+                    _ws_profile_updated(str(uid))
             logger.info(
                 "_refund_at_match: match=%s refunded %d/%d players %d AT each",
                 match_id, refunded, len(player_rows), stake_per_player,
@@ -5017,6 +5057,9 @@ def _settle_at_tie_match(match_id: str) -> None:
                 {"uid": str(player_rows[0][0]), "amt": fee, "mid": match_id},
             )
             session.commit()
+            for (uid,) in player_rows:
+                if uid is not None:
+                    _ws_profile_updated(str(uid))
             logger.info(
                 "_settle_at_tie_match: match=%s refund=%d AT each fee=%d AT players=%d",
                 match_id, refund_per_player, fee, player_count,
@@ -5402,6 +5445,24 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
 
             session.commit()
 
+        # Subscribe the joining user's WS socket to this match room.
+        # (Idempotent: ws_manager does nothing if already subscribed.)
+        for _ws in list(ws_manager._user_sockets.get(user_id, set())):
+            import asyncio as _aio
+            try:
+                loop = _aio.get_event_loop()
+                if loop.is_running():
+                    loop.call_soon_threadsafe(
+                        loop.create_task, ws_manager.subscribe_match(_ws, match_id)
+                    )
+            except Exception:
+                pass
+
+        _ws_roster_updated(match_id, [{"user_id": user_id, "team": assigned_team}])
+
+        if match_started:
+            _ws_match_status(match_id, "in_progress")
+
         # ── Match just went LIVE ──────────────────────────────────────────────
         if match_started:
             import json as _json2, string as _str2
@@ -5608,6 +5669,7 @@ async def cancel_match(match_id: str, payload: dict = Depends(verify_token)):
                 {"mid": match_id},
             )
             session.commit()
+            _ws_match_status(match_id, "cancelled")
 
     except HTTPException:
         raise
@@ -5700,6 +5762,7 @@ async def leave_match(match_id: str, payload: dict = Depends(verify_token)):
                     _credit_at(session, user_id, at_amount, match_id, "escrow_refund_leave")
 
             session.commit()
+            _ws_roster_updated(match_id, [])
 
     except HTTPException:
         raise
@@ -8808,6 +8871,7 @@ async def create_dispute(req: CreateDisputeRequest, payload: dict = Depends(veri
                 {"mid": req.match_id},
             )
             session.commit()
+            _ws_match_status(req.match_id, "disputed")
             dispute_id = str(row[0])
             created_at = row[1].isoformat() if row[1] else None
 
@@ -9836,6 +9900,7 @@ async def admin_declare_winner(
                 {"winner": req.winner_id, "mid": match_id},
             )
             session.commit()
+            _ws_match_status(match_id, "completed", winner_id=req.winner_id)
 
         # ── 2. Payout ─────────────────────────────────────────────────────────
         if stake_currency == "AT":
@@ -11224,6 +11289,8 @@ async def admin_resolve_dispute_holding(
                 "meta": f"action={req.action} currency={stake_currency} notes={req.notes}",
             })
             session.commit()
+            final_status = "completed" if req.action in ("award_a", "award_b") else "cancelled"
+            _ws_match_status(match_id, final_status)
         return {"ok": True, "resolved": holding_id, "action": req.action}
     except HTTPException:
         raise
