@@ -41,6 +41,7 @@ from sqlalchemy import text
 
 if TYPE_CHECKING:
     from src.contract.escrow_client import EscrowClient
+    from src.ws_manager import ConnectionManager
 
 log = logging.getLogger("vision.disconnect_monitor")
 
@@ -84,11 +85,13 @@ class DisconnectMonitor:
         escrow_client: Optional[EscrowClient] = None,
         settle_at_fn: Optional[Callable[[str, str], None]] = None,
         refund_at_fn: Optional[Callable[[str], None]] = None,
+        ws_manager: Optional["ConnectionManager"] = None,
     ) -> None:
         self._sf          = session_factory
         self._escrow      = escrow_client
         self._settle_at   = settle_at_fn
         self._refund_at   = refund_at_fn
+        self._ws          = ws_manager
         self._states:     dict[str, _MatchState] = {}
 
     # ── Public ────────────────────────────────────────────────────────────────
@@ -317,6 +320,12 @@ class DisconnectMonitor:
                     WHERE id = :mid AND status = 'in_progress'
                 """), {"at": now, "team": team, "mid": state.match_id})
                 session.commit()
+            if self._ws:
+                self._ws.fire_match(state.match_id, "match:forfeit_warning", {
+                    "match_id":   state.match_id,
+                    "team":       team,
+                    "warning_at": now.isoformat(),
+                })
         except Exception as exc:
             log.error("disconnect_monitor: _enter_warning DB failed: %s", exc)
 
@@ -330,6 +339,10 @@ class DisconnectMonitor:
                     WHERE id = :mid
                 """), {"mid": match_id})
                 session.commit()
+            if self._ws:
+                self._ws.fire_match(match_id, "match:forfeit_warning_cleared", {
+                    "match_id": match_id,
+                })
         except Exception as exc:
             log.error("disconnect_monitor: _clear_warning_db failed: %s", exc)
 
@@ -423,6 +436,13 @@ class DisconnectMonitor:
                         VALUES (:uid, :type, :title, :msg, :meta::jsonb)
                     """), m)
                 session.commit()
+            if self._ws:
+                for m in msgs:
+                    self._ws.fire_user(m["uid"], "notification:new", {
+                        "type":    m["type"],
+                        "title":   m["title"],
+                        "message": m["msg"],
+                    })
         except Exception as exc:
             log.error("disconnect_monitor: notification insert failed: %s", exc)
 
@@ -457,6 +477,12 @@ class DisconnectMonitor:
                 log.warning("disconnect_monitor: forfeit skipped — match=%s not in_progress",
                             match_id)
                 return
+            if self._ws:
+                self._ws.fire_match(match_id, "match:status_changed", {
+                    "match_id":  match_id,
+                    "status":    "completed",
+                    "winner_id": winner_id,
+                })
         except Exception as exc:
             log.error("disconnect_monitor: forfeit DB update failed match=%s: %s", match_id, exc)
             return
@@ -517,6 +543,11 @@ class DisconnectMonitor:
                 session.commit()
             if not updated:
                 return
+            if self._ws:
+                self._ws.fire_match(match_id, "match:status_changed", {
+                    "match_id": match_id,
+                    "status":   "disputed",
+                })
         except Exception as exc:
             log.error("disconnect_monitor: holding DB update failed match=%s: %s", match_id, exc)
             return
