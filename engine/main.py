@@ -1376,6 +1376,11 @@ class ValidationResponse(BaseModel):
     evidence_path: str | None
     consensus_status: str | None = None  # "pending" | "reached" | "failed"
     consensus_result: str | None = None  # agreed outcome when consensus reached
+    winning_team: str | None = None       # "team_a" | "team_b" | None
+    is_cross_validated: bool = False       # True when both teams confirmed
+    screen_type: str = "unknown"           # "victory"|"defeat"|"live"|"unknown"
+    live_score: dict | None = None         # {"ct": int, "t": int} | None
+    is_round_start: bool = False           # True when live HUD shows 0-0
 
 
 class CaptureResponse(BaseModel):
@@ -1548,46 +1553,57 @@ def _auto_flag_consensus(wallet_addresses: list[str]) -> None:
         logger.error("_auto_flag_consensus outer error: %s", exc)
 
 
-def _auto_payout_on_consensus(match_id: str, agreed_result: str) -> None:
+def _auto_payout_on_consensus(
+    match_id: str,
+    agreed_result: str,
+    winning_team: str | None = None,
+) -> None:
     """
     Triggered automatically when MatchConsensus reaches REACHED status.
 
-    Finds the winning player (the one who submitted agreed_result), updates
-    the match to 'completed', and releases payout.
+    Finds the winning player, updates the match to 'completed', releases payout.
 
-    Winner determination:
-      - Query match_consensus for wallets that submitted agreed_result.
-      - Join with users to resolve wallet_address → user_id.
-      - For 1v1: one winner wallet; for team match: first agreeing player is
-        the representative winner_id (team payout is handled by the contract).
-
-    Idempotent guard: UPDATE … WHERE status='in_progress' ensures a match
-    that was already completed (e.g. by admin or submit_result) is skipped.
+    Winner determination (in order of preference):
+      1. When winning_team is "team_a" or "team_b": query match_players JOIN users
+         for the first player on that team — most accurate for cross-team consensus.
+      2. Fallback (no team info): query match_consensus for the "victory" submitter.
 
     Non-fatal: any error is logged and swallowed; admin can use
     POST /admin/match/{id}/declare-winner as fallback.
-
-    DB-ready: match_consensus, users, matches
-    CONTRACT-ready: EscrowClient.declare_winner() for CRYPTO matches
     """
     try:
-        # ── Find winner_id from consensus votes ───────────────────────────────
+        # ── Find winner_id ────────────────────────────────────────────────────
         winner_id: str | None = None
         stake_currency: str = "CRYPTO"
         try:
             with SessionLocal() as session:
-                row = session.execute(
-                    text("""
-                        SELECT u.id, m.stake_currency
-                        FROM   match_consensus mc
-                        JOIN   users u ON u.wallet_address = mc.wallet_address
-                        JOIN   matches m ON m.id = mc.match_id
-                        WHERE  mc.match_id = :mid
-                          AND  mc.result   = :result
-                        LIMIT  1
-                    """),
-                    {"mid": match_id, "result": agreed_result},
-                ).fetchone()
+                if winning_team in ("team_a", "team_b"):
+                    db_team = "A" if winning_team == "team_a" else "B"
+                    row = session.execute(
+                        text("""
+                            SELECT u.id, m.stake_currency
+                            FROM   match_players mp
+                            JOIN   users u ON u.wallet_address = mp.wallet_address
+                            JOIN   matches m ON m.id = mp.match_id
+                            WHERE  mp.match_id = :mid
+                              AND  mp.team      = :team
+                            LIMIT  1
+                        """),
+                        {"mid": match_id, "team": db_team},
+                    ).fetchone()
+                else:
+                    row = session.execute(
+                        text("""
+                            SELECT u.id, m.stake_currency
+                            FROM   match_consensus mc
+                            JOIN   users u ON u.wallet_address = mc.wallet_address
+                            JOIN   matches m ON m.id = mc.match_id
+                            WHERE  mc.match_id = :mid
+                              AND  mc.result   = :result
+                            LIMIT  1
+                        """),
+                        {"mid": match_id, "result": agreed_result},
+                    ).fetchone()
             if row:
                 winner_id      = str(row[0])
                 stake_currency = (row[1] or "CRYPTO")
@@ -1791,39 +1807,88 @@ async def validate_screenshot(
     except Exception as exc:
         logger.error("validate_screenshot evidence insert error (non-fatal): %s", exc)
 
+    # ── 5b. Live score upsert (HUD frames — no end-screen) ───────────────────
+    if output.screen_type == "live" and output.live_score:
+        try:
+            _ls = output.live_score
+            with SessionLocal() as _s:
+                _s.execute(
+                    text("""
+                        INSERT INTO match_live_state
+                            (match_id, ct_score, t_score, round_confirmed,
+                             first_round_at, submissions, updated_at)
+                        VALUES
+                            (:mid, :ct, :t, :rc, :frat, 1, NOW())
+                        ON CONFLICT (match_id) DO UPDATE SET
+                            ct_score        = EXCLUDED.ct_score,
+                            t_score         = EXCLUDED.t_score,
+                            round_confirmed = match_live_state.round_confirmed
+                                              OR EXCLUDED.round_confirmed,
+                            first_round_at  = CASE
+                                WHEN EXCLUDED.round_confirmed
+                                     AND match_live_state.first_round_at IS NULL
+                                THEN NOW()
+                                ELSE match_live_state.first_round_at
+                            END,
+                            submissions     = match_live_state.submissions + 1,
+                            updated_at      = NOW()
+                    """),
+                    {
+                        "mid": match_id,
+                        "ct":  _ls["ct"],
+                        "t":   _ls["t"],
+                        "rc":  output.is_round_start,
+                        "frat": datetime.now(timezone.utc) if output.is_round_start else None,
+                    },
+                )
+                _s.commit()
+            logger.info(
+                "live_score upsert: match=%s ct=%d t=%d round_start=%s",
+                match_id, _ls["ct"], _ls["t"], output.is_round_start,
+            )
+        except Exception as exc:
+            logger.error("validate_screenshot live_score upsert error (non-fatal): %s", exc)
+
     # ── 6. Submit to MatchConsensus (DB-backed, non-fatal) ───────────────────
-    # Instantiate a DB-backed MatchConsensus for this match.  Because the
-    # constructor calls _restore_from_db(), any votes persisted before an
-    # engine restart are re-loaded automatically — no lost votes on crash.
-    #
-    # If consensus is REACHED on this submission we log it; the actual payout
-    # trigger is owned by POST /match/result once the winner_id is confirmed
-    # by the client.  This step is purely vote-tracking.
-    #
-    # DB-ready: match_consensus table (013-match-consensus.sql)
+    # Fetch actual joined player count + team wallets for cross-team validation.
+    # This replaces the old max_players lookup and eliminates the 50/50 deadlock.
     consensus_status_str: str | None = None
     consensus_result_str: str | None = None
+    _winning_team: str | None = None
+    _is_cross_validated: bool = False
 
     if output.result and wallet_address:
         try:
             from src.vision.consensus import MatchConsensus, ConsensusStatus
 
-            # Fetch max_players from DB to know when consensus is complete
-            _expected = 2   # safe default
+            _team_a_wallets: list[str] = []
+            _team_b_wallets: list[str] = []
+            _expected = 2
             try:
                 with SessionLocal() as _s:
-                    _mp_row = _s.execute(
-                        text("SELECT max_players FROM matches WHERE id = :mid"),
+                    _mp_rows = _s.execute(
+                        text("""
+                            SELECT team, wallet_address
+                            FROM   match_players
+                            WHERE  match_id = :mid
+                              AND  wallet_address IS NOT NULL
+                        """),
                         {"mid": match_id},
-                    ).fetchone()
-                    if _mp_row and _mp_row[0]:
-                        _expected = int(_mp_row[0])
+                    ).fetchall()
+                    _expected = max(len(_mp_rows), 2)
+                    for _team, _wallet in _mp_rows:
+                        if _team == "A":
+                            _team_a_wallets.append(_wallet)
+                        else:
+                            _team_b_wallets.append(_wallet)
             except Exception as _exc:
-                logger.debug("consensus: max_players lookup failed (using 2): %s", _exc)
+                logger.debug("consensus: team wallet lookup failed (using defaults): %s", _exc)
 
             _consensus = MatchConsensus(
                 match_id=match_id,
                 expected_players=_expected,
+                team_a_wallets=_team_a_wallets,
+                team_b_wallets=_team_b_wallets,
                 session_factory=SessionLocal,
             )
             _status = _consensus.submit(wallet_address, output)
@@ -1831,18 +1896,23 @@ async def validate_screenshot(
 
             if _status == ConsensusStatus.REACHED:
                 _verdict = _consensus.evaluate()
-                consensus_result_str = _verdict.agreed_result
+                consensus_result_str  = _verdict.agreed_result
+                _winning_team         = _verdict.winning_team
+                _is_cross_validated   = _verdict.is_cross_validated
                 logger.info(
-                    "consensus REACHED: match=%s result=%s agreeing=%d/%d flagged=%s",
-                    match_id, _verdict.agreed_result,
+                    "consensus REACHED: match=%s result=%s winning_team=%s "
+                    "cross_validated=%s agreeing=%d/%d flagged=%s",
+                    match_id, _verdict.agreed_result, _verdict.winning_team,
+                    _verdict.is_cross_validated,
                     _verdict.agreeing_players, _verdict.total_players,
                     _verdict.flagged_wallets,
                 )
-                # Auto-payout: find winner from votes and release funds.
-                # Non-fatal — admin can use declare-winner as fallback.
                 if _verdict.agreed_result:
-                    _auto_payout_on_consensus(match_id, _verdict.agreed_result)
-                # Auto-flag players whose result contradicted majority (Issue #155).
+                    _auto_payout_on_consensus(
+                        match_id,
+                        _verdict.agreed_result,
+                        winning_team=_verdict.winning_team,
+                    )
                 if _verdict.flagged_wallets:
                     _auto_flag_consensus(_verdict.flagged_wallets)
         except Exception as exc:
@@ -1861,6 +1931,11 @@ async def validate_screenshot(
         evidence_path=evidence_path,
         consensus_status=consensus_status_str,
         consensus_result=consensus_result_str,
+        winning_team=_winning_team,
+        is_cross_validated=_is_cross_validated,
+        screen_type=output.screen_type,
+        live_score=output.live_score,
+        is_round_start=output.is_round_start,
     )
 
 
