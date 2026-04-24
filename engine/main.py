@@ -1110,6 +1110,12 @@ async def lifespan(app: FastAPI):
     yield
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
+    _reconciler.stop()
+    _reconciler_task.cancel()
+    try:
+        await _reconciler_task
+    except asyncio.CancelledError:
+        pass
     _rq_task.cancel()
     _cleanup_task.cancel()
     _stale_task.cancel()

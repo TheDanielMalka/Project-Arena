@@ -17,6 +17,7 @@ What it monitors:
 """
 
 import logging
+import threading
 import time
 import uuid
 from typing import Optional
@@ -57,21 +58,27 @@ class ContractReconciler:
     def __init__(self, session_factory, escrow_client) -> None:
         self._session_factory   = session_factory
         self._escrow_client     = escrow_client   # may be None if chain disabled
+        self._stop              = threading.Event()
+
+    def stop(self) -> None:
+        """Signal the run() loop to exit at the next sleep boundary."""
+        self._stop.set()
 
     def run(self, poll_interval: int = 300) -> None:
         """
-        Main loop — runs forever, sleeping poll_interval seconds between passes.
+        Main loop — runs until stop() is called, sleeping poll_interval seconds between passes.
         poll_interval is overridden by platform_config.reconciliation_interval_sec.
+        Uses threading.Event.wait() instead of time.sleep() so stop() wakes the thread immediately.
         """
         logger.info("ContractReconciler started | default_interval=%ds", poll_interval)
-        while True:
+        while not self._stop.is_set():
             try:
                 interval = self._load_interval(poll_interval)
                 self._run_once()
             except Exception as exc:
                 logger.error("ContractReconciler loop error: %s", exc)
                 interval = poll_interval
-            time.sleep(interval)
+            self._stop.wait(timeout=interval)
 
     def _load_interval(self, default: int) -> int:
         try:
