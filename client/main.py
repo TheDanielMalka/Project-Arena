@@ -20,7 +20,7 @@ import random
 import logging
 import threading
 import ctypes
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from logging.handlers import RotatingFileHandler
 
 import signal
@@ -2780,6 +2780,34 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         vs_lbl.pack(side="left", padx=4)
         _team_col(teams_grid, "Team B", teams["b"],
                    highlight_me=(your_team == "b"), side="left")
+
+        # Forfeit warning banner — DisconnectMonitor issued a 30s grace period warning
+        warn_at   = data.get("forfeit_warning_at")
+        warn_team = (data.get("forfeit_warning_team") or "").upper()
+        if warn_at and warn_team and (
+            warn_team == "BOTH" or warn_team == your_team.upper()
+        ):
+            try:
+                deadline_dt = (
+                    datetime.fromisoformat(warn_at.replace("Z", "+00:00"))
+                    + timedelta(seconds=30)
+                )
+                secs_left = max(0, int(
+                    (deadline_dt - datetime.now(timezone.utc)).total_seconds()
+                ))
+                warn_msg = f"\u26a0  FORFEIT WARNING \u2014 Return to game NOW!  {secs_left}s remaining"
+            except Exception:
+                warn_msg = "\u26a0  FORFEIT WARNING \u2014 Return to game NOW!"
+            warn_banner = ctk.CTkLabel(
+                lobby_outer,
+                text=warn_msg,
+                font=ctk.CTkFont(family=FONT_MONO, size=12, weight="bold"),
+                text_color=BRAND["accent"],
+                fg_color="#2A0000",
+                corner_radius=4,
+            )
+            warn_banner.pack(fill="x", padx=0, pady=(0, 8))
+            lobby_body_ref.append(warn_banner)
 
         # Result banner — shown when match completed and result was fetched
         # TODO(Claude): confirm GET /match/{id}/status response shape.

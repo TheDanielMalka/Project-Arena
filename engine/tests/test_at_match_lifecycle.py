@@ -174,6 +174,8 @@ class TestHeartbeatStaleIsolation:
                     10,
                     "AT",
                     created,
+                    None,  # forfeit_warning_at
+                    None,  # forfeit_warning_team
                 )
             return m
 

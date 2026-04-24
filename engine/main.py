@@ -5924,7 +5924,8 @@ async def match_heartbeat(match_id: str, payload: dict = Depends(verify_token)):
             match_info = session.execute(
                 text(
                     "SELECT status, game, mode, code, max_players, max_per_team, "
-                    "       host_id, type, bet_amount, stake_currency, created_at "
+                    "       host_id, type, bet_amount, stake_currency, created_at, "
+                    "       forfeit_warning_at, forfeit_warning_team "
                     "FROM matches WHERE id = :mid"
                 ),
                 {"mid": match_id},
@@ -5934,21 +5935,24 @@ async def match_heartbeat(match_id: str, payload: dict = Depends(verify_token)):
 
         # Indices: 0=status 1=game 2=mode 3=code 4=max_players 5=max_per_team
         #          6=host_id 7=type 8=bet_amount 9=stake_currency 10=created_at
+        #          11=forfeit_warning_at 12=forfeit_warning_team
         return {
-            "in_match":       True,
-            "match_id":       match_id,
-            "status":         match_info[0]  if match_info else None,
-            "game":           match_info[1]  if match_info else None,
-            "mode":           match_info[2]  if match_info else None,
-            "code":           match_info[3]  if match_info else None,
-            "max_players":    match_info[4]  if match_info else None,
-            "max_per_team":   match_info[5]  if match_info else None,
-            "host_id":        str(match_info[6]) if match_info and match_info[6] else None,
-            "type":           match_info[7]  if match_info else None,
-            "bet_amount":     str(match_info[8]) if match_info and match_info[8] is not None else None,
-            "stake_currency": match_info[9]  if match_info else None,
-            "created_at":     match_info[10].isoformat() if match_info and match_info[10] else None,
-            "your_user_id":   user_id,
+            "in_match":             True,
+            "match_id":             match_id,
+            "status":               match_info[0]  if match_info else None,
+            "game":                 match_info[1]  if match_info else None,
+            "mode":                 match_info[2]  if match_info else None,
+            "code":                 match_info[3]  if match_info else None,
+            "max_players":          match_info[4]  if match_info else None,
+            "max_per_team":         match_info[5]  if match_info else None,
+            "host_id":              str(match_info[6]) if match_info and match_info[6] else None,
+            "type":                 match_info[7]  if match_info else None,
+            "bet_amount":           str(match_info[8]) if match_info and match_info[8] is not None else None,
+            "stake_currency":       match_info[9]  if match_info else None,
+            "created_at":           match_info[10].isoformat() if match_info and match_info[10] else None,
+            "forfeit_warning_at":   match_info[11].isoformat() if match_info and match_info[11] else None,
+            "forfeit_warning_team": match_info[12] if match_info else None,
+            "your_user_id":         user_id,
             "your_team":      your_team,
             "stale_removed":  stale_removed,
             "players": [
