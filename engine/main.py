@@ -1676,6 +1676,82 @@ def _auto_payout_on_consensus(
         )
 
 
+def _auto_payout_on_tie(match_id: str) -> None:
+    """
+    Triggered automatically when MatchConsensus reaches REACHED with agreed_result="tie".
+
+    Marks the match as 'tied', then refunds all players minus 5% fee via the
+    appropriate currency path (AT in-memory or CRYPTO on-chain).
+
+    Non-fatal: any error is logged and swallowed; admin can use the contract
+    directly as a fallback.
+    """
+    try:
+        stake_currency: str = "CRYPTO"
+        try:
+            with SessionLocal() as session:
+                row = session.execute(
+                    text("SELECT stake_currency FROM matches WHERE id = :mid"),
+                    {"mid": match_id},
+                ).fetchone()
+                if row:
+                    stake_currency = row[0] or "CRYPTO"
+        except Exception as exc:
+            logger.warning(
+                "_auto_payout_on_tie: currency lookup failed (non-fatal): match=%s error=%s",
+                match_id, exc,
+            )
+
+        try:
+            with SessionLocal() as session:
+                session.execute(
+                    text(
+                        "UPDATE matches SET status = 'tied', ended_at = NOW() "
+                        "WHERE id = :mid AND status = 'in_progress'"
+                    ),
+                    {"mid": match_id},
+                )
+                session.commit()
+        except Exception as exc:
+            logger.error(
+                "_auto_payout_on_tie: match UPDATE failed (non-fatal): match=%s error=%s",
+                match_id, exc,
+            )
+            return
+
+        if _PAYOUTS_FROZEN:
+            logger.warning(
+                "_auto_payout_on_tie FROZEN: match=%s currency=%s — "
+                "funds withheld until admin unfreezes via POST /admin/freeze",
+                match_id, stake_currency,
+            )
+            return
+
+        if stake_currency == "AT":
+            _settle_at_tie_match(match_id)
+        elif _escrow_client:
+            try:
+                tx_hash = _escrow_client.declare_tie(match_id)
+                logger.info(
+                    "_auto_payout_on_tie on-chain: match=%s tx=%s", match_id, tx_hash
+                )
+            except Exception as exc:
+                logger.error(
+                    "_auto_payout_on_tie on-chain failed (non-fatal): match=%s error=%s",
+                    match_id, exc,
+                )
+
+        logger.info(
+            "_auto_payout_on_tie complete: match=%s currency=%s", match_id, stake_currency
+        )
+
+    except Exception as exc:
+        logger.error(
+            "_auto_payout_on_tie unexpected error (non-fatal): match=%s error=%s",
+            match_id, exc,
+        )
+
+
 @app.post("/validate/screenshot", response_model=ValidationResponse)
 async def validate_screenshot(
     match_id: str,
@@ -1907,7 +1983,9 @@ async def validate_screenshot(
                     _verdict.agreeing_players, _verdict.total_players,
                     _verdict.flagged_wallets,
                 )
-                if _verdict.agreed_result:
+                if _verdict.agreed_result == "tie":
+                    _auto_payout_on_tie(match_id)
+                elif _verdict.agreed_result:
                     _auto_payout_on_consensus(
                         match_id,
                         _verdict.agreed_result,
@@ -4597,17 +4675,15 @@ def _credit_at(session, user_id: str, amount: int, match_id: str, tx_type: str =
 
 def _at_payout_already_happened(session, match_id: str) -> bool:
     """
-    True if this match already has a match_win or refund AT transaction.
-    Shared idempotency guard for both _settle_at_match and _refund_at_match:
-      - blocks double-settle (same winner paid twice)
-      - blocks double-refund (same stake returned twice)
-      - blocks settle-after-refund and refund-after-settle
+    True if this match already has a match_win, refund, or tie_refund AT transaction.
+    Shared idempotency guard for _settle_at_match, _refund_at_match, and
+    _settle_at_tie_match. Blocks any double-credit path regardless of outcome type.
     Caller must hold a FOR UPDATE lock on matches.id = match_id.
     """
     row = session.execute(
         text(
             "SELECT 1 FROM transactions "
-            "WHERE match_id = :mid AND type IN ('match_win', 'refund') LIMIT 1"
+            "WHERE match_id = :mid AND type IN ('match_win', 'refund', 'tie_refund') LIMIT 1"
         ),
         {"mid": match_id},
     ).fetchone()
@@ -4728,6 +4804,78 @@ def _refund_at_match(match_id: str) -> None:
             )
     except Exception as exc:
         logger.error("_refund_at_match error (non-fatal): match=%s error=%s", match_id, exc)
+
+
+def _settle_at_tie_match(match_id: str) -> None:
+    """
+    Refund all AT players at 95 % of their stake (5 % fee) for a draw outcome.
+
+    Flow (mirrors ArenaEscrow.declareTie):
+      1. Read all players and their AT stake from the match.
+      2. pot = stake_per_player * player_count.
+      3. fee = 5% of pot; refund_per_player = (pot - fee) // player_count.
+      4. Credit each player with 'tie_refund', increment user_stats.ties.
+      5. Fee transaction.
+
+    Idempotent: re-invocation is a no-op (shared _at_payout_already_happened guard).
+    DB-ready: uses users.at_balance + transactions + user_stats tables.
+    """
+    try:
+        with SessionLocal() as session:
+            match_row = session.execute(
+                text(
+                    "SELECT stake_currency, bet_amount FROM matches "
+                    "WHERE id = :mid FOR UPDATE"
+                ),
+                {"mid": match_id},
+            ).fetchone()
+
+            if not match_row or match_row[0] != "AT":
+                return
+
+            if _at_payout_already_happened(session, match_id):
+                logger.info("_settle_at_tie_match: match=%s already settled — skipping", match_id)
+                return
+
+            stake_per_player = int(match_row[1])
+            player_rows = session.execute(
+                text("SELECT user_id FROM match_players WHERE match_id = :mid"),
+                {"mid": match_id},
+            ).fetchall()
+
+            player_count = len(player_rows)
+            if player_count == 0:
+                return
+
+            pot              = stake_per_player * player_count
+            fee              = int(pot * _AT_FEE_PCT)
+            refund_pool      = pot - fee
+            refund_per_player = refund_pool // player_count
+
+            for (uid,) in player_rows:
+                if uid is None:
+                    continue
+                uid_str = str(uid)
+                _credit_at(session, uid_str, refund_per_player, match_id, "tie_refund")
+                session.execute(
+                    text("UPDATE user_stats SET ties = ties + 1 WHERE user_id = :uid"),
+                    {"uid": uid_str},
+                )
+
+            session.execute(
+                text(
+                    "INSERT INTO transactions (user_id, type, amount, token, status, match_id) "
+                    "VALUES (:uid, 'fee', :amt, 'AT', 'completed', :mid)"
+                ),
+                {"uid": str(player_rows[0][0]), "amt": fee, "mid": match_id},
+            )
+            session.commit()
+            logger.info(
+                "_settle_at_tie_match: match=%s refund=%d AT each fee=%d AT players=%d",
+                match_id, refund_per_player, fee, player_count,
+            )
+    except Exception as exc:
+        logger.error("_settle_at_tie_match error (non-fatal): match=%s error=%s", match_id, exc)
 
 
 @app.post("/matches", status_code=201)
