@@ -374,7 +374,7 @@ class TestMatchPlayersNull:
             sql = str(args[0])
             if "SELECT stake_currency, bet_amount" in sql:
                 m.fetchone.return_value = ("AT", 10)
-            elif "type IN ('match_win', 'refund')" in sql:
+            elif "type IN ('match_win', 'refund', 'tie_refund')" in sql:
                 m.fetchone.return_value = None  # idempotency: not yet paid
             elif "SELECT user_id FROM match_players" in sql:
                 m.fetchall.return_value = [(None,), (real_uid,)]
@@ -405,7 +405,7 @@ class TestMatchPlayersNull:
             sql = str(args[0])
             if "SELECT stake_currency, bet_amount" in sql:
                 m.fetchone.return_value = ("AT", 10)
-            elif "type IN ('match_win', 'refund')" in sql:
+            elif "type IN ('match_win', 'refund', 'tie_refund')" in sql:
                 m.fetchone.return_value = None  # idempotency: not yet paid
             elif "SELECT user_id FROM match_players" in sql:
                 m.fetchall.return_value = [(None,), (None,)]
@@ -503,7 +503,7 @@ class TestAtPayoutIdempotency:
             sql = str(args[0])
             if "SELECT stake_currency, bet_amount" in sql:
                 m.fetchone.return_value = ("AT", 10)
-            elif "type IN ('match_win', 'refund')" in sql:
+            elif "type IN ('match_win', 'refund', 'tie_refund')" in sql:
                 m.fetchone.return_value = ("exists",) if payout_exists else None
             elif "SELECT user_id FROM match_players" in sql:
                 m.fetchall.return_value = [(str(uuid.uuid4()),), (str(uuid.uuid4()),)]
