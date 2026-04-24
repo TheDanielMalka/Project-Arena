@@ -269,6 +269,8 @@ class TestValidateScreenshotConsensus:
         mock_verdict = ConsensusResult(
             status=ConsensusStatus.REACHED,
             agreed_result="CT_WIN",
+            winning_team=None,
+            is_cross_validated=False,
             total_players=2,
             agreeing_players=2,
             flagged_wallets=[],
@@ -442,6 +444,8 @@ class TestAutoPayout:
         mock_verdict = ConsensusResult(
             status=ConsensusStatus.REACHED,
             agreed_result="victory",
+            winning_team=None,
+            is_cross_validated=False,
             total_players=2, agreeing_players=2,
             flagged_wallets=[], submissions=[],
         )
@@ -469,4 +473,4 @@ class TestAutoPayout:
             )
 
         assert resp.status_code == 200
-        mock_payout.assert_called_once_with(_MATCH_ID, "victory")
+        mock_payout.assert_called_once_with(_MATCH_ID, "victory", winning_team=None)
