@@ -142,7 +142,9 @@ export interface Match {
   depositsReceived?: number; // how many players locked funds — DB: matches.deposits_received
   lockCountdownStart?: string;   // ISO timestamp set when room fills — starts 10s leave window
                                  // DB: matches.lock_countdown_start (TIMESTAMPTZ)
-  expiresAt?: string;            // ISO timestamp (createdAt + 30min) — DB: matches.expires_at (TIMESTAMPTZ GENERATED)
+  expiresAt?: string;            // ISO timestamp (createdAt + 1h) — DB: matches.expires_at (TIMESTAMPTZ GENERATED)
+  /** True when the calling user has locked funds on-chain for this match. From GET /match/active. */
+  yourHasDeposited?: boolean;
   code?: string;
   /** Local-only legacy; never set from public list API — use hasPassword + server join instead. */
   password?: string;
@@ -159,6 +161,30 @@ export interface Match {
    * DB-ready: match_players JOIN users.
    */
   playersRoster?: Array<{ userId: string; username: string; team: "A" | "B" | null }>;
+}
+
+// ─── Pending Withdrawals (pull-payment fallback) ─────────────
+// On-chain pendingWithdrawals[wallet] — only non-zero when direct ETH transfer failed.
+
+export interface PendingWithdrawalResponse {
+  on_chain_wei: string;     // bigint as string — from pendingWithdrawals(address) view
+  db_tracked_wei: string;   // DB sum — from pending_withdrawals table
+  has_pending: boolean;
+  wallet: string | null;
+}
+
+// ─── Leave Status ─────────────────────────────────────────────
+// GET /matches/{id}/leave-status response
+
+export interface LeaveStatusResponse {
+  can_leave_now: boolean;       // no on-chain action needed
+  requires_cancel: boolean;     // host with deposits → must call cancelMatch on-chain first
+  rescue_available: boolean;    // WAITING_TIMEOUT (1h) elapsed → can call cancelWaiting
+  has_deposited: boolean;       // this user specifically has an on-chain deposit
+  is_host: boolean;
+  stake_currency: "CRYPTO" | "AT";
+  created_at: string | null;
+  on_chain_match_id: string | null;
 }
 
 // ─── Match Players ───────────────────────────────────────────
