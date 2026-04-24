@@ -39,9 +39,10 @@ def _detect_result_cs2(image_path: str, region=None):
 
     VICTORY : green banner  — HSV H 35-85  (pure green glow)
     DEFEAT  : red banner    — HSV H 0-10 / 170-180  (red glow, wraps around)
+    TIE     : gray banner   — S < 40, V 50-220  (neutral/metallic glow, Wingman 8-8 / Competitive 12-12)
 
     Default crop: y 12-17%, x 34-68% of the frame.
-    That window sits over the CS2 "VICTORY / DEFEAT" text in the top-centre.
+    That window sits over the CS2 "VICTORY / DEFEAT / DRAW" text in the top-centre.
     """
     img = cv2.imread(image_path)
 
@@ -64,7 +65,10 @@ def _detect_result_cs2(image_path: str, region=None):
     red_mask2 = cv2.inRange(hsv, (170, 50, 50), (180, 255, 255))
     red_pct = np.sum((red_mask1 | red_mask2) > 0) / total_pixels * 100
 
-    logger.debug(f"[CS2] green: {green_pct:.1f}%, red: {red_pct:.1f}%")
+    gray_mask = cv2.inRange(hsv, (0, 0, 50), (180, 40, 220))
+    gray_pct = np.sum(gray_mask > 0) / total_pixels * 100
+
+    logger.debug(f"[CS2] green: {green_pct:.1f}%, red: {red_pct:.1f}%, gray: {gray_pct:.1f}%")
 
     if green_pct > 30:
         result = "victory"
@@ -80,7 +84,14 @@ def _detect_result_cs2(image_path: str, region=None):
         save_evidence(image_path, result, confidence)
         return result, confidence
 
-    logger.warning(f"[CS2] no result - green: {green_pct:.1f}%, red: {red_pct:.1f}%")
+    if gray_pct > 30:
+        result = "tie"
+        confidence = round(gray_pct / 100, 4)
+        logger.info(f"[CS2] TIE detected - confidence: {confidence}")
+        save_evidence(image_path, result, confidence)
+        return result, confidence
+
+    logger.warning(f"[CS2] no result - green: {green_pct:.1f}%, red: {red_pct:.1f}%, gray: {gray_pct:.1f}%")
     return None, 0.0
 
 
@@ -174,7 +185,7 @@ def detect_result(image_path: str, region=None, game: str = "CS2"):
 
     Returns:
         (result, confidence)
-          result     - "victory" | "defeat" | None
+          result     - "victory" | "defeat" | "tie" | None
           confidence - float in [0, 1]; 0.0 when nothing is detected.
     """
     logger.info(f"detect_result: game={game}, image={image_path}")
