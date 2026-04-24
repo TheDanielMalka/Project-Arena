@@ -161,6 +161,8 @@ export interface Match {
    * DB-ready: match_players JOIN users.
    */
   playersRoster?: Array<{ userId: string; username: string; team: "A" | "B" | null }>;
+  forfeit_warning_at?: string | null;
+  forfeit_warning_team?: "A" | "B" | "BOTH" | null;
 }
 
 // ─── Pending Withdrawals (pull-payment fallback) ─────────────
@@ -185,6 +187,26 @@ export interface LeaveStatusResponse {
   stake_currency: "CRYPTO" | "AT";
   created_at: string | null;
   on_chain_match_id: string | null;
+}
+
+// ─── Dispute Holdings ────────────────────────────────────────
+// GET /admin/dispute-holdings — CRYPTO matches sent to holding wallet
+
+export interface DisputeHolding {
+  id: string;
+  match_id: string;
+  on_chain_tx_hash: string | null;
+  holding_wallet: string;
+  amount_wei: string;
+  reason: string;
+  status: "pending" | "resolved" | "refunded";
+  admin_notes: string | null;
+  created_at: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+  game?: string;
+  stake_per_player?: string;
+  player_count?: number;
 }
 
 // ─── Match Players ───────────────────────────────────────────
@@ -348,7 +370,10 @@ export type NotificationType =
   | "dispute"         // dispute opened or resolved             — DB: notifications.type = 'dispute'
   | "match_invite"    // room created / code shared             — DB: notifications.type = 'match_invite'
   | "escrow"          // deposit confirmed / refunded           — DB: notifications.type = 'escrow'
-  | "friend_request"; // friend request sent or accepted        — DB: notifications.type = 'friend_request'
+  | "friend_request"  // friend request sent or accepted        — DB: notifications.type = 'friend_request'
+  | "forfeit_warning" // disconnect grace period — team warned before forfeit
+  | "forfeit_result"  // match forfeited due to disconnect
+  | "holding_dispute";// both teams gone — funds held pending admin review
 
 // ─── Arena Client Status ──────────────────────────────────
 // Tracks whether the desktop capture client is running and ready to record.
