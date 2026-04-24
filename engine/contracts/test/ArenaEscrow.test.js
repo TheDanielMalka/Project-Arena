@@ -33,7 +33,7 @@ const STAKE   = ethers.parseEther("0.1");  // 0.1 ETH per player
 const TIMEOUT = 2 * 60 * 60;              // 2 hours in seconds — matches TIMEOUT in contract
 
 // MatchState enum values (order must match contract enum)
-const STATE = { WAITING: 0, ACTIVE: 1, FINISHED: 2, REFUNDED: 3, CANCELLED: 4 };
+const STATE = { WAITING: 0, ACTIVE: 1, FINISHED: 2, REFUNDED: 3, CANCELLED: 4, TIED: 5 };
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -1714,6 +1714,179 @@ describe("ArenaEscrow", function () {
 
       expect(await escrow.pendingWithdrawals(await rr.getAddress()))
         .to.equal(STAKE * 3n);
+    });
+
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // declareTie — draw outcome (Wingman 8-8 / Competitive 12-12)
+  // ══════════════════════════════════════════════════════════════════════════
+  describe("declareTie", function () {
+
+    it("emits TieDeclared with correct refund and fee amounts", async function () {
+      const { escrow, oracle, players } = await loadFixture(active1v1Fixture);
+      const feePercent = await escrow.feePercent(); // 5
+      const totalPot   = STAKE * 2n;
+      const fee        = (totalPot * feePercent) / 100n;
+      const refundPool = totalPot - fee;
+      const refundPer  = refundPool / 2n;   // 2 players in 1v1
+
+      await expect(
+        escrow.connect(oracle).declareTie(0)
+      )
+        .to.emit(escrow, "TieDeclared")
+        .withArgs(0n, refundPer, fee);
+    });
+
+    it("sets match state to TIED", async function () {
+      const { escrow, oracle } = await loadFixture(active1v1Fixture);
+      await escrow.connect(oracle).declareTie(0);
+      const [,,,,,, state] = await escrow.getMatch(0);
+      expect(state).to.equal(STATE.TIED);
+    });
+
+    it("refunds all players minus fee (1v1)", async function () {
+      const { escrow, oracle, players } = await loadFixture(active1v1Fixture);
+      const feePercent = await escrow.feePercent();
+      const totalPot   = STAKE * 2n;
+      const fee        = (totalPot * feePercent) / 100n;
+      const refundPool = totalPot - fee;
+      const refundPer  = refundPool / 2n;
+      const dust       = refundPool - refundPer * 2n;
+
+      const balA0Before = await ethers.provider.getBalance(players[0].address);
+      const balA1Before = await ethers.provider.getBalance(players[1].address);
+
+      const tx       = await escrow.connect(oracle).declareTie(0);
+      const receipt  = await tx.wait();
+      // oracle paid gas — adjust only for player balances (no gas for them here)
+
+      const balA0After = await ethers.provider.getBalance(players[0].address);
+      const balA1After = await ethers.provider.getBalance(players[1].address);
+
+      // players[0] is teamA[0] → gets refundPer + dust
+      expect(balA0After - balA0Before).to.equal(refundPer + dust);
+      // players[1] is teamB[0] → gets refundPer
+      expect(balA1After - balA1Before).to.equal(refundPer);
+    });
+
+    it("fee goes to owner", async function () {
+      const { escrow, owner, oracle } = await loadFixture(active1v1Fixture);
+      const feePercent   = await escrow.feePercent();
+      const totalPot     = STAKE * 2n;
+      const fee          = (totalPot * feePercent) / 100n;
+
+      const ownerBefore  = await ethers.provider.getBalance(owner.address);
+      const tx           = await escrow.connect(oracle).declareTie(0);
+      const receipt      = await tx.wait();
+      const ownerAfter   = await ethers.provider.getBalance(owner.address);
+
+      // owner didn't pay gas (oracle did) — delta should equal fee exactly
+      expect(ownerAfter - ownerBefore).to.equal(fee);
+    });
+
+    it("works for 2v2 — all 4 players refunded correctly", async function () {
+      const { escrow, oracle, players } = await loadFixture(deployFixture);
+      // Create 2v2 match
+      await escrow.connect(players[0]).createMatch(2, { value: STAKE });
+      await escrow.connect(players[1]).joinMatch(0, 0, { value: STAKE }); // teamA
+      await escrow.connect(players[2]).joinMatch(0, 1, { value: STAKE }); // teamB
+      await escrow.connect(players[3]).joinMatch(0, 1, { value: STAKE }); // teamB — activates
+
+      const feePercent = await escrow.feePercent();
+      const totalPot   = STAKE * 4n;
+      const fee        = (totalPot * feePercent) / 100n;
+      const refundPool = totalPot - fee;
+      const refundPer  = refundPool / 4n;
+
+      const balsBefore = await Promise.all(
+        [players[0],players[1],players[2],players[3]].map(p => ethers.provider.getBalance(p.address))
+      );
+
+      await escrow.connect(oracle).declareTie(0);
+
+      const balsAfter = await Promise.all(
+        [players[0],players[1],players[2],players[3]].map(p => ethers.provider.getBalance(p.address))
+      );
+
+      const dust = refundPool - refundPer * 4n;
+      // players[0] is teamA[0] — gets refundPer + dust
+      expect(balsAfter[0] - balsBefore[0]).to.equal(refundPer + dust);
+      // remaining 3 each get refundPer
+      for (let i = 1; i < 4; i++) {
+        expect(balsAfter[i] - balsBefore[i]).to.equal(refundPer);
+      }
+    });
+
+    it("reverts when called by non-oracle", async function () {
+      const { escrow, players } = await loadFixture(active1v1Fixture);
+      await expect(
+        escrow.connect(players[0]).declareTie(0)
+      ).to.be.revertedWith("Only oracle");
+    });
+
+    it("reverts when match is not ACTIVE (WAITING)", async function () {
+      const { escrow, oracle, players } = await loadFixture(create1v1Fixture);
+      await expect(
+        escrow.connect(oracle).declareTie(0)
+      ).to.be.revertedWith("Match not active");
+    });
+
+    it("reverts when match is not ACTIVE (already FINISHED)", async function () {
+      const { escrow, oracle, players } = await loadFixture(active1v1Fixture);
+      await escrow.connect(oracle).declareWinner(0, 0);
+      await expect(
+        escrow.connect(oracle).declareTie(0)
+      ).to.be.revertedWith("Match not active");
+    });
+
+    it("reverts when match is not ACTIVE (already TIED)", async function () {
+      const { escrow, oracle } = await loadFixture(active1v1Fixture);
+      await escrow.connect(oracle).declareTie(0);
+      await expect(
+        escrow.connect(oracle).declareTie(0)
+      ).to.be.revertedWith("Match not active");
+    });
+
+    it("reverts when paused", async function () {
+      const { escrow, owner, oracle } = await loadFixture(active1v1Fixture);
+      await escrow.connect(owner).pause();
+      await expect(
+        escrow.connect(oracle).declareTie(0)
+      ).to.be.revertedWithCustomError(escrow, "EnforcedPause");
+    });
+
+    it("reverts for non-existent match", async function () {
+      const { escrow, oracle } = await loadFixture(deployFixture);
+      await expect(
+        escrow.connect(oracle).declareTie(99)
+      ).to.be.revertedWith("Match does not exist");
+    });
+
+    it("compromised oracle cannot declareTie after match already TIED", async function () {
+      const { escrow, oracle } = await loadFixture(active1v1Fixture);
+      await escrow.connect(oracle).declareTie(0);
+      await expect(
+        escrow.connect(oracle).declareTie(0)
+      ).to.be.revertedWith("Match not active");
+    });
+
+    it("5v5 tie: total refunded + fee equals total pot", async function () {
+      const { escrow, oracle, players } = await loadFixture(deployFixture);
+      // Create 5v5 match (10 players)
+      await escrow.connect(players[0]).createMatch(5, { value: STAKE });
+      for (let i = 1; i < 5; i++)
+        await escrow.connect(players[i]).joinMatch(0, 0, { value: STAKE });
+      for (let i = 5; i < 10; i++)
+        await escrow.connect(players[i]).joinMatch(0, 1, { value: STAKE });
+
+      const contractBefore = await ethers.provider.getBalance(await escrow.getAddress());
+      expect(contractBefore).to.equal(STAKE * 10n);
+
+      await escrow.connect(oracle).declareTie(0);
+
+      const contractAfter = await ethers.provider.getBalance(await escrow.getAddress());
+      expect(contractAfter).to.equal(0n);
     });
 
   });
