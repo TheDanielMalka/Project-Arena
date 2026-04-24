@@ -16,6 +16,7 @@ import {
   waitForTransactionReceipt,
   getBalance,
   getWalletClient,
+  readContract,
 } from "@wagmi/core";
 import { getAddress, parseEther, formatEther } from "viem";
 import { parseEventLogs } from "viem";
@@ -221,6 +222,41 @@ export async function claimRefundFromEscrow(onChainMatchId: bigint): Promise<str
   });
   await waitForTransactionReceipt(wagmiConfig, { hash });
   return hash;
+}
+
+/**
+ * ArenaEscrow.withdraw() — pull pending balance from the pull-payment fallback ledger.
+ * Only needed when a direct ETH payout failed (e.g. contract recipient with expensive receive()).
+ * Returns tx hash.
+ */
+export async function withdrawPendingOnChain(): Promise<string> {
+  const { client, address } = await ensureTargetChain();
+  const hash = await client.writeContract({
+    address:      getContractAddress(),
+    abi:          ARENA_ESCROW_ABI,
+    functionName: "withdraw",
+    args:         [],
+    chain:        undefined,
+    account:      address,
+  });
+  await waitForTransactionReceipt(wagmiConfig, { hash });
+  return hash;
+}
+
+/**
+ * ArenaEscrow.pendingWithdrawals(address) — read the pull-payment credit for a wallet.
+ * Returns amount in wei as bigint. Zero for normal EOA wallets (direct transfer succeeded).
+ */
+export async function readPendingWithdrawalsOnChain(walletAddress: string): Promise<bigint> {
+  const chainId = getArenaTargetChainId() as 97 | 56;
+  const result = await readContract(wagmiConfig, {
+    address:      getContractAddress(),
+    abi:          ARENA_ESCROW_ABI,
+    functionName: "pendingWithdrawals",
+    args:         [getAddress(walletAddress as `0x${string}`)],
+    chainId,
+  });
+  return result as bigint;
 }
 
 // ─── Read ────────────────────────────────────────────────────────────────────
