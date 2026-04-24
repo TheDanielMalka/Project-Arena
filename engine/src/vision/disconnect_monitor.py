@@ -490,7 +490,7 @@ class DisconnectMonitor:
             "disconnect_monitor: HOLDING match=%s currency=%s wallet=%s",
             match_id, stake_currency, holding_wallet or "(not configured)",
         )
-        new_status = "disputed"
+        amount_wei = self._query_match_amount_wei(match_id) if stake_currency == "CRYPTO" else 0
         try:
             with self._sf() as session:
                 updated = session.execute(text("""
@@ -500,7 +500,20 @@ class DisconnectMonitor:
                         forfeit_committed  = TRUE
                     WHERE id = :mid AND status = 'in_progress'
                     RETURNING id
-                """), {"status": new_status, "mid": match_id}).fetchone()
+                """), {"status": "disputed", "mid": match_id}).fetchone()
+
+                if updated and stake_currency == "CRYPTO":
+                    session.execute(text("""
+                        INSERT INTO dispute_holdings
+                            (match_id, holding_wallet, amount_wei, reason)
+                        VALUES (:mid, :wallet, :amount, :reason)
+                    """), {
+                        "mid":    match_id,
+                        "wallet": holding_wallet or "",
+                        "amount": amount_wei,
+                        "reason": "both_disconnected",
+                    })
+
                 session.commit()
             if not updated:
                 return
@@ -530,6 +543,15 @@ class DisconnectMonitor:
                 log.info(
                     "disconnect_monitor: transfer_to_holding match=%s tx=%s", match_id, tx
                 )
+                try:
+                    with self._sf() as session:
+                        session.execute(text("""
+                            UPDATE dispute_holdings SET on_chain_tx_hash = :tx
+                            WHERE match_id = :mid
+                        """), {"tx": tx, "mid": match_id})
+                        session.commit()
+                except Exception:
+                    pass
             except NotImplementedError:
                 log.warning(
                     "disconnect_monitor: transfer_to_holding not yet deployed — "
@@ -542,6 +564,25 @@ class DisconnectMonitor:
                     "admin must resolve manually",
                     match_id, exc,
                 )
+
+
+    def _query_match_amount_wei(self, match_id: str) -> int:
+        """Return total wei held on-chain for match (stake_per_player × deposited players)."""
+        try:
+            with self._sf() as session:
+                row = session.execute(text("""
+                    SELECT m.stake_per_player, COUNT(mp.user_id) AS deposited_count
+                    FROM matches m
+                    JOIN match_players mp
+                      ON mp.match_id = m.id AND mp.has_deposited = TRUE
+                    WHERE m.id = :mid
+                    GROUP BY m.stake_per_player
+                """), {"mid": match_id}).fetchone()
+            if row and row[0]:
+                return int(float(row[0]) * 10 ** 18 * int(row[1]))
+        except Exception:
+            pass
+        return 0
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
