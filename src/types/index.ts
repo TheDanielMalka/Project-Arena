@@ -683,6 +683,41 @@ export interface CreatorProfile {
   wins?: number;
 }
 
+// ─── Tournaments (CS2 open + registration) — GET /tournaments/seasons
+export interface TournamentDivision {
+  id: string;
+  mode: string;
+  title: string;
+  titleHe: string | null;
+  position: number;
+  prize1Ils: number;
+  prize2Ils: number;
+  prize3Ils: number;
+  formatMarkdown: string | null;
+  maxSlots: number;
+  isTeamMode: boolean;
+  registeredCount: number;
+}
+
+export interface TournamentSeason {
+  id: string;
+  slug: string;
+  title: string;
+  titleHe: string | null;
+  subtitle: string | null;
+  game: string;
+  networkPhase: "testnet" | "mainnet" | "internal";
+  state: string;
+  warmUpMinutes: number;
+  registrationOpensAt: string | null;
+  registrationClosesAt: string | null;
+  mainStartsAt: string | null;
+  testDisclaimerMd: string | null;
+  futureRewardsMd: string | null;
+  marketingBlurbMd: string | null;
+  divisions: TournamentDivision[];
+}
+
 export interface CreatorApplication {
   id: string;
   user_id: string;

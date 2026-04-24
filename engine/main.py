@@ -29,6 +29,7 @@ from src.config import (
     ENGINE_BASE_URL, FRONTEND_URL, POOL_MANAGER_INTERVAL, ARENA_SYSTEM_USER_ID,
 )
 from src.forum import router as forum_router
+from src.tournament_routes import router as tournament_router
 from src.vision.capture import capture_screen, crop_roi
 from src.vision.engine import VisionEngine, VisionEngineConfig
 from src.vision.disconnect_monitor import DisconnectMonitor
@@ -1180,6 +1181,7 @@ app.add_middleware(
 )
 
 app.include_router(forum_router)
+app.include_router(tournament_router)
 
 
 @app.middleware("http")
