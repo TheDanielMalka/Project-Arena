@@ -16,6 +16,7 @@ export type WsEventType =
   | "match:roster_updated"
   | "match:forfeit_warning"
   | "match:forfeit_warning_cleared"
+  | "match:live_score"
   | "notification:new"
   | "user:profile_updated"
   | "client:status_changed";

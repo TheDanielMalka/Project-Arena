@@ -85,6 +85,28 @@ _PSM          = "8"     # single-word mode — best for isolated digits
 _WHITELIST    = "0123456789"
 _MAX_SCORE    = 30      # sanity cap — no CS2 match reaches 30 rounds
 
+# ── Valorant HUD region constants ─────────────────────────────────────────────
+#
+# Calibrated from real 1920×1080 Valorant 5v5 footage.
+# The Valorant HUD places the score at the top center with the round timer
+# at dead center (x ≈ 45–55 %) flanked by each team's score:
+#
+#   Left  (team A): x 35–43 %, y 1–6 %
+#   Right (team B): x 57–65 %, y 1–6 %
+#
+# Player agent icons occupy x 0–34 % (left) and x 66–100 % (right), so
+# these windows sit cleanly between the icons and the centre timer.
+# Scores are rendered as bright white digits on a dark translucent panel —
+# the same 140-threshold preprocessing used for CS2 works here.
+
+_VAL_HUD_Y_START = 0.010   # 1.0 % from top
+_VAL_HUD_Y_END   = 0.060   # 6.0 % from top
+_VAL_A_X_START   = 0.35    # left-team score column left edge
+_VAL_A_X_END     = 0.43    # left-team score column right edge
+_VAL_B_X_START   = 0.57    # right-team score column left edge
+_VAL_B_X_END     = 0.65    # right-team score column right edge
+_VAL_MAX_SCORE   = 30      # sanity cap (max Valorant rounds in any format)
+
 # ── Preprocessing ─────────────────────────────────────────────────────────────
 
 def _prep_digit_crop(crop: np.ndarray) -> np.ndarray:
@@ -120,20 +142,51 @@ def _ocr_digit(binary: np.ndarray) -> int | None:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+def _detect_live_score_cs2(img: "np.ndarray", name: str) -> dict[str, int] | None:
+    h, w = img.shape[:2]
+    y1 = int(h * _HUD_Y_START)
+    y2 = int(h * _HUD_Y_END)
+    ct_crop = img[y1:y2, int(w * _CT_X_START): int(w * _CT_X_END)]
+    t_crop  = img[y1:y2, int(w * _T_X_START):  int(w * _T_X_END)]
+    ct_val  = _ocr_digit(_prep_digit_crop(ct_crop))
+    t_val   = _ocr_digit(_prep_digit_crop(t_crop))
+    if ct_val is None or t_val is None:
+        logger.debug("detect_live_score CS2: could not parse (ct=%s t=%s) in %s", ct_val, t_val, name)
+        return None
+    logger.info("detect_live_score CS2: %s → ct=%d t=%d", name, ct_val, t_val)
+    return {"ct": ct_val, "t": t_val}
+
+
+def _detect_live_score_valorant(img: "np.ndarray", name: str) -> dict[str, int] | None:
+    h, w = img.shape[:2]
+    y1 = int(h * _VAL_HUD_Y_START)
+    y2 = int(h * _VAL_HUD_Y_END)
+    a_crop = img[y1:y2, int(w * _VAL_A_X_START): int(w * _VAL_A_X_END)]
+    b_crop = img[y1:y2, int(w * _VAL_B_X_START): int(w * _VAL_B_X_END)]
+    a_val  = _ocr_digit(_prep_digit_crop(a_crop))
+    b_val  = _ocr_digit(_prep_digit_crop(b_crop))
+    if a_val is None or b_val is None:
+        logger.debug("detect_live_score Valorant: could not parse (a=%s b=%s) in %s", a_val, b_val, name)
+        return None
+    if a_val > _VAL_MAX_SCORE or b_val > _VAL_MAX_SCORE:
+        logger.debug("detect_live_score Valorant: values out of range (%d, %d) in %s", a_val, b_val, name)
+        return None
+    logger.info("detect_live_score Valorant: %s → a=%d b=%d", name, a_val, b_val)
+    return {"ct": a_val, "t": b_val}
+
+
 def detect_live_score(image_path: str, game: str = "CS2") -> dict[str, int] | None:
     """
-    Read the live round score from the CS2 HUD top strip.
+    Read the live round score from the HUD top strip.
 
-    Returns {"ct": <int>, "t": <int>} when both digits are read
-    successfully, or None when:
-      - The image cannot be loaded.
-      - Either digit column yields no recognisable number.
-      - Detected values exceed _MAX_SCORE (likely OCR noise on non-HUD frame).
+    Supported games: "CS2", "Valorant".
 
-    Currently only CS2 is supported.  Valorant uses a different HUD layout
-    (score at top-left corner) and is not yet implemented.
+    Returns {"ct": <int>, "t": <int>} on success (for Valorant "ct" = left
+    team, "t" = right team — same field names for DB/WS compatibility), or
+    None when the image cannot be loaded, digits cannot be read, or values
+    exceed the per-game sanity cap.
     """
-    if game != "CS2":
+    if game not in ("CS2", "Valorant"):
         logger.debug("detect_live_score: game=%s not supported", game)
         return None
 
@@ -146,30 +199,10 @@ def detect_live_score(image_path: str, game: str = "CS2") -> dict[str, int] | No
         logger.error("detect_live_score: cv2 could not read: %s", image_path)
         return None
 
-    h, w = img.shape[:2]
-
-    y1 = int(h * _HUD_Y_START)
-    y2 = int(h * _HUD_Y_END)
-
-    ct_crop = img[y1:y2, int(w * _CT_X_START): int(w * _CT_X_END)]
-    t_crop  = img[y1:y2, int(w * _T_X_START):  int(w * _T_X_END)]
-
-    ct_bin = _prep_digit_crop(ct_crop)
-    t_bin  = _prep_digit_crop(t_crop)
-
-    ct_val = _ocr_digit(ct_bin)
-    t_val  = _ocr_digit(t_bin)
-
-    if ct_val is None or t_val is None:
-        logger.debug(
-            "detect_live_score: could not parse both digits (ct=%s, t=%s) in %s",
-            ct_val, t_val, os.path.basename(image_path),
-        )
-        return None
-
-    score = {"ct": ct_val, "t": t_val}
-    logger.info("detect_live_score: %s → ct=%d t=%d", os.path.basename(image_path), ct_val, t_val)
-    return score
+    name = os.path.basename(image_path)
+    if game == "Valorant":
+        return _detect_live_score_valorant(img, name)
+    return _detect_live_score_cs2(img, name)
 
 
 def detect_round_start(image_path: str, game: str = "CS2") -> bool:

@@ -2314,6 +2314,12 @@ async def validate_screenshot(
                 "live_score upsert: match=%s ct=%d t=%d round_start=%s",
                 match_id, _ls["ct"], _ls["t"], output.is_round_start,
             )
+            ws_manager.fire_match(match_id, "match:live_score", {
+                "match_id":  match_id,
+                "ct_score":  _ls["ct"],
+                "t_score":   _ls["t"],
+                "round_confirmed": output.is_round_start,
+            })
         except Exception as exc:
             logger.error("validate_screenshot live_score upsert error (non-fatal): %s", exc)
 
@@ -5301,6 +5307,9 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
     mode = req.mode.strip()
     if mode not in _VALID_MODES:
         raise HTTPException(400, f"mode must be one of: {', '.join(sorted(_VALID_MODES))}")
+
+    if game == "Valorant" and mode != "5v5":
+        raise HTTPException(400, "Valorant only supports 5v5 mode")
 
     match_type = req.match_type.strip()
     if match_type not in ("public", "custom"):

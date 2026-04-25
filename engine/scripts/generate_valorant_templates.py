@@ -29,9 +29,15 @@ import numpy as np
 
 # ── Target resolutions ────────────────────────────────────────────────────────
 RESOLUTIONS: list[tuple[int, int]] = [
+    ( 800,  600),   # legacy 4:3
+    (1024,  768),   # legacy 4:3
     (1280,  720),
+    (1280,  960),   # stretched 4:3
     (1366,  768),
+    (1440, 1080),   # stretched 4:3
     (1600,  900),
+    (1600, 1024),   # stretched 4:3
+    (1680, 1050),
     (1920, 1080),
     (2560, 1080),   # ultrawide
     (2560, 1440),

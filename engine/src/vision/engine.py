@@ -117,7 +117,7 @@ class VisionEngine:
         live_score: Optional[dict] = None
         is_round_start = False
 
-        if result is None and game == "CS2":
+        if result is None and game in ("CS2", "Valorant"):
             live_score = detect_live_score(image_path, game=game)
             if live_score is not None:
                 screen_type    = "live"
