@@ -3078,17 +3078,38 @@ async def match_status(
                 if score_row:
                     score_val = score_row[0]
 
+                # consensus progress — submissions so far vs expected
+                submissions_count = session.execute(
+                    text("SELECT COUNT(*) FROM match_consensus WHERE match_id = :mid"),
+                    {"mid": match_id},
+                ).scalar() or 0
+                expected_count = session.execute(
+                    text("SELECT COUNT(*) FROM match_players WHERE match_id = :mid"),
+                    {"mid": match_id},
+                ).scalar() or 0
+
+                if match_status_val == "completed":
+                    consensus_status_val = "reached"
+                elif match_status_val == "disputed":
+                    consensus_status_val = "failed"
+                elif match_status_val == "in_progress":
+                    consensus_status_val = "pending"
+                else:
+                    consensus_status_val = None
+
                 return {
-                    "match_id":          match_id,
-                    "status":            match_status_val,
-                    "winner_id":         winner_id_val,
-                    "on_chain_match_id": row[2],
-                    "stake_per_player":  float(row[3]) if row[3] is not None else None,
-                    "your_team":         your_team,
-                    "result":            result_val,
-                    "score":             score_val,
-                    # Only revealed once match is in_progress — never exposed while waiting
-                    "game_password":     row[4] if match_status_val == "in_progress" else None,
+                    "match_id":           match_id,
+                    "status":             match_status_val,
+                    "winner_id":          winner_id_val,
+                    "on_chain_match_id":  row[2],
+                    "stake_per_player":   float(row[3]) if row[3] is not None else None,
+                    "your_team":          your_team,
+                    "result":             result_val,
+                    "score":              score_val,
+                    "game_password":      row[4] if match_status_val == "in_progress" else None,
+                    "consensus_status":   consensus_status_val,
+                    "submissions_count":  int(submissions_count),
+                    "submissions_needed": int(expected_count),
                 }
     except Exception:
         pass
