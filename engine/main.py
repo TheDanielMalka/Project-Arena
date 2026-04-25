@@ -2194,7 +2194,9 @@ async def validate_screenshot(
         logger.warning("validate_screenshot: match status check skipped (DB error): %s", exc)
         match_row = None
 
-    # ── 2. Submission limit: 1 per user per match (non-fatal if DB unavailable)
+    # ── 2. Participant gate + submission limit ────────────────────────────────
+    # 2a. Submitter must be a registered player in this match.
+    # 2b. Only 1 accepted screenshot per wallet per match.
     wallet_address: str | None = None
     try:
         with SessionLocal() as session:
@@ -2204,6 +2206,21 @@ async def validate_screenshot(
             ).fetchone()
             wallet_address = wallet_row[0] if wallet_row else None
 
+            # 2a — match_players membership check
+            is_participant = session.execute(
+                text(
+                    "SELECT 1 FROM match_players "
+                    "WHERE match_id = :mid AND user_id = :uid LIMIT 1"
+                ),
+                {"mid": match_id, "uid": user_id},
+            ).fetchone()
+            if not is_participant:
+                raise HTTPException(
+                    403,
+                    "You are not a participant in this match.",
+                )
+
+            # 2b — duplicate submission check
             if wallet_address:
                 existing = session.execute(
                     text(
@@ -2221,7 +2238,7 @@ async def validate_screenshot(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.warning("validate_screenshot: submission limit check skipped (DB error): %s", exc)
+        logger.warning("validate_screenshot: participant/limit check skipped (DB error): %s", exc)
 
     # ── 3. Save screenshot to disk ────────────────────────────────────────────
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
