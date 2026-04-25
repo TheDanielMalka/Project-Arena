@@ -55,6 +55,7 @@ const FALLBACK: TournamentSeason = {
   id: "local",
   slug: "cs2-arena-open-2026",
   title: "Arena CS2 Open — System Test",
+  titleHe: "",
   subtitle: "5v5 · 2v2 · 1v1 · Testnet",
   game: "CS2",
   networkPhase: "testnet",
