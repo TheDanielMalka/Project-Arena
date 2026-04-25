@@ -7,7 +7,7 @@ import { NotificationToastListener } from "@/components/notifications/Notificati
 import { useUserStore } from "@/stores/userStore";
 import { useWalletStore } from "@/stores/walletStore";
 import { registerAuth401Handler, clearAuth401Handler } from "@/lib/authSession";
-import { wsClient } from "@/lib/ws-client";
+import { wsClient, useWsEvent } from "@/lib/ws-client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WagmiProvider, useAccount } from "wagmi";
 import { wagmiConfig } from "@/lib/wagmiConfig";
@@ -82,6 +82,7 @@ function WagmiAutoSync() {
 
 function WsLifecycle() {
   const token = useUserStore((s) => s.token);
+  const refreshProfileFromServer = useUserStore((s) => s.refreshProfileFromServer);
 
   useEffect(() => {
     if (token) {
@@ -93,6 +94,12 @@ function WsLifecycle() {
       if (!token) wsClient.disconnect();
     };
   }, [token]);
+
+  // Instant profile refresh when engine pushes AT/wallet balance changes.
+  // The page-level polls (15s/30s) stay active as fallback.
+  useWsEvent("user:profile_updated", () => {
+    if (token) void refreshProfileFromServer();
+  });
 
   return null;
 }
