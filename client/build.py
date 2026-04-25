@@ -31,7 +31,7 @@ DATA_FILES = [
     ("assets", "assets"),
 ]
 
-# Client only needs: pystray, PIL, mss, httpx, psutil
+# Client only needs: pystray, PIL, mss, httpx, psutil, websockets
 # NO cv2, numpy, pytesseract - OCR happens server-side
 HIDDEN_IMPORTS = [
     "pystray._win32",
@@ -43,6 +43,14 @@ HIDDEN_IMPORTS = [
     "customtkinter",
     "customtkinter.windows",
     "customtkinter.windows.widgets",
+    "websockets",
+    "websockets.asyncio",
+    "websockets.asyncio.client",
+    "websockets.exceptions",
+    "websockets.http11",
+    "websockets.connection",
+    "websockets.frames",
+    "websockets.streams",
 ]
 
 
