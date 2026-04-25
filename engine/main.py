@@ -412,12 +412,6 @@ async def _public_pool_manager_loop() -> None:
                             "Pool: created public room code=%s game=%s mode=%s %s %.4f",
                             code, game_val, mode_val, sc, amount,
                         )
-                        currency_label = "tBNB" if sc == "CRYPTO" else "AT"
-                        discord_post(
-                            f"🎮 **New room open** | {game_val} {mode_val} "
-                            f"| {amount:g} {currency_label} | Code: `{code}` "
-                            f"| https://project-arena.com/lobby"
-                        )
 
                 session.commit()
 
