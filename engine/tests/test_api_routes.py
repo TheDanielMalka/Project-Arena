@@ -247,6 +247,7 @@ class TestSubmissionLimit:
             session_cm.execute.return_value.fetchone.side_effect = [
                 None,          # match status check → None (skip)
                 (wallet,),     # wallet_address lookup
+                (1,),          # participant check → passes gate
                 None,          # no existing evidence
             ]
 
@@ -261,6 +262,7 @@ class TestSubmissionLimit:
             session_cm.execute.return_value.fetchone.side_effect = [
                 None,               # match status check
                 (wallet,),          # wallet_address lookup
+                (1,),               # participant check → passes gate
                 (str(uuid.uuid4()),),  # existing evidence row → duplicate
             ]
 

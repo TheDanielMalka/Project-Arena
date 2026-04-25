@@ -731,19 +731,32 @@ class EngineClient:
             logger.debug(f"Match status: {e}")
         return None
 
-    def upload_screenshot(self, match_id: str, filepath: str) -> dict | None:
-        try:
-            with open(filepath, "rb") as f:
-                r = self.client.post(
-                    f"{self.base_url}/validate/screenshot",
-                    params={"match_id": match_id},
-                    files={"file": (os.path.basename(filepath), f, "image/png")},
-                    headers={"Authorization": f"Bearer {self.token}"},
-                )
-            if r.status_code == 200:
-                return r.json()
-        except Exception as e:
-            logger.error(f"Upload error: {e}")
+    def upload_screenshot(self, match_id: str, filepath: str,
+                          game: str = "CS2") -> dict | None:
+        for attempt in range(3):
+            try:
+                with open(filepath, "rb") as f:
+                    r = self.client.post(
+                        f"{self.base_url}/validate/screenshot",
+                        params={"match_id": match_id, "game": game},
+                        files={"file": (os.path.basename(filepath), f, "image/png")},
+                        headers={"Authorization": f"Bearer {self.token}"},
+                        timeout=30,
+                    )
+                if r.status_code == 200:
+                    return r.json()
+                if r.status_code == 401:
+                    logger.warning("upload_screenshot: token expired — re-login required")
+                    return {"_error": "token_expired"}
+                if r.status_code == 409:
+                    logger.debug("upload_screenshot: duplicate submission (409)")
+                    return r.json()
+                logger.warning("upload_screenshot HTTP %d (attempt %d/3): %s",
+                               r.status_code, attempt + 1, r.text[:200])
+            except Exception as e:
+                logger.error("upload_screenshot error (attempt %d/3): %s", attempt + 1, e)
+            if attempt < 2:
+                time.sleep(2 ** attempt)
         return None
 
     def login(self, identifier: str, password: str) -> dict | None:
@@ -1175,11 +1188,12 @@ class MatchMonitor:
         logger.info("Monitor stopped")
 
     def _loop(self):
-        _match_status:       str | None = None
-        _match_completed_at: float | None = None
-        _last_status_poll:   float = 0
-        _STATUS_POLL_INTERVAL = 10   # seconds between match-status polls
-        _CAPTURE_COOLDOWN     = 60   # seconds to keep match visible after completed
+        _match_status:          str | None = None
+        _match_completed_at:    float | None = None
+        _last_status_poll:      float = 0
+        _STATUS_POLL_INTERVAL   = 10    # seconds between match-status polls
+        _CAPTURE_COOLDOWN       = 60    # seconds to keep match visible after completed
+        _token_expired_warned   = False  # show re-login warning at most once per session
 
         while self.running:
             try:
@@ -1248,9 +1262,28 @@ class MatchMonitor:
                             self._capture_count += 1
                             self._last_screenshot = filepath
                             result = self.engine.upload_screenshot(
-                                self.current_match_id, filepath)
+                                self.current_match_id, filepath, game=game)
                             if result:
-                                logger.info(f"Engine: {result}")
+                                if result.get("_error") == "token_expired":
+                                    if not _token_expired_warned:
+                                        _token_expired_warned = True
+                                        logger.warning(
+                                            "Screenshots paused — session expired. "
+                                            "Please re-login in the Arena client."
+                                        )
+                                        try:
+                                            import tkinter.messagebox as _mb
+                                            _mb.showwarning(
+                                                "Arena — Session Expired",
+                                                "Your session has expired.\n"
+                                                "Please log out and log back in to "
+                                                "resume screenshot uploads.",
+                                            )
+                                        except Exception:
+                                            pass
+                                else:
+                                    _token_expired_warned = False
+                                    logger.info(f"Engine: {result}")
                                 try: os.remove(filepath)
                                 except OSError: pass
                     else:

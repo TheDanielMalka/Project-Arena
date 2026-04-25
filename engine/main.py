@@ -2194,7 +2194,9 @@ async def validate_screenshot(
         logger.warning("validate_screenshot: match status check skipped (DB error): %s", exc)
         match_row = None
 
-    # ── 2. Submission limit: 1 per user per match (non-fatal if DB unavailable)
+    # ── 2. Participant gate + submission limit ────────────────────────────────
+    # 2a. Submitter must be a registered player in this match.
+    # 2b. Only 1 accepted screenshot per wallet per match.
     wallet_address: str | None = None
     try:
         with SessionLocal() as session:
@@ -2204,6 +2206,21 @@ async def validate_screenshot(
             ).fetchone()
             wallet_address = wallet_row[0] if wallet_row else None
 
+            # 2a — match_players membership check
+            is_participant = session.execute(
+                text(
+                    "SELECT 1 FROM match_players "
+                    "WHERE match_id = :mid AND user_id = :uid LIMIT 1"
+                ),
+                {"mid": match_id, "uid": user_id},
+            ).fetchone()
+            if not is_participant:
+                raise HTTPException(
+                    403,
+                    "You are not a participant in this match.",
+                )
+
+            # 2b — duplicate submission check
             if wallet_address:
                 existing = session.execute(
                     text(
@@ -2221,7 +2238,7 @@ async def validate_screenshot(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.warning("validate_screenshot: submission limit check skipped (DB error): %s", exc)
+        logger.warning("validate_screenshot: participant/limit check skipped (DB error): %s", exc)
 
     # ── 3. Save screenshot to disk ────────────────────────────────────────────
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -3061,17 +3078,38 @@ async def match_status(
                 if score_row:
                     score_val = score_row[0]
 
+                # consensus progress — submissions so far vs expected
+                submissions_count = session.execute(
+                    text("SELECT COUNT(*) FROM match_consensus WHERE match_id = :mid"),
+                    {"mid": match_id},
+                ).scalar() or 0
+                expected_count = session.execute(
+                    text("SELECT COUNT(*) FROM match_players WHERE match_id = :mid"),
+                    {"mid": match_id},
+                ).scalar() or 0
+
+                if match_status_val == "completed":
+                    consensus_status_val = "reached"
+                elif match_status_val == "disputed":
+                    consensus_status_val = "failed"
+                elif match_status_val == "in_progress":
+                    consensus_status_val = "pending"
+                else:
+                    consensus_status_val = None
+
                 return {
-                    "match_id":          match_id,
-                    "status":            match_status_val,
-                    "winner_id":         winner_id_val,
-                    "on_chain_match_id": row[2],
-                    "stake_per_player":  float(row[3]) if row[3] is not None else None,
-                    "your_team":         your_team,
-                    "result":            result_val,
-                    "score":             score_val,
-                    # Only revealed once match is in_progress — never exposed while waiting
-                    "game_password":     row[4] if match_status_val == "in_progress" else None,
+                    "match_id":           match_id,
+                    "status":             match_status_val,
+                    "winner_id":          winner_id_val,
+                    "on_chain_match_id":  row[2],
+                    "stake_per_player":   float(row[3]) if row[3] is not None else None,
+                    "your_team":          your_team,
+                    "result":             result_val,
+                    "score":              score_val,
+                    "game_password":      row[4] if match_status_val == "in_progress" else None,
+                    "consensus_status":   consensus_status_val,
+                    "submissions_count":  int(submissions_count),
+                    "submissions_needed": int(expected_count),
                 }
     except Exception:
         pass
@@ -5475,7 +5513,7 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
                 text(
                     "SELECT game, status, bet_amount, stake_currency, password, "
                     "       max_players, max_per_team, type, on_chain_match_id "
-                    "FROM matches WHERE id = :mid"
+                    "FROM matches WHERE id = :mid FOR UPDATE"
                 ),
                 {"mid": match_id},
             ).fetchone()

@@ -88,6 +88,18 @@ export interface MatchStatusApiResponse {
   on_chain_match_id:   string | number | null;
   stake_per_player:    number | null;
   your_team:           0 | 1 | null;
+  /** OCR consensus pipeline state */
+  consensus_status?:   "pending" | "reached" | "failed" | null;
+  /** How many players have submitted a screenshot so far */
+  submissions_count?:  number;
+  /** Total players in the match (submissions target) */
+  submissions_needed?: number;
+  /** End-screen score string e.g. "13-11" once consensus reached */
+  score?:              string | null;
+  /** "victory" | "defeat" from the calling user's perspective */
+  result?:             string | null;
+  /** In-game room password — only returned while match is in_progress */
+  game_password?:      string | null;
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────
