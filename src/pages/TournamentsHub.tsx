@@ -1,14 +1,20 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Trophy, ArrowRight, Radio, Swords } from "lucide-react";
+import { Trophy, ArrowRight, Radio, Swords, Users, Calendar } from "lucide-react";
 import { fetchTournamentSeasons } from "@/lib/tournament-api";
 import type { TournamentSeason } from "@/types";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
 
 const FALLBACK_SLUG = "cs2-arena-open-2026";
 
-/** Public hub — /tournaments — lists seasons (or deep-link card when API offline). */
+const STATE_LABEL: Record<string, string> = {
+  registration_open: "Registration Open",
+  warmup: "Warm-up",
+  live: "Live",
+  completed: "Completed",
+  draft: "Draft",
+};
+
 export default function TournamentsHub() {
   const [rows, setRows] = useState<TournamentSeason[] | null>(null);
   const [err, setErr] = useState(false);
@@ -28,84 +34,142 @@ export default function TournamentsHub() {
   const hasApi = rows && rows.length > 0;
 
   return (
-    <div className="space-y-8">
-      <header className="space-y-3 text-center sm:text-left">
-        <p className="font-hud text-[10px] uppercase tracking-[0.4em] text-arena-cyan/70">
-          Standalone event sector
+    <div className="space-y-10">
+      {/* ── Header ── */}
+      <header className="relative space-y-3 border-b border-arena-cyan/10 pb-8">
+        <div className="absolute inset-0 -z-10 bg-gradient-to-br from-arena-cyan/[0.03] via-transparent to-transparent" />
+        <p className="font-hud text-[10px] uppercase tracking-[0.5em] text-arena-cyan/60">
+          Competitive Division
         </p>
-        <h1 className="font-display text-2xl font-bold tracking-wide text-foreground sm:text-3xl md:text-4xl">
+        <h1 className="font-display text-3xl font-bold tracking-tight text-foreground sm:text-4xl md:text-5xl">
           Tournaments
         </h1>
-        <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-          CS2 open brackets, on-platform registration, and testnet escrows. Events live on their own URLs
-          (like <code className="text-xs text-arena-cyan/80">/legal/terms</code>
-          <span className="mx-1 text-muted-foreground/40">·</span>
-          separate from the app shell list above).
+        <p className="max-w-xl text-sm leading-relaxed text-muted-foreground">
+          On-platform CS2 brackets with live escrow, automated result detection, and
+          prize distribution. Each event runs on its own registration page.
         </p>
       </header>
 
+      {/* ── Offline banner ── */}
       {err && !hasApi && (
-        <div
-          className="rounded-sm border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-200/90"
-          role="status"
-        >
-          <strong>Engine data offline.</strong> The featured card still links to the season page; wire{" "}
-          <code className="text-xs">/tournaments</code> API on the server when you are ready.
+        <div className="flex items-start gap-3 rounded-sm border border-amber-500/25 bg-amber-500/[0.04] p-4 text-sm text-amber-200/80">
+          <Radio className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+          <span>
+            <strong className="text-amber-300">Engine offline.</strong> Showing featured event — live data resumes when the API is reachable.
+          </span>
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
+      {/* ── Season cards ── */}
+      <div className="grid gap-5 md:grid-cols-2">
         {(hasApi ? rows! : [null]).map((row, i) => (
-          <div
-            key={row?.id ?? `fallback-${i}`}
-            className={cn(
-              "group relative overflow-hidden rounded-sm border border-arena-cyan/25",
-              "bg-gradient-to-br from-primary/[0.08] via-card/40 to-background/30",
-              "p-5 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.04),0_20px_50px_-32px_hsl(0_0%_0%/0.5)]",
-            )}
-          >
-            <div className="pointer-events-none absolute -right-6 -top-6 h-28 w-28 rounded-full bg-arena-cyan/10 blur-2xl" />
-            <div className="flex items-start justify-between gap-3">
-              <div className="space-y-1.5">
-                <span className="font-hud text-[9px] uppercase tracking-[0.35em] text-muted-foreground/80">
-                  {(row?.networkPhase ?? "testnet").toUpperCase()}
-                </span>
-                <h2 className="font-display text-lg font-bold text-foreground sm:text-xl">
-                  {row?.title ?? "Arena CS2 Open — System Test (Testnet)"}
-                </h2>
-                <p className="text-xs text-muted-foreground sm:text-sm">
-                  {row?.subtitle ??
-                    "5v5 · 2v2 · 1v1 — ILS prize table · client + site + testnet flow"}
-                </p>
-              </div>
-              <Trophy className="h-10 w-10 shrink-0 text-arena-cyan/50" />
-            </div>
-            <div className="mt-4 flex flex-wrap items-center gap-2 font-hud text-[9px] uppercase tracking-wider text-muted-foreground">
-              <span className="inline-flex items-center gap-1.5 border border-arena-cyan/20 bg-black/20 px-2 py-1">
-                <Swords className="h-3 w-3 text-arena-cyan" /> CS2
-              </span>
-              <span className="inline-flex items-center gap-1.5 border border-arena-cyan/20 bg-black/20 px-2 py-1">
-                <Radio className="h-3 w-3 text-arena-cyan" />
-                {row?.state ?? "registration_open"}
-              </span>
-            </div>
-            <div className="mt-5">
-              <Button
-                asChild
-                className="w-full font-hud text-[10px] uppercase tracking-[0.2em] sm:w-auto"
-              >
-                <Link
-                  to={`/tournaments/${row?.slug ?? FALLBACK_SLUG}`}
-                  className="inline-flex items-center justify-center gap-2"
-                >
-                  Open event brief
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </Link>
-              </Button>
-            </div>
-          </div>
+          <SeasonCard key={row?.id ?? `fallback-${i}`} row={row} />
         ))}
       </div>
     </div>
+  );
+}
+
+function SeasonCard({ row }: { row: TournamentSeason | null }) {
+  const title = row?.title ?? "Arena CS2 Open — System Test (Testnet)";
+  const subtitle = row?.subtitle ?? "5v5 · 2v2 · 1v1 — ILS prize pool · testnet";
+  const phase = row?.networkPhase ?? "testnet";
+  const state = row?.state ?? "registration_open";
+  const slug = row?.slug ?? FALLBACK_SLUG;
+  const totalSlots = row?.divisions?.reduce((a, d) => a + (d.maxSlots ?? 0), 0) ?? 80;
+  const registered = row?.divisions?.reduce((a, d) => a + (d.registeredCount ?? 0), 0) ?? 0;
+
+  return (
+    <Link
+      to={`/tournaments/${slug}`}
+      className={cn(
+        "group relative flex flex-col overflow-hidden rounded-sm border border-arena-cyan/20",
+        "bg-gradient-to-br from-card/90 via-card/50 to-background/20",
+        "p-0 shadow-[0_0_48px_-24px_hsl(var(--arena-cyan)/0.15)]",
+        "transition-all duration-300 hover:border-arena-cyan/40 hover:shadow-[0_0_64px_-16px_hsl(var(--arena-cyan)/0.25)]",
+      )}
+    >
+      {/* Glow top strip */}
+      <div className="h-px w-full bg-gradient-to-r from-transparent via-arena-cyan/40 to-transparent" />
+
+      <div className="flex flex-1 flex-col gap-4 p-5">
+        {/* Top row */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <span
+                className={cn(
+                  "font-hud text-[8px] uppercase tracking-[0.4em] px-1.5 py-0.5 border",
+                  phase === "testnet"
+                    ? "border-amber-500/40 text-amber-400/80 bg-amber-500/[0.06]"
+                    : "border-arena-cyan/30 text-arena-cyan/70 bg-arena-cyan/[0.05]",
+                )}
+              >
+                {phase}
+              </span>
+              <span
+                className={cn(
+                  "font-hud text-[8px] uppercase tracking-[0.3em] px-1.5 py-0.5 border",
+                  state === "registration_open"
+                    ? "border-emerald-500/40 text-emerald-400/80 bg-emerald-500/[0.06]"
+                    : state === "live"
+                    ? "border-red-500/40 text-red-400/80 bg-red-500/[0.06]"
+                    : "border-muted-foreground/20 text-muted-foreground/60",
+                )}
+              >
+                {STATE_LABEL[state] ?? state}
+              </span>
+            </div>
+            <h2 className="font-display text-lg font-bold leading-snug text-foreground transition-colors group-hover:text-arena-cyan sm:text-xl">
+              {title}
+            </h2>
+            <p className="text-xs text-muted-foreground">{subtitle}</p>
+          </div>
+          <Trophy className="h-9 w-9 shrink-0 text-arena-cyan/30 transition-colors group-hover:text-arena-cyan/60" />
+        </div>
+
+        {/* Stats row */}
+        <div className="flex flex-wrap items-center gap-3 font-hud text-[9px] uppercase tracking-wider text-muted-foreground/70">
+          <span className="inline-flex items-center gap-1.5">
+            <Swords className="h-3 w-3 text-arena-cyan/50" /> CS2
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <Users className="h-3 w-3 text-arena-cyan/50" />
+            {registered} / {totalSlots} registered
+          </span>
+          {row?.mainStartsAt && (
+            <span className="inline-flex items-center gap-1.5">
+              <Calendar className="h-3 w-3 text-arena-cyan/50" />
+              {new Date(row.mainStartsAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+            </span>
+          )}
+        </div>
+
+        {/* Division pills */}
+        {row?.divisions && row.divisions.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {row.divisions.map((d) => (
+              <span
+                key={d.id}
+                className="border border-arena-cyan/15 bg-arena-cyan/[0.04] px-2 py-0.5 font-hud text-[9px] uppercase tracking-wider text-arena-cyan/70"
+              >
+                {d.mode}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* CTA */}
+        <div className="mt-auto pt-2">
+          <span className="inline-flex items-center gap-2 border border-arena-cyan/30 bg-arena-cyan/[0.06] px-4 py-2 font-hud text-[10px] uppercase tracking-[0.25em] text-arena-cyan transition-all group-hover:border-arena-cyan/60 group-hover:bg-arena-cyan/[0.12]">
+            Open Event Brief
+            <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+          </span>
+        </div>
+      </div>
+
+      {/* Bottom glow strip */}
+      <div className="h-px w-full bg-gradient-to-r from-transparent via-arena-cyan/20 to-transparent" />
+    </Link>
   );
 }
