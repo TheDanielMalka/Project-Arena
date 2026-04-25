@@ -2314,6 +2314,12 @@ async def validate_screenshot(
                 "live_score upsert: match=%s ct=%d t=%d round_start=%s",
                 match_id, _ls["ct"], _ls["t"], output.is_round_start,
             )
+            ws_manager.fire_match(match_id, "match:live_score", {
+                "match_id":  match_id,
+                "ct_score":  _ls["ct"],
+                "t_score":   _ls["t"],
+                "round_confirmed": output.is_round_start,
+            })
         except Exception as exc:
             logger.error("validate_screenshot live_score upsert error (non-fatal): %s", exc)
 
