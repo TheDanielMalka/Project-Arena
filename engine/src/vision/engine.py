@@ -108,6 +108,8 @@ class VisionEngine:
             screen_type = "victory"
         elif result == "defeat":
             screen_type = "defeat"
+        elif result == "tie":
+            screen_type = "tie"
         else:
             screen_type = "unknown"
 
@@ -126,7 +128,7 @@ class VisionEngine:
         agents:  list[str] = []
         score:   Optional[str] = None
 
-        if screen_type in ("victory", "defeat"):
+        if screen_type in ("victory", "defeat", "tie"):
             invert_ocr: bool = game == "Valorant"
             players = extract_player_names(image_path, invert=invert_ocr, game=game) or []
             score   = extract_score(image_path, invert=invert_ocr, game=game)
