@@ -410,6 +410,7 @@ const MatchLobby = () => {
   const [playerPopover,         setPlayerPopover]         = useState<{ slotValue: string; rect: DOMRect } | null>(null);
   const [walletLinkBusy, setWalletLinkBusy]               = useState(false);
   const [inviteModalOpen,      setInviteModalOpen]      = useState(false);
+  const [inviteAnchorRect,     setInviteAnchorRect]     = useState<DOMRect | null>(null);
   const [inviteFriends,        setInviteFriends]        = useState<ApiFriendRow[]>([]);
   const [inviteFriendsLoading, setInviteFriendsLoading] = useState(false);
   const [invitingFriendId,     setInvitingFriendId]     = useState<string | null>(null);
@@ -420,6 +421,8 @@ const MatchLobby = () => {
   const [rescuePending,        setRescuePending]        = useState(false);
   const [rescueAvailable,      setRescueAvailable]      = useState(false);
   const [inviteRateLimitedIds, setInviteRateLimitedIds] = useState<Set<string>>(new Set());
+  const [leaveAnchorRect,      setLeaveAnchorRect]      = useState<DOMRect | null>(null);
+  const [deleteAnchorRect,     setDeleteAnchorRect]     = useState<DOMRect | null>(null);
   const inviteModalPanelRef = useRef<HTMLDivElement>(null);
   const [dailyAtStaked,        setDailyAtStaked]        = useState<number | null>(null);
   const [dailyAtLimit,         setDailyAtLimit]         = useState<number | null>(null);
@@ -1055,8 +1058,9 @@ const MatchLobby = () => {
     })();
   }, [myActiveRoom, activeRoomOnChainId]);
 
-  const handleOpenInviteModal = useCallback(async () => {
+  const handleOpenInviteModal = useCallback(async (e?: React.MouseEvent<HTMLElement>) => {
     if (!token) return;
+    setInviteAnchorRect(e ? e.currentTarget.getBoundingClientRect() : null);
     setInviteModalOpen(true);
     setInvitedFriendIds(new Set());
     setInviteFriendsLoading(true);
@@ -1100,6 +1104,22 @@ const MatchLobby = () => {
       });
     }
   }, [token, myRoomMatchId, matches]);
+
+  function anchoredPanel(anchor: DOMRect | null, panelH = 440): { mode: "centered" | "anchored" | "sheet"; panelStyle: React.CSSProperties } {
+    const isMobile = window.innerWidth < 640;
+    if (isMobile) return { mode: "sheet", panelStyle: {} };
+    if (!anchor) return { mode: "centered", panelStyle: {} };
+    const GAP = 8, PW = 384;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    let top = anchor.bottom + GAP;
+    let left = anchor.left;
+    const w = Math.min(PW, vw - GAP * 2);
+    if (left + w > vw - GAP) left = vw - w - GAP;
+    if (left < GAP) left = GAP;
+    if (top + panelH > vh - GAP) top = Math.max(GAP, anchor.top - panelH - GAP);
+    if (top < GAP) top = GAP;
+    return { mode: "anchored", panelStyle: { position: "fixed", top, left, width: w, zIndex: 62 } };
+  }
 
   return (
     <ArenaPageShell variant="lobby" contentClassName="space-y-5">
@@ -1630,7 +1650,7 @@ const MatchLobby = () => {
                     <div key={i} className={cn("flex items-center px-2 text-[9px] sm:text-[10px]", openCls)}>
                       <button
                         className="flex items-center gap-1 hover:text-primary transition-colors w-full"
-                        onClick={(e) => { e.stopPropagation(); void handleOpenInviteModal(); }}
+                        onClick={(e) => { e.stopPropagation(); void handleOpenInviteModal(e); }}
                         title="Invite a friend"
                         type="button"
                       >
@@ -1707,12 +1727,13 @@ const MatchLobby = () => {
                     "tactical-hud-action-btn border-destructive/45 text-destructive hover:bg-destructive/12 hover:border-destructive/75",
                     countdown !== null && countdown <= 3 && "motion-safe:animate-pulse"
                   )}
-                  onClick={() => {
+                  onClick={(e) => {
                     const isCrypto = matchStakeCurrency(myActiveRoom) === "CRYPTO";
                     const hasDeposited = myActiveRoom.yourHasDeposited ?? false;
                     if (isCrypto && hasDeposited) {
                       handleLeaveRoom();
                     } else {
+                      setLeaveAnchorRect(e.currentTarget.getBoundingClientRect());
                       setLeaveConfirmOpen(true);
                     }
                   }}
@@ -1748,7 +1769,7 @@ const MatchLobby = () => {
                 size="sm"
                 variant="outline"
                 className="tactical-hud-action-btn border-arena-purple/45 text-arena-purple hover:bg-arena-purple/12"
-                onClick={() => void handleOpenInviteModal()}
+                onClick={(e) => void handleOpenInviteModal(e)}
               >
                 <UserPlus className="mr-1 h-2.5 w-2.5" />
                 Invite Friends
@@ -1770,7 +1791,7 @@ const MatchLobby = () => {
                 variant="outline"
                 disabled={leavePending}
                 className="tactical-hud-action-btn ml-auto border-destructive/50 text-destructive hover:bg-destructive/12"
-                onClick={() => setDeleteRoomConfirmOpen(true)}
+                onClick={(e) => { setDeleteAnchorRect(e.currentTarget.getBoundingClientRect()); setDeleteRoomConfirmOpen(true); }}
               >
                 {leavePending ? (
                   <Loader2 className="mr-1 h-2.5 w-2.5 animate-spin" />
@@ -2662,9 +2683,19 @@ const MatchLobby = () => {
       </div>
 
       {/* ── Leave Room Confirmation — only non-host players ──────────── */}
-      {leaveConfirmOpen && myActiveRoom && myActiveRoom.hostId !== user?.id && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-          <div className="w-full max-w-sm rounded-2xl border border-destructive/40 bg-card shadow-2xl p-6 space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto">
+      {leaveConfirmOpen && myActiveRoom && myActiveRoom.hostId !== user?.id && (() => {
+        const { mode, panelStyle } = anchoredPanel(leaveAnchorRect, 260);
+        const wrapperCls = mode === "sheet"
+          ? "fixed inset-0 z-[61] flex items-end justify-center bg-background/80 backdrop-blur-sm"
+          : mode === "anchored"
+          ? "fixed inset-0 z-[61] bg-background/40 backdrop-blur-[2px]"
+          : "fixed inset-0 z-[61] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4";
+        const panelCls = mode === "sheet"
+          ? "w-full rounded-t-2xl border-t border-x border-destructive/40 bg-card shadow-2xl p-6 space-y-4 max-h-[80dvh] overflow-y-auto"
+          : "w-full max-w-sm rounded-2xl border border-destructive/40 bg-card shadow-2xl p-6 space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto";
+        return (
+        <div className={wrapperCls} onClick={() => setLeaveConfirmOpen(false)}>
+          <div className={panelCls} style={panelStyle} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0">
                 <LogOut className="h-5 w-5 text-destructive" />
@@ -2693,12 +2724,23 @@ const MatchLobby = () => {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ── Delete Room Confirmation ───────────────────────────────── */}
-      {deleteRoomConfirmOpen && myActiveRoom && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-          <div className="w-full max-w-sm rounded-2xl border border-destructive/40 bg-card shadow-2xl p-6 space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto">
+      {deleteRoomConfirmOpen && myActiveRoom && (() => {
+        const { mode, panelStyle } = anchoredPanel(deleteAnchorRect, 320);
+        const wrapperCls = mode === "sheet"
+          ? "fixed inset-0 z-[61] flex items-end justify-center bg-background/80 backdrop-blur-sm"
+          : mode === "anchored"
+          ? "fixed inset-0 z-[61] bg-background/40 backdrop-blur-[2px]"
+          : "fixed inset-0 z-[61] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4";
+        const panelCls = mode === "sheet"
+          ? "w-full rounded-t-2xl border-t border-x border-destructive/40 bg-card shadow-2xl p-6 space-y-4 max-h-[80dvh] overflow-y-auto"
+          : "w-full max-w-sm rounded-2xl border border-destructive/40 bg-card shadow-2xl p-6 space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto";
+        return (
+        <div className={wrapperCls} onClick={() => setDeleteRoomConfirmOpen(false)}>
+          <div className={panelCls} style={panelStyle} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0">
                 <Trash2 className="h-5 w-5 text-destructive" />
@@ -2748,7 +2790,8 @@ const MatchLobby = () => {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ── Player Card Popover ───────────────────────────────────────── */}
       <PlayerPopoverLayer
@@ -2761,15 +2804,26 @@ const MatchLobby = () => {
       />
 
       {/* ── Invite Friends Modal ──────────────────────────────────────── */}
-      {inviteModalOpen && (
+      {inviteModalOpen && (() => {
+        const { mode, panelStyle } = anchoredPanel(inviteAnchorRect, 440);
+        const wrapperCls = mode === "sheet"
+          ? "fixed inset-0 z-[61] flex items-end justify-center bg-background/80 backdrop-blur-sm"
+          : mode === "anchored"
+          ? "fixed inset-0 z-[61] bg-background/40 backdrop-blur-[2px]"
+          : "fixed inset-0 z-[61] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4";
+        const panelCls = mode === "sheet"
+          ? "w-full rounded-t-2xl border-t border-x border-border bg-card shadow-2xl p-5 space-y-4 outline-none max-h-[80dvh] overflow-y-auto"
+          : "w-full max-w-sm rounded-2xl border border-border bg-card shadow-2xl p-5 space-y-4 outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-arena-cyan/40 max-h-[calc(100dvh-2rem)] overflow-y-auto";
+        return (
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4"
+          className={wrapperCls}
           onClick={() => setInviteModalOpen(false)}
         >
           <div
             ref={inviteModalPanelRef}
             tabIndex={-1}
-            className="w-full max-w-sm rounded-2xl border border-border bg-card shadow-2xl p-5 space-y-4 outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-arena-cyan/40 max-h-[calc(100dvh-2rem)] overflow-y-auto"
+            className={panelCls}
+            style={panelStyle}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
@@ -2853,7 +2907,8 @@ const MatchLobby = () => {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </ArenaPageShell>
   );
 };
