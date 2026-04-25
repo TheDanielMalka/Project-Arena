@@ -30,6 +30,7 @@ from src.config import (
 )
 from src.forum import router as forum_router
 from src.ws_manager import ConnectionManager
+from src.tournament_routes import router as tournament_router
 from src.vision.capture import capture_screen, crop_roi
 from src.vision.engine import VisionEngine, VisionEngineConfig
 from src.vision.disconnect_monitor import DisconnectMonitor
@@ -1185,6 +1186,7 @@ app.add_middleware(
 )
 
 app.include_router(forum_router)
+app.include_router(tournament_router)
 
 # ── Global WebSocket connection manager ──────────────────────────────────────
 # Single instance — Phase 1 (single Uvicorn worker). When scaling to multiple

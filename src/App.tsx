@@ -42,6 +42,9 @@ import ThreadPage from "./pages/forum/ThreadPage";
 import NewThreadPage from "./pages/forum/NewThreadPage";
 import SearchPage from "./pages/forum/SearchPage";
 import { ForumLayout } from "./components/forum/ForumLayout";
+import { TournamentSectionLayout } from "./components/tournament/TournamentSectionLayout";
+import TournamentsHub from "./pages/TournamentsHub";
+import TournamentSeasonPage from "./pages/TournamentSeasonPage";
 
 const queryClient = new QueryClient();
 
@@ -180,6 +183,23 @@ const AppShell = () => (
             <Route path="/legal/terms" element={<PublicLegal><TermsOfService /></PublicLegal>} />
             <Route path="/legal/privacy" element={<PublicLegal><PrivacyPolicy /></PublicLegal>} />
             <Route path="/legal/responsible-gaming" element={<PublicLegal><ResponsibleGaming /></PublicLegal>} />
+            {/* Tournaments — standalone section (dedicated layout, not AppLayout sidebar) */}
+            <Route
+              path="/tournaments"
+              element={
+                <TournamentSectionLayout backTo="/" backLabel="Home">
+                  <TournamentsHub />
+                </TournamentSectionLayout>
+              }
+            />
+            <Route
+              path="/tournaments/:slug"
+              element={
+                <TournamentSectionLayout backTo="/tournaments" backLabel="Tournaments">
+                  <TournamentSeasonPage />
+                </TournamentSectionLayout>
+              }
+            />
             <Route path="/hub" element={<AppLayout><Hub /></AppLayout>} />
             <Route path="/forge" element={<AppLayout><Forge /></AppLayout>} />
             <Route path="/players" element={<AppLayout><Players /></AppLayout>} />
