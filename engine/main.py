@@ -5475,7 +5475,7 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
                 text(
                     "SELECT game, status, bet_amount, stake_currency, password, "
                     "       max_players, max_per_team, type, on_chain_match_id "
-                    "FROM matches WHERE id = :mid"
+                    "FROM matches WHERE id = :mid FOR UPDATE"
                 ),
                 {"mid": match_id},
             ).fetchone()
