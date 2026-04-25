@@ -1188,11 +1188,12 @@ class MatchMonitor:
         logger.info("Monitor stopped")
 
     def _loop(self):
-        _match_status:       str | None = None
-        _match_completed_at: float | None = None
-        _last_status_poll:   float = 0
-        _STATUS_POLL_INTERVAL = 10   # seconds between match-status polls
-        _CAPTURE_COOLDOWN     = 60   # seconds to keep match visible after completed
+        _match_status:          str | None = None
+        _match_completed_at:    float | None = None
+        _last_status_poll:      float = 0
+        _STATUS_POLL_INTERVAL   = 10    # seconds between match-status polls
+        _CAPTURE_COOLDOWN       = 60    # seconds to keep match visible after completed
+        _token_expired_warned   = False  # show re-login warning at most once per session
 
         while self.running:
             try:
@@ -1264,11 +1265,24 @@ class MatchMonitor:
                                 self.current_match_id, filepath, game=game)
                             if result:
                                 if result.get("_error") == "token_expired":
-                                    logger.warning(
-                                        "Screenshots paused — token expired. "
-                                        "Please re-login in the Arena client."
-                                    )
+                                    if not _token_expired_warned:
+                                        _token_expired_warned = True
+                                        logger.warning(
+                                            "Screenshots paused — session expired. "
+                                            "Please re-login in the Arena client."
+                                        )
+                                        try:
+                                            import tkinter.messagebox as _mb
+                                            _mb.showwarning(
+                                                "Arena — Session Expired",
+                                                "Your session has expired.\n"
+                                                "Please log out and log back in to "
+                                                "resume screenshot uploads.",
+                                            )
+                                        except Exception:
+                                            pass
                                 else:
+                                    _token_expired_warned = False
                                     logger.info(f"Engine: {result}")
                                 try: os.remove(filepath)
                                 except OSError: pass
