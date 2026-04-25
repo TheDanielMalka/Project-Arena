@@ -411,6 +411,15 @@ class MatchConsensus:
             import uuid as _uuid
 
             with self._session_factory() as session:
+                # Acquire a pg_advisory_xact_lock keyed on the match_id hash so
+                # concurrent submissions for the same match serialise here rather
+                # than at the ON CONFLICT clause.  This prevents a race where two
+                # threads both pass evaluate() before either has committed.
+                # The lock is released automatically when the transaction ends.
+                session.execute(
+                    _text("SELECT pg_advisory_xact_lock(hashtext(:mid))"),
+                    {"mid": self.match_id},
+                )
                 session.execute(
                     _text("""
                         INSERT INTO match_consensus
