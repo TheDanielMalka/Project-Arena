@@ -7,6 +7,7 @@ Mount (choose one in your deployment; not hard-wired in main.py in this branch):
 """
 from __future__ import annotations
 
+import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -191,6 +192,13 @@ def get_season(slug: str) -> dict[str, Any]:
     }
 
 
+class PlayerDetail(BaseModel):
+    ign: str = Field(min_length=1, max_length=64)
+    steam_id: str | None = Field(default=None, max_length=32)
+    country: str | None = Field(default=None, max_length=64)
+    email: str | None = Field(default=None, max_length=120)
+
+
 class RegisterBody(BaseModel):
     division_id: str
     team_label: str | None = Field(default=None, max_length=64)
@@ -199,6 +207,7 @@ class RegisterBody(BaseModel):
     ack_cs2_ownership: bool = False
     wants_demo_at: bool = False
     met_wallet_connected: bool = False
+    players: list[PlayerDetail] = Field(default_factory=list)
 
 
 @router.post("/seasons/{slug}/register", status_code=201)
@@ -250,6 +259,7 @@ def register_tournament(
             status = "waitlist"
         else:
             status = "confirmed"
+        reg_id = str(_uuid.uuid4())
         try:
             session.execute(
                 text(
@@ -258,12 +268,13 @@ def register_tournament(
                         id, season_id, division_id, user_id, steam_id_at_register, team_label,
                         ack_arena_client, ack_testnet, ack_cs2_ownership, wants_demo_at, met_wallet_connected, status
                     ) VALUES (
-                        gen_random_uuid(), :sid::uuid, :did::uuid, :uid::uuid, :steam, :team,
+                        :id::uuid, :sid::uuid, :did::uuid, :uid::uuid, :steam, :team,
                         :ac, :at, :c2, :wda, :mw, :st
                     )
                     """
                 ),
                 {
+                    "id": reg_id,
                     "sid": str(srow[0]),
                     "did": body.division_id,
                     "uid": uid,
@@ -277,13 +288,87 @@ def register_tournament(
                     "st": status,
                 },
             )
+            for i, p in enumerate(body.players):
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO tournament_registration_players
+                            (registration_id, slot, ign, steam_id, country, email)
+                        VALUES (:rid::uuid, :slot, :ign, :sid, :country, :email)
+                        ON CONFLICT (registration_id, slot) DO NOTHING
+                        """
+                    ),
+                    {
+                        "rid": reg_id,
+                        "slot": i,
+                        "ign": p.ign,
+                        "sid": p.steam_id,
+                        "country": p.country,
+                        "email": p.email,
+                    },
+                )
             session.commit()
         except Exception as exc:  # noqa: BLE001
             session.rollback()
-            if "tournament_reg_user_division" in str(exc) or "unique" in str(exc).lower():
+            exc_str = str(exc)
+            if "tournament_reg_user_division" in exc_str or "unique" in exc_str.lower():
                 raise HTTPException(409, "Already registered in this division") from exc
+            if "invalid input syntax for type uuid" in exc_str:
+                raise HTTPException(400, "Invalid division — reload the page and try again") from exc
             raise HTTPException(500, "Registration failed") from exc
-    return {"ok": True, "status": status, "divisionId": body.division_id}
+    return {"ok": True, "status": status, "divisionId": body.division_id, "registrationId": reg_id}
+
+
+@router.get("/seasons/{slug}/teams")
+def list_teams(slug: str) -> dict[str, Any]:
+    with _get_session() as session:
+        srow = session.execute(
+            text("SELECT id FROM tournament_seasons WHERE slug = :s"),
+            {"s": slug},
+        ).fetchone()
+        if not srow:
+            raise HTTPException(404, "Tournament not found")
+        sid = str(srow[0])
+        rows = session.execute(
+            text(
+                """
+                SELECT
+                    d.mode::text, d.title, d.position,
+                    r.id, r.team_label, r.status, r.created_at,
+                    u.username,
+                    COALESCE(
+                        (SELECT json_agg(json_build_object(
+                            'slot', p.slot, 'ign', p.ign,
+                            'steamId', p.steam_id, 'country', p.country
+                        ) ORDER BY p.slot)
+                         FROM tournament_registration_players p
+                         WHERE p.registration_id = r.id),
+                        '[]'::json
+                    ) AS players
+                FROM tournament_registrations r
+                JOIN tournament_divisions d ON d.id = r.division_id
+                JOIN users u ON u.id = r.user_id
+                WHERE r.season_id = :sid AND r.status IN ('confirmed', 'waitlist')
+                ORDER BY d.position, r.created_at
+                """
+            ),
+            {"sid": sid},
+        ).fetchall()
+    teams: list[dict[str, Any]] = []
+    for row in rows:
+        teams.append(
+            {
+                "mode": row[0],
+                "divisionTitle": row[1],
+                "registrationId": str(row[3]),
+                "teamLabel": row[4] or row[7],
+                "status": row[5],
+                "registeredAt": row[6].isoformat() if row[6] else None,
+                "captain": row[7],
+                "players": row[8] if isinstance(row[8], list) else [],
+            }
+        )
+    return {"teams": teams}
 
 
 @router.get("/me")
