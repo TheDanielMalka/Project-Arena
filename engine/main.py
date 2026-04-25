@@ -5302,6 +5302,9 @@ async def create_match(req: CreateMatchRequest, payload: dict = Depends(verify_t
     if mode not in _VALID_MODES:
         raise HTTPException(400, f"mode must be one of: {', '.join(sorted(_VALID_MODES))}")
 
+    if game == "Valorant" and mode != "5v5":
+        raise HTTPException(400, "Valorant only supports 5v5 mode")
+
     match_type = req.match_type.strip()
     if match_type not in ("public", "custom"):
         raise HTTPException(400, "match_type must be 'public' or 'custom'")
