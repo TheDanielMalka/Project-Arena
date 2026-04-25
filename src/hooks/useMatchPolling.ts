@@ -12,6 +12,7 @@ import { useNotificationStore } from "@/stores/notificationStore";
 import { useUserStore } from "@/stores/userStore";
 import { getMatchStatus, isEngineOnline } from "@/lib/engine-api";
 import { resolveUserWonFromEngineWinner } from "@/lib/match-engine-sync";
+import { useWsEvent } from "@/lib/ws-client";
 import type { MatchStatus } from "@/types";
 
 interface UseMatchPollingOptions {
@@ -41,6 +42,45 @@ export function useMatchPolling({
   const releaseEscrow = useWalletStore((s) => s.releaseEscrow);
   const addNotification = useNotificationStore((s) => s.addNotification);
   const user = useUserStore((s) => s.user);
+
+  // ── WS fast-path ─────────────────────────────────────────────────────────
+  // match:status_changed replaces the 5s poll for matches we are watching.
+  // The poll remains active as a fallback (VITE_ENABLE_WS unset or WS down).
+  useWsEvent("match:status_changed", (raw) => {
+    const d = raw as { match_id?: string; status?: MatchStatus; winner_id?: string };
+    if (!d.match_id || !d.status) return;
+
+    const match = matches.find((m) => m.id === d.match_id);
+    if (!match) return;
+    if (d.status === match.status) return;
+
+    updateMatchStatus(d.match_id, d.status, d.winner_id);
+
+    if (d.status === "completed") {
+      const outcome = resolveUserWonFromEngineWinner(d.winner_id, user);
+      if (outcome === null) {
+        addNotification({
+          type: "match_result",
+          title: "Match completed",
+          message: `Match finished. Confirming result…`,
+        });
+      } else {
+        releaseEscrow(match.betAmount, d.match_id, outcome);
+        addNotification({
+          type: "match_result",
+          title: outcome ? "🏆 Victory!" : "❌ Defeat",
+          message: outcome ? `You won $${match.betAmount * 2}!` : `You lost $${match.betAmount}.`,
+        });
+      }
+    }
+    if (d.status === "disputed") {
+      addNotification({
+        type: "dispute",
+        title: "⚠️ Match Disputed",
+        message: `Match has been flagged for admin review.`,
+      });
+    }
+  });
 
   const pollMatches = useCallback(async () => {
     // Check engine connectivity (only once per session)

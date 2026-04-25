@@ -7,6 +7,7 @@ import { NotificationToastListener } from "@/components/notifications/Notificati
 import { useUserStore } from "@/stores/userStore";
 import { useWalletStore } from "@/stores/walletStore";
 import { registerAuth401Handler, clearAuth401Handler } from "@/lib/authSession";
+import { wsClient, useWsEvent } from "@/lib/ws-client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WagmiProvider, useAccount } from "wagmi";
 import { wagmiConfig } from "@/lib/wagmiConfig";
@@ -82,6 +83,30 @@ function WagmiAutoSync() {
   return null;
 }
 
+function WsLifecycle() {
+  const token = useUserStore((s) => s.token);
+  const refreshProfileFromServer = useUserStore((s) => s.refreshProfileFromServer);
+
+  useEffect(() => {
+    if (token) {
+      wsClient.connect(token);
+    } else {
+      wsClient.disconnect();
+    }
+    return () => {
+      if (!token) wsClient.disconnect();
+    };
+  }, [token]);
+
+  // Instant profile refresh when engine pushes AT/wallet balance changes.
+  // The page-level polls (15s/30s) stay active as fallback.
+  useWsEvent("user:profile_updated", () => {
+    if (token) void refreshProfileFromServer();
+  });
+
+  return null;
+}
+
 const PublicLegal = ({ children }: { children: React.ReactNode }) => (
   <div className="min-h-screen bg-background text-foreground relative">
     <ArenaGlobalStarfield className="fixed inset-0 z-0" />
@@ -130,6 +155,7 @@ const AppShell = () => (
   <WagmiProvider config={wagmiConfig}>
     <QueryClientProvider client={queryClient}>
       <WagmiAutoSync />
+      <WsLifecycle />
       <TooltipProvider>
         <Toaster />
         <Sonner />

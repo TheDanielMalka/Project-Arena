@@ -7,6 +7,7 @@ import {
 } from "@/lib/engine-api";
 import { useMatchStore } from "@/stores/matchStore";
 import { looksLikeServerMatchId } from "@/lib/gameAccounts";
+import { useWsEvent } from "@/lib/ws-client";
 import type { Game, MatchMode, MatchStatus } from "@/types";
 
 /** Heartbeat interval while status is "waiting". */
@@ -29,11 +30,40 @@ export function useActiveRoomServerSync(
 ): void {
   const missesRef = useRef(0);
 
+  // ── WS fast-path: match:status_changed ───────────────────────────────────
+  // When the server pushes a status change we apply it immediately so the UI
+  // reacts in <100ms instead of waiting up to 4s for the next poll tick.
+  useWsEvent("match:status_changed", (data) => {
+    const d = data as { match_id?: string; status?: MatchStatus; winner_id?: string };
+    if (!d.match_id || d.match_id !== activeRoomId) return;
+    if (d.status) {
+      useMatchStore.getState().updateMatchStatus(d.match_id, d.status, d.winner_id);
+      if (d.status === "cancelled") {
+        useMatchStore.getState().setActiveRoomId(null);
+        toast.error("Match ended");
+      }
+    }
+  });
+
+  // ── WS fast-path: match:roster_updated ───────────────────────────────────
+  // Server pushes this when a player joins or leaves; we trigger an immediate
+  // heartbeat poll instead of waiting for the next interval so the roster UI
+  // stays accurate without a separate WS roster payload.
+  const triggerRef = useRef<(() => void) | null>(null);
+  useWsEvent("match:roster_updated", (data) => {
+    const d = data as { match_id?: string };
+    if (d.match_id === activeRoomId && triggerRef.current) {
+      void triggerRef.current();
+    }
+  });
+
   useEffect(() => {
     if (!token || !activeRoomId) return;
 
     let intervalId = 0;
     let cancelled = false;
+
+    triggerRef.current = () => void tick();
 
     const tick = async () => {
       if (cancelled) return;
@@ -178,6 +208,7 @@ export function useActiveRoomServerSync(
 
     return () => {
       cancelled = true;
+      triggerRef.current = null;
       clearPoll();
       document.removeEventListener("visibilitychange", onVisibilityOrFocus);
       window.removeEventListener("focus", onVisibilityOrFocus);

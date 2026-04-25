@@ -15,7 +15,7 @@ from datetime import datetime, timezone, timedelta
 import time as _time
 from collections import defaultdict as _defaultdict
 
-from fastapi import FastAPI, HTTPException, Depends, Header, Query, UploadFile, File, Request, Response, Cookie
+from fastapi import FastAPI, HTTPException, Depends, Header, Query, UploadFile, File, Request, Response, Cookie, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -29,6 +29,7 @@ from src.config import (
     ENGINE_BASE_URL, FRONTEND_URL, POOL_MANAGER_INTERVAL, ARENA_SYSTEM_USER_ID,
 )
 from src.forum import router as forum_router
+from src.ws_manager import ConnectionManager
 from src.tournament_routes import router as tournament_router
 from src.vision.capture import capture_screen, crop_roi
 from src.vision.engine import VisionEngine, VisionEngineConfig
@@ -254,6 +255,7 @@ def _try_cancel_waiting_match_host_client_timeout(match_id: str) -> bool:
         if stake_currency == "AT":
             _refund_at_match(match_id)
 
+        _ws_match_status(match_id, "cancelled")
         logger.info(
             "host_client_timeout: cancelled match_id=%s stake_currency=%s",
             match_id,
@@ -320,6 +322,7 @@ async def _expired_match_cleanup_loop(interval: int = 300) -> None:
                 logger.info("Expired match cancelled: match=%s currency=%s", mid, sc)
                 if sc == "AT":
                     _refund_at_match(mid)
+                _ws_match_status(mid, "cancelled")
         except Exception as exc:
             logger.error("_expired_match_cleanup_loop error: %s", exc)
 
@@ -592,6 +595,7 @@ def _try_cancel_inprogress_match_timeout(match_id: str, stake_currency: str) -> 
                 "inprogress_timeout: CRYPTO match=%s marked disputed — admin action required",
                 match_id,
             )
+        _ws_match_status(match_id, new_status)
         return True
     except Exception as exc:
         logger.error(
@@ -1057,6 +1061,7 @@ async def lifespan(app: FastAPI):
             escrow_client=_escrow_client,
             settle_at_fn=_settle_at_match,
             refund_at_fn=_refund_at_match,
+            ws_manager=ws_manager,
         ).run()
     )
     logger.info("✅ DisconnectMonitor started")
@@ -1183,6 +1188,42 @@ app.add_middleware(
 app.include_router(forum_router)
 app.include_router(tournament_router)
 
+# ── Global WebSocket connection manager ──────────────────────────────────────
+# Single instance — Phase 1 (single Uvicorn worker). When scaling to multiple
+# workers, replace with Redis pub/sub in ws_manager.py before this changes.
+ws_manager = ConnectionManager()
+
+
+# ── WS broadcast helpers ──────────────────────────────────────────────────────
+# Thin wrappers so routes stay readable. All use fire_* (thread-safe,
+# non-blocking) so they can be called from both async routes and sync bg tasks.
+
+def _ws_match_status(match_id: str, status: str, **extra) -> None:
+    """Broadcast match:status_changed to every socket in the match room."""
+    ws_manager.fire_match(match_id, "match:status_changed", {
+        "match_id": match_id,
+        "status":   status,
+        **extra,
+    })
+
+
+def _ws_roster_updated(match_id: str, players: list[dict]) -> None:
+    """Broadcast match:roster_updated when a player joins or leaves."""
+    ws_manager.fire_match(match_id, "match:roster_updated", {
+        "match_id": match_id,
+        "players":  players,
+    })
+
+
+def _ws_notification(user_id: str, notification: dict) -> None:
+    """Push a notification:new event to a specific user's sockets."""
+    ws_manager.fire_user(user_id, "notification:new", notification)
+
+
+def _ws_profile_updated(user_id: str, **fields) -> None:
+    """Push user:profile_updated (AT balance, XP, rank) to the user's sockets."""
+    ws_manager.fire_user(user_id, "user:profile_updated", {"user_id": user_id, **fields})
+
 
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
@@ -1275,6 +1316,328 @@ async def optional_token(
         return auth.decode_token(token)
     except (_jwt.ExpiredSignatureError, _jwt.InvalidTokenError):
         return None
+
+
+# ── WebSocket endpoint ────────────────────────────────────────────────────────
+
+@app.websocket("/ws")
+async def websocket_endpoint(
+    ws: WebSocket,
+    token: str | None = Query(default=None),
+):
+    """
+    Authenticated WebSocket connection.
+
+    Auth: ?token=<JWT>  (same JWT the HTTP API uses)
+    Cookie auth is NOT supported over WS — pass token in query param.
+
+    On connect the server:
+      1. Validates JWT — closes with 4001 if invalid/expired
+      2. Looks up the user's active match — joins that room if found
+      3. Sends {"type": "ws:connected", "data": {"user_id": ..., "match_id": ...}}
+      4. Maintains with WebSocket ping/pong (Uvicorn/Starlette handles protocol)
+      5. Calls ws_manager.disconnect() on any close
+
+    Mid-session room changes (player joins a match after connect):
+      The server broadcasts match:status_changed which the client uses
+      to know a match is active; the client reconnects with the match_id
+      already cached from the REST call that created/joined the match.
+      No explicit room-join message is needed from the client.
+    """
+    # ── Validate JWT ─────────────────────────────────────────────────────────
+    if not token:
+        await ws.close(code=4001, reason="Missing token")
+        return
+    try:
+        payload = auth.decode_token(token)
+    except _jwt.ExpiredSignatureError:
+        await ws.close(code=4001, reason="Token expired")
+        return
+    except _jwt.InvalidTokenError:
+        await ws.close(code=4001, reason="Invalid token")
+        return
+    if payload.get("token_use") == "2fa_pending":
+        await ws.close(code=4001, reason="2FA pending")
+        return
+
+    user_id: str = payload["sub"]
+
+    # ── Resolve active match (join room if in one) ────────────────────────────
+    match_id: str | None = None
+    try:
+        with SessionLocal() as s:
+            row = s.execute(
+                text(
+                    "SELECT mp.match_id::text "
+                    "FROM match_players mp "
+                    "JOIN matches m ON m.id = mp.match_id "
+                    "WHERE mp.user_id = :uid "
+                    "  AND m.status IN ('waiting', 'in_progress') "
+                    "LIMIT 1"
+                ),
+                {"uid": user_id},
+            ).fetchone()
+            if row:
+                match_id = str(row[0])
+    except Exception as exc:
+        logger.warning("WS match lookup failed user=%s: %s", user_id, exc)
+
+    await ws_manager.connect(ws, user_id, match_id)
+
+    # ── Confirmation message ──────────────────────────────────────────────────
+    try:
+        await ws.send_json({
+            "type": "ws:connected",
+            "data": {"user_id": user_id, "match_id": match_id},
+        })
+    except Exception:
+        await ws_manager.disconnect(ws)
+        return
+
+    # ── Keep alive — receive loop ─────────────────────────────────────────────
+    try:
+        while True:
+            raw = await ws.receive_text()
+            try:
+                msg = __import__("json").loads(raw)
+            except Exception:
+                continue
+            # Client may send {"type": "ws:subscribe_match", "match_id": "<id>"}
+            # to join a match room after connecting (e.g. right after create/join).
+            if msg.get("type") == "ws:subscribe_match":
+                mid = msg.get("match_id") or ""
+                if mid:
+                    with SessionLocal() as s:
+                        allowed = s.execute(
+                            text(
+                                "SELECT 1 FROM match_players "
+                                "WHERE match_id = :mid AND user_id = :uid"
+                            ),
+                            {"mid": mid, "uid": user_id},
+                        ).fetchone()
+                    if allowed:
+                        await ws_manager.subscribe_match(ws, mid)
+                        await ws.send_json({
+                            "type": "ws:subscribed",
+                            "data": {"match_id": mid},
+                        })
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        logger.warning("WS error user=%s: %s", user_id, exc)
+    finally:
+        await ws_manager.disconnect(ws)
+
+
+# ── Per-match WebSocket endpoint ─────────────────────────────────────────────
+
+@app.websocket("/ws/match/{match_id}")
+async def ws_match_endpoint(
+    ws: WebSocket,
+    match_id: str,
+    token: str | None = Query(default=None),
+):
+    """
+    GET /ws/match/{match_id} — per-match real-time channel.
+
+    Auth: ?token=<JWT> (query param — cookies are unreliable on WS upgrade).
+    Closes with code 4001 on auth failure, 4003 if caller is not in this match.
+
+    On connect:
+      1. Validates JWT.
+      2. Verifies caller is a player in this match.
+      3. Joins the ws_manager match room.
+      4. Sends ws:connected confirmation.
+      5. Launches a 2s DB-poll loop that pushes match_state events.
+         The loop exits when the match reaches a terminal status or the socket closes.
+
+    Push events:
+      {"type": "match:state", "data": { ...heartbeat-shape fields... }}
+        — pushed every 2s while status is waiting/in_progress
+      {"type": "match:result", "data": {"match_id", "status", "winner_id"}}
+        — pushed once when status is completed/tied/cancelled/disputed
+      {"type": "notification:unread_count", "data": {"count": int}}
+        — pushed every 10s (piggybacks on the loop)
+
+    Client → server messages:
+      {"type": "ws:ping"}    → server replies {"type": "ws:pong"}
+    """
+    if not token:
+        await ws.close(code=4001, reason="Missing token")
+        return
+    try:
+        payload = auth.decode_token(token)
+    except _jwt.ExpiredSignatureError:
+        await ws.close(code=4001, reason="Token expired")
+        return
+    except _jwt.InvalidTokenError:
+        await ws.close(code=4001, reason="Invalid token")
+        return
+    if payload.get("token_use") == "2fa_pending":
+        await ws.close(code=4001, reason="2FA pending")
+        return
+
+    user_id: str = payload["sub"]
+
+    try:
+        with SessionLocal() as _s:
+            member = _s.execute(
+                text(
+                    "SELECT 1 FROM match_players "
+                    "WHERE match_id = :mid AND user_id = :uid"
+                ),
+                {"mid": match_id, "uid": user_id},
+            ).fetchone()
+    except Exception as _exc:
+        logger.warning("ws_match membership check failed: %s", _exc)
+        member = None
+
+    if not member:
+        await ws.close(code=4003, reason="Not a player in this match")
+        return
+
+    await ws_manager.connect(ws, user_id, match_id)
+
+    try:
+        await ws.send_json({
+            "type": "ws:connected",
+            "data": {"user_id": user_id, "match_id": match_id},
+        })
+    except Exception:
+        await ws_manager.disconnect(ws)
+        return
+
+    _POLL_INTERVAL = 2.0
+    _NOTIF_EVERY   = 5  # send unread count every 5 ticks = 10s
+    _tick_count    = 0
+
+    async def _poll_loop() -> None:
+        nonlocal _tick_count
+        while True:
+            await asyncio.sleep(_POLL_INTERVAL)
+            _tick_count += 1
+            try:
+                with SessionLocal() as _s:
+                    players_rows = _s.execute(
+                        text(
+                            "SELECT u.id, u.username, u.avatar, u.arena_id, "
+                            "       COALESCE(mp.team, 'A') AS team "
+                            "FROM match_players mp "
+                            "JOIN users u ON u.id = mp.user_id "
+                            "WHERE mp.match_id = :mid "
+                            "ORDER BY COALESCE(mp.team, 'A'), mp.joined_at"
+                        ),
+                        {"mid": match_id},
+                    ).fetchall()
+                    mi = _s.execute(
+                        text(
+                            "SELECT status, game, mode, code, max_players, max_per_team, "
+                            "       host_id, type, bet_amount, stake_currency, created_at, "
+                            "       forfeit_warning_at, forfeit_warning_team, winner_id "
+                            "FROM matches WHERE id = :mid"
+                        ),
+                        {"mid": match_id},
+                    ).fetchone()
+
+                if not mi:
+                    break
+
+                status = mi[0]
+                terminal = status in ("completed", "cancelled", "disputed", "tied")
+
+                your_team = next(
+                    (str(p[4]) for p in players_rows if str(p[0]) == user_id), None
+                )
+
+                if not terminal:
+                    await ws.send_json({
+                        "type": "match:state",
+                        "data": {
+                            "match_id":             match_id,
+                            "status":               status,
+                            "game":                 mi[1],
+                            "mode":                 mi[2],
+                            "code":                 mi[3],
+                            "max_players":          mi[4],
+                            "max_per_team":         mi[5],
+                            "host_id":              str(mi[6]) if mi[6] else None,
+                            "type":                 mi[7],
+                            "bet_amount":           str(mi[8]) if mi[8] is not None else None,
+                            "stake_currency":       mi[9],
+                            "created_at":           mi[10].isoformat() if mi[10] else None,
+                            "forfeit_warning_at":   mi[11].isoformat() if mi[11] else None,
+                            "forfeit_warning_team": mi[12],
+                            "your_team":            your_team,
+                            "players": [
+                                {"user_id": str(p[0]), "username": p[1],
+                                 "avatar": p[2], "arena_id": p[3], "team": p[4]}
+                                for p in players_rows
+                            ],
+                        },
+                    })
+                else:
+                    await ws.send_json({
+                        "type": "match:result",
+                        "data": {
+                            "match_id":  match_id,
+                            "status":    status,
+                            "winner_id": str(mi[13]) if mi[13] else None,
+                        },
+                    })
+                    break
+
+                if _tick_count % _NOTIF_EVERY == 0:
+                    try:
+                        with SessionLocal() as _ns:
+                            dm_cnt = _ns.execute(
+                                text(
+                                    "SELECT COUNT(*) FROM direct_messages "
+                                    "WHERE receiver_id = :me AND read = FALSE"
+                                ),
+                                {"me": user_id},
+                            ).scalar()
+                            ib_cnt = _ns.execute(
+                                text(
+                                    "SELECT COUNT(*) FROM inbox_messages "
+                                    "WHERE receiver_id = :me AND read = FALSE AND deleted = FALSE"
+                                ),
+                                {"me": user_id},
+                            ).scalar()
+                        await ws.send_json({
+                            "type": "notification:unread_count",
+                            "data": {"count": int(dm_cnt or 0) + int(ib_cnt or 0)},
+                        })
+                    except Exception as _ne:
+                        logger.debug("ws_match notif count failed: %s", _ne)
+
+            except WebSocketDisconnect:
+                return
+            except Exception as _pe:
+                logger.debug("ws_match poll tick error match=%s: %s", match_id, _pe)
+                return
+
+    poll_task = asyncio.create_task(_poll_loop())
+
+    try:
+        while True:
+            raw = await ws.receive_text()
+            try:
+                msg = __import__("json").loads(raw)
+            except Exception:
+                continue
+            if msg.get("type") == "ws:ping":
+                await ws.send_json({"type": "ws:pong"})
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        logger.warning("ws_match error user=%s match=%s: %s", user_id, match_id, exc)
+    finally:
+        poll_task.cancel()
+        try:
+            await poll_task
+        except asyncio.CancelledError:
+            pass
+        await ws_manager.disconnect(ws)
 
 
 # ── Auth models ───────────────────────────────────────────────────────────────
@@ -1666,6 +2029,7 @@ def _auto_payout_on_consensus(
                     {"winner": winner_id, "mid": match_id},
                 )
                 session.commit()
+            _ws_match_status(match_id, "completed", winner_id=winner_id)
         except Exception as exc:
             logger.error(
                 "_auto_payout: match UPDATE failed (non-fatal): match=%s error=%s",
@@ -1745,6 +2109,7 @@ def _auto_payout_on_tie(match_id: str) -> None:
                     {"mid": match_id},
                 )
                 session.commit()
+            _ws_match_status(match_id, "tied")
         except Exception as exc:
             logger.error(
                 "_auto_payout_on_tie: match UPDATE failed (non-fatal): match=%s error=%s",
@@ -4781,6 +5146,7 @@ def _settle_at_match(match_id: str, winner_id: str) -> None:
                 {"uid": winner_id, "amt": fee, "mid": match_id},
             )
             session.commit()
+            _ws_profile_updated(winner_id)
             logger.info(
                 "_settle_at_match: match=%s winner=%s payout=%d AT fee=%d AT",
                 match_id, winner_id, winner_payout, fee,
@@ -4830,6 +5196,9 @@ def _refund_at_match(match_id: str) -> None:
                 refunded += 1
 
             session.commit()
+            for (uid,) in player_rows:
+                if uid is not None:
+                    _ws_profile_updated(str(uid))
             logger.info(
                 "_refund_at_match: match=%s refunded %d/%d players %d AT each",
                 match_id, refunded, len(player_rows), stake_per_player,
@@ -4902,6 +5271,9 @@ def _settle_at_tie_match(match_id: str) -> None:
                 {"uid": str(player_rows[0][0]), "amt": fee, "mid": match_id},
             )
             session.commit()
+            for (uid,) in player_rows:
+                if uid is not None:
+                    _ws_profile_updated(str(uid))
             logger.info(
                 "_settle_at_tie_match: match=%s refund=%d AT each fee=%d AT players=%d",
                 match_id, refund_per_player, fee, player_count,
@@ -5287,6 +5659,24 @@ async def join_match(match_id: str, req: JoinMatchRequest, payload: dict = Depen
 
             session.commit()
 
+        # Subscribe the joining user's WS socket to this match room.
+        # (Idempotent: ws_manager does nothing if already subscribed.)
+        for _ws in list(ws_manager._user_sockets.get(user_id, set())):
+            import asyncio as _aio
+            try:
+                loop = _aio.get_event_loop()
+                if loop.is_running():
+                    loop.call_soon_threadsafe(
+                        loop.create_task, ws_manager.subscribe_match(_ws, match_id)
+                    )
+            except Exception:
+                pass
+
+        _ws_roster_updated(match_id, [{"user_id": user_id, "team": assigned_team}])
+
+        if match_started:
+            _ws_match_status(match_id, "in_progress")
+
         # ── Match just went LIVE ──────────────────────────────────────────────
         if match_started:
             import json as _json2, string as _str2
@@ -5493,6 +5883,7 @@ async def cancel_match(match_id: str, payload: dict = Depends(verify_token)):
                 {"mid": match_id},
             )
             session.commit()
+            _ws_match_status(match_id, "cancelled")
 
     except HTTPException:
         raise
@@ -5585,6 +5976,7 @@ async def leave_match(match_id: str, payload: dict = Depends(verify_token)):
                     _credit_at(session, user_id, at_amount, match_id, "escrow_refund_leave")
 
             session.commit()
+            _ws_roster_updated(match_id, [])
 
     except HTTPException:
         raise
@@ -8693,6 +9085,7 @@ async def create_dispute(req: CreateDisputeRequest, payload: dict = Depends(veri
                 {"mid": req.match_id},
             )
             session.commit()
+            _ws_match_status(req.match_id, "disputed")
             dispute_id = str(row[0])
             created_at = row[1].isoformat() if row[1] else None
 
@@ -9721,6 +10114,7 @@ async def admin_declare_winner(
                 {"winner": req.winner_id, "mid": match_id},
             )
             session.commit()
+            _ws_match_status(match_id, "completed", winner_id=req.winner_id)
 
         # ── 2. Payout ─────────────────────────────────────────────────────────
         if stake_currency == "AT":
@@ -11109,6 +11503,8 @@ async def admin_resolve_dispute_holding(
                 "meta": f"action={req.action} currency={stake_currency} notes={req.notes}",
             })
             session.commit()
+            final_status = "completed" if req.action in ("award_a", "award_b") else "cancelled"
+            _ws_match_status(match_id, final_status)
         return {"ok": True, "resolved": holding_id, "action": req.action}
     except HTTPException:
         raise

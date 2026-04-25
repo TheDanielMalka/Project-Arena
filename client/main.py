@@ -18,6 +18,7 @@ import json
 import uuid
 import random
 import logging
+import asyncio
 import threading
 import ctypes
 from datetime import datetime, timezone, timedelta
@@ -25,6 +26,8 @@ from logging.handlers import RotatingFileHandler
 
 import signal
 import httpx
+import websockets
+import websockets.exceptions
 import mss
 import mss.tools
 import pystray
@@ -970,6 +973,152 @@ class EngineClient:
             return None
 
 
+# ── WS URL helper ─────────────────────────────────────────────────────────────
+
+def _ws_url_from_engine_url(engine_url: str, token: str) -> str:
+    """Convert engine HTTP URL to the /ws endpoint WebSocket URL."""
+    base = engine_url.rstrip("/")
+    if base.startswith("https://"):
+        ws_base = "wss://" + base[len("https://"):]
+    elif base.startswith("http://"):
+        ws_base = "ws://" + base[len("http://"):]
+    else:
+        ws_base = "ws://" + base
+    return f"{ws_base}/ws?token={token}"
+
+
+# ── Client WebSocket thread ────────────────────────────────────────────────────
+
+class ClientWsThread:
+    """
+    Long-lived WebSocket connection from the desktop client to the engine.
+    Runs its own asyncio event loop in a daemon thread — never blocks the
+    capture or heartbeat threads.
+
+    Downlink only: HTTP POST/heartbeat remains the write path.
+    Events handled:
+      match:status_changed       → on_match_status(match_id, status, winner_id)
+      match:forfeit_warning      → on_forfeit_warning(match_id, team, seconds_left)
+      match:forfeit_warning_cleared → on_forfeit_cleared(match_id)
+    """
+
+    _BACKOFF_INIT = 1.0
+    _BACKOFF_MAX  = 30.0
+    _BACKOFF_MULT = 2.0
+
+    def __init__(
+        self,
+        engine_url: str,
+        token: str,
+        on_match_status:    "Callable[[str, str, str | None], None] | None" = None,
+        on_forfeit_warning: "Callable[[str, str, int], None] | None"        = None,
+        on_forfeit_cleared: "Callable[[str], None] | None"                  = None,
+    ) -> None:
+        self._engine_url        = engine_url
+        self._token             = token
+        self._on_match_status   = on_match_status
+        self._on_forfeit_warn   = on_forfeit_warning
+        self._on_forfeit_clear  = on_forfeit_cleared
+        self._stop_event        = threading.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+
+    # ── Public API ─────────────────────────────────────────────────────────
+
+    def start(self) -> None:
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._run_loop, daemon=True, name="ArenaWsClient")
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._loop and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._loop.stop)
+        if self._thread:
+            self._thread.join(timeout=5)
+
+    def update_token(self, token: str) -> None:
+        """Call after a token refresh — next reconnect picks up the new value."""
+        self._token = token
+
+    # ── Internal ───────────────────────────────────────────────────────────
+
+    def _run_loop(self) -> None:
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        try:
+            self._loop.run_until_complete(self._connect_loop())
+        except Exception as exc:
+            logger.debug(f"[WS] event loop exited: {exc}")
+        finally:
+            self._loop.close()
+
+    async def _connect_loop(self) -> None:
+        backoff = self._BACKOFF_INIT
+        while not self._stop_event.is_set():
+            url = _ws_url_from_engine_url(self._engine_url, self._token)
+            try:
+                async with websockets.connect(url, open_timeout=10, ping_interval=20, ping_timeout=30) as ws:
+                    logger.info("[WS] connected to engine")
+                    backoff = self._BACKOFF_INIT
+                    await self._listen(ws)
+            except websockets.exceptions.InvalidStatus as exc:
+                code = exc.response.status_code if hasattr(exc, "response") else 0
+                if code == 4001 or code == 401:
+                    logger.warning("[WS] auth rejected — not retrying")
+                    return
+                logger.debug(f"[WS] connection refused ({code}) — retry in {backoff}s")
+            except (OSError, websockets.exceptions.WebSocketException) as exc:
+                logger.debug(f"[WS] disconnected ({exc}) — retry in {backoff}s")
+            except Exception as exc:
+                logger.debug(f"[WS] unexpected error: {exc}")
+
+            if self._stop_event.is_set():
+                return
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * self._BACKOFF_MULT, self._BACKOFF_MAX)
+
+    async def _listen(self, ws) -> None:
+        async for raw in ws:
+            if self._stop_event.is_set():
+                return
+            try:
+                msg = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            event_type = msg.get("type", "")
+            data       = msg.get("data", {})
+            self._dispatch(event_type, data)
+
+    def _dispatch(self, event_type: str, data: dict) -> None:
+        try:
+            if event_type == "match:status_changed":
+                mid    = data.get("match_id")
+                status = data.get("status")
+                winner = data.get("winner_id")
+                if mid and status and self._on_match_status:
+                    logger.info(f"[WS] match:status_changed match={mid} status={status}")
+                    self._on_match_status(mid, status, winner)
+
+            elif event_type == "match:forfeit_warning":
+                mid     = data.get("match_id")
+                team    = (data.get("team") or "").upper()
+                seconds = int(data.get("seconds_left") or 0)
+                if mid and self._on_forfeit_warn:
+                    logger.info(f"[WS] forfeit_warning match={mid} team={team} secs={seconds}")
+                    self._on_forfeit_warn(mid, team, seconds)
+
+            elif event_type == "match:forfeit_warning_cleared":
+                mid = data.get("match_id")
+                if mid and self._on_forfeit_clear:
+                    logger.info(f"[WS] forfeit_warning_cleared match={mid}")
+                    self._on_forfeit_clear(mid)
+
+        except Exception as exc:
+            logger.debug(f"[WS] dispatch error for {event_type}: {exc}")
+
+
 # ── Match Monitor ──────────────────────────────────────────────────────────────
 class MatchMonitor:
     _HEARTBEAT_INTERVAL = 4   # must be < engine _CLIENT_TIMEOUT_SECONDS (10s); fast disconnect detection
@@ -987,6 +1136,13 @@ class MatchMonitor:
         self._last_screenshot:    str | None = None
         self._heartbeat_stop       = threading.Event()
         self._session_id           = get_or_create_session_id(config)
+        self._ws: ClientWsThread | None = None
+
+    def _on_ws_match_status(self, match_id: str, status: str, winner_id: str | None) -> None:
+        if match_id != self.current_match_id:
+            return
+        self.current_match_status = status
+        logger.info(f"[WS] match status → {status} (winner={winner_id})")
 
     def start(self):
         if self.running:
@@ -998,11 +1154,22 @@ class MatchMonitor:
         self._heartbeat_thread = threading.Thread(
             target=self._heartbeat_loop, daemon=True, name="ArenaHeartbeat")
         self._heartbeat_thread.start()
+        token = self.config.get("auth_token", "")
+        if token:
+            self._ws = ClientWsThread(
+                engine_url=self.config["engine_url"],
+                token=token,
+                on_match_status=self._on_ws_match_status,
+            )
+            self._ws.start()
         logger.info("Monitor started")
 
     def stop(self):
         self.running = False
         self._heartbeat_stop.set()
+        if self._ws:
+            self._ws.stop()
+            self._ws = None
         if self._thread:           self._thread.join(timeout=10)
         if self._heartbeat_thread: self._heartbeat_thread.join(timeout=5)
         logger.info("Monitor stopped")
@@ -1016,6 +1183,11 @@ class MatchMonitor:
 
         while self.running:
             try:
+                # WS fast-path: if the server pushed a status change, apply it now
+                # without waiting for the next HTTP poll cycle.
+                if self.current_match_status and self.current_match_status != _match_status:
+                    _match_status = self.current_match_status
+
                 game = detect_running_game()
                 if not game:
                     _match_status = None
@@ -2045,6 +2217,8 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                             monitor.engine.token = auth.access_token or ""
                             if not monitor.running:
                                 monitor.start()
+                            elif monitor._ws:
+                                monitor._ws.update_token(auth.access_token or "")
                             _rebuild_identity()
                             if tray_app is not None:
                                 tray_app.request_unread_refresh()
@@ -2084,6 +2258,8 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                         # Re-start heartbeat if it was stopped by a prior sign-out
                         if not monitor.running:
                             monitor.start()
+                        elif monitor._ws:
+                            monitor._ws.update_token(auth.access_token or "")
                         _rebuild_identity()
                         if tray_app is not None:
                             tray_app.request_unread_refresh()
