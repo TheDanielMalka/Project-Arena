@@ -712,7 +712,7 @@ class TestMatchGating:
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 "/matches",
-                json={"game": "Valorant"},
+                json={"game": "Valorant", "mode": "5v5"},
                 headers=self._auth_header(),
             )
         assert resp.status_code == 201
@@ -723,7 +723,7 @@ class TestMatchGating:
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.post(
                 "/matches",
-                json={"game": "Valorant"},
+                json={"game": "Valorant", "mode": "5v5"},
                 headers=self._auth_header(),
             )
         assert resp.status_code == 403
