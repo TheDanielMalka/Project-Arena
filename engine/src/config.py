@@ -118,8 +118,17 @@ DISCORD_CLIENT_SECRET      = os.getenv("DISCORD_CLIENT_SECRET", "")
 # ── FACEIT ────────────────────────────────────────────────────
 # Server-side API key — App Studio → API Keys → Server side
 FACEIT_API_KEY    = os.getenv("FACEIT_API_KEY", "")
-# OAuth2 Client ID (PKCE — no secret) — App Studio → OAuth2 Clients
-FACEIT_CLIENT_ID  = os.getenv("FACEIT_CLIENT_ID", "")
+# OAuth2 Client ID — App Studio → OAuth2 Clients
+FACEIT_CLIENT_ID     = os.getenv("FACEIT_CLIENT_ID", "")
+# OAuth2 Client Secret — required for confidential FACEIT clients (token exchange)
+FACEIT_CLIENT_SECRET = os.getenv("FACEIT_CLIENT_SECRET", "")
+
+# ── Email (Resend) ────────────────────────────────────────────
+# API key from resend.com (free tier: 3 000 emails/month)
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+# Sender address — must match a verified domain in your Resend account.
+# During testing use: "onboarding@resend.dev"
+EMAIL_FROM = os.getenv("EMAIL_FROM", "Arena <noreply@project-arena.com>")
 
 # ── App Settings ─────────────────────────────────────────────
 API_SECRET = os.getenv("API_SECRET", "change_me_in_production")
