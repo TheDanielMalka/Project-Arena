@@ -586,8 +586,7 @@ const Profile = () => {
           if (finished) return;
           finished = true;
           window.removeEventListener('message', onMsg);
-          window.removeEventListener('storage', onStorage);
-          localStorage.removeItem('faceit_auth_result');
+          clearInterval(pollInterval);
           try { popup.close(); } catch { /* ignore */ }
           if (success) {
             void refreshProfileFromServer();
@@ -601,29 +600,9 @@ const Profile = () => {
           const d = e.data as Record<string, unknown>;
           if (d.type === 'faceit_linked') { done(!!d.success); return; }
         };
-        const onStorage = (e: StorageEvent) => {
-          if (e.key !== 'faceit_auth_result' || !e.newValue) return;
-          try {
-            const d = JSON.parse(e.newValue) as Record<string, unknown>;
-            if (typeof d.ts === 'number' && Date.now() - d.ts > 120000) return;
-            done(!!d.success);
-          } catch { /* ignore */ }
-        };
-        localStorage.removeItem('faceit_auth_result');
         window.addEventListener('message', onMsg);
-        window.addEventListener('storage', onStorage);
         const pollInterval = setInterval(() => {
-          if (!popup.closed) return;
-          clearInterval(pollInterval);
-          const stored = localStorage.getItem('faceit_auth_result');
-          if (stored) {
-            try {
-              const d = JSON.parse(stored) as Record<string, unknown>;
-              done(!!d.success);
-              return;
-            } catch { /* ignore */ }
-          }
-          if (!finished) done(false);
+          if (popup.closed && !finished) done(false);
         }, 500);
       },
       onDisconnect: () => {
