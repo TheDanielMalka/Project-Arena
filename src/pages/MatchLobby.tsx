@@ -5,7 +5,6 @@ import { useUserStore } from "@/stores/userStore";
 import { useMatchStore } from "@/stores/matchStore";
 import { consumeLastLockEscrowFailureMessage, useWalletStore } from "@/stores/walletStore";
 import { useMatchPolling } from "@/hooks/useMatchPolling";
-import { usePublicRoomAlert } from "@/hooks/usePublicRoomAlert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -323,7 +322,6 @@ const MatchLobby = () => {
   const markInMatch  = useClientStore((s) => s.markInMatch);
   const markIdle     = useClientStore((s) => s.markIdle);
   useMatchPolling({ interval: 5000 });
-  usePublicRoomAlert();
   useMatchListLivePoll(user && token ? token : null);
   useActiveRoomServerSync(user && token ? token : null, myRoomMatchId);
 
@@ -1818,7 +1816,7 @@ const MatchLobby = () => {
                 size="sm"
                 variant="outline"
                 disabled={leavePending}
-                className="tactical-hud-action-btn ml-auto border-destructive/50 text-destructive hover:bg-destructive/12"
+                className="tactical-hud-action-btn border-destructive/50 text-destructive hover:bg-destructive/12"
                 onClick={(e) => { setDeleteAnchorRect(e.currentTarget.getBoundingClientRect()); setDeleteRoomConfirmOpen(true); }}
               >
                 {leavePending ? (
