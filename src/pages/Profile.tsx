@@ -28,7 +28,7 @@ import { useNotificationStore } from "@/stores/notificationStore";
 import { userFacingNotification } from "@/lib/userFacingNotification";
 import { useForgeStore } from "@/stores/forgeStore";
 import { useToast } from "@/hooks/use-toast";
-import { ENGINE_BASE, apiPatchCountry, apiDisconnectDiscord, apiDisconnectFaceit, apiFaceitStats, apiSaveRiotId, apiDisconnectRiot, type FaceitStats } from "@/lib/engine-api";
+import { ENGINE_BASE, apiGetMe, apiPatchCountry, apiDisconnectDiscord, apiDisconnectFaceit, apiFaceitStats, apiSaveRiotId, apiDisconnectRiot, type FaceitStats } from "@/lib/engine-api";
 import { getXpInfo } from "@/lib/xp";
 import {
   getAvatarBackground,
@@ -612,7 +612,22 @@ const Profile = () => {
         window.addEventListener('message', onMsg);
         window.addEventListener('storage', onStorage);
         const pollInterval = setInterval(() => {
-          if (popup.closed && !finished) done(false);
+          if (!popup.closed || finished) return;
+          // popup closed without postMessage (FACEIT COOP severs window.opener) — verify via server
+          finished = true;
+          window.removeEventListener('message', onMsg);
+          window.removeEventListener('storage', onStorage);
+          clearInterval(pollInterval);
+          apiGetMe(token).then((me) => {
+            if (me?.faceit_verified) {
+              void refreshProfileFromServer();
+              toast({ title: "FACEIT Connected!", description: "Your FACEIT account has been linked to Arena." });
+            } else {
+              toast({ title: "FACEIT Connection Failed", variant: "destructive" });
+            }
+          }).catch(() => {
+            toast({ title: "FACEIT Connection Failed", variant: "destructive" });
+          });
         }, 500);
       },
       onDisconnect: () => {
