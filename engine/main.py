@@ -4487,8 +4487,10 @@ async def discord_auth_disconnect(payload: dict = Depends(verify_token)):
 
 # ── FACEIT OAuth2 (PKCE) ──────────────────────────────────────────────────────
 
+_faceit_states: dict[str, tuple[str, str, float]] = {}  # nonce -> (jwt, verifier, expires_at)
+
 def _faceit_pkce_pair() -> tuple[str, str]:
-    import hashlib, base64, secrets
+    import hashlib, base64
     verifier  = secrets.token_urlsafe(64)
     challenge = base64.urlsafe_b64encode(
         hashlib.sha256(verifier.encode()).digest()
@@ -4502,13 +4504,18 @@ async def faceit_auth_start(token: str):
     if not FACEIT_CLIENT_ID:
         raise HTTPException(503, "FACEIT OAuth not configured")
     verifier, challenge = _faceit_pkce_pair()
-    state = f"{token}|{verifier}"
+    nonce = secrets.token_urlsafe(16)
+    _faceit_states[nonce] = (token, verifier, _time.time() + 600)
+    # prune expired entries
+    expired = [k for k, v in _faceit_states.items() if v[2] < _time.time()]
+    for k in expired:
+        del _faceit_states[k]
     params = {
         "response_type":         "code",
         "client_id":             FACEIT_CLIENT_ID,
         "redirect_uri":          f"{ENGINE_BASE_URL}/auth/faceit/callback",
         "scope":                 "openid email profile",
-        "state":                 state,
+        "state":                 nonce,
         "code_challenge":        challenge,
         "code_challenge_method": "S256",
     }
@@ -4524,10 +4531,11 @@ async def faceit_auth_callback(code: str, state: str):
     if not FACEIT_CLIENT_ID:
         return RedirectResponse(error_url, status_code=302)
 
-    if "|" not in state:
+    entry = _faceit_states.pop(state, None)
+    if not entry or entry[2] < _time.time():
         return RedirectResponse(error_url, status_code=302)
 
-    jwt_token, code_verifier = state.split("|", 1)
+    jwt_token, code_verifier = entry[0], entry[1]
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as hc:
