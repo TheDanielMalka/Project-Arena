@@ -4516,10 +4516,14 @@ _faceit_states_ensure_table()
 
 @app.get("/auth/faceit")
 async def faceit_auth_start(token: str):
-    """Redirect user to FACEIT OAuth2 consent screen (PKCE flow)."""
+    """Redirect user to FACEIT OAuth2 consent screen.
+    Uses PKCE only for public clients (no client_secret).
+    Confidential clients authenticate via client_secret at token exchange.
+    """
     if not FACEIT_CLIENT_ID:
         raise HTTPException(503, "FACEIT OAuth not configured")
-    verifier, challenge = _faceit_pkce_pair()
+    use_pkce = not FACEIT_CLIENT_SECRET
+    verifier, challenge = (_faceit_pkce_pair() if use_pkce else ("", ""))
     nonce = secrets.token_urlsafe(16)
     with SessionLocal() as s:
         s.execute(text("""
@@ -4530,15 +4534,16 @@ async def faceit_auth_start(token: str):
         """), {"n": nonce, "j": token, "v": verifier})
         s.execute(text("DELETE FROM faceit_oauth_states WHERE expires_at < NOW()"))
         s.commit()
-    params = {
-        "response_type":         "code",
-        "client_id":             FACEIT_CLIENT_ID,
-        "redirect_uri":          f"{ENGINE_BASE_URL.rstrip('/')}/auth/faceit/callback",
-        "scope":                 "openid email profile",
-        "state":                 nonce,
-        "code_challenge":        challenge,
-        "code_challenge_method": "S256",
+    params: dict = {
+        "response_type": "code",
+        "client_id":     FACEIT_CLIENT_ID,
+        "redirect_uri":  f"{ENGINE_BASE_URL.rstrip('/')}/auth/faceit/callback",
+        "scope":         "openid email profile",
+        "state":         nonce,
     }
+    if use_pkce:
+        params["code_challenge"]        = challenge
+        params["code_challenge_method"] = "S256"
     url = "https://accounts.faceit.com/oauth/authorize?" + urllib.parse.urlencode(params)
     return RedirectResponse(url, status_code=302)
 
@@ -4576,10 +4581,24 @@ def _faceit_decode_id_token(id_token: str) -> dict | None:
 
 
 @app.get("/auth/faceit/callback")
-async def faceit_auth_callback(request: Request, code: str, state: str):
-    """FACEIT OAuth2 PKCE callback: exchange code → token → fetch player → save to DB."""
+async def faceit_auth_callback(
+    request: Request,
+    state: str,
+    code: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+):
+    """FACEIT OAuth2 callback: exchange code → token → fetch player → save to DB."""
     error_url = f"{FRONTEND_URL}/profile?faceit_error=1"
     wants_json = "application/json" in request.headers.get("accept", "")
+
+    if error:
+        logger.warning("FACEIT callback: provider returned error=%s description=%s", error, error_description)
+        return _faceit_resp(error_url, False, wants_json)
+
+    if not code:
+        logger.error("FACEIT callback: no code and no error in callback params")
+        return _faceit_resp(error_url, False, wants_json)
 
     if not FACEIT_CLIENT_ID:
         logger.error("FACEIT callback: FACEIT_CLIENT_ID not set")
@@ -4604,18 +4623,22 @@ async def faceit_auth_callback(request: Request, code: str, state: str):
     jwt_token, code_verifier = _row[0], _row[1]
     redirect_uri = f"{ENGINE_BASE_URL.rstrip('/')}/auth/faceit/callback"
 
+    token_data: dict = {
+        "grant_type":   "authorization_code",
+        "client_id":    FACEIT_CLIENT_ID,
+        "code":         code,
+        "redirect_uri": redirect_uri,
+    }
+    if FACEIT_CLIENT_SECRET:
+        token_data["client_secret"] = FACEIT_CLIENT_SECRET
+    elif code_verifier:
+        token_data["code_verifier"] = code_verifier
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as hc:
             token_resp = await hc.post(
                 "https://accounts.faceit.com/oauth/token",
-                data={
-                    "grant_type":    "authorization_code",
-                    "client_id":     FACEIT_CLIENT_ID,
-                    **({"client_secret": FACEIT_CLIENT_SECRET} if FACEIT_CLIENT_SECRET else {}),
-                    "code":          code,
-                    "redirect_uri":  redirect_uri,
-                    "code_verifier": code_verifier,
-                },
+                data=token_data,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
             if token_resp.status_code != 200:
