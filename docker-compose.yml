@@ -64,6 +64,9 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+      - "443:443"
+    volumes:
+      - /etc/ssl/cloudflare:/etc/ssl/cloudflare:ro
     depends_on:
       arena-db:
         condition: service_healthy
