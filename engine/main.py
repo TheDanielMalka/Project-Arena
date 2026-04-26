@@ -27,6 +27,7 @@ import jwt as _jwt
 from src.config import (
     DATABASE_URL, ENVIRONMENT, MIN_CLIENT_VERSION, STEAM_API_KEY,
     ENGINE_BASE_URL, FRONTEND_URL, POOL_MANAGER_INTERVAL, ARENA_SYSTEM_USER_ID,
+    DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET,
 )
 from src.forum import router as forum_router
 from src.ws_manager import ConnectionManager
@@ -1701,6 +1702,10 @@ class UserProfile(BaseModel):
     # Game account verification — TRUE only after real OAuth/OpenID proof
     steam_verified: bool = False
     riot_verified:  bool = False
+    # Discord OAuth linking
+    discord_id:       str | None = None
+    discord_username: str | None = None
+    discord_verified: bool = False
     # ISO 3166-1 alpha-2 country code (user-set once, shown as flag in profile)
     country: str | None = None
 
@@ -3697,7 +3702,9 @@ async def me(payload: dict = Depends(verify_token)):
                     "       COALESCE(u.auth_provider, 'email'), "
                     "       COALESCE(u.steam_verified, FALSE), "
                     "       COALESCE(u.riot_verified,  FALSE), "
-                    "       u.country "
+                    "       u.country, "
+                    "       u.discord_id, u.discord_username, "
+                    "       COALESCE(u.discord_verified, FALSE) "
                     "FROM users u "
                     "LEFT JOIN user_stats s ON s.user_id = u.id "
                     "LEFT JOIN user_settings us ON us.user_id = u.id "
@@ -3753,6 +3760,9 @@ async def me(payload: dict = Depends(verify_token)):
         steam_verified=bool(row[20]) if len(row) > 20 and row[20] is not None else False,
         riot_verified=bool(row[21]) if len(row) > 21 and row[21] is not None else False,
         country=str(row[22]) if len(row) > 22 and row[22] else None,
+        discord_id=str(row[23]) if len(row) > 23 and row[23] else None,
+        discord_username=str(row[24]) if len(row) > 24 and row[24] else None,
+        discord_verified=bool(row[25]) if len(row) > 25 and row[25] is not None else False,
     )
 
 
@@ -4288,6 +4298,122 @@ async def steam_auth_callback(token: str, request: Request):
         return RedirectResponse(error_url, status_code=302)
 
     return RedirectResponse(f"{FRONTEND_URL}/profile?steam_linked=1", status_code=302)
+
+
+@app.get("/auth/discord")
+async def discord_auth_start(token: str):
+    """Redirect the user's browser to Discord OAuth2 consent screen."""
+    if not DISCORD_CLIENT_ID:
+        raise HTTPException(503, "Discord OAuth not configured")
+    params = {
+        "client_id":     DISCORD_CLIENT_ID,
+        "redirect_uri":  f"{ENGINE_BASE_URL}/auth/discord/callback",
+        "response_type": "code",
+        "scope":         "identify email",
+        "state":         token,
+    }
+    url = "https://discord.com/oauth2/authorize?" + urllib.parse.urlencode(params)
+    return RedirectResponse(url, status_code=302)
+
+
+@app.get("/auth/discord/callback")
+async def discord_auth_callback(code: str, state: str):
+    """Discord OAuth2 callback: exchange code → token → fetch user → save to DB."""
+    error_url = f"{FRONTEND_URL}/profile?discord_error=1"
+
+    if not DISCORD_CLIENT_ID or not DISCORD_CLIENT_SECRET:
+        return RedirectResponse(error_url, status_code=302)
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as hc:
+            token_resp = await hc.post(
+                "https://discord.com/api/oauth2/token",
+                data={
+                    "client_id":     DISCORD_CLIENT_ID,
+                    "client_secret": DISCORD_CLIENT_SECRET,
+                    "grant_type":    "authorization_code",
+                    "code":          code,
+                    "redirect_uri":  f"{ENGINE_BASE_URL}/auth/discord/callback",
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            if token_resp.status_code != 200:
+                return RedirectResponse(error_url, status_code=302)
+
+            access_token = token_resp.json().get("access_token")
+            if not access_token:
+                return RedirectResponse(error_url, status_code=302)
+
+            me_resp = await hc.get(
+                "https://discord.com/api/users/@me",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if me_resp.status_code != 200:
+                return RedirectResponse(error_url, status_code=302)
+
+            discord_data = me_resp.json()
+    except Exception as exc:
+        logger.warning("Discord OAuth error: %s", exc)
+        return RedirectResponse(error_url, status_code=302)
+
+    discord_id = discord_data.get("id", "").strip()
+    global_name = discord_data.get("global_name") or discord_data.get("username", "")
+    discord_username = f"{global_name}".strip()
+
+    if not discord_id:
+        return RedirectResponse(error_url, status_code=302)
+
+    try:
+        payload = auth.decode_token(state)
+        user_id = str(payload["sub"])
+    except Exception:
+        return RedirectResponse(error_url, status_code=302)
+
+    try:
+        with SessionLocal() as session:
+            if session.execute(
+                text("SELECT 1 FROM users WHERE discord_id = :d AND id != :uid"),
+                {"d": discord_id, "uid": user_id},
+            ).fetchone():
+                return RedirectResponse(f"{FRONTEND_URL}/profile?discord_error=taken", status_code=302)
+
+            session.execute(
+                text(
+                    "UPDATE users "
+                    "SET discord_id = :d, discord_username = :u, "
+                    "    discord_verified = TRUE, discord_verified_at = NOW() "
+                    "WHERE id = :uid"
+                ),
+                {"d": discord_id, "u": discord_username, "uid": user_id},
+            )
+            session.commit()
+    except Exception as exc:
+        logger.error("Discord link DB error: %s", exc)
+        return RedirectResponse(error_url, status_code=302)
+
+    return RedirectResponse(f"{FRONTEND_URL}/profile?discord_linked=1", status_code=302)
+
+
+@app.delete("/auth/discord", status_code=200)
+async def discord_auth_disconnect(payload: dict = Depends(verify_token)):
+    """Remove Discord link from the authenticated user's account."""
+    user_id = str(payload["sub"])
+    try:
+        with SessionLocal() as session:
+            session.execute(
+                text(
+                    "UPDATE users "
+                    "SET discord_id = NULL, discord_username = NULL, "
+                    "    discord_verified = FALSE, discord_verified_at = NULL "
+                    "WHERE id = :uid"
+                ),
+                {"uid": user_id},
+            )
+            session.commit()
+    except Exception as exc:
+        logger.error("Discord unlink DB error: %s", exc)
+        raise HTTPException(500, "Failed to unlink Discord")
+    return {"unlinked": True}
 
 
 @app.post("/client/bind", status_code=200)

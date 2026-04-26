@@ -84,6 +84,10 @@ export interface UserProfile {
   steamVerified: boolean;
   /** TRUE only after Riot OAuth verification — required for Valorant matches */
   riotVerified: boolean;
+  /** Discord OAuth linking */
+  discordId: string | null;
+  discordUsername: string | null;
+  discordVerified: boolean;
   /** ISO 3166-1 alpha-2 country code — user-set once, displayed as flag emoji */
   country?: string | null;
 }

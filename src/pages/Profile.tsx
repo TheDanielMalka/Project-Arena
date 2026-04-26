@@ -28,7 +28,7 @@ import { useNotificationStore } from "@/stores/notificationStore";
 import { userFacingNotification } from "@/lib/userFacingNotification";
 import { useForgeStore } from "@/stores/forgeStore";
 import { useToast } from "@/hooks/use-toast";
-import { ENGINE_BASE, apiPatchCountry } from "@/lib/engine-api";
+import { ENGINE_BASE, apiPatchCountry, apiDisconnectDiscord } from "@/lib/engine-api";
 import { getXpInfo } from "@/lib/xp";
 import {
   getAvatarBackground,
@@ -190,6 +190,22 @@ const Profile = () => {
       });
     } else {
       toast({ title: "Steam Connection Failed", description: "Could not verify your Steam account. Please try again.", variant: "destructive" });
+    }
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const linked = params.get("discord_linked");
+    const err    = params.get("discord_error");
+    if (!linked && !err) return;
+    window.history.replaceState({}, "", window.location.pathname);
+    if (linked === "1") {
+      void refreshProfileFromServer();
+      toast({ title: "Discord Connected!", description: "Your Discord account has been linked to Arena." });
+    } else if (err === "taken") {
+      toast({ title: "Discord Already Linked", description: "That Discord account is already linked to another Arena account.", variant: "destructive" });
+    } else {
+      toast({ title: "Discord Connection Failed", description: "Could not verify your Discord account. Please try again.", variant: "destructive" });
     }
   }, []);
 
@@ -469,13 +485,26 @@ const Profile = () => {
       icon: Link2,
       img: "https://cdn.simpleicons.org/discord/5865F2",
       imgBg: "rgba(88,101,242,0.12)",
-      status: serviceConnections.discord ? "connected" as const : "disconnected" as const,
-      detail: serviceConnections.discord || "Not connected",
+      status: user?.discordVerified ? "connected" as const : "disconnected" as const,
+      detail: user?.discordVerified
+        ? (user.discordUsername ?? "Verified")
+        : "Not connected",
       color: "text-arena-purple",
       borderColor: "border-arena-purple/30",
       bgColor: "bg-arena-purple/5",
-      onConnect: () => handleOpenLinkDialog("Discord", "service", undefined, "YourName#1234"),
-      onDisconnect: () => handleDisconnectService("discord"),
+      onConnect: () => {
+        if (!token) return;
+        window.location.href = `${ENGINE_BASE}/auth/discord?token=${encodeURIComponent(token)}`;
+      },
+      onDisconnect: () => {
+        if (!token) return;
+        void apiDisconnectDiscord(token).then((ok) => {
+          if (ok) {
+            void refreshProfileFromServer();
+            toast({ title: "Discord Disconnected", description: "Your Discord account has been unlinked." });
+          }
+        });
+      },
     },
     {
       name: "FACEIT",

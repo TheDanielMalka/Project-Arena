@@ -178,6 +178,9 @@ function userProfileFromMe(profile: MeProfile): UserProfile {
     authProvider: profile.auth_provider === "google" ? "google" : "email",
     steamVerified: !!profile.steam_verified,
     riotVerified: !!profile.riot_verified,
+    discordId: profile.discord_id?.trim() || null,
+    discordUsername: profile.discord_username?.trim() || null,
+    discordVerified: !!profile.discord_verified,
     country: profile.country ?? null,
   };
 }
@@ -372,6 +375,9 @@ export const useUserStore = create<UserState>((set, get) => ({
       authProvider: profile.auth_provider === "google" ? "google" : "email",
       steamVerified: !!profile.steam_verified,
       riotVerified: !!profile.riot_verified,
+      discordId: profile.discord_id?.trim() || null,
+      discordUsername: profile.discord_username?.trim() || null,
+      discordVerified: !!profile.discord_verified,
     };
     set({ user: next, walletConnected: !!w });
     hydrateWalletForgeAfterAuth(next);

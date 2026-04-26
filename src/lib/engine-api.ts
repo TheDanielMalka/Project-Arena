@@ -721,6 +721,9 @@ export async function apiGetMe(token: string): Promise<{
   riot_id: string | null;
   steam_verified: boolean;
   riot_verified: boolean;
+  discord_id: string | null;
+  discord_username: string | null;
+  discord_verified: boolean;
   xp: number;
   wins: number;
   losses: number;
@@ -758,6 +761,9 @@ export async function apiGetMe(token: string): Promise<{
       riot_id: string | null;
       steam_verified: boolean;
       riot_verified: boolean;
+      discord_id: string | null;
+      discord_username: string | null;
+      discord_verified: boolean;
       xp: number;
       wins: number;
       losses: number;
@@ -1019,6 +1025,17 @@ export async function apiVerifyDiscord(discordId: string): Promise<VerifyPlatfor
   } catch (err) {
     reportEngineApiError(err);
     return { valid: false };
+  }
+}
+
+/** DELETE /auth/discord — removes Discord link from authenticated account */
+export async function apiDisconnectDiscord(token: string): Promise<boolean> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/auth/discord`, token, { method: "DELETE" });
+    return res.ok;
+  } catch (err) {
+    reportEngineApiError(err);
+    return false;
   }
 }
 
