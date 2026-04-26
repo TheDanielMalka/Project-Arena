@@ -345,22 +345,23 @@ const MatchLobby = () => {
       // Zustand store so that `myActiveRoom = matches.find(m.id)` resolves
       // correctly after navigation (BUG 1 fix).
       const matchObj = mapApiMatchRowToMatch({
-        id:             m.match_id,
-        match_id:       m.match_id,
-        game:           m.game,
-        status:         m.status,
-        bet_amount:     m.bet_amount,
-        stake_currency: m.stake_currency,
-        type:           m.type,
-        code:           m.code,
-        created_at:     m.created_at,
-        mode:           m.mode,
-        host_id:        m.host_id,
-        host_username:  m.host_username,
-        max_players:    m.max_players,
-        max_per_team:   m.max_per_team,
+        id:                  m.match_id,
+        match_id:            m.match_id,
+        game:                m.game,
+        status:              m.status,
+        bet_amount:          m.bet_amount,
+        stake_currency:      m.stake_currency,
+        type:                m.type,
+        code:                m.code,
+        created_at:          m.created_at,
+        mode:                m.mode,
+        host_id:             m.host_id,
+        host_username:       m.host_username,
+        max_players:         m.max_players,
+        max_per_team:        m.max_per_team,
+        your_has_deposited:  m.your_has_deposited,
         // players array contains full player objects — extract for match_players
-        match_players:  m.players,
+        match_players:       m.players,
       });
       if (matchObj) {
         // addMatch is idempotent: won't duplicate if already in store

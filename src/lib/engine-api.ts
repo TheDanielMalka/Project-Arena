@@ -367,8 +367,9 @@ export type ActiveMatchResponse = {
     host_username:  string | null;
     max_players:    number | null;
     max_per_team:   number | null;
-    your_user_id:   string | null;
-    your_team:      "A" | "B" | null;
+    your_user_id:        string | null;
+    your_team:           "A" | "B" | null;
+    your_has_deposited:  boolean;
   } | null;
 };
 

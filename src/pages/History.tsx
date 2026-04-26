@@ -18,6 +18,7 @@ import {
 import type { Game, Match, MatchStatus } from "@/types";
 import { SupportTicketDialog } from "@/components/support/SupportTicketDialog";
 import { ArenaPageShell } from "@/components/visual";
+import { ClaimRefundButton } from "@/components/match/ClaimRefundButton";
 
 const ITEMS_PER_PAGE = 8;
 
@@ -709,18 +710,26 @@ const History = () => {
                         </div>
                       )}
 
-                      {canAppealMatch(m) && (
-                        <div className="flex justify-end pt-1" onClick={(e) => e.stopPropagation()}>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-8 text-xs font-display border-arena-orange/40 text-arena-orange hover:bg-arena-orange/10"
-                            onClick={() => setAppealMatch(m)}
-                          >
-                            <Scale className="h-3.5 w-3.5 mr-1.5" />
-                            Appeal match
-                          </Button>
+                      {(canAppealMatch(m) || (m.status === "cancelled" && m.stakeCurrency === "CRYPTO")) && (
+                        <div className="flex justify-end gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
+                          {m.status === "cancelled" && m.stakeCurrency === "CRYPTO" && (
+                            <ClaimRefundButton
+                              matchId={m.id}
+                              amountLabel={m.betAmount > 0 ? `${m.betAmount} BNB` : undefined}
+                            />
+                          )}
+                          {canAppealMatch(m) && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-8 text-xs font-display border-arena-orange/40 text-arena-orange hover:bg-arena-orange/10"
+                              onClick={() => setAppealMatch(m)}
+                            >
+                              <Scale className="h-3.5 w-3.5 mr-1.5" />
+                              Appeal match
+                            </Button>
+                          )}
                         </div>
                       )}
                     </div>
