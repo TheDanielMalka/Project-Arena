@@ -4486,18 +4486,30 @@ async def discord_auth_disconnect(payload: dict = Depends(verify_token)):
 
 
 # ── FACEIT OAuth2 ─────────────────────────────────────────────────────────────
+# In-memory nonce store — avoids DB schema issues and keeps state short
+# (long JWT in state triggers Cloudflare WAF).
+import threading as _threading, time as _time
+_faceit_nonces: dict[str, tuple[str, float]] = {}
+_faceit_nonces_lock = _threading.Lock()
+
 
 @app.get("/auth/faceit")
 async def faceit_auth_start(token: str):
-    """Redirect user to FACEIT OAuth2 consent screen (same pattern as Discord)."""
     if not FACEIT_CLIENT_ID:
         raise HTTPException(503, "FACEIT OAuth not configured")
+    nonce = secrets.token_urlsafe(16)
+    expires = _time.time() + 600
+    with _faceit_nonces_lock:
+        now = _time.time()
+        for k in [k for k, (_, exp) in _faceit_nonces.items() if exp < now]:
+            del _faceit_nonces[k]
+        _faceit_nonces[nonce] = (token, expires)
     params = {
         "response_type": "code",
         "client_id":     FACEIT_CLIENT_ID,
         "redirect_uri":  f"{ENGINE_BASE_URL.rstrip('/')}/auth/faceit/callback",
         "scope":         "openid email profile",
-        "state":         token,
+        "state":         nonce,
     }
     url = "https://accounts.faceit.com/oauth/authorize?" + urllib.parse.urlencode(params)
     return RedirectResponse(url, status_code=302)
@@ -4560,7 +4572,12 @@ async def faceit_auth_callback(
         logger.error("FACEIT callback: FACEIT_CLIENT_ID not set")
         return _faceit_resp(error_url, False, wants_json)
 
-    jwt_token = state
+    with _faceit_nonces_lock:
+        entry = _faceit_nonces.pop(state, None)
+    if not entry:
+        logger.warning("FACEIT callback: nonce not found (state prefix=%s)", state[:8])
+        return _faceit_resp(error_url, False, wants_json)
+    jwt_token, _ = entry
     redirect_uri = f"{ENGINE_BASE_URL.rstrip('/')}/auth/faceit/callback"
 
     token_data: dict = {
