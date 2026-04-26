@@ -4588,6 +4588,60 @@ async def faceit_auth_disconnect(payload: dict = Depends(verify_token)):
     return {"unlinked": True}
 
 
+@app.post("/auth/riot", status_code=200)
+async def riot_save(riot_id: str = Body(..., embed=True), payload: dict = Depends(verify_token)):
+    """Save a Riot ID (Name#TAG) for the authenticated user — format-validated, uniqueness-checked."""
+    user_id = str(payload["sub"])
+    rid = riot_id.strip()
+    fmt_err = auth.validate_riot_id(rid)
+    if fmt_err:
+        raise HTTPException(400, fmt_err)
+    try:
+        with SessionLocal() as session:
+            conflict = session.execute(
+                text("SELECT id FROM users WHERE riot_id = :r AND id != :uid"),
+                {"r": rid, "uid": user_id},
+            ).fetchone()
+            if conflict:
+                raise HTTPException(409, "This Riot ID is already linked to another account")
+            session.execute(
+                text(
+                    "UPDATE users "
+                    "SET riot_id = :r, riot_verified = TRUE, riot_verified_at = NOW() "
+                    "WHERE id = :uid"
+                ),
+                {"r": rid, "uid": user_id},
+            )
+            session.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Riot save DB error: %s", exc)
+        raise HTTPException(500, "Failed to save Riot ID")
+    return {"linked": True, "riot_id": rid}
+
+
+@app.delete("/auth/riot", status_code=200)
+async def riot_disconnect(payload: dict = Depends(verify_token)):
+    """Remove Riot ID link from the authenticated user's account."""
+    user_id = str(payload["sub"])
+    try:
+        with SessionLocal() as session:
+            session.execute(
+                text(
+                    "UPDATE users "
+                    "SET riot_id = NULL, riot_verified = FALSE, riot_verified_at = NULL "
+                    "WHERE id = :uid"
+                ),
+                {"uid": user_id},
+            )
+            session.commit()
+    except Exception as exc:
+        logger.error("Riot unlink DB error: %s", exc)
+        raise HTTPException(500, "Failed to unlink Riot ID")
+    return {"unlinked": True}
+
+
 @app.get("/users/me/faceit-stats")
 async def get_faceit_stats(payload: dict = Depends(verify_token)):
     """Fetch live FACEIT stats for the authenticated user from FACEIT Data API."""

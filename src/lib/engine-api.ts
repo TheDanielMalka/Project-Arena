@@ -1060,6 +1060,37 @@ export async function apiDisconnectFaceit(token: string): Promise<boolean> {
   }
 }
 
+/** POST /auth/riot — save manual Riot ID (Name#TAG) for authenticated account */
+export async function apiSaveRiotId(
+  token: string,
+  riotId: string,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/auth/riot`, token, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ riot_id: riotId }),
+    });
+    if (res.ok) return { success: true };
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+    return { success: false, error: (body.detail as string) ?? "Failed to save Riot ID" };
+  } catch (err) {
+    reportEngineApiError(err);
+    return { success: false, error: "Network error" };
+  }
+}
+
+/** DELETE /auth/riot — removes Riot ID link from authenticated account */
+export async function apiDisconnectRiot(token: string): Promise<boolean> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/auth/riot`, token, { method: "DELETE" });
+    return res.ok;
+  } catch (err) {
+    reportEngineApiError(err);
+    return false;
+  }
+}
+
 export interface FaceitStats {
   nickname: string;
   avatar: string | null;
