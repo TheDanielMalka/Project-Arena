@@ -45,7 +45,7 @@ interface UserState {
   login: (
     email: string,
     password: string,
-  ) => Promise<boolean | "rate_limited" | { needs_2fa: true; temp_token: string }>;
+  ) => Promise<boolean | "rate_limited" | { needs_2fa: true; temp_token: string } | { _email_not_verified: true; email: string }>;
   /** After login returned needs_2fa — POST /auth/2fa/confirm then same hydration as login */
   completeTwoFactorLogin: (temp_token: string, code: string) => Promise<boolean>;
   signup: (
@@ -57,7 +57,7 @@ interface UserState {
   /** POST /auth/google with Google Identity id_token — same hydration as login */
   loginWithGoogleIdToken: (
     idToken: string,
-  ) => Promise<boolean | "rate_limited" | { needs_2fa: true; temp_token: string }>;
+  ) => Promise<boolean | "rate_limited" | { needs_2fa: true; temp_token: string } | { _email_not_verified: true; email: string }>;
   // DB-ready: replace with POST /api/auth/logout
   logout: () => void;
   /** Restore session from localStorage token (Phase 3). */
@@ -206,6 +206,9 @@ export const useUserStore = create<UserState>((set, get) => ({
     if ("requires_2fa" in data && data.requires_2fa) {
       return { needs_2fa: true as const, temp_token: data.temp_token };
     }
+    if ("_email_not_verified" in data) {
+      return { _email_not_verified: true as const, email: (data as { _email_not_verified: true; email: string }).email };
+    }
     const creds = data as ApiLoginSuccess;
     const profile = await apiGetMe(creds.access_token);
     if (!profile) return false;
@@ -307,6 +310,9 @@ export const useUserStore = create<UserState>((set, get) => ({
     if ("_rate_limited" in data) return "rate_limited";
     if ("requires_2fa" in data && data.requires_2fa) {
       return { needs_2fa: true as const, temp_token: data.temp_token };
+    }
+    if ("_email_not_verified" in data) {
+      return { _email_not_verified: true as const, email: (data as { _email_not_verified: true; email: string }).email };
     }
     const creds = data as ApiLoginSuccess;
     const profile = await apiGetMe(creds.access_token);
