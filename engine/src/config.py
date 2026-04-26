@@ -111,6 +111,9 @@ DISCORD_GUILD_ID           = os.getenv("DISCORD_GUILD_ID", "")
 # Numeric category ID under which match channels are created (optional).
 # Right-click a category → Copy Channel ID.  Leave blank to use root.
 DISCORD_MATCH_CATEGORY_ID  = os.getenv("DISCORD_MATCH_CATEGORY_ID", "")
+# OAuth2 credentials — General Information → Application ID + OAuth2 → Client Secret
+DISCORD_CLIENT_ID          = os.getenv("DISCORD_CLIENT_ID", "")
+DISCORD_CLIENT_SECRET      = os.getenv("DISCORD_CLIENT_SECRET", "")
 
 # ── App Settings ─────────────────────────────────────────────
 API_SECRET = os.getenv("API_SECRET", "change_me_in_production")
