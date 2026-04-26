@@ -28,7 +28,7 @@ import { useNotificationStore } from "@/stores/notificationStore";
 import { userFacingNotification } from "@/lib/userFacingNotification";
 import { useForgeStore } from "@/stores/forgeStore";
 import { useToast } from "@/hooks/use-toast";
-import { ENGINE_BASE, apiPatchCountry, apiDisconnectDiscord, apiDisconnectFaceit, apiFaceitStats, type FaceitStats } from "@/lib/engine-api";
+import { ENGINE_BASE, apiPatchCountry, apiDisconnectDiscord, apiDisconnectFaceit, apiFaceitStats, apiSaveRiotId, apiDisconnectRiot, type FaceitStats } from "@/lib/engine-api";
 import { getXpInfo } from "@/lib/xp";
 import {
   getAvatarBackground,
@@ -230,6 +230,42 @@ const Profile = () => {
     if (!user?.faceitVerified || !token) { setFaceitStats(null); return; }
     void apiFaceitStats(token).then(setFaceitStats);
   }, [user?.faceitVerified, user?.faceitId, token]);
+
+  const [showRiotDialog, setShowRiotDialog] = useState(false);
+  const [riotInputVal, setRiotInputVal] = useState("");
+  const [riotInputError, setRiotInputError] = useState("");
+  const [riotInputLoading, setRiotInputLoading] = useState(false);
+
+  const handleConnectRiot = async () => {
+    if (!token) return;
+    const rid = riotInputVal.trim();
+    if (!rid) { setRiotInputError("Please enter your Riot ID."); return; }
+    if (!/^[^#]{3,16}#[A-Za-z0-9]{3,5}$/.test(rid)) {
+      setRiotInputError("Format must be Name#TAG — e.g. Player#1234");
+      return;
+    }
+    setRiotInputLoading(true);
+    setRiotInputError("");
+    const result = await apiSaveRiotId(token, rid);
+    setRiotInputLoading(false);
+    if (result.success) {
+      setShowRiotDialog(false);
+      setRiotInputVal("");
+      await refreshProfileFromServer();
+      toast({ title: "Riot ID Saved", description: `Your Riot ID ${rid} is now active.` });
+    } else {
+      setRiotInputError(result.error ?? "Failed to save Riot ID.");
+    }
+  };
+
+  const handleDisconnectRiot = async () => {
+    if (!token) return;
+    const ok = await apiDisconnectRiot(token);
+    if (ok) {
+      await refreshProfileFromServer();
+      toast({ title: "Riot ID Removed", description: "Your Riot ID has been unlinked." });
+    }
+  };
 
   const forgeAvatarIcons   = new Set(
     SEED_ITEMS.filter((i) => i.category === "avatar").map((i) => i.icon),
@@ -562,12 +598,13 @@ const Profile = () => {
       imgBg: "rgba(211,41,54,0.12)",
       status: user?.riotVerified ? "connected" as const : "disconnected" as const,
       detail: user?.riotVerified
-        ? (user.riotId ?? "Verified")
-        : "Coming soon",
+        ? (user.riotId ?? "Active")
+        : "Not connected",
       color: "text-red-400",
       borderColor: "border-red-500/30",
       bgColor: "bg-red-500/5",
-      // Riot OAuth — coming soon; no onConnect yet
+      onConnect: () => { setRiotInputVal(""); setRiotInputError(""); setShowRiotDialog(true); },
+      onDisconnect: () => { void handleDisconnectRiot(); },
     },
   ];
 
@@ -1001,8 +1038,12 @@ const Profile = () => {
                 <div key={game.name} className={`relative flex flex-col items-center gap-1.5 p-3 rounded-lg border transition-all ${
                   isVerified
                     ? "bg-secondary/40 border-border/50 hover:border-primary/20"
-                    : "bg-secondary/20 border-border/30 opacity-60"
-                }`}>
+                    : isValorant
+                      ? "bg-secondary/20 border-[#FF4655]/20 opacity-80 hover:border-[#FF4655]/40 cursor-pointer"
+                      : "bg-secondary/20 border-border/30 opacity-60"
+                }`}
+                onClick={!isVerified && isValorant ? () => { setRiotInputVal(""); setRiotInputError(""); setShowRiotDialog(true); } : undefined}
+                >
                   {/* Top-right badge */}
                   {isVerified && isCs2 && (
                     <span className="absolute top-1.5 right-1.5 text-[8px] font-display font-bold px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-400 tracking-wide border border-emerald-500/30">
@@ -1010,14 +1051,19 @@ const Profile = () => {
                     </span>
                   )}
                   {isVerified && isValorant && (
+                    <span className="absolute top-1.5 right-1.5 text-[8px] font-display font-bold px-1 py-0.5 rounded bg-[#FF4655]/15 text-[#FF4655] tracking-wide border border-[#FF4655]/30">
+                      ACTIVE
+                    </span>
+                  )}
+                  {!isVerified && isValorant && (
                     <button
-                      onClick={() => toast({ title: "Account linked", description: "Your Riot account is permanently bound. Contact support to unlink." })}
-                      className="absolute top-1.5 right-1.5 text-[8px] font-display font-bold px-1 py-0.5 rounded bg-yellow-500/15 text-yellow-400 tracking-wide border border-yellow-500/30 hover:bg-yellow-500/25 transition-colors"
+                      onClick={() => { setRiotInputVal(""); setRiotInputError(""); setShowRiotDialog(true); }}
+                      className="absolute top-1.5 right-1.5 text-[8px] font-display font-bold px-1 py-0.5 rounded bg-[#FF4655]/10 text-[#FF4655]/70 tracking-wide border border-[#FF4655]/20 hover:bg-[#FF4655]/20 transition-colors"
                     >
-                      UNLINK
+                      LINK
                     </button>
                   )}
-                  {!isVerified && (
+                  {!isVerified && !isValorant && (
                     <span className="absolute top-1.5 right-1.5 text-[8px] font-display font-bold px-1 py-0.5 rounded bg-muted text-muted-foreground/50 tracking-wide">SOON</span>
                   )}
                   {/* game icon — colored only when verified */}
@@ -1045,8 +1091,16 @@ const Profile = () => {
                       Riot ✓
                     </span>
                   )}
-                  {!isVerified && (
+                  {!isVerified && !isValorant && (
                     <span className="text-[10px] text-muted-foreground/40 font-display">Coming Soon</span>
+                  )}
+                  {!isVerified && isValorant && (
+                    <button
+                      onClick={() => { setRiotInputVal(""); setRiotInputError(""); setShowRiotDialog(true); }}
+                      className="text-[10px] text-[#FF4655]/60 font-display hover:text-[#FF4655] transition-colors"
+                    >
+                      Enter Riot ID
+                    </button>
                   )}
                 </div>
               );
@@ -1175,6 +1229,52 @@ const Profile = () => {
             </Button>
             <Button onClick={handleConfirmLink} className="glow-green font-display" disabled={!linkAccountId.trim()}>
               <Link2 className="mr-2 h-4 w-4" /> Link Account
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Riot ID Entry Dialog ── */}
+      <Dialog open={showRiotDialog} onOpenChange={(open) => { if (!open) { setShowRiotDialog(false); setRiotInputError(""); } }}>
+        <DialogContent className="bg-card border-border max-w-sm">
+          <DialogHeader>
+            <div className="flex items-center gap-2">
+              <img src="https://cdn.simpleicons.org/riotgames/D32936" alt="Riot" className="w-5 h-5" />
+              <DialogTitle className="font-display">Connect Riot Games</DialogTitle>
+            </div>
+            <DialogDescription className="text-muted-foreground text-sm">
+              Enter your Riot ID to enable Valorant matchmaking.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div>
+              <label className="text-xs text-muted-foreground font-display mb-1.5 block">
+                Riot ID <span className="text-muted-foreground/60">(Name#TAG)</span>
+              </label>
+              <Input
+                value={riotInputVal}
+                onChange={(e) => { setRiotInputVal(e.target.value); setRiotInputError(""); }}
+                placeholder="Player#1234"
+                className="font-mono"
+                onKeyDown={(e) => { if (e.key === "Enter") void handleConnectRiot(); }}
+                disabled={riotInputLoading}
+              />
+              {riotInputError && (
+                <p className="text-xs text-destructive mt-1.5">{riotInputError}</p>
+              )}
+            </div>
+            <p className="text-[11px] text-muted-foreground/70 leading-relaxed">
+              Your Riot ID is visible in-game under your profile. Format: <span className="font-mono text-foreground/80">Name#TAG</span>
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowRiotDialog(false)} disabled={riotInputLoading}>Cancel</Button>
+            <Button
+              onClick={() => void handleConnectRiot()}
+              disabled={riotInputLoading || !riotInputVal.trim()}
+              className="bg-[#D32936] hover:bg-[#b5222e] text-white"
+            >
+              {riotInputLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save Riot ID"}
             </Button>
           </DialogFooter>
         </DialogContent>

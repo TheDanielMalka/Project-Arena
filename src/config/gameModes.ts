@@ -27,7 +27,6 @@ export const GAME_MODES: Record<Game, GameModeOption[]> = {
     { mode: "5v5", teamSize: 5, label: "5v5 — Competitive", isDefault: true },
   ],
   "Valorant": [
-    { mode: "1v1", teamSize: 1, label: "1v1 — Duel" },
     { mode: "5v5", teamSize: 5, label: "5v5 — Competitive", isDefault: true },
   ],
   "Fortnite": [
