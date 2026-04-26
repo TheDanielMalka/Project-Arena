@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import {
   User, Shield, Gamepad2, Wallet, Link2, CheckCircle, XCircle,
   Copy, ExternalLink, Edit2, Save, Trophy, TrendingUp, Zap, Smartphone, Monitor, X,
-  Camera, Lock, Upload, Crown, Medal, Gem, Sparkles, Flame, Award,
+  Camera, Lock, Upload, Crown, Medal, Gem, Sparkles, Flame, Award, Loader2,
   type LucideIcon,
 } from "lucide-react";
 import {
