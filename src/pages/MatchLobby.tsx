@@ -971,7 +971,6 @@ const MatchLobby = () => {
     const stakeLabel   = formatMatchStakeShort(myActiveRoom);
     const isCrypto     = matchStakeCurrency(myActiveRoom) === "CRYPTO";
     const depositsExist = (myActiveRoom.depositsReceived ?? 0) > 0;
-    const onChainId    = activeRoomOnChainId;
     setDeleteRoomConfirmOpen(false);
 
     const clearRoomState = () => {
@@ -993,15 +992,32 @@ const MatchLobby = () => {
       }
     };
 
-    if (isCrypto && depositsExist && onChainId != null) {
-      // Confirm-then-clear: on-chain cancelMatch FIRST, then update UI.
-      // The MatchCancelled event listener will update DB automatically.
-      // Do NOT clear state until the tx is confirmed — otherwise the UI
-      // loses the onChainId needed for any retry.
-      setLeavePending(true);
-      void (async () => {
-        try {
-          await cancelMatchOnChain(onChainId);
+    setLeavePending(true);
+    void (async () => {
+      try {
+        // After a page refresh both activeRoomOnChainId (useState) and
+        // depositsReceived (not in GET /matches response) are gone.
+        // Always ask the server for the authoritative state when either is missing.
+        let resolvedOnChainId  = activeRoomOnChainId;
+        let requiresOnChainCancel = isCrypto && depositsExist;
+
+        if (isCrypto && token && looksLikeServerMatchId(matchId) &&
+            (resolvedOnChainId === null || !depositsExist)) {
+          const leaveStatus = await apiGetLeaveStatus(token, matchId);
+          if (leaveStatus?.on_chain_match_id) {
+            resolvedOnChainId = BigInt(leaveStatus.on_chain_match_id);
+          }
+          // requires_cancel is the server's authoritative answer:
+          // "is_host AND is_crypto AND deposits_received > 0"
+          if (leaveStatus) {
+            requiresOnChainCancel = leaveStatus.requires_cancel;
+          }
+        }
+
+        if (requiresOnChainCancel && resolvedOnChainId != null) {
+          // On-chain cancelMatch FIRST — contract refunds all depositors.
+          // MatchCancelled event updates DB automatically via oracle listener.
+          await cancelMatchOnChain(resolvedOnChainId);
           clearRoomState();
           useNotificationStore.getState().addNotification({
             type: "system",
@@ -1009,38 +1025,50 @@ const MatchLobby = () => {
             message: `cancelMatch confirmed on-chain — all ${stakeLabel} deposits refunded to each player.`,
           });
           doServerCancel();
-        } catch (err) {
+        } else {
+          // AT match or CRYPTO with zero on-chain deposits — DB-only is safe.
+          clearRoomState();
           useNotificationStore.getState().addNotification({
             type: "system",
-            title: "On-chain cancel failed",
-            message: friendlyChainErrorMessage(err) ?? "MetaMask transaction rejected. Your tBNB is still in escrow — try again or wait 1h for cancelWaiting.",
+            title: "🗑️ Room Deleted",
+            message: `Match room closed. Your ${stakeLabel} deposit has been refunded.`,
           });
-        } finally {
-          setLeavePending(false);
+          doServerCancel();
         }
-      })();
-    } else {
-      // AT match or CRYPTO with zero deposits — safe to clear and cancel in DB immediately.
-      clearRoomState();
-      useNotificationStore.getState().addNotification({
-        type: "system",
-        title: "🗑️ Room Deleted",
-        message: `Match room closed. Your ${stakeLabel} deposit has been refunded.`,
-      });
-      doServerCancel();
-    }
+      } catch (err) {
+        useNotificationStore.getState().addNotification({
+          type: "system",
+          title: "On-chain cancel failed",
+          message: friendlyChainErrorMessage(err) ?? "MetaMask transaction rejected. Your tBNB is still in escrow — try again or wait 1h for cancelWaiting.",
+        });
+      } finally {
+        setLeavePending(false);
+      }
+    })();
   }, [myActiveRoom, user, token, cancelEscrow, deleteMatch, activeRoomOnChainId]);
 
   const handleRescueFunds = useCallback(() => {
-    if (!myActiveRoom || !activeRoomOnChainId) return;
-    const onChainId = activeRoomOnChainId;
+    if (!myActiveRoom) return;
     setRescuePending(true);
     void (async () => {
       try {
+        // Resolve on-chain ID — same fallback pattern as handleDeleteRoom.
+        let onChainId = activeRoomOnChainId;
+        if (onChainId === null && token && looksLikeServerMatchId(myActiveRoom.id)) {
+          const leaveStatus = await apiGetLeaveStatus(token, myActiveRoom.id);
+          if (leaveStatus?.on_chain_match_id) {
+            onChainId = BigInt(leaveStatus.on_chain_match_id);
+          }
+        }
+        if (!onChainId) {
+          useNotificationStore.getState().addNotification({
+            type: "system",
+            title: "Rescue failed",
+            message: "Could not resolve on-chain match ID — try again or contact support.",
+          });
+          return;
+        }
         await cancelWaitingOnChain(onChainId);
-        // State cleared by the MatchCancelled event handler in the backend —
-        // the event listener will mark the match cancelled and the heartbeat
-        // poll will return status='cancelled', triggering markIdle() + clear.
         useNotificationStore.getState().addNotification({
           type: "system",
           title: "✅ Rescue confirmed",
@@ -1056,7 +1084,7 @@ const MatchLobby = () => {
         setRescuePending(false);
       }
     })();
-  }, [myActiveRoom, activeRoomOnChainId]);
+  }, [myActiveRoom, activeRoomOnChainId, token]);
 
   const handleOpenInviteModal = useCallback(async (e?: React.MouseEvent<HTMLElement>) => {
     if (!token) return;
@@ -1745,7 +1773,7 @@ const MatchLobby = () => {
                   )}
                   Leave Room
                 </Button>
-                {rescueAvailable && myActiveRoom.stakeCurrency === "CRYPTO" && activeRoomOnChainId != null && (
+                {rescueAvailable && myActiveRoom.stakeCurrency === "CRYPTO" && (
                   <Button
                     size="sm"
                     variant="outline"
