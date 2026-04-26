@@ -17,7 +17,7 @@ from collections import defaultdict as _defaultdict
 
 from fastapi import FastAPI, HTTPException, Depends, Header, Query, UploadFile, File, Request, Response, Cookie, WebSocket, WebSocketDisconnect, Body
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -4523,17 +4523,34 @@ async def faceit_auth_start(token: str):
     return RedirectResponse(url, status_code=302)
 
 
+def _faceit_resp(redirect_url: str, success: bool, wants_json: bool = False):
+    if wants_json:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"success": success})
+    return _faceit_html(redirect_url, success)
+
+
+def _faceit_html(redirect_url: str, success: bool) -> HTMLResponse:
+    s = "true" if success else "false"
+    return HTMLResponse(f"""<!DOCTYPE html><html><body><script>
+(function(){{var m={{type:"faceit_linked",success:{s}}};
+if(window.opener){{window.opener.postMessage(m,"*");window.close();}}
+else{{window.location.href="{redirect_url}";}}}})();
+</script></body></html>""")
+
+
 @app.get("/auth/faceit/callback")
-async def faceit_auth_callback(code: str, state: str):
+async def faceit_auth_callback(request: Request, code: str, state: str):
     """FACEIT OAuth2 PKCE callback: exchange code → token → fetch player → save to DB."""
     error_url = f"{FRONTEND_URL}/profile?faceit_error=1"
+    wants_json = "application/json" in request.headers.get("accept", "")
 
     if not FACEIT_CLIENT_ID:
-        return RedirectResponse(error_url, status_code=302)
+        return _faceit_resp(error_url, False, wants_json)
 
     entry = _faceit_states.pop(state, None)
     if not entry or entry[2] < _time.time():
-        return RedirectResponse(error_url, status_code=302)
+        return _faceit_resp(error_url, False, wants_json)
 
     jwt_token, code_verifier = entry[0], entry[1]
 
@@ -4553,31 +4570,30 @@ async def faceit_auth_callback(code: str, state: str):
             )
             if token_resp.status_code != 200:
                 logger.warning("FACEIT token exchange failed: %s", token_resp.text)
-                return RedirectResponse(error_url, status_code=302)
+                return _faceit_resp(error_url, False, wants_json)
 
             access_token = token_resp.json().get("access_token")
             if not access_token:
-                return RedirectResponse(error_url, status_code=302)
+                return _faceit_resp(error_url, False, wants_json)
 
             userinfo_resp = await hc.get(
                 "https://api.faceit.com/auth/v1/resources/userinfo",
                 headers={"Authorization": f"Bearer {access_token}"},
             )
             if userinfo_resp.status_code != 200:
-                return RedirectResponse(error_url, status_code=302)
+                return _faceit_resp(error_url, False, wants_json)
 
             userinfo = userinfo_resp.json()
     except Exception as exc:
         logger.warning("FACEIT OAuth error: %s", exc)
-        return RedirectResponse(error_url, status_code=302)
+        return _faceit_html(error_url, False)
 
     faceit_id       = (userinfo.get("guid") or userinfo.get("sub") or "").strip()
     faceit_nickname = (userinfo.get("nickname") or userinfo.get("name") or "").strip()
 
     if not faceit_id:
-        return RedirectResponse(error_url, status_code=302)
+        return _faceit_html(error_url, False)
 
-    # Fetch ELO + level from Data API
     faceit_elo, faceit_level = None, None
     if FACEIT_API_KEY:
         try:
@@ -4599,7 +4615,7 @@ async def faceit_auth_callback(code: str, state: str):
         payload  = auth.decode_token(jwt_token)
         user_id  = str(payload["sub"])
     except Exception:
-        return RedirectResponse(error_url, status_code=302)
+        return _faceit_html(error_url, False)
 
     try:
         with SessionLocal() as session:
@@ -4607,7 +4623,7 @@ async def faceit_auth_callback(code: str, state: str):
                 text("SELECT 1 FROM users WHERE faceit_id = :f AND id != :uid"),
                 {"f": faceit_id, "uid": user_id},
             ).fetchone():
-                return RedirectResponse(f"{FRONTEND_URL}/profile?faceit_error=taken", status_code=302)
+                return _faceit_resp(f"{FRONTEND_URL}/profile?faceit_error=taken", False, wants_json)
 
             session.execute(
                 text(
@@ -4623,9 +4639,9 @@ async def faceit_auth_callback(code: str, state: str):
             session.commit()
     except Exception as exc:
         logger.error("FACEIT link DB error: %s", exc)
-        return RedirectResponse(error_url, status_code=302)
+        return _faceit_resp(error_url, False, wants_json)
 
-    return RedirectResponse(f"{FRONTEND_URL}/profile?faceit_linked=1", status_code=302)
+    return _faceit_resp(f"{FRONTEND_URL}/profile?faceit_linked=1", True, wants_json)
 
 
 @app.delete("/auth/faceit", status_code=200)
