@@ -181,6 +181,11 @@ function userProfileFromMe(profile: MeProfile): UserProfile {
     discordId: profile.discord_id?.trim() || null,
     discordUsername: profile.discord_username?.trim() || null,
     discordVerified: !!profile.discord_verified,
+    faceitId: profile.faceit_id?.trim() || null,
+    faceitNickname: profile.faceit_nickname?.trim() || null,
+    faceitElo: profile.faceit_elo ?? null,
+    faceitLevel: profile.faceit_level ?? null,
+    faceitVerified: !!profile.faceit_verified,
     country: profile.country ?? null,
   };
 }
@@ -378,6 +383,11 @@ export const useUserStore = create<UserState>((set, get) => ({
       discordId: profile.discord_id?.trim() || null,
       discordUsername: profile.discord_username?.trim() || null,
       discordVerified: !!profile.discord_verified,
+      faceitId: profile.faceit_id?.trim() || null,
+      faceitNickname: profile.faceit_nickname?.trim() || null,
+      faceitElo: profile.faceit_elo ?? null,
+      faceitLevel: profile.faceit_level ?? null,
+      faceitVerified: !!profile.faceit_verified,
     };
     set({ user: next, walletConnected: !!w });
     hydrateWalletForgeAfterAuth(next);

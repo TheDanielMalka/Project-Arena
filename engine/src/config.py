@@ -115,6 +115,12 @@ DISCORD_MATCH_CATEGORY_ID  = os.getenv("DISCORD_MATCH_CATEGORY_ID", "")
 DISCORD_CLIENT_ID          = os.getenv("DISCORD_CLIENT_ID", "")
 DISCORD_CLIENT_SECRET      = os.getenv("DISCORD_CLIENT_SECRET", "")
 
+# ── FACEIT ────────────────────────────────────────────────────
+# Server-side API key — App Studio → API Keys → Server side
+FACEIT_API_KEY    = os.getenv("FACEIT_API_KEY", "")
+# OAuth2 Client ID (PKCE — no secret) — App Studio → OAuth2 Clients
+FACEIT_CLIENT_ID  = os.getenv("FACEIT_CLIENT_ID", "")
+
 # ── App Settings ─────────────────────────────────────────────
 API_SECRET = os.getenv("API_SECRET", "change_me_in_production")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
