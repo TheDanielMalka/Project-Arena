@@ -4487,8 +4487,6 @@ async def discord_auth_disconnect(payload: dict = Depends(verify_token)):
 
 # ── FACEIT OAuth2 (PKCE) ──────────────────────────────────────────────────────
 
-_faceit_states: dict[str, tuple[str, str, float]] = {}  # nonce -> (jwt, verifier, expires_at)
-
 def _faceit_pkce_pair() -> tuple[str, str]:
     import hashlib, base64
     verifier  = secrets.token_urlsafe(64)
@@ -4498,6 +4496,24 @@ def _faceit_pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
+def _faceit_states_ensure_table() -> None:
+    try:
+        with SessionLocal() as s:
+            s.execute(text("""
+                CREATE TABLE IF NOT EXISTS faceit_oauth_states (
+                    nonce        TEXT PRIMARY KEY,
+                    jwt_token    TEXT NOT NULL,
+                    code_verifier TEXT NOT NULL,
+                    expires_at   TIMESTAMPTZ NOT NULL
+                )
+            """))
+            s.commit()
+    except Exception:
+        pass
+
+_faceit_states_ensure_table()
+
+
 @app.get("/auth/faceit")
 async def faceit_auth_start(token: str):
     """Redirect user to FACEIT OAuth2 consent screen (PKCE flow)."""
@@ -4505,11 +4521,15 @@ async def faceit_auth_start(token: str):
         raise HTTPException(503, "FACEIT OAuth not configured")
     verifier, challenge = _faceit_pkce_pair()
     nonce = secrets.token_urlsafe(16)
-    _faceit_states[nonce] = (token, verifier, _time.time() + 600)
-    # prune expired entries
-    expired = [k for k, v in _faceit_states.items() if v[2] < _time.time()]
-    for k in expired:
-        del _faceit_states[k]
+    with SessionLocal() as s:
+        s.execute(text("""
+            INSERT INTO faceit_oauth_states (nonce, jwt_token, code_verifier, expires_at)
+            VALUES (:n, :j, :v, NOW() + INTERVAL '10 minutes')
+            ON CONFLICT (nonce) DO UPDATE SET jwt_token=EXCLUDED.jwt_token,
+                code_verifier=EXCLUDED.code_verifier, expires_at=EXCLUDED.expires_at
+        """), {"n": nonce, "j": token, "v": verifier})
+        s.execute(text("DELETE FROM faceit_oauth_states WHERE expires_at < NOW()"))
+        s.commit()
     params = {
         "response_type":         "code",
         "client_id":             FACEIT_CLIENT_ID,
@@ -4533,9 +4553,14 @@ def _faceit_resp(redirect_url: str, success: bool, wants_json: bool = False):
 def _faceit_html(redirect_url: str, success: bool) -> HTMLResponse:
     s = "true" if success else "false"
     return HTMLResponse(f"""<!DOCTYPE html><html><body><script>
-(function(){{var m={{type:"faceit_linked",success:{s}}};
-if(window.opener){{window.opener.postMessage(m,"*");window.close();}}
-else{{window.location.href="{redirect_url}";}}}})();
+(function(){{
+  var ok={s};
+  var m={{type:"faceit_linked",success:ok,ts:Date.now()}};
+  try{{localStorage.setItem("faceit_auth_result",JSON.stringify(m));}}catch(e){{}}
+  if(window.opener){{try{{window.opener.postMessage(m,"*");}}catch(e){{}}}}
+  window.close();
+  setTimeout(function(){{window.location.href="{redirect_url}";}},800);
+}})();
 </script></body></html>""")
 
 
@@ -4548,11 +4573,17 @@ async def faceit_auth_callback(request: Request, code: str, state: str):
     if not FACEIT_CLIENT_ID:
         return _faceit_resp(error_url, False, wants_json)
 
-    entry = _faceit_states.pop(state, None)
-    if not entry or entry[2] < _time.time():
+    with SessionLocal() as _s:
+        _row = _s.execute(text("""
+            DELETE FROM faceit_oauth_states
+            WHERE nonce = :nonce AND expires_at > NOW()
+            RETURNING jwt_token, code_verifier
+        """), {"nonce": state}).fetchone()
+        _s.commit()
+    if not _row:
         return _faceit_resp(error_url, False, wants_json)
 
-    jwt_token, code_verifier = entry[0], entry[1]
+    jwt_token, code_verifier = _row[0], _row[1]
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as hc:
@@ -4586,13 +4617,13 @@ async def faceit_auth_callback(request: Request, code: str, state: str):
             userinfo = userinfo_resp.json()
     except Exception as exc:
         logger.warning("FACEIT OAuth error: %s", exc)
-        return _faceit_html(error_url, False)
+        return _faceit_resp(error_url, False, wants_json)
 
     faceit_id       = (userinfo.get("guid") or userinfo.get("sub") or "").strip()
     faceit_nickname = (userinfo.get("nickname") or userinfo.get("name") or "").strip()
 
     if not faceit_id:
-        return _faceit_html(error_url, False)
+        return _faceit_resp(error_url, False, wants_json)
 
     faceit_elo, faceit_level = None, None
     if FACEIT_API_KEY:
@@ -4615,7 +4646,7 @@ async def faceit_auth_callback(request: Request, code: str, state: str):
         payload  = auth.decode_token(jwt_token)
         user_id  = str(payload["sub"])
     except Exception:
-        return _faceit_html(error_url, False)
+        return _faceit_resp(error_url, False, wants_json)
 
     try:
         with SessionLocal() as session:
