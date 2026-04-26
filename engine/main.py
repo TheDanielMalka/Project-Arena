@@ -4561,9 +4561,10 @@ def _faceit_html(redirect_url: str, success: bool) -> HTMLResponse:
 (function(){{
   var ok={s};
   var m={{type:"faceit_linked",success:ok,ts:Date.now()}};
+  try{{localStorage.setItem("faceit_oauth_result",JSON.stringify(m));}}catch(e){{}}
   if(window.opener){{try{{window.opener.postMessage(m,"*");}}catch(e){{}}}}
-  window.close();
-  setTimeout(function(){{window.location.href="{redirect_url}";}},500);
+  try{{window.close();}}catch(e){{}}
+  setTimeout(function(){{window.location.href="{redirect_url}";}},300);
 }})();
 </script></body></html>""")
 

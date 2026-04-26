@@ -83,6 +83,8 @@ __pycache__/
 .secret
 # SSH keys / certs (e.g. ARENA.V01.pem) — never commit
 *.pem
+CRT-FLARE.txt
+*CRT-FLARE.txt
 # Client runtime config — contains JWT, wallet, session_id (PII + auth token).
 # Written at runtime by the desktop client login flow; must stay out of VCS.
 client/config.json
@@ -135,3 +137,23 @@ engine/contracts/node_modules/
 engine/contracts/typechain-types/
 arena_sign.pfx
 client/arena_sign.pfx
+
+# -----------------------------
+# Local-only documentation (not committed)
+# - Full tree under docs/
+# - Per-area READMEs generated for local reference
+# -----------------------------
+docs/
+src/README.md
+src/pages/README.md
+src/hooks/README.md
+src/stores/README.md
+src/components/README.md
+src/types/README.md
+src/test/README.md
+engine/README.md
+engine/src/README.md
+engine/tests/README.md
+engine/contracts/README.md
+infra/sql/README.md
+
