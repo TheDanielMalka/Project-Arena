@@ -28,6 +28,7 @@ from src.config import (
     DATABASE_URL, ENVIRONMENT, MIN_CLIENT_VERSION, STEAM_API_KEY,
     ENGINE_BASE_URL, FRONTEND_URL, POOL_MANAGER_INTERVAL, ARENA_SYSTEM_USER_ID,
     DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET,
+    FACEIT_API_KEY, FACEIT_CLIENT_ID,
 )
 from src.forum import router as forum_router
 from src.ws_manager import ConnectionManager
@@ -1706,6 +1707,12 @@ class UserProfile(BaseModel):
     discord_id:       str | None = None
     discord_username: str | None = None
     discord_verified: bool = False
+    # FACEIT OAuth linking
+    faceit_id:       str | None = None
+    faceit_nickname: str | None = None
+    faceit_elo:      int | None = None
+    faceit_level:    int | None = None
+    faceit_verified: bool = False
     # ISO 3166-1 alpha-2 country code (user-set once, shown as flag in profile)
     country: str | None = None
 
@@ -3704,7 +3711,10 @@ async def me(payload: dict = Depends(verify_token)):
                     "       COALESCE(u.riot_verified,  FALSE), "
                     "       u.country, "
                     "       u.discord_id, u.discord_username, "
-                    "       COALESCE(u.discord_verified, FALSE) "
+                    "       COALESCE(u.discord_verified, FALSE), "
+                    "       u.faceit_id, u.faceit_nickname, "
+                    "       u.faceit_elo, u.faceit_level, "
+                    "       COALESCE(u.faceit_verified, FALSE) "
                     "FROM users u "
                     "LEFT JOIN user_stats s ON s.user_id = u.id "
                     "LEFT JOIN user_settings us ON us.user_id = u.id "
@@ -3763,6 +3773,11 @@ async def me(payload: dict = Depends(verify_token)):
         discord_id=str(row[23]) if len(row) > 23 and row[23] else None,
         discord_username=str(row[24]) if len(row) > 24 and row[24] else None,
         discord_verified=bool(row[25]) if len(row) > 25 and row[25] is not None else False,
+        faceit_id=str(row[26]) if len(row) > 26 and row[26] else None,
+        faceit_nickname=str(row[27]) if len(row) > 27 and row[27] else None,
+        faceit_elo=int(row[28]) if len(row) > 28 and row[28] is not None else None,
+        faceit_level=int(row[29]) if len(row) > 29 and row[29] is not None else None,
+        faceit_verified=bool(row[30]) if len(row) > 30 and row[30] is not None else False,
     )
 
 
@@ -4414,6 +4429,222 @@ async def discord_auth_disconnect(payload: dict = Depends(verify_token)):
         logger.error("Discord unlink DB error: %s", exc)
         raise HTTPException(500, "Failed to unlink Discord")
     return {"unlinked": True}
+
+
+# ── FACEIT OAuth2 (PKCE) ──────────────────────────────────────────────────────
+
+def _faceit_pkce_pair() -> tuple[str, str]:
+    import hashlib, base64, secrets
+    verifier  = secrets.token_urlsafe(64)
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode()).digest()
+    ).rstrip(b"=").decode()
+    return verifier, challenge
+
+
+@app.get("/auth/faceit")
+async def faceit_auth_start(token: str):
+    """Redirect user to FACEIT OAuth2 consent screen (PKCE flow)."""
+    if not FACEIT_CLIENT_ID:
+        raise HTTPException(503, "FACEIT OAuth not configured")
+    verifier, challenge = _faceit_pkce_pair()
+    state = f"{token}|{verifier}"
+    params = {
+        "response_type":         "code",
+        "client_id":             FACEIT_CLIENT_ID,
+        "redirect_uri":          f"{ENGINE_BASE_URL}/auth/faceit/callback",
+        "scope":                 "openid email profile",
+        "state":                 state,
+        "code_challenge":        challenge,
+        "code_challenge_method": "S256",
+    }
+    url = "https://accounts.faceit.com/oauth/authorize?" + urllib.parse.urlencode(params)
+    return RedirectResponse(url, status_code=302)
+
+
+@app.get("/auth/faceit/callback")
+async def faceit_auth_callback(code: str, state: str):
+    """FACEIT OAuth2 PKCE callback: exchange code → token → fetch player → save to DB."""
+    error_url = f"{FRONTEND_URL}/profile?faceit_error=1"
+
+    if not FACEIT_CLIENT_ID:
+        return RedirectResponse(error_url, status_code=302)
+
+    if "|" not in state:
+        return RedirectResponse(error_url, status_code=302)
+
+    jwt_token, code_verifier = state.split("|", 1)
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as hc:
+            token_resp = await hc.post(
+                "https://accounts.faceit.com/oauth/token",
+                data={
+                    "grant_type":    "authorization_code",
+                    "client_id":     FACEIT_CLIENT_ID,
+                    "code":          code,
+                    "redirect_uri":  f"{ENGINE_BASE_URL}/auth/faceit/callback",
+                    "code_verifier": code_verifier,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            if token_resp.status_code != 200:
+                logger.warning("FACEIT token exchange failed: %s", token_resp.text)
+                return RedirectResponse(error_url, status_code=302)
+
+            access_token = token_resp.json().get("access_token")
+            if not access_token:
+                return RedirectResponse(error_url, status_code=302)
+
+            userinfo_resp = await hc.get(
+                "https://api.faceit.com/auth/v1/resources/userinfo",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if userinfo_resp.status_code != 200:
+                return RedirectResponse(error_url, status_code=302)
+
+            userinfo = userinfo_resp.json()
+    except Exception as exc:
+        logger.warning("FACEIT OAuth error: %s", exc)
+        return RedirectResponse(error_url, status_code=302)
+
+    faceit_id       = (userinfo.get("guid") or userinfo.get("sub") or "").strip()
+    faceit_nickname = (userinfo.get("nickname") or userinfo.get("name") or "").strip()
+
+    if not faceit_id:
+        return RedirectResponse(error_url, status_code=302)
+
+    # Fetch ELO + level from Data API
+    faceit_elo, faceit_level = None, None
+    if FACEIT_API_KEY:
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as hc:
+                player_resp = await hc.get(
+                    f"https://open.faceit.com/data/v4/players/{faceit_id}",
+                    headers={"Authorization": f"Bearer {FACEIT_API_KEY}"},
+                )
+                if player_resp.status_code == 200:
+                    pd = player_resp.json()
+                    games = pd.get("games", {})
+                    cs2   = games.get("cs2") or games.get("csgo") or {}
+                    faceit_elo   = cs2.get("faceit_elo")
+                    faceit_level = cs2.get("skill_level")
+        except Exception:
+            pass
+
+    try:
+        payload  = auth.decode_token(jwt_token)
+        user_id  = str(payload["sub"])
+    except Exception:
+        return RedirectResponse(error_url, status_code=302)
+
+    try:
+        with SessionLocal() as session:
+            if session.execute(
+                text("SELECT 1 FROM users WHERE faceit_id = :f AND id != :uid"),
+                {"f": faceit_id, "uid": user_id},
+            ).fetchone():
+                return RedirectResponse(f"{FRONTEND_URL}/profile?faceit_error=taken", status_code=302)
+
+            session.execute(
+                text(
+                    "UPDATE users "
+                    "SET faceit_id = :f, faceit_nickname = :n, "
+                    "    faceit_elo = :e, faceit_level = :l, "
+                    "    faceit_verified = TRUE, faceit_verified_at = NOW() "
+                    "WHERE id = :uid"
+                ),
+                {"f": faceit_id, "n": faceit_nickname,
+                 "e": faceit_elo, "l": faceit_level, "uid": user_id},
+            )
+            session.commit()
+    except Exception as exc:
+        logger.error("FACEIT link DB error: %s", exc)
+        return RedirectResponse(error_url, status_code=302)
+
+    return RedirectResponse(f"{FRONTEND_URL}/profile?faceit_linked=1", status_code=302)
+
+
+@app.delete("/auth/faceit", status_code=200)
+async def faceit_auth_disconnect(payload: dict = Depends(verify_token)):
+    """Remove FACEIT link from the authenticated user's account."""
+    user_id = str(payload["sub"])
+    try:
+        with SessionLocal() as session:
+            session.execute(
+                text(
+                    "UPDATE users "
+                    "SET faceit_id = NULL, faceit_nickname = NULL, "
+                    "    faceit_elo = NULL, faceit_level = NULL, "
+                    "    faceit_verified = FALSE, faceit_verified_at = NULL "
+                    "WHERE id = :uid"
+                ),
+                {"uid": user_id},
+            )
+            session.commit()
+    except Exception as exc:
+        logger.error("FACEIT unlink DB error: %s", exc)
+        raise HTTPException(500, "Failed to unlink FACEIT")
+    return {"unlinked": True}
+
+
+@app.get("/users/me/faceit-stats")
+async def get_faceit_stats(payload: dict = Depends(verify_token)):
+    """Fetch live FACEIT stats for the authenticated user from FACEIT Data API."""
+    if not FACEIT_API_KEY:
+        raise HTTPException(503, "FACEIT API not configured")
+
+    user_id = str(payload["sub"])
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("SELECT faceit_id, faceit_nickname FROM users WHERE id = :uid"),
+                {"uid": user_id},
+            ).fetchone()
+    except Exception:
+        raise HTTPException(500, "DB error")
+
+    if not row or not row[0]:
+        raise HTTPException(404, "FACEIT account not linked")
+
+    faceit_id       = row[0]
+    faceit_nickname = row[1] or ""
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as hc:
+            player_resp, stats_resp = await asyncio.gather(
+                hc.get(
+                    f"https://open.faceit.com/data/v4/players/{faceit_id}",
+                    headers={"Authorization": f"Bearer {FACEIT_API_KEY}"},
+                ),
+                hc.get(
+                    f"https://open.faceit.com/data/v4/players/{faceit_id}/stats/cs2",
+                    headers={"Authorization": f"Bearer {FACEIT_API_KEY}"},
+                ),
+            )
+    except Exception as exc:
+        logger.warning("FACEIT Data API error: %s", exc)
+        raise HTTPException(502, "FACEIT API unavailable")
+
+    player_data = player_resp.json() if player_resp.status_code == 200 else {}
+    stats_data  = stats_resp.json()  if stats_resp.status_code == 200  else {}
+
+    games    = player_data.get("games", {})
+    cs2_game = games.get("cs2") or games.get("csgo") or {}
+    lifetime = stats_data.get("lifetime", {})
+
+    return {
+        "nickname":    faceit_nickname,
+        "avatar":      player_data.get("avatar"),
+        "country":     player_data.get("country"),
+        "elo":         cs2_game.get("faceit_elo"),
+        "level":       cs2_game.get("skill_level"),
+        "matches":     lifetime.get("Matches"),
+        "win_rate":    lifetime.get("Win Rate %"),
+        "kd_ratio":    lifetime.get("Average K/D Ratio"),
+        "headshots":   lifetime.get("Average Headshots %"),
+        "faceit_url":  player_data.get("faceit_url", "").replace("{lang}", "en"),
+    }
 
 
 @app.post("/client/bind", status_code=200)

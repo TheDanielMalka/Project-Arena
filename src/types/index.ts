@@ -88,6 +88,12 @@ export interface UserProfile {
   discordId: string | null;
   discordUsername: string | null;
   discordVerified: boolean;
+  /** FACEIT OAuth linking */
+  faceitId: string | null;
+  faceitNickname: string | null;
+  faceitElo: number | null;
+  faceitLevel: number | null;
+  faceitVerified: boolean;
   /** ISO 3166-1 alpha-2 country code — user-set once, displayed as flag emoji */
   country?: string | null;
 }

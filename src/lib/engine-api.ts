@@ -724,6 +724,11 @@ export async function apiGetMe(token: string): Promise<{
   discord_id: string | null;
   discord_username: string | null;
   discord_verified: boolean;
+  faceit_id: string | null;
+  faceit_nickname: string | null;
+  faceit_elo: number | null;
+  faceit_level: number | null;
+  faceit_verified: boolean;
   xp: number;
   wins: number;
   losses: number;
@@ -764,6 +769,11 @@ export async function apiGetMe(token: string): Promise<{
       discord_id: string | null;
       discord_username: string | null;
       discord_verified: boolean;
+      faceit_id: string | null;
+      faceit_nickname: string | null;
+      faceit_elo: number | null;
+      faceit_level: number | null;
+      faceit_verified: boolean;
       xp: number;
       wins: number;
       losses: number;
@@ -1036,6 +1046,42 @@ export async function apiDisconnectDiscord(token: string): Promise<boolean> {
   } catch (err) {
     reportEngineApiError(err);
     return false;
+  }
+}
+
+/** DELETE /auth/faceit — removes FACEIT link from authenticated account */
+export async function apiDisconnectFaceit(token: string): Promise<boolean> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/auth/faceit`, token, { method: "DELETE" });
+    return res.ok;
+  } catch (err) {
+    reportEngineApiError(err);
+    return false;
+  }
+}
+
+export interface FaceitStats {
+  nickname: string;
+  avatar: string | null;
+  country: string | null;
+  elo: number | null;
+  level: number | null;
+  matches: string | null;
+  win_rate: string | null;
+  kd_ratio: string | null;
+  headshots: string | null;
+  faceit_url: string | null;
+}
+
+/** GET /users/me/faceit-stats — live FACEIT stats from Data API */
+export async function apiFaceitStats(token: string): Promise<FaceitStats | null> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/users/me/faceit-stats`, token, {});
+    if (!res.ok) return null;
+    return (await res.json()) as FaceitStats;
+  } catch (err) {
+    reportEngineApiError(err);
+    return null;
   }
 }
 

@@ -28,7 +28,7 @@ import { useNotificationStore } from "@/stores/notificationStore";
 import { userFacingNotification } from "@/lib/userFacingNotification";
 import { useForgeStore } from "@/stores/forgeStore";
 import { useToast } from "@/hooks/use-toast";
-import { ENGINE_BASE, apiPatchCountry, apiDisconnectDiscord } from "@/lib/engine-api";
+import { ENGINE_BASE, apiPatchCountry, apiDisconnectDiscord, apiDisconnectFaceit, apiFaceitStats, type FaceitStats } from "@/lib/engine-api";
 import { getXpInfo } from "@/lib/xp";
 import {
   getAvatarBackground,
@@ -208,6 +208,28 @@ const Profile = () => {
       toast({ title: "Discord Connection Failed", description: "Could not verify your Discord account. Please try again.", variant: "destructive" });
     }
   }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const linked = params.get("faceit_linked");
+    const err    = params.get("faceit_error");
+    if (!linked && !err) return;
+    window.history.replaceState({}, "", window.location.pathname);
+    if (linked === "1") {
+      void refreshProfileFromServer();
+      toast({ title: "FACEIT Connected!", description: "Your FACEIT account has been linked to Arena." });
+    } else if (err === "taken") {
+      toast({ title: "FACEIT Already Linked", description: "That FACEIT account is already linked to another Arena account.", variant: "destructive" });
+    } else {
+      toast({ title: "FACEIT Connection Failed", description: "Could not verify your FACEIT account. Please try again.", variant: "destructive" });
+    }
+  }, []);
+
+  const [faceitStats, setFaceitStats] = useState<FaceitStats | null>(null);
+  useEffect(() => {
+    if (!user?.faceitVerified || !token) { setFaceitStats(null); return; }
+    void apiFaceitStats(token).then(setFaceitStats);
+  }, [user?.faceitVerified, user?.faceitId, token]);
 
   const forgeAvatarIcons   = new Set(
     SEED_ITEMS.filter((i) => i.category === "avatar").map((i) => i.icon),
@@ -511,13 +533,27 @@ const Profile = () => {
       icon: Shield,
       img: "https://cdn.simpleicons.org/faceit/FF5500",
       imgBg: "rgba(255,85,0,0.12)",
-      status: serviceConnections.faceit ? "connected" as const : "disconnected" as const,
-      detail: serviceConnections.faceit || "Not connected",
+      status: user?.faceitVerified ? "connected" as const : "disconnected" as const,
+      detail: user?.faceitVerified
+        ? `${user.faceitNickname ?? "Verified"}${user.faceitElo ? ` · ELO ${user.faceitElo}` : ""}`
+        : "Not connected",
       color: "text-arena-orange",
       borderColor: "border-arena-orange/30",
       bgColor: "bg-arena-orange/5",
-      onConnect: () => handleOpenLinkDialog("FACEIT", "service", undefined, "your_faceit_username"),
-      onDisconnect: () => handleDisconnectService("faceit"),
+      onConnect: () => {
+        if (!token) return;
+        window.location.href = `${ENGINE_BASE}/auth/faceit?token=${encodeURIComponent(token)}`;
+      },
+      onDisconnect: () => {
+        if (!token) return;
+        void apiDisconnectFaceit(token).then((ok) => {
+          if (ok) {
+            void refreshProfileFromServer();
+            setFaceitStats(null);
+            toast({ title: "FACEIT Disconnected", description: "Your FACEIT account has been unlinked." });
+          }
+        });
+      },
     },
     {
       name: "Riot Games",
@@ -858,6 +894,89 @@ const Profile = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* FACEIT Stats Card — shown only when verified */}
+      {user?.faceitVerified && (
+        <Card className="bg-card border-border border-arena-orange/20">
+          <CardHeader className="pb-2">
+            <CardTitle className="font-display text-sm tracking-widest uppercase text-muted-foreground flex items-center gap-2">
+              <img src="https://cdn.simpleicons.org/faceit/FF5500" alt="FACEIT" className="h-4 w-4" />
+              FACEIT Stats
+              {faceitStats?.faceit_url && (
+                <a href={faceitStats.faceit_url} target="_blank" rel="noopener noreferrer"
+                  className="ml-auto text-[10px] text-arena-orange/70 hover:text-arena-orange font-mono flex items-center gap-1">
+                  <ExternalLink className="h-3 w-3" /> View profile
+                </a>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {faceitStats ? (
+              <div className="space-y-3">
+                {/* Header row */}
+                <div className="flex items-center gap-3">
+                  {faceitStats.avatar ? (
+                    <img src={faceitStats.avatar} alt={faceitStats.nickname}
+                      className="w-10 h-10 rounded-lg object-cover border border-arena-orange/30" />
+                  ) : (
+                    <div className="w-10 h-10 rounded-lg bg-arena-orange/10 border border-arena-orange/30 flex items-center justify-center">
+                      <span className="text-arena-orange font-bold text-sm">{faceitStats.nickname?.slice(0,2).toUpperCase()}</span>
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-display font-bold text-foreground truncate">{faceitStats.nickname}</p>
+                    {faceitStats.country && (
+                      <p className="text-xs text-muted-foreground">{faceitStats.country.toUpperCase()}</p>
+                    )}
+                  </div>
+                  {/* Level badge */}
+                  {faceitStats.level && (
+                    <div className="flex flex-col items-center gap-0.5">
+                      <div className="w-10 h-10 rounded-lg flex items-center justify-center font-bold text-lg"
+                        style={{
+                          background: faceitStats.level >= 10 ? "rgba(255,30,0,0.15)" :
+                                      faceitStats.level >= 7  ? "rgba(255,120,0,0.15)" :
+                                      faceitStats.level >= 4  ? "rgba(255,200,0,0.12)" :
+                                                                "rgba(100,180,100,0.12)",
+                          color:      faceitStats.level >= 10 ? "#ff1e00" :
+                                      faceitStats.level >= 7  ? "#FF6500" :
+                                      faceitStats.level >= 4  ? "#ffd700" :
+                                                                "#64b464",
+                          border:     `1px solid currentColor`,
+                        }}>
+                        {faceitStats.level}
+                      </div>
+                      <span className="text-[9px] font-mono text-muted-foreground/60">LEVEL</span>
+                    </div>
+                  )}
+                </div>
+                {/* Stats grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { label: "ELO",      value: faceitStats.elo?.toLocaleString() ?? "—" },
+                    { label: "Matches",  value: faceitStats.matches ?? "—" },
+                    { label: "Win Rate", value: faceitStats.win_rate ? `${faceitStats.win_rate}%` : "—" },
+                    { label: "Avg K/D",  value: faceitStats.kd_ratio ?? "—" },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="bg-secondary/40 border border-border/50 rounded-lg px-3 py-2 text-center">
+                      <p className="text-[10px] font-mono text-muted-foreground/50 uppercase tracking-widest">{label}</p>
+                      <p className="font-display font-bold text-foreground text-sm mt-0.5">{value}</p>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[9px] text-muted-foreground/40 text-right font-mono">
+                  Powered by FACEIT · CS2 lifetime stats
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground/60 py-2">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Loading FACEIT stats…
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Game Connections - PC */}
       <Card className="bg-card border-border">
