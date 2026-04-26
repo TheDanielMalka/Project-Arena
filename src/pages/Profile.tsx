@@ -28,7 +28,7 @@ import { useNotificationStore } from "@/stores/notificationStore";
 import { userFacingNotification } from "@/lib/userFacingNotification";
 import { useForgeStore } from "@/stores/forgeStore";
 import { useToast } from "@/hooks/use-toast";
-import { ENGINE_BASE, apiPatchCountry, apiDisconnectDiscord, apiDisconnectFaceit, apiFaceitStats, apiSaveRiotId, apiDisconnectRiot, type FaceitStats } from "@/lib/engine-api";
+import { ENGINE_BASE, apiGetMe, apiPatchCountry, apiDisconnectDiscord, apiDisconnectFaceit, apiFaceitStats, apiSaveRiotId, apiDisconnectRiot, type FaceitStats } from "@/lib/engine-api";
 import { getXpInfo } from "@/lib/xp";
 import {
   getAvatarBackground,
@@ -581,11 +581,13 @@ const Profile = () => {
         const authUrl = `${ENGINE_BASE}/auth/faceit?token=${encodeURIComponent(token)}`;
         const popup = window.open(authUrl, 'faceit_oauth', 'width=580,height=720,top=100,left=400');
         if (!popup) { window.location.href = authUrl; return; }
+        localStorage.removeItem('faceit_oauth_result');
         let finished = false;
         const done = (success: boolean) => {
           if (finished) return;
           finished = true;
           window.removeEventListener('message', onMsg);
+          window.removeEventListener('storage', onStorage);
           clearInterval(pollInterval);
           try { popup.close(); } catch { /* ignore */ }
           if (success) {
@@ -600,9 +602,32 @@ const Profile = () => {
           const d = e.data as Record<string, unknown>;
           if (d.type === 'faceit_linked') { done(!!d.success); return; }
         };
+        const onStorage = (e: StorageEvent) => {
+          if (e.key !== 'faceit_oauth_result' || !e.newValue) return;
+          try {
+            const d = JSON.parse(e.newValue) as Record<string, unknown>;
+            if (d.type === 'faceit_linked') { localStorage.removeItem('faceit_oauth_result'); done(!!d.success); }
+          } catch { /* ignore */ }
+        };
         window.addEventListener('message', onMsg);
+        window.addEventListener('storage', onStorage);
         const pollInterval = setInterval(() => {
-          if (popup.closed && !finished) done(false);
+          if (!popup.closed || finished) return;
+          // popup closed without postMessage (FACEIT COOP severs window.opener) — verify via server
+          finished = true;
+          window.removeEventListener('message', onMsg);
+          window.removeEventListener('storage', onStorage);
+          clearInterval(pollInterval);
+          apiGetMe(token).then((me) => {
+            if (me?.faceit_verified) {
+              void refreshProfileFromServer();
+              toast({ title: "FACEIT Connected!", description: "Your FACEIT account has been linked to Arena." });
+            } else {
+              toast({ title: "FACEIT Connection Failed", variant: "destructive" });
+            }
+          }).catch(() => {
+            toast({ title: "FACEIT Connection Failed", variant: "destructive" });
+          });
         }, 500);
       },
       onDisconnect: () => {
