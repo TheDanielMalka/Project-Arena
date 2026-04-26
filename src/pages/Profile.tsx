@@ -581,9 +581,14 @@ const Profile = () => {
         const authUrl = `${ENGINE_BASE}/auth/faceit?token=${encodeURIComponent(token)}`;
         const popup = window.open(authUrl, 'faceit_oauth', 'width=580,height=720,top=100,left=400');
         if (!popup) { window.location.href = authUrl; return; }
+        let finished = false;
         const done = (success: boolean) => {
+          if (finished) return;
+          finished = true;
           window.removeEventListener('message', onMsg);
-          popup.close();
+          window.removeEventListener('storage', onStorage);
+          localStorage.removeItem('faceit_auth_result');
+          try { popup.close(); } catch { /* ignore */ }
           if (success) {
             void refreshProfileFromServer();
             toast({ title: "FACEIT Connected!", description: "Your FACEIT account has been linked to Arena." });
@@ -594,21 +599,32 @@ const Profile = () => {
         const onMsg = (e: MessageEvent) => {
           if (!e.data || typeof e.data !== 'object') return;
           const d = e.data as Record<string, unknown>;
-          // Case A: our callback page sends {type:"faceit_linked"}
           if (d.type === 'faceit_linked') { done(!!d.success); return; }
-          // Case B: FACEIT sends {code, state} directly via postMessage
-          const code = typeof d.code === 'string' ? d.code : null;
-          const state = typeof d.state === 'string' ? d.state : null;
-          if (code && state) {
-            fetch(`${ENGINE_BASE}/auth/faceit/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`, {
-              headers: { Accept: 'application/json' },
-            })
-              .then(r => r.json() as Promise<{ success?: boolean }>)
-              .then(j => done(!!j.success))
-              .catch(() => done(false));
-          }
         };
+        const onStorage = (e: StorageEvent) => {
+          if (e.key !== 'faceit_auth_result' || !e.newValue) return;
+          try {
+            const d = JSON.parse(e.newValue) as Record<string, unknown>;
+            if (typeof d.ts === 'number' && Date.now() - d.ts > 120000) return;
+            done(!!d.success);
+          } catch { /* ignore */ }
+        };
+        localStorage.removeItem('faceit_auth_result');
         window.addEventListener('message', onMsg);
+        window.addEventListener('storage', onStorage);
+        const pollInterval = setInterval(() => {
+          if (!popup.closed) return;
+          clearInterval(pollInterval);
+          const stored = localStorage.getItem('faceit_auth_result');
+          if (stored) {
+            try {
+              const d = JSON.parse(stored) as Record<string, unknown>;
+              done(!!d.success);
+              return;
+            } catch { /* ignore */ }
+          }
+          if (!finished) done(false);
+        }, 500);
       },
       onDisconnect: () => {
         if (!token) return;
