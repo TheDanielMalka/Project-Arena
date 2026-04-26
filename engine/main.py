@@ -4485,65 +4485,20 @@ async def discord_auth_disconnect(payload: dict = Depends(verify_token)):
     return {"unlinked": True}
 
 
-# ── FACEIT OAuth2 (PKCE) ──────────────────────────────────────────────────────
-
-def _faceit_pkce_pair() -> tuple[str, str]:
-    import hashlib, base64
-    verifier  = secrets.token_urlsafe(64)
-    challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(verifier.encode()).digest()
-    ).rstrip(b"=").decode()
-    return verifier, challenge
-
-
-def _faceit_states_ensure_table() -> None:
-    try:
-        with SessionLocal() as s:
-            s.execute(text("""
-                CREATE TABLE IF NOT EXISTS faceit_oauth_states (
-                    nonce        TEXT PRIMARY KEY,
-                    jwt_token    TEXT NOT NULL,
-                    code_verifier TEXT NOT NULL,
-                    expires_at   TIMESTAMPTZ NOT NULL
-                )
-            """))
-            s.commit()
-    except Exception as exc:
-        logger.error("FACEIT: failed to create faceit_oauth_states table: %s", exc)
-
-_faceit_states_ensure_table()
-
+# ── FACEIT OAuth2 ─────────────────────────────────────────────────────────────
 
 @app.get("/auth/faceit")
 async def faceit_auth_start(token: str):
-    """Redirect user to FACEIT OAuth2 consent screen.
-    Uses PKCE only for public clients (no client_secret).
-    Confidential clients authenticate via client_secret at token exchange.
-    """
+    """Redirect user to FACEIT OAuth2 consent screen (same pattern as Discord)."""
     if not FACEIT_CLIENT_ID:
         raise HTTPException(503, "FACEIT OAuth not configured")
-    use_pkce = not FACEIT_CLIENT_SECRET
-    verifier, challenge = (_faceit_pkce_pair() if use_pkce else ("", ""))
-    nonce = secrets.token_urlsafe(16)
-    with SessionLocal() as s:
-        s.execute(text("""
-            INSERT INTO faceit_oauth_states (nonce, jwt_token, code_verifier, expires_at)
-            VALUES (:n, :j, :v, NOW() + INTERVAL '10 minutes')
-            ON CONFLICT (nonce) DO UPDATE SET jwt_token=EXCLUDED.jwt_token,
-                code_verifier=EXCLUDED.code_verifier, expires_at=EXCLUDED.expires_at
-        """), {"n": nonce, "j": token, "v": verifier})
-        s.execute(text("DELETE FROM faceit_oauth_states WHERE expires_at < NOW()"))
-        s.commit()
-    params: dict = {
+    params = {
         "response_type": "code",
         "client_id":     FACEIT_CLIENT_ID,
         "redirect_uri":  f"{ENGINE_BASE_URL.rstrip('/')}/auth/faceit/callback",
         "scope":         "openid email profile",
-        "state":         nonce,
+        "state":         token,
     }
-    if use_pkce:
-        params["code_challenge"]        = challenge
-        params["code_challenge_method"] = "S256"
     url = "https://accounts.faceit.com/oauth/authorize?" + urllib.parse.urlencode(params)
     return RedirectResponse(url, status_code=302)
 
@@ -4605,23 +4560,7 @@ async def faceit_auth_callback(
         logger.error("FACEIT callback: FACEIT_CLIENT_ID not set")
         return _faceit_resp(error_url, False, wants_json)
 
-    try:
-        with SessionLocal() as _s:
-            _row = _s.execute(text("""
-                DELETE FROM faceit_oauth_states
-                WHERE nonce = :nonce AND expires_at > NOW()
-                RETURNING jwt_token, code_verifier
-            """), {"nonce": state}).fetchone()
-            _s.commit()
-    except Exception as exc:
-        logger.error("FACEIT callback: nonce table query failed: %s", exc)
-        return _faceit_resp(error_url, False, wants_json)
-
-    if not _row:
-        logger.warning("FACEIT callback: nonce not found or expired (state prefix=%s)", state[:8])
-        return _faceit_resp(error_url, False, wants_json)
-
-    jwt_token, code_verifier = _row[0], _row[1]
+    jwt_token = state
     redirect_uri = f"{ENGINE_BASE_URL.rstrip('/')}/auth/faceit/callback"
 
     token_data: dict = {
@@ -4632,8 +4571,6 @@ async def faceit_auth_callback(
     }
     if FACEIT_CLIENT_SECRET:
         token_data["client_secret"] = FACEIT_CLIENT_SECRET
-    elif code_verifier:
-        token_data["code_verifier"] = code_verifier
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as hc:
