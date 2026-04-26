@@ -664,6 +664,41 @@ export async function apiRequestEmailChange(
   }
 }
 
+/** POST /auth/forgot-password — send reset link (always succeeds to avoid user enumeration) */
+export async function apiForgotPassword(email: string): Promise<boolean> {
+  try {
+    await fetch(`${ENGINE_BASE}/auth/forgot-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+/** POST /auth/reset-password — set new password using reset token */
+export async function apiResetPassword(
+  token: string,
+  newPassword: string,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/auth/reset-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, new_password: newPassword }),
+    });
+    if (res.ok) return { success: true };
+    const body = await res.json().catch(() => ({})) as { detail?: unknown };
+    if (body.detail === "invalid_or_expired_token") return { success: false, error: "invalid_or_expired_token" };
+    return { success: false, error: (body.detail as string) ?? "Failed to reset password" };
+  } catch (err) {
+    reportEngineApiError(err);
+    return { success: false, error: "Network error" };
+  }
+}
+
 function parseFastApiDetail(raw: unknown): string | null {
   if (typeof raw === "string" && raw.trim()) return raw;
   if (Array.isArray(raw)) {

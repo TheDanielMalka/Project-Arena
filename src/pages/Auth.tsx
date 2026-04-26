@@ -12,7 +12,7 @@ import { PASSWORD_RULES, isPasswordValid } from "@/lib/passwordValidation";
 import { cn } from "@/lib/utils";
 import { ArenaGlobalStarfield } from "@/components/visual/ArenaGlobalStarfield";
 import { ArenaLogo } from "@/components/shared/ArenaLogo";
-import { apiResendVerification } from "@/lib/engine-api";
+import { apiResendVerification, apiForgotPassword, apiResetPassword } from "@/lib/engine-api";
 
 const Auth = () => {
   const navigate = useNavigate();
@@ -41,6 +41,13 @@ const Auth = () => {
   const [verifyEmailPending, setVerifyEmailPending] = useState<string | null>(null);
   const [resendLoading, setResendLoading] = useState(false);
   const [loginNotVerifiedEmail, setLoginNotVerifiedEmail] = useState<string | null>(null);
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
+  const [resetToken, setResetToken] = useState<string | null>(null);
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetConfirm, setResetConfirm] = useState("");
+  const [resetLoading, setResetLoading] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(false);
 
   const hasGoogleClient = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim());
 
@@ -56,6 +63,11 @@ const Auth = () => {
       window.history.replaceState({}, "", window.location.pathname);
     } else if (v === "expired") {
       toast({ title: "Link expired", description: "Verification link has expired. Please request a new one.", variant: "destructive" });
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+    const rt = searchParams.get("reset_token");
+    if (rt) {
+      setResetToken(rt);
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
@@ -188,12 +200,112 @@ const Auth = () => {
     navigate("/");
   };
 
+  const handleForgotSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotEmail) return;
+    setForgotLoading(true);
+    await apiForgotPassword(forgotEmail);
+    setForgotLoading(false);
+    setForgotSent(true);
+  };
+
+  const handleResetSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetToken) return;
+    if (!isPasswordValid(resetPassword)) {
+      toast({ title: "Password too weak", description: "Please meet all password requirements.", variant: "destructive" });
+      return;
+    }
+    if (resetPassword !== resetConfirm) {
+      toast({ title: "Passwords don't match", description: "Both fields must be identical.", variant: "destructive" });
+      return;
+    }
+    setResetLoading(true);
+    const result = await apiResetPassword(resetToken, resetPassword);
+    setResetLoading(false);
+    if (!result.success) {
+      if (result.error === "invalid_or_expired_token") {
+        toast({ title: "Link expired", description: "This reset link has expired. Please request a new one.", variant: "destructive" });
+      } else {
+        toast({ title: "Failed", description: result.error ?? "Could not reset password.", variant: "destructive" });
+      }
+      return;
+    }
+    setResetToken(null);
+    setResetPassword("");
+    setResetConfirm("");
+    toast({ title: "Password updated!", description: "You can now log in with your new password." });
+  };
+
   const handleResend = async (email: string) => {
     setResendLoading(true);
     await apiResendVerification(email);
     setResendLoading(false);
     toast({ title: "Email sent!", description: "Check your inbox for the verification link." });
   };
+
+  if (resetToken) {
+    return (
+      <div className="relative min-h-screen flex items-center justify-center bg-background px-4">
+        <ArenaGlobalStarfield className="fixed inset-0 z-0" />
+        <Card className="relative z-[1] w-full max-w-md bg-card border-border">
+          <CardHeader className="text-center flex flex-col items-center gap-1">
+            <ArenaLogo variant="compact" markSize={30} className="mb-1" />
+            <Lock className="h-8 w-8 text-primary" />
+            <p className="font-display text-xl font-bold text-foreground tracking-wide">Set new password</p>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleResetSubmit} className="space-y-4">
+              <div>
+                <label className="text-sm text-muted-foreground mb-1 block">New password</label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    type={showResetPassword ? "text" : "password"}
+                    placeholder="••••••••"
+                    value={resetPassword}
+                    onChange={(e) => setResetPassword(e.target.value)}
+                    className="pl-10 pr-10 bg-secondary border-border"
+                    autoComplete="new-password"
+                  />
+                  <button type="button" onClick={() => setShowResetPassword(!showResetPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                    {showResetPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="text-sm text-muted-foreground mb-1 block">Confirm new password</label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    type={showResetPassword ? "text" : "password"}
+                    placeholder="••••••••"
+                    value={resetConfirm}
+                    onChange={(e) => setResetConfirm(e.target.value)}
+                    className="pl-10 bg-secondary border-border"
+                    autoComplete="new-password"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                {PASSWORD_RULES.map((rule) => (
+                  <div key={rule.label} className={cn("flex items-center gap-2 text-xs", rule.test(resetPassword) ? "text-green-400" : "text-muted-foreground")}>
+                    {rule.test(resetPassword) ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+                    {rule.label}
+                  </div>
+                ))}
+              </div>
+              <Button type="submit" className="w-full glow-green font-display text-base" disabled={resetLoading}>
+                {resetLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Swords className="mr-2 h-4 w-4" />}
+                Update Password
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (verifyEmailPending) {
     return (
@@ -264,38 +376,44 @@ const Auth = () => {
           <CardHeader className="text-center flex flex-col items-center gap-1">
             <ArenaLogo variant="compact" markSize={30} className="mb-1" />
             <p className="font-display text-xl font-bold text-foreground tracking-wide">Reset Password</p>
-            <p className="text-sm text-muted-foreground">Enter your email to receive a reset link</p>
+            <p className="text-sm text-muted-foreground">
+              {forgotSent ? "Check your inbox" : "Enter your email to receive a reset link"}
+            </p>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div>
-              <label className="text-sm text-muted-foreground mb-1 block">Email</label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  type="email"
-                  placeholder="your@email.com"
-                  value={forgotEmail}
-                  onChange={(e) => setForgotEmail(e.target.value)}
-                  className="pl-10 bg-secondary border-border"
-                />
-              </div>
-            </div>
-            <Button className="w-full glow-green font-display" onClick={() => {
-              toast({ title: "Email sent!", description: "Check your inbox for the reset link." });
-              setForgotMode(false);
-            }}>
-              Send Reset Link
-            </Button>
-            <Button variant="ghost" className="w-full text-muted-foreground" onClick={() => setForgotMode(false)}>
-              Back to Login
-            </Button>
-            <Button
-              type="button"
-              className="w-full glow-green font-display text-base"
-              onClick={() => navigate("/")}
-            >
-              <Home className="mr-2 h-4 w-4" /> Back to Site
-            </Button>
+            {forgotSent ? (
+              <>
+                <p className="text-sm text-muted-foreground text-center">
+                  If an account exists for <span className="text-foreground font-medium">{forgotEmail}</span>, a reset link has been sent. Check your spam folder too.
+                </p>
+                <Button className="w-full font-display" variant="outline" onClick={() => { setForgotMode(false); setForgotSent(false); setForgotEmail(""); }}>
+                  Back to Login
+                </Button>
+              </>
+            ) : (
+              <form onSubmit={handleForgotSubmit} className="space-y-4">
+                <div>
+                  <label className="text-sm text-muted-foreground mb-1 block">Email</label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      type="email"
+                      placeholder="your@email.com"
+                      value={forgotEmail}
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                      className="pl-10 bg-secondary border-border"
+                    />
+                  </div>
+                </div>
+                <Button type="submit" className="w-full glow-green font-display" disabled={forgotLoading}>
+                  {forgotLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  Send Reset Link
+                </Button>
+                <Button variant="ghost" className="w-full text-muted-foreground" type="button" onClick={() => setForgotMode(false)}>
+                  Back to Login
+                </Button>
+              </form>
+            )}
           </CardContent>
         </Card>
       </div>
