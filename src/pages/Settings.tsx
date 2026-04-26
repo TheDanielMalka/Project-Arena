@@ -38,6 +38,7 @@ import {
   apiDeleteMyAccount,
   apiGetForumProfile,
   apiPatchForumProfile,
+  apiRequestEmailChange,
 } from "@/lib/engine-api";
 
 // ─── Nav sections ──────────────────────────────────────────────
@@ -177,7 +178,7 @@ const ENGINE_REGION_OPTIONS: { value: UserSettingsRegion; label: string }[] = [
 const SettingsPage = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { user, greetingType, token, logout, updateProfile } = useUserStore();
+  const { user, greetingType, token, logout, updateProfile, refreshProfileFromServer } = useUserStore();
   const clientStatusLabel = useClientStore((s) => s.statusLabel);
   const clientVersion = useClientStore((s) => s.version);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -216,27 +217,35 @@ const SettingsPage = () => {
   const [newEmail, setNewEmail]         = useState("");
   const [emailUpdated, setEmailUpdated] = useState(false);
   const [showEmailPw, setShowEmailPw]   = useState(false);
+  const [emailChangeSaving, setEmailChangeSaving] = useState(false);
+  const [emailChangeError, setEmailChangeError]   = useState("");
 
   const handleEmailVerify = () => {
     if (!emailPw) { setEmailPwError("Please enter your password."); return; }
-    // DB-ready: POST /api/auth/verify-password { password: emailPw }
     setEmailPwError("");
     setNewEmail(user?.email ?? "");
     setEmailStep("change");
   };
 
-  const handleEmailUpdate = () => {
+  const handleEmailUpdate = async () => {
     if (!newEmail || !newEmail.includes("@")) {
       toast({ title: "Invalid email", description: "Please enter a valid email address.", variant: "destructive" });
       return;
     }
-    // DB-ready: PATCH /api/users/me { email: newEmail }
-    //           server sends verification link to newEmail before updating
+    if (!token) return;
+    setEmailChangeSaving(true);
+    setEmailChangeError("");
+    const result = await apiRequestEmailChange(token, newEmail, emailPw);
+    setEmailChangeSaving(false);
+    if (!result.success) {
+      setEmailChangeError(result.error ?? "Failed to send verification email.");
+      return;
+    }
     setEmailStep("idle");
-    setEmailPw(""); setNewEmail(""); setEmailPwError("");
+    setEmailPw(""); setNewEmail(""); setEmailPwError(""); setEmailChangeError("");
     setEmailUpdated(true);
-    toast({ title: "✅ Email updated", description: `A verification link has been sent to ${newEmail}.` });
-    setTimeout(() => setEmailUpdated(false), 3000);
+    toast({ title: "Verification sent", description: `A confirmation link has been sent to ${newEmail}. Your email won't change until you click it.` });
+    setTimeout(() => setEmailUpdated(false), 4000);
   };
 
   // ── 2FA state machine ──────────────────────────────────────────
@@ -261,6 +270,18 @@ const SettingsPage = () => {
   useEffect(() => {
     setTwoFAEnabled(user?.twoFactorEnabled ?? false);
   }, [user?.twoFactorEnabled]);
+
+  useEffect(() => {
+    const changed = searchParams.get("email_changed");
+    if (!changed) return;
+    setSearchParams({}, { replace: true });
+    if (changed === "1") {
+      toast({ title: "Email updated!", description: "Your new email address is now active." });
+      void refreshProfileFromServer();
+    } else if (changed === "expired") {
+      toast({ title: "Link expired", description: "The email change link has expired. Please request a new one.", variant: "destructive" });
+    }
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -1054,17 +1075,17 @@ const SettingsPage = () => {
             />
           </div>
           <p className="text-[10px] text-muted-foreground leading-relaxed">
-            {/* DB-ready: PATCH /api/users/me { email } → server sends verification to newEmail */}
             A verification link will be sent to your new address. Your email won't change until you click it.
           </p>
+          {emailChangeError && <p className="text-[11px] text-destructive">{emailChangeError}</p>}
         </div>
         <div className="flex gap-2 px-5 pb-5">
           <Button variant="ghost" size="sm" className="flex-1 text-xs font-display border border-border/60"
-            onClick={() => setEmailStep("idle")}>Cancel</Button>
+            onClick={() => { setEmailStep("idle"); setEmailChangeError(""); }}>Cancel</Button>
           <Button size="sm"
-            disabled={!newEmail || !newEmail.includes("@") || newEmail === user?.email}
+            disabled={!newEmail || !newEmail.includes("@") || newEmail === user?.email || emailChangeSaving}
             className="flex-1 text-xs font-display bg-arena-cyan hover:bg-arena-cyan/80 text-black font-bold"
-            onClick={handleEmailUpdate}>
+            onClick={() => void handleEmailUpdate()}>
             <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" /> Confirm & Send Link
           </Button>
         </div>

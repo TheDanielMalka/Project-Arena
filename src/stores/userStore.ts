@@ -29,7 +29,7 @@ import {
 } from "@/lib/authStorage";
 
 export type SignupResult =
-  | { ok: true }
+  | { ok: true; verification_required?: boolean; email?: string }
   | { ok: false; status?: number; detail?: string; field?: RegisterConflictField | null };
 
 interface UserState {
@@ -266,7 +266,10 @@ export const useUserStore = create<UserState>((set, get) => ({
       };
     }
     const data = reg.data;
-    const profile = await apiGetMe(data.access_token);
+    if (data.verification_required) {
+      return { ok: true as const, verification_required: true, email: data.email };
+    }
+    const profile = await apiGetMe(data.access_token!);
 
     if (!profile) {
       return { ok: false as const, detail: "Could not load profile after signup.", field: null };

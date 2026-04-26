@@ -571,6 +571,7 @@ export type ApiLoginResult =
   | ApiLoginSuccess
   | { requires_2fa: true; temp_token: string }
   | { _rate_limited: true }
+  | { _email_not_verified: true; email: string }
   | null;
 
 // POST /auth/google — Google Identity Services id_token (same response shape as login)
@@ -608,6 +609,10 @@ export async function apiLogin(identifier: string, password: string): Promise<Ap
     });
     if (res.status === 429) return { _rate_limited: true };
     const raw = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (res.status === 403 && typeof raw?.detail === "string" && raw.detail === "email_not_verified") {
+      const emailGuess = identifier.includes("@") ? identifier.trim() : "";
+      return { _email_not_verified: true, email: emailGuess };
+    }
     if (!res.ok) return null;
     if (!raw) return null;
     if (raw.requires_2fa === true && typeof raw.temp_token === "string") {
@@ -620,6 +625,42 @@ export async function apiLogin(identifier: string, password: string): Promise<Ap
   } catch (err) {
     reportEngineApiError(err);
     return null;
+  }
+}
+
+/** POST /auth/resend-verification — resend account verification email */
+export async function apiResendVerification(email: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/auth/resend-verification`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    return res.ok;
+  } catch (err) {
+    reportEngineApiError(err);
+    return false;
+  }
+}
+
+/** POST /auth/request-email-change — send confirmation to new email address */
+export async function apiRequestEmailChange(
+  token: string,
+  newEmail: string,
+  password: string,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await arenaUserFetch(`${ENGINE_BASE}/auth/request-email-change`, token, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ new_email: newEmail, password }),
+    });
+    if (res.ok) return { success: true };
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+    return { success: false, error: (body.detail as string) ?? "Failed to send confirmation" };
+  } catch (err) {
+    reportEngineApiError(err);
+    return { success: false, error: "Network error" };
   }
 }
 
@@ -650,12 +691,13 @@ export function registerConflictFieldFromDetail(detail: string | null): Register
 }
 
 export type ApiRegisterSuccess = {
-  access_token: string;
+  access_token?: string;
+  verification_required?: boolean;
   user_id: string;
   username: string;
   email: string;
   arena_id: string | null;
-  wallet_address: string | null;
+  wallet_address?: string | null;
 };
 
 export type ApiRegisterResult =

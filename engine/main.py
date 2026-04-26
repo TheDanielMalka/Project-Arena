@@ -28,8 +28,10 @@ from src.config import (
     DATABASE_URL, ENVIRONMENT, MIN_CLIENT_VERSION, STEAM_API_KEY,
     ENGINE_BASE_URL, FRONTEND_URL, POOL_MANAGER_INTERVAL, ARENA_SYSTEM_USER_ID,
     DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET,
-    FACEIT_API_KEY, FACEIT_CLIENT_ID,
+    FACEIT_API_KEY, FACEIT_CLIENT_ID, FACEIT_CLIENT_SECRET,
+    RESEND_API_KEY,
 )
+from src.email_service import send_verification_email, send_email_change_email
 from src.forum import router as forum_router
 from src.ws_manager import ConnectionManager
 from src.tournament_routes import router as tournament_router
@@ -1009,6 +1011,28 @@ async def lifespan(app: FastAPI):
                 CREATE INDEX IF NOT EXISTS idx_forum_reports_status
                 ON forum_reports(status, created_at DESC)
             """))
+            # Migration 054: email verification + pending email change
+            conn.execute(text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS email_verified                 BOOLEAN     NOT NULL DEFAULT FALSE, "
+                "ADD COLUMN IF NOT EXISTS verification_token             UUID, "
+                "ADD COLUMN IF NOT EXISTS verification_token_expires_at  TIMESTAMPTZ, "
+                "ADD COLUMN IF NOT EXISTS pending_email                  VARCHAR(255), "
+                "ADD COLUMN IF NOT EXISTS pending_email_token            UUID, "
+                "ADD COLUMN IF NOT EXISTS pending_email_token_expires_at TIMESTAMPTZ"
+            ))
+            # All users that existed before verification was introduced are pre-verified
+            conn.execute(text(
+                "UPDATE users SET email_verified = TRUE WHERE email_verified = FALSE"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS users_verification_token_idx "
+                "ON users(verification_token) WHERE verification_token IS NOT NULL"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS users_pending_email_token_idx "
+                "ON users(pending_email_token) WHERE pending_email_token IS NOT NULL"
+            ))
             conn.commit()
         logger.info("✅ Arena Engine connected to DB")
     except Exception as exc:
@@ -1666,6 +1690,7 @@ class AuthResponse(BaseModel):
     wallet_address: str | None = None   # DB-ready: from users.wallet_address
     requires_2fa: bool = False
     temp_token: str | None = None
+    verification_required: bool = False
 
 
 class UserProfile(BaseModel):
@@ -3392,13 +3417,18 @@ async def register(req: RegisterRequest, request: Request, response: Response):
             # ── Create user ───────────────────────────────────────────────────
             pw_hash  = auth.hash_password(req.password)
             arena_id = auth.generate_arena_id()
+            import uuid as _uuid
+            v_token   = str(_uuid.uuid4())
+            needs_verify = bool(RESEND_API_KEY)
             row = session.execute(
                 text(
-                    "INSERT INTO users (username, email, password_hash, arena_id, at_balance) "
-                    "VALUES (:u, :e, :h, :a, 200) "
+                    "INSERT INTO users (username, email, password_hash, arena_id, at_balance, "
+                    "                   email_verified, verification_token, verification_token_expires_at) "
+                    "VALUES (:u, :e, :h, :a, 200, :ev, :vt, NOW() + INTERVAL '24 hours') "
                     "RETURNING id, username, email, arena_id"
                 ),
-                {"u": username, "e": email, "h": pw_hash, "a": arena_id},
+                {"u": username, "e": email, "h": pw_hash, "a": arena_id,
+                 "ev": not needs_verify, "vt": v_token if needs_verify else None},
             ).fetchone()
 
             user_id = str(row[0])
@@ -3427,6 +3457,16 @@ async def register(req: RegisterRequest, request: Request, response: Response):
         logger.error("register error: %s", exc)
         raise HTTPException(500, "Registration failed")
 
+    if needs_verify:
+        await asyncio.to_thread(send_verification_email, email, username, v_token)
+        return AuthResponse(
+            verification_required=True,
+            user_id=user_id,
+            username=username,
+            email=email,
+            arena_id=arena_id,
+        )
+
     token = auth.issue_token(user_id, email, username)
     _set_auth_cookie(response, token)
     return AuthResponse(
@@ -3453,7 +3493,8 @@ async def login(req: LoginRequest, request: Request, response: Response):
             row = session.execute(
                 text(
                     "SELECT id, username, email, password_hash, arena_id, wallet_address, "
-                    "       COALESCE(totp_enabled, FALSE), totp_secret "
+                    "       COALESCE(totp_enabled, FALSE), totp_secret, "
+                    "       COALESCE(email_verified, TRUE) "
                     "FROM users "
                     "WHERE lower(email) = lower(:id) OR lower(username) = lower(:id)"
                 ),
@@ -3471,6 +3512,9 @@ async def login(req: LoginRequest, request: Request, response: Response):
         raise HTTPException(401, "This account uses Google sign-in")
     if not auth.verify_password(req.password, row[3]):
         raise HTTPException(401, "Invalid credentials")
+    email_verified = bool(row[8]) if len(row) > 8 else True
+    if not email_verified:
+        raise HTTPException(403, "email_not_verified")
 
     user_id = str(row[0])
     if totp_enabled:
@@ -3608,7 +3652,7 @@ async def auth_google(req: GoogleAuthRequest, request: Request, response: Respon
                         "This email is linked to a different Google account",
                     )
                 session.execute(
-                    text("UPDATE users SET google_id = :g WHERE id = :id"),
+                    text("UPDATE users SET google_id = :g, email_verified = TRUE WHERE id = :id"),
                     {"g": str(sub), "id": str(row_em[0])},
                 )
                 session.commit()
@@ -3625,8 +3669,8 @@ async def auth_google(req: GoogleAuthRequest, request: Request, response: Respon
             ins = session.execute(
                 text(
                     "INSERT INTO users (username, email, password_hash, arena_id, "
-                    "                   google_id, auth_provider, at_balance) "
-                    "VALUES (:u, :e, NULL, :a, :g, 'google', 200) "
+                    "                   google_id, auth_provider, at_balance, email_verified) "
+                    "VALUES (:u, :e, NULL, :a, :g, 'google', 200, TRUE) "
                     "RETURNING id, username, email, arena_id, wallet_address"
                 ),
                 {
@@ -4482,6 +4526,7 @@ async def faceit_auth_callback(code: str, state: str):
                 data={
                     "grant_type":    "authorization_code",
                     "client_id":     FACEIT_CLIENT_ID,
+                    **({"client_secret": FACEIT_CLIENT_SECRET} if FACEIT_CLIENT_SECRET else {}),
                     "code":          code,
                     "redirect_uri":  f"{ENGINE_BASE_URL}/auth/faceit/callback",
                     "code_verifier": code_verifier,
@@ -4640,6 +4685,170 @@ async def riot_disconnect(payload: dict = Depends(verify_token)):
         logger.error("Riot unlink DB error: %s", exc)
         raise HTTPException(500, "Failed to unlink Riot ID")
     return {"unlinked": True}
+
+
+# ── Email verification ─────────────────────────────────────────────────────────
+
+@app.get("/auth/verify-email")
+async def verify_email(token: str = Query(...)):
+    """Click-link from verification email → marks email_verified=TRUE → redirect to frontend."""
+    import uuid as _uuid
+    try:
+        _uuid.UUID(token)
+    except ValueError:
+        raise HTTPException(400, "Invalid verification token")
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT id, username FROM users "
+                    "WHERE verification_token = :t "
+                    "  AND verification_token_expires_at > NOW() "
+                    "  AND email_verified = FALSE"
+                ),
+                {"t": token},
+            ).fetchone()
+            if not row:
+                from fastapi.responses import RedirectResponse
+                return RedirectResponse(f"{FRONTEND_URL}/auth?verified=expired")
+            session.execute(
+                text(
+                    "UPDATE users "
+                    "SET email_verified = TRUE, verification_token = NULL, "
+                    "    verification_token_expires_at = NULL "
+                    "WHERE id = :uid"
+                ),
+                {"uid": str(row[0])},
+            )
+            session.commit()
+    except Exception as exc:
+        logger.error("verify_email DB error: %s", exc)
+        raise HTTPException(500, "Verification failed")
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(f"{FRONTEND_URL}/auth?verified=1")
+
+
+@app.post("/auth/resend-verification", status_code=200)
+async def resend_verification(request: Request):
+    """Resend verification email for unverified account."""
+    import uuid as _uuid
+    _check_rate_limit(f"resend_verify:{request.client.host}", max_calls=3, window_secs=300)
+    body = await request.json()
+    email = (body.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(400, "email required")
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("SELECT id, username FROM users WHERE lower(email) = :e AND email_verified = FALSE"),
+                {"e": email},
+            ).fetchone()
+            if not row:
+                return {"sent": True}  # silent: don't reveal whether email exists
+            new_token = str(_uuid.uuid4())
+            session.execute(
+                text(
+                    "UPDATE users SET verification_token = :t, "
+                    "verification_token_expires_at = NOW() + INTERVAL '24 hours' "
+                    "WHERE id = :uid"
+                ),
+                {"t": new_token, "uid": str(row[0])},
+            )
+            session.commit()
+    except Exception as exc:
+        logger.error("resend_verification DB error: %s", exc)
+        raise HTTPException(500, "Failed to resend")
+    await asyncio.to_thread(send_verification_email, email, row[1], new_token)
+    return {"sent": True}
+
+
+@app.post("/auth/request-email-change", status_code=200)
+async def request_email_change(request: Request, payload: dict = Depends(verify_token)):
+    """Initiate email change: verify password, send confirmation to new address."""
+    import uuid as _uuid
+    user_id = str(payload["sub"])
+    body = await request.json()
+    new_email  = (body.get("new_email") or "").strip().lower()
+    password   = body.get("password") or ""
+    if not new_email or not password:
+        raise HTTPException(400, "new_email and password required")
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("SELECT username, email, password_hash, auth_provider FROM users WHERE id = :uid"),
+                {"uid": user_id},
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "User not found")
+            if row[3] == "google":
+                raise HTTPException(400, "Google accounts cannot change email here")
+            if not auth.verify_password(password, row[2]):
+                raise HTTPException(401, "Incorrect password")
+            if new_email == row[1]:
+                raise HTTPException(400, "That is already your current email")
+            conflict = session.execute(
+                text("SELECT 1 FROM users WHERE lower(email) = :e AND id != :uid"),
+                {"e": new_email, "uid": user_id},
+            ).fetchone()
+            if conflict:
+                raise HTTPException(409, "That email is already in use")
+            token = str(_uuid.uuid4())
+            session.execute(
+                text(
+                    "UPDATE users SET pending_email = :pe, pending_email_token = :t, "
+                    "pending_email_token_expires_at = NOW() + INTERVAL '24 hours' "
+                    "WHERE id = :uid"
+                ),
+                {"pe": new_email, "t": token, "uid": user_id},
+            )
+            session.commit()
+            username = row[0]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("request_email_change DB error: %s", exc)
+        raise HTTPException(500, "Failed to initiate email change")
+    await asyncio.to_thread(send_email_change_email, new_email, username, token)
+    return {"sent": True}
+
+
+@app.get("/auth/verify-email-change")
+async def verify_email_change(token: str = Query(...)):
+    """Click-link from email-change email → updates users.email → redirect to settings."""
+    import uuid as _uuid
+    try:
+        _uuid.UUID(token)
+    except ValueError:
+        raise HTTPException(400, "Invalid token")
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT id FROM users "
+                    "WHERE pending_email_token = :t "
+                    "  AND pending_email_token_expires_at > NOW()"
+                ),
+                {"t": token},
+            ).fetchone()
+            if not row:
+                from fastapi.responses import RedirectResponse
+                return RedirectResponse(f"{FRONTEND_URL}/settings?email_changed=expired")
+            session.execute(
+                text(
+                    "UPDATE users "
+                    "SET email = pending_email, email_verified = TRUE, "
+                    "    pending_email = NULL, pending_email_token = NULL, "
+                    "    pending_email_token_expires_at = NULL "
+                    "WHERE id = :uid"
+                ),
+                {"uid": str(row[0])},
+            )
+            session.commit()
+    except Exception as exc:
+        logger.error("verify_email_change DB error: %s", exc)
+        raise HTTPException(500, "Failed to confirm email change")
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(f"{FRONTEND_URL}/settings?email_changed=1")
 
 
 @app.get("/users/me/faceit-stats")

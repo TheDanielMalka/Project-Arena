@@ -1,20 +1,22 @@
 import { useEffect, useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useSearchParams } from "react-router-dom";
 import { GoogleLogin } from "@react-oauth/google";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Swords, Mail, Lock, Eye, EyeOff, User, Gamepad2, Check, X, Home } from "lucide-react";
+import { Swords, Mail, Lock, Eye, EyeOff, User, Gamepad2, Check, X, Home, Loader2 } from "lucide-react";
 import { useUserStore } from "@/stores/userStore";
 import { useToast } from "@/hooks/use-toast";
 import { PASSWORD_RULES, isPasswordValid } from "@/lib/passwordValidation";
 import { cn } from "@/lib/utils";
 import { ArenaGlobalStarfield } from "@/components/visual/ArenaGlobalStarfield";
 import { ArenaLogo } from "@/components/shared/ArenaLogo";
+import { apiResendVerification } from "@/lib/engine-api";
 
 const Auth = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { login, signup, loginWithGoogleIdToken, isAuthenticated, completeTwoFactorLogin } = useUserStore();
   const { toast } = useToast();
   const [showPassword, setShowPassword] = useState(false);
@@ -36,6 +38,9 @@ const Auth = () => {
   const [loginTempToken, setLoginTempToken] = useState("");
   const [loginTwoFaCode, setLoginTwoFaCode] = useState("");
   const [authTab, setAuthTab] = useState<"login" | "signup">("login");
+  const [verifyEmailPending, setVerifyEmailPending] = useState<string | null>(null);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [loginNotVerifiedEmail, setLoginNotVerifiedEmail] = useState<string | null>(null);
 
   const hasGoogleClient = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim());
 
@@ -43,6 +48,17 @@ const Auth = () => {
   useEffect(() => {
     if (isAuthenticated) navigate("/", { replace: true });
   }, [isAuthenticated, navigate]);
+
+  useEffect(() => {
+    const v = searchParams.get("verified");
+    if (v === "1") {
+      toast({ title: "Email verified!", description: "Your account is verified. You can now log in." });
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (v === "expired") {
+      toast({ title: "Link expired", description: "Verification link has expired. Please request a new one.", variant: "destructive" });
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
 
   if (isAuthenticated) return null;
 
@@ -63,6 +79,10 @@ const Auth = () => {
       setLoginTempToken(result.temp_token);
       setLoginTwoFaCode("");
       setLoginAuthPhase("2fa");
+      return;
+    }
+    if (result && typeof result === "object" && "_email_not_verified" in result) {
+      setLoginNotVerifiedEmail(result.email || loginEmail);
       return;
     }
     if (!result) {
@@ -125,6 +145,10 @@ const Auth = () => {
       }
       return;
     }
+    if (result.ok && result.verification_required) {
+      setVerifyEmailPending(result.email ?? signupEmail);
+      return;
+    }
     navigate("/");
   };
 
@@ -163,6 +187,74 @@ const Auth = () => {
     }
     navigate("/");
   };
+
+  const handleResend = async (email: string) => {
+    setResendLoading(true);
+    await apiResendVerification(email);
+    setResendLoading(false);
+    toast({ title: "Email sent!", description: "Check your inbox for the verification link." });
+  };
+
+  if (verifyEmailPending) {
+    return (
+      <div className="relative min-h-screen flex items-center justify-center bg-background px-4">
+        <ArenaGlobalStarfield className="fixed inset-0 z-0" />
+        <Card className="relative z-[1] w-full max-w-md bg-card border-border text-center">
+          <CardHeader className="flex flex-col items-center gap-2 pb-2">
+            <ArenaLogo variant="compact" markSize={30} className="mb-1" />
+            <Mail className="h-10 w-10 text-primary" />
+            <p className="font-display text-xl font-bold text-foreground tracking-wide">Check your email</p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              We sent a verification link to <span className="text-foreground font-medium">{verifyEmailPending}</span>.
+              Click the link to activate your account.
+            </p>
+            <p className="text-xs text-muted-foreground">Didn't receive it? Check your spam folder or resend below.</p>
+            <Button className="w-full font-display" variant="outline" disabled={resendLoading}
+              onClick={() => void handleResend(verifyEmailPending)}>
+              {resendLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Resend verification email
+            </Button>
+            <Button variant="ghost" className="w-full text-muted-foreground text-xs"
+              onClick={() => setVerifyEmailPending(null)}>
+              Back to login
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (loginNotVerifiedEmail) {
+    return (
+      <div className="relative min-h-screen flex items-center justify-center bg-background px-4">
+        <ArenaGlobalStarfield className="fixed inset-0 z-0" />
+        <Card className="relative z-[1] w-full max-w-md bg-card border-border text-center">
+          <CardHeader className="flex flex-col items-center gap-2 pb-2">
+            <ArenaLogo variant="compact" markSize={30} className="mb-1" />
+            <Mail className="h-10 w-10 text-yellow-400" />
+            <p className="font-display text-xl font-bold text-foreground tracking-wide">Email not verified</p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Your account hasn't been verified yet. Check your inbox for the verification email
+              {loginNotVerifiedEmail ? <> sent to <span className="text-foreground font-medium">{loginNotVerifiedEmail}</span></> : null}.
+            </p>
+            <Button className="w-full font-display" disabled={resendLoading}
+              onClick={() => void handleResend(loginNotVerifiedEmail)}>
+              {resendLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Resend verification email
+            </Button>
+            <Button variant="ghost" className="w-full text-muted-foreground text-xs"
+              onClick={() => setLoginNotVerifiedEmail(null)}>
+              Back to login
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (forgotMode) {
     return (
