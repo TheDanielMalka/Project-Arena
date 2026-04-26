@@ -971,7 +971,6 @@ const MatchLobby = () => {
     const stakeLabel   = formatMatchStakeShort(myActiveRoom);
     const isCrypto     = matchStakeCurrency(myActiveRoom) === "CRYPTO";
     const depositsExist = (myActiveRoom.depositsReceived ?? 0) > 0;
-    const onChainId    = activeRoomOnChainId;
     setDeleteRoomConfirmOpen(false);
 
     const clearRoomState = () => {
@@ -993,15 +992,23 @@ const MatchLobby = () => {
       }
     };
 
-    if (isCrypto && depositsExist && onChainId != null) {
-      // Confirm-then-clear: on-chain cancelMatch FIRST, then update UI.
-      // The MatchCancelled event listener will update DB automatically.
-      // Do NOT clear state until the tx is confirmed — otherwise the UI
-      // loses the onChainId needed for any retry.
-      setLeavePending(true);
-      void (async () => {
-        try {
-          await cancelMatchOnChain(onChainId);
+    setLeavePending(true);
+    void (async () => {
+      try {
+        // Resolve on-chain match ID — prefer in-memory state, fall back to server
+        // (state is lost on page refresh since activeRoomOnChainId is useState).
+        let resolvedOnChainId = activeRoomOnChainId;
+        if (resolvedOnChainId === null && isCrypto && depositsExist && token && looksLikeServerMatchId(matchId)) {
+          const leaveStatus = await apiGetLeaveStatus(token, matchId);
+          if (leaveStatus?.on_chain_match_id) {
+            resolvedOnChainId = BigInt(leaveStatus.on_chain_match_id);
+          }
+        }
+
+        if (isCrypto && depositsExist && resolvedOnChainId != null) {
+          // Confirm-then-clear: on-chain cancelMatch FIRST, then update UI.
+          // The MatchCancelled event listener will update DB automatically.
+          await cancelMatchOnChain(resolvedOnChainId);
           clearRoomState();
           useNotificationStore.getState().addNotification({
             type: "system",
@@ -1009,26 +1016,26 @@ const MatchLobby = () => {
             message: `cancelMatch confirmed on-chain — all ${stakeLabel} deposits refunded to each player.`,
           });
           doServerCancel();
-        } catch (err) {
+        } else {
+          // AT match or CRYPTO with zero deposits — safe to clear and cancel in DB immediately.
+          clearRoomState();
           useNotificationStore.getState().addNotification({
             type: "system",
-            title: "On-chain cancel failed",
-            message: friendlyChainErrorMessage(err) ?? "MetaMask transaction rejected. Your tBNB is still in escrow — try again or wait 1h for cancelWaiting.",
+            title: "🗑️ Room Deleted",
+            message: `Match room closed. Your ${stakeLabel} deposit has been refunded.`,
           });
-        } finally {
-          setLeavePending(false);
+          doServerCancel();
         }
-      })();
-    } else {
-      // AT match or CRYPTO with zero deposits — safe to clear and cancel in DB immediately.
-      clearRoomState();
-      useNotificationStore.getState().addNotification({
-        type: "system",
-        title: "🗑️ Room Deleted",
-        message: `Match room closed. Your ${stakeLabel} deposit has been refunded.`,
-      });
-      doServerCancel();
-    }
+      } catch (err) {
+        useNotificationStore.getState().addNotification({
+          type: "system",
+          title: "On-chain cancel failed",
+          message: friendlyChainErrorMessage(err) ?? "MetaMask transaction rejected. Your tBNB is still in escrow — try again or wait 1h for cancelWaiting.",
+        });
+      } finally {
+        setLeavePending(false);
+      }
+    })();
   }, [myActiveRoom, user, token, cancelEscrow, deleteMatch, activeRoomOnChainId]);
 
   const handleRescueFunds = useCallback(() => {
