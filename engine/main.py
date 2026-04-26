@@ -4508,18 +4508,22 @@ def _faceit_states_ensure_table() -> None:
                 )
             """))
             s.commit()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.error("FACEIT: failed to create faceit_oauth_states table: %s", exc)
 
 _faceit_states_ensure_table()
 
 
 @app.get("/auth/faceit")
 async def faceit_auth_start(token: str):
-    """Redirect user to FACEIT OAuth2 consent screen (PKCE flow)."""
+    """Redirect user to FACEIT OAuth2 consent screen.
+    Uses PKCE only for public clients (no client_secret).
+    Confidential clients authenticate via client_secret at token exchange.
+    """
     if not FACEIT_CLIENT_ID:
         raise HTTPException(503, "FACEIT OAuth not configured")
-    verifier, challenge = _faceit_pkce_pair()
+    use_pkce = not FACEIT_CLIENT_SECRET
+    verifier, challenge = (_faceit_pkce_pair() if use_pkce else ("", ""))
     nonce = secrets.token_urlsafe(16)
     with SessionLocal() as s:
         s.execute(text("""
@@ -4530,15 +4534,16 @@ async def faceit_auth_start(token: str):
         """), {"n": nonce, "j": token, "v": verifier})
         s.execute(text("DELETE FROM faceit_oauth_states WHERE expires_at < NOW()"))
         s.commit()
-    params = {
-        "response_type":         "code",
-        "client_id":             FACEIT_CLIENT_ID,
-        "redirect_uri":          f"{ENGINE_BASE_URL}/auth/faceit/callback",
-        "scope":                 "openid email profile",
-        "state":                 nonce,
-        "code_challenge":        challenge,
-        "code_challenge_method": "S256",
+    params: dict = {
+        "response_type": "code",
+        "client_id":     FACEIT_CLIENT_ID,
+        "redirect_uri":  f"{ENGINE_BASE_URL.rstrip('/')}/auth/faceit/callback",
+        "scope":         "openid email profile",
+        "state":         nonce,
     }
+    if use_pkce:
+        params["code_challenge"]        = challenge
+        params["code_challenge_method"] = "S256"
     url = "https://accounts.faceit.com/oauth/authorize?" + urllib.parse.urlencode(params)
     return RedirectResponse(url, status_code=302)
 
@@ -4556,73 +4561,128 @@ def _faceit_html(redirect_url: str, success: bool) -> HTMLResponse:
 (function(){{
   var ok={s};
   var m={{type:"faceit_linked",success:ok,ts:Date.now()}};
-  try{{localStorage.setItem("faceit_auth_result",JSON.stringify(m));}}catch(e){{}}
   if(window.opener){{try{{window.opener.postMessage(m,"*");}}catch(e){{}}}}
   window.close();
-  setTimeout(function(){{window.location.href="{redirect_url}";}},800);
+  setTimeout(function(){{window.location.href="{redirect_url}";}},500);
 }})();
 </script></body></html>""")
 
 
+def _faceit_decode_id_token(id_token: str) -> dict | None:
+    import base64 as _b64, json as _json
+    try:
+        parts = id_token.split(".")
+        if len(parts) < 2:
+            return None
+        padded = parts[1] + "=" * (4 - len(parts[1]) % 4)
+        return _json.loads(_b64.urlsafe_b64decode(padded))
+    except Exception:
+        return None
+
+
 @app.get("/auth/faceit/callback")
-async def faceit_auth_callback(request: Request, code: str, state: str):
-    """FACEIT OAuth2 PKCE callback: exchange code → token → fetch player → save to DB."""
+async def faceit_auth_callback(
+    request: Request,
+    state: str,
+    code: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+):
+    """FACEIT OAuth2 callback: exchange code → token → fetch player → save to DB."""
     error_url = f"{FRONTEND_URL}/profile?faceit_error=1"
     wants_json = "application/json" in request.headers.get("accept", "")
 
-    if not FACEIT_CLIENT_ID:
+    if error:
+        logger.warning("FACEIT callback: provider returned error=%s description=%s", error, error_description)
         return _faceit_resp(error_url, False, wants_json)
 
-    with SessionLocal() as _s:
-        _row = _s.execute(text("""
-            DELETE FROM faceit_oauth_states
-            WHERE nonce = :nonce AND expires_at > NOW()
-            RETURNING jwt_token, code_verifier
-        """), {"nonce": state}).fetchone()
-        _s.commit()
+    if not code:
+        logger.error("FACEIT callback: no code and no error in callback params")
+        return _faceit_resp(error_url, False, wants_json)
+
+    if not FACEIT_CLIENT_ID:
+        logger.error("FACEIT callback: FACEIT_CLIENT_ID not set")
+        return _faceit_resp(error_url, False, wants_json)
+
+    try:
+        with SessionLocal() as _s:
+            _row = _s.execute(text("""
+                DELETE FROM faceit_oauth_states
+                WHERE nonce = :nonce AND expires_at > NOW()
+                RETURNING jwt_token, code_verifier
+            """), {"nonce": state}).fetchone()
+            _s.commit()
+    except Exception as exc:
+        logger.error("FACEIT callback: nonce table query failed: %s", exc)
+        return _faceit_resp(error_url, False, wants_json)
+
     if not _row:
+        logger.warning("FACEIT callback: nonce not found or expired (state prefix=%s)", state[:8])
         return _faceit_resp(error_url, False, wants_json)
 
     jwt_token, code_verifier = _row[0], _row[1]
+    redirect_uri = f"{ENGINE_BASE_URL.rstrip('/')}/auth/faceit/callback"
+
+    token_data: dict = {
+        "grant_type":   "authorization_code",
+        "client_id":    FACEIT_CLIENT_ID,
+        "code":         code,
+        "redirect_uri": redirect_uri,
+    }
+    if FACEIT_CLIENT_SECRET:
+        token_data["client_secret"] = FACEIT_CLIENT_SECRET
+    elif code_verifier:
+        token_data["code_verifier"] = code_verifier
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as hc:
             token_resp = await hc.post(
                 "https://accounts.faceit.com/oauth/token",
-                data={
-                    "grant_type":    "authorization_code",
-                    "client_id":     FACEIT_CLIENT_ID,
-                    **({"client_secret": FACEIT_CLIENT_SECRET} if FACEIT_CLIENT_SECRET else {}),
-                    "code":          code,
-                    "redirect_uri":  f"{ENGINE_BASE_URL}/auth/faceit/callback",
-                    "code_verifier": code_verifier,
-                },
+                data=token_data,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
             if token_resp.status_code != 200:
-                logger.warning("FACEIT token exchange failed: %s", token_resp.text)
+                logger.error("FACEIT token exchange failed: status=%s body=%s",
+                             token_resp.status_code, token_resp.text[:500])
                 return _faceit_resp(error_url, False, wants_json)
 
-            access_token = token_resp.json().get("access_token")
+            token_json = token_resp.json()
+            access_token = token_json.get("access_token")
+            id_token_raw = token_json.get("id_token")
+
             if not access_token:
+                logger.error("FACEIT token exchange: no access_token in response keys=%s", list(token_json.keys()))
                 return _faceit_resp(error_url, False, wants_json)
 
+            userinfo: dict | None = None
             userinfo_resp = await hc.get(
                 "https://api.faceit.com/auth/v1/resources/userinfo",
                 headers={"Authorization": f"Bearer {access_token}"},
             )
-            if userinfo_resp.status_code != 200:
+            if userinfo_resp.status_code == 200:
+                userinfo = userinfo_resp.json()
+            else:
+                logger.warning("FACEIT userinfo endpoint failed: status=%s body=%s — trying id_token fallback",
+                               userinfo_resp.status_code, userinfo_resp.text[:200])
+                if id_token_raw:
+                    userinfo = _faceit_decode_id_token(id_token_raw)
+                    if userinfo:
+                        logger.info("FACEIT: userinfo sourced from id_token")
+
+            if not userinfo:
+                logger.error("FACEIT: no userinfo available; access_token present=%s id_token present=%s",
+                             bool(access_token), bool(id_token_raw))
                 return _faceit_resp(error_url, False, wants_json)
 
-            userinfo = userinfo_resp.json()
     except Exception as exc:
-        logger.warning("FACEIT OAuth error: %s", exc)
+        logger.error("FACEIT OAuth network error: %s", exc)
         return _faceit_resp(error_url, False, wants_json)
 
     faceit_id       = (userinfo.get("guid") or userinfo.get("sub") or "").strip()
     faceit_nickname = (userinfo.get("nickname") or userinfo.get("name") or "").strip()
 
     if not faceit_id:
+        logger.error("FACEIT: no user ID in userinfo; available keys=%s", list(userinfo.keys()))
         return _faceit_resp(error_url, False, wants_json)
 
     faceit_elo, faceit_level = None, None
@@ -4645,7 +4705,8 @@ async def faceit_auth_callback(request: Request, code: str, state: str):
     try:
         payload  = auth.decode_token(jwt_token)
         user_id  = str(payload["sub"])
-    except Exception:
+    except Exception as exc:
+        logger.error("FACEIT callback: JWT decode failed: %s", exc)
         return _faceit_resp(error_url, False, wants_json)
 
     try:
