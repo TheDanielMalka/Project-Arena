@@ -581,17 +581,31 @@ const Profile = () => {
         const authUrl = `${ENGINE_BASE}/auth/faceit?token=${encodeURIComponent(token)}`;
         const popup = window.open(authUrl, 'faceit_oauth', 'width=580,height=720,top=100,left=400');
         if (!popup) { window.location.href = authUrl; return; }
-        const onMsg = (e: MessageEvent) => {
-          if (!e.data || typeof e.data !== 'object') return;
-          const d = e.data as Record<string, unknown>;
-          if (d.type !== 'faceit_linked') return;
+        const done = (success: boolean) => {
           window.removeEventListener('message', onMsg);
           popup.close();
-          if (d.success) {
+          if (success) {
             void refreshProfileFromServer();
             toast({ title: "FACEIT Connected!", description: "Your FACEIT account has been linked to Arena." });
           } else {
             toast({ title: "FACEIT Connection Failed", variant: "destructive" });
+          }
+        };
+        const onMsg = (e: MessageEvent) => {
+          if (!e.data || typeof e.data !== 'object') return;
+          const d = e.data as Record<string, unknown>;
+          // Case A: our callback page sends {type:"faceit_linked"}
+          if (d.type === 'faceit_linked') { done(!!d.success); return; }
+          // Case B: FACEIT sends {code, state} directly via postMessage
+          const code = typeof d.code === 'string' ? d.code : null;
+          const state = typeof d.state === 'string' ? d.state : null;
+          if (code && state) {
+            fetch(`${ENGINE_BASE}/auth/faceit/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`, {
+              headers: { Accept: 'application/json' },
+            })
+              .then(r => r.json() as Promise<{ success?: boolean }>)
+              .then(j => done(!!j.success))
+              .catch(() => done(false));
           }
         };
         window.addEventListener('message', onMsg);
