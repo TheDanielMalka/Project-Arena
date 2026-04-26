@@ -993,23 +993,28 @@ const MatchLobby = () => {
     setLeavePending(true);
     void (async () => {
       try {
-        // Resolve on-chain ID — prefer in-memory state (set at deposit time),
-        // fall back to server (covers page-refresh case where useState is reset).
-        let resolvedOnChainId = activeRoomOnChainId;
-        if (resolvedOnChainId === null && isCrypto && token && looksLikeServerMatchId(matchId)) {
+        // After a page refresh both activeRoomOnChainId (useState) and
+        // depositsReceived (not in GET /matches response) are gone.
+        // Always ask the server for the authoritative state when either is missing.
+        let resolvedOnChainId  = activeRoomOnChainId;
+        let requiresOnChainCancel = isCrypto && depositsExist;
+
+        if (isCrypto && token && looksLikeServerMatchId(matchId) &&
+            (resolvedOnChainId === null || !depositsExist)) {
           const leaveStatus = await apiGetLeaveStatus(token, matchId);
           if (leaveStatus?.on_chain_match_id) {
             resolvedOnChainId = BigInt(leaveStatus.on_chain_match_id);
           }
+          // requires_cancel is the server's authoritative answer:
+          // "is_host AND is_crypto AND deposits_received > 0"
+          if (leaveStatus) {
+            requiresOnChainCancel = leaveStatus.requires_cancel;
+          }
         }
 
-        if (isCrypto && resolvedOnChainId != null) {
-          // We have an on-chain match ID — always call cancelMatch.
-          // The contract refunds whoever deposited (teamA loop + teamB loop).
-          // depositsReceived from local state is unreliable for public rooms
-          // (matchStore.joinMatch only increments it for custom rooms) and
-          // deposits_received in DB may be 0 if the oracle hasn't caught up yet.
-          // The contract itself is the source of truth — if state != WAITING it reverts.
+        if (requiresOnChainCancel && resolvedOnChainId != null) {
+          // On-chain cancelMatch FIRST — contract refunds all depositors.
+          // MatchCancelled event updates DB automatically via oracle listener.
           await cancelMatchOnChain(resolvedOnChainId);
           clearRoomState();
           useNotificationStore.getState().addNotification({
@@ -1019,7 +1024,7 @@ const MatchLobby = () => {
           });
           doServerCancel();
         } else {
-          // AT match or CRYPTO with no on-chain match yet — DB-only is safe.
+          // AT match or CRYPTO with zero on-chain deposits — DB-only is safe.
           clearRoomState();
           useNotificationStore.getState().addNotification({
             type: "system",
