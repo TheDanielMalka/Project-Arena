@@ -578,7 +578,23 @@ const Profile = () => {
       bgColor: "bg-arena-orange/5",
       onConnect: () => {
         if (!token) return;
-        window.location.href = `${ENGINE_BASE}/auth/faceit?token=${encodeURIComponent(token)}`;
+        const authUrl = `${ENGINE_BASE}/auth/faceit?token=${encodeURIComponent(token)}`;
+        const popup = window.open(authUrl, 'faceit_oauth', 'width=580,height=720,top=100,left=400');
+        if (!popup) { window.location.href = authUrl; return; }
+        const onMsg = (e: MessageEvent) => {
+          if (!e.data || typeof e.data !== 'object') return;
+          const d = e.data as Record<string, unknown>;
+          if (d.type !== 'faceit_linked') return;
+          window.removeEventListener('message', onMsg);
+          popup.close();
+          if (d.success) {
+            void refreshProfileFromServer();
+            toast({ title: "FACEIT Connected!", description: "Your FACEIT account has been linked to Arena." });
+          } else {
+            toast({ title: "FACEIT Connection Failed", variant: "destructive" });
+          }
+        };
+        window.addEventListener('message', onMsg);
       },
       onDisconnect: () => {
         if (!token) return;
