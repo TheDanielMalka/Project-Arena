@@ -78,6 +78,44 @@ def send_verification_email(to_email: str, username: str, token: str) -> bool:
     return _send(to_email, "Verify your Arena account", html)
 
 
+def send_password_reset_email(to_email: str, username: str, token: str) -> bool:
+    reset_url = f"{FRONTEND_URL}/auth?reset_token={token}"
+    html = f"""
+<!DOCTYPE html><html><body style="margin:0;padding:0;background:#0a0a0f;font-family:sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0">
+  <tr><td align="center" style="padding:40px 20px;">
+    <table width="480" cellpadding="0" cellspacing="0"
+           style="background:#111827;border:1px solid #1f2937;border-radius:12px;overflow:hidden;">
+      <tr><td style="background:#f59e0b;padding:24px 32px;text-align:center;">
+        <span style="color:#fff;font-size:22px;font-weight:700;letter-spacing:2px;">⚔ ARENA</span>
+      </td></tr>
+      <tr><td style="padding:32px;">
+        <p style="color:#f9fafb;font-size:18px;font-weight:600;margin:0 0 8px;">
+          Reset your password
+        </p>
+        <p style="color:#9ca3af;font-size:14px;margin:0 0 24px;">
+          Hi {username}, click below to set a new password for your Arena account.
+        </p>
+        <table width="100%"><tr><td align="center">
+          <a href="{reset_url}"
+             style="display:inline-block;background:#f59e0b;color:#fff;
+                    font-size:15px;font-weight:700;padding:14px 36px;
+                    border-radius:8px;text-decoration:none;letter-spacing:1px;">
+            RESET PASSWORD
+          </a>
+        </td></tr></table>
+        <p style="color:#6b7280;font-size:12px;margin:24px 0 0;text-align:center;">
+          Link expires in 1 hour. If you didn't request this, ignore this email — your password won't change.
+        </p>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body></html>
+"""
+    return _send(to_email, "Reset your Arena password", html)
+
+
 def send_email_change_email(to_email: str, username: str, token: str) -> bool:
     verify_url = f"{ENGINE_BASE_URL}/auth/verify-email-change?token={token}"
     html = f"""

@@ -31,7 +31,7 @@ from src.config import (
     FACEIT_API_KEY, FACEIT_CLIENT_ID, FACEIT_CLIENT_SECRET,
     RESEND_API_KEY,
 )
-from src.email_service import send_verification_email, send_email_change_email
+from src.email_service import send_verification_email, send_email_change_email, send_password_reset_email
 from src.forum import router as forum_router
 from src.ws_manager import ConnectionManager
 from src.tournament_routes import router as tournament_router
@@ -1032,6 +1032,16 @@ async def lifespan(app: FastAPI):
             conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS users_pending_email_token_idx "
                 "ON users(pending_email_token) WHERE pending_email_token IS NOT NULL"
+            ))
+            # Migration 055: password reset token
+            conn.execute(text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS password_reset_token             UUID, "
+                "ADD COLUMN IF NOT EXISTS password_reset_token_expires_at  TIMESTAMPTZ"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS users_password_reset_token_idx "
+                "ON users(password_reset_token) WHERE password_reset_token IS NOT NULL"
             ))
             conn.commit()
         logger.info("✅ Arena Engine connected to DB")
@@ -4849,6 +4859,89 @@ async def verify_email_change(token: str = Query(...)):
         raise HTTPException(500, "Failed to confirm email change")
     from fastapi.responses import RedirectResponse
     return RedirectResponse(f"{FRONTEND_URL}/settings?email_changed=1")
+
+
+@app.post("/auth/forgot-password", status_code=200)
+async def forgot_password(request: Request):
+    """Send a password-reset link to the given email. Always returns 200 (no user enumeration)."""
+    import uuid as _uuid
+    body = await request.json()
+    email = (body.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(400, "email required")
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text("SELECT id, username, auth_provider FROM users WHERE lower(email) = :e"),
+                {"e": email},
+            ).fetchone()
+            if not row:
+                return {"sent": True}
+            if row[2] == "google":
+                return {"sent": True}
+            token = str(_uuid.uuid4())
+            session.execute(
+                text(
+                    "UPDATE users SET password_reset_token = :t, "
+                    "password_reset_token_expires_at = NOW() + INTERVAL '1 hour' "
+                    "WHERE id = :uid"
+                ),
+                {"t": token, "uid": str(row[0])},
+            )
+            session.commit()
+            username = row[1]
+    except Exception as exc:
+        logger.error("forgot_password DB error: %s", exc)
+        return {"sent": True}
+    await asyncio.to_thread(send_password_reset_email, email, username, token)
+    return {"sent": True}
+
+
+@app.post("/auth/reset-password", status_code=200)
+async def reset_password(request: Request):
+    """Validate reset token and set new password."""
+    import uuid as _uuid
+    body = await request.json()
+    token       = (body.get("token") or "").strip()
+    new_password = body.get("new_password") or ""
+    if not token or not new_password:
+        raise HTTPException(400, "token and new_password required")
+    if len(new_password) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters")
+    try:
+        _uuid.UUID(token)
+    except ValueError:
+        raise HTTPException(400, "Invalid token")
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT id FROM users "
+                    "WHERE password_reset_token = :t "
+                    "  AND password_reset_token_expires_at > NOW()"
+                ),
+                {"t": token},
+            ).fetchone()
+            if not row:
+                raise HTTPException(400, "invalid_or_expired_token")
+            new_hash = auth.hash_password(new_password)
+            session.execute(
+                text(
+                    "UPDATE users "
+                    "SET password_hash = :h, "
+                    "    password_reset_token = NULL, "
+                    "    password_reset_token_expires_at = NULL "
+                    "WHERE id = :uid"
+                ),
+                {"h": new_hash, "uid": str(row[0])},
+            )
+            session.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("reset_password DB error: %s", exc)
+        raise HTTPException(500, "Failed to reset password")
+    return {"reset": True}
 
 
 @app.get("/users/me/faceit-stats")
