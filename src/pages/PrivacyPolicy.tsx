@@ -125,7 +125,7 @@ const SECTIONS: Section[] = [
             "Create an account and use authenticated platform features",
             "Use the Arena Desktop Client for game session detection and result reporting",
             "Participate in staked matches, disputes, or support interactions",
-            "Connect third-party accounts (Steam, Google, etc.) via OAuth",
+            "Connect third-party accounts (Steam, Discord, FACEIT, Riot Games, Google) via OAuth",
             "Access Arena APIs, smart contracts, or blockchain-facing services",
           ].map((item) => (
             <li key={item} className="flex items-start gap-2 text-sm">
@@ -175,7 +175,10 @@ const SECTIONS: Section[] = [
               "Match IDs, game titles, match modes and results",
               "Dispute submissions and resolution records",
               "In-game metadata captured by the Desktop Client (scoreboard OCR data)",
-              "Steam IDs, game account identifiers linked to your Arena account",
+              "Steam ID and Steam username (linked via Steam OpenID)",
+              "Riot ID, Riot PUUID, and Riot display name (linked via Riot RSO OAuth)",
+              "Discord user ID and Discord display name (linked via Discord OAuth2)",
+              "FACEIT player ID, FACEIT username, and FACEIT ELO/skill level (linked via FACEIT OAuth2)",
               "Anti-fraud signals, behavioral patterns, and anomaly flags",
             ],
           },
@@ -520,6 +523,113 @@ const SECTIONS: Section[] = [
   },
   {
     id: 16,
+    icon: <Globe className="h-5 w-5 text-arena-cyan" />,
+    title: "Third-Party Account Integrations — What Data We Receive & Why",
+    content: (
+      <div className="space-y-4">
+        <p>
+          When you choose to connect a third-party account to your Arena profile, we receive limited identity data
+          from that platform via their official OAuth2 / OpenID API. We describe exactly what we receive, why, and
+          how long we keep it for each integration.
+        </p>
+
+        <div className="bg-secondary/40 border border-border rounded-lg p-3 text-xs mb-2">
+          <p className="font-semibold text-foreground mb-1">No Affiliation — Independent Data Controllers</p>
+          <p>
+            Arena is an independent platform. Valve, Riot Games, Discord Inc., and FACEIT Ltd. are separate and
+            independent data controllers. Connecting your account to Arena does not grant Arena any ongoing access
+            to your data on those platforms beyond the initial authorisation. Each platform collects and processes
+            data in accordance with their own privacy policies, linked below.
+          </p>
+        </div>
+
+        {[
+          {
+            name: "Steam (Valve Corporation)",
+            legalBasis: "Contract — required to verify game account ownership for CS2 match participation",
+            dataReceived: ["Steam64 ID (unique numeric identifier)", "Account display name at time of linking"],
+            dataNotReceived: ["Purchases, game library, friends list, in-game data, wallet balance, communications"],
+            retention: "For the lifetime of your Arena account. Cleared on account deletion.",
+            theirPrivacy: "https://store.steampowered.com/privacy_agreement/",
+          },
+          {
+            name: "Riot Games, Inc. (VALORANT / Riot ID)",
+            legalBasis: "Contract — required to verify Riot ID ownership for Valorant match participation",
+            dataReceived: ["Riot PUUID (permanent unique identifier)", "Riot display name (gameName#tagLine)", "Valorant rank / match stats (optional, for profile display only)"],
+            dataNotReceived: ["Payment methods, purchase history, in-game chat, personal communications"],
+            retention: "For the lifetime of your Arena account. Cleared on account deletion.",
+            theirPrivacy: "https://www.riotgames.com/en/privacy-notice",
+          },
+          {
+            name: "Discord Inc.",
+            legalBasis: "Legitimate interest — identity verification and community feature access (not required for match participation)",
+            dataReceived: ["Discord user ID (Snowflake numeric ID)", "Discord global display name"],
+            dataNotReceived: ["Message content, server membership lists, friend lists, DMs, voice data, payment info"],
+            retention: "Stored until you disconnect Discord from your profile or delete your Arena account.",
+            theirPrivacy: "https://discord.com/privacy",
+          },
+          {
+            name: "FACEIT Ltd.",
+            legalBasis: "Legitimate interest — competitive profile enrichment and identity verification (not required for match participation)",
+            dataReceived: ["FACEIT player ID", "FACEIT username", "FACEIT ELO and skill level (publicly visible on FACEIT)"],
+            dataNotReceived: ["Private match data not publicly accessible, payment info, private messages"],
+            retention: "Stored until you disconnect FACEIT from your profile or delete your Arena account.",
+            theirPrivacy: "https://www.faceit.com/en/privacy_policy",
+          },
+          {
+            name: "Google LLC",
+            legalBasis: "Contract — alternative authentication method for Arena account login",
+            dataReceived: ["Google account ID", "Email address", "Display name"],
+            dataNotReceived: ["Google Drive, Gmail, search history, location, or any other Google service data"],
+            retention: "Email and display name stored for account lifetime. Google ID stored for authentication.",
+            theirPrivacy: "https://policies.google.com/privacy",
+          },
+        ].map((p) => (
+          <div key={p.name} className="border border-border/60 rounded-xl p-4 space-y-2 text-xs">
+            <p className="font-semibold text-foreground text-sm">{p.name}</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-widest font-mono text-muted-foreground/50 mb-1">Data We Receive</p>
+                <ul className="space-y-0.5">
+                  {p.dataReceived.map((d) => (
+                    <li key={d} className="flex items-start gap-1.5 text-muted-foreground">
+                      <span className="text-primary shrink-0 mt-0.5">·</span>{d}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-widest font-mono text-muted-foreground/50 mb-1">Data We Do NOT Receive</p>
+                <ul className="space-y-0.5">
+                  {p.dataNotReceived.map((d) => (
+                    <li key={d} className="flex items-start gap-1.5 text-muted-foreground">
+                      <span className="text-destructive shrink-0 mt-0.5">✕</span>{d}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-muted-foreground pt-1 border-t border-border/30">
+              <p><strong className="text-foreground">Legal basis:</strong> {p.legalBasis}</p>
+              <p><strong className="text-foreground">Retention:</strong> {p.retention}</p>
+            </div>
+            <p>
+              <strong className="text-foreground">Their Privacy Policy:</strong>{" "}
+              <a href={p.theirPrivacy} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline break-all">{p.theirPrivacy}</a>
+            </p>
+          </div>
+        ))}
+
+        <p className="text-xs text-muted-foreground">
+          All third-party account connections are optional (except Steam for CS2 matches and Riot ID for Valorant
+          matches). You may disconnect any linked account at any time from your Profile page. Disconnecting removes
+          the stored identifiers from our systems but does not affect data already processed.
+        </p>
+      </div>
+    ),
+  },
+  {
+    id: 17,
     icon: <Mail className="h-5 w-5 text-primary" />,
     title: "Contact Us",
     content: (

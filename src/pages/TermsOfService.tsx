@@ -432,6 +432,92 @@ const SECTIONS: Section[] = [
   },
   {
     id: 17,
+    icon: <Globe className="h-5 w-5 text-arena-cyan" />,
+    title: "Third-Party Platforms, Trademarks & Developer API Compliance",
+    content: (
+      <div className="space-y-4">
+        <p>
+          Arena integrates with the following third-party platforms via their official developer APIs and OAuth2
+          authentication protocols. Arena operates under each platform's developer terms of service and API usage
+          policies. Users must also independently comply with the terms of service of each platform they connect.
+        </p>
+
+        {/* Disclaimer box */}
+        <div className="bg-secondary/50 border border-border rounded-lg p-3 text-xs space-y-1">
+          <p className="font-semibold text-foreground uppercase tracking-widest text-[10px]">No Affiliation or Endorsement</p>
+          <p>
+            Arena is an independent platform and is <strong className="text-foreground">not affiliated with, endorsed by,
+            sponsored by, or officially connected to</strong> any of the companies listed below. All trademarks, service
+            marks, trade names, and logos referenced herein are the exclusive property of their respective owners.
+          </p>
+        </div>
+
+        {/* Per-platform entries */}
+        {[
+          {
+            name: "Valve Corporation — Steam & CS2",
+            trademark: "Steam®, Counter-Strike® 2, and Valve® are registered trademarks of Valve Corporation.",
+            usage: "Arena uses Steam OpenID 2.0 solely to verify that a connecting user is the legitimate owner of a Steam account. Arena does not access Steam game data, purchases, friends lists, or communications. CS2 match results are verified exclusively via Arena's Vision Engine OCR on the local machine — no Valve API is used for match result data.",
+            compliance: "Use of Steam OpenID complies with Valve's OpenID usage policies. Arena does not claim any association with or endorsement by Valve.",
+            tos: "https://store.steampowered.com/subscriber_agreement/",
+          },
+          {
+            name: "Riot Games, Inc. — Valorant & Riot ID",
+            trademark: "VALORANT™ and Riot Games® are trademarks of Riot Games, Inc.",
+            usage: "Arena uses Riot Account OAuth (RSO) solely to verify player Riot ID ownership for profile linking. Arena does not use Riot APIs for any wagering, match result determination, or financial mechanism — all such functions use Arena's own Vision Engine OCR. Riot API integration, where present, is used exclusively for player identity verification and optional stat display.",
+            compliance: "Arena acknowledges Riot Games' developer policies. Arena's escrow and wagering mechanisms operate independently of all Riot services and APIs. The ArenaEscrow smart contract has no dependency on Riot data.",
+            tos: "https://www.riotgames.com/en/terms-of-service",
+          },
+          {
+            name: "Discord Inc.",
+            trademark: "Discord® is a registered trademark of Discord Inc.",
+            usage: "Arena uses Discord OAuth2 exclusively for user identity verification (account linking) and community features (server membership, notifications). Discord is not used as a gateway, authentication layer, or component of any wagering, payment, escrow, or betting mechanism. All financial and staking operations occur exclusively via the ArenaEscrow smart contract.",
+            compliance: "Arena's use of Discord OAuth complies with Discord's Developer Policy and Terms of Service. Arena does not use Discord to facilitate, promote, or process any betting or gambling activity as defined in Discord's policies.",
+            tos: "https://discord.com/terms",
+          },
+          {
+            name: "FACEIT Ltd.",
+            trademark: "FACEIT® is a registered trademark of FACEIT Ltd.",
+            usage: "Arena uses the FACEIT Data API and OAuth2 for player identity verification and competitive profile display (ELO, skill level). FACEIT account data is used for profile enrichment only and is not used in match result determination, wagering calculations, or any financial mechanism.",
+            compliance: "Arena operates under FACEIT's Developer Terms of Service. Arena acknowledges that FACEIT organizer rules and jurisdictional competition laws apply independently to any FACEIT-related activity.",
+            tos: "https://www.faceit.com/en/terms_and_conditions",
+          },
+          {
+            name: "BSC (BNB Smart Chain) — Blockchain Infrastructure",
+            trademark: "BNB® and Binance® are trademarks of their respective owners.",
+            usage: "Arena's ArenaEscrow smart contract is deployed on BSC Testnet (chain ID 97) and will deploy to BSC Mainnet for production. Blockchain transactions are subject to BSC network rules and are irreversible. Arena has no affiliation with Binance or the BNB Chain Foundation.",
+            compliance: "Users are responsible for understanding blockchain transaction finality, gas fees, and the immutability of on-chain records.",
+            tos: "https://www.bnbchain.org/en/terms",
+          },
+        ].map((p) => (
+          <div key={p.name} className="border border-border/60 rounded-xl p-4 space-y-2">
+            <p className="font-semibold text-foreground text-sm">{p.name}</p>
+            <p className="text-xs text-muted-foreground/70 italic">{p.trademark}</p>
+            <div className="space-y-1.5 text-xs text-muted-foreground">
+              <p><strong className="text-foreground">How Arena uses it:</strong> {p.usage}</p>
+              <p><strong className="text-foreground">Compliance statement:</strong> {p.compliance}</p>
+              <p>
+                <strong className="text-foreground">Their Terms of Service:</strong>{" "}
+                <a href={p.tos} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline break-all">{p.tos}</a>
+              </p>
+            </div>
+          </div>
+        ))}
+
+        <div className="bg-primary/5 border border-primary/20 rounded-lg p-3 text-xs">
+          <p className="font-semibold text-foreground mb-1">User Obligation</p>
+          <p>
+            By connecting a third-party account to Arena, you represent that you are the legitimate owner of that
+            account, that you have the right to link it, and that you will continue to comply with the terms of
+            service of that third-party platform. Arena is not responsible for any sanctions, bans, or restrictions
+            imposed by third-party platforms on your accounts.
+          </p>
+        </div>
+      </div>
+    ),
+  },
+  {
+    id: 18,
     icon: <Info className="h-5 w-5 text-muted-foreground" />,
     title: "Changes to Terms",
     content: (
