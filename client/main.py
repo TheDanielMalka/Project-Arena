@@ -1667,8 +1667,21 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             for y in range(0, h, 4):
                 bg.create_line(0, y, w, y, fill="#000000", width=1)
 
+            # HUD tactical grid overlay
+            for gx in range(0, w + 60, 60):
+                bg.create_line(gx, 0, gx, h, fill="#0d1117", width=1)
+            for gy in range(0, h + 60, 60):
+                bg.create_line(0, gy, w, gy, fill="#0d1117", width=1)
+
+            # Corner bracket marks
+            _cb = 20
+            bg.create_line(0, _cb, _cb, 0, fill=BRAND["hud_glow"], width=1)
+            bg.create_line(w - _cb, 0, w, _cb, fill=BRAND["accent"], width=1)
+            bg.create_line(0, h - _cb, _cb, h, fill=BRAND["hud_glow"], width=1)
+            bg.create_line(w - _cb, h, w, h - _cb, fill=BRAND["accent"], width=1)
+
             # Cyan accent line at very top
-            bg.create_rectangle(0, 0, w, 1, outline="", fill=BRAND["hud_glow"])
+            bg.create_rectangle(0, 0, w, 2, outline="", fill=BRAND["hud_glow"])
 
         def _schedule_backdrop_redraw() -> None:
             job = _bg_redraw_job[0]
@@ -1760,49 +1773,71 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         return ctk.CTkLabel(parent, text="●", font=ctk.CTkFont(size=12),
                              text_color=BRAND["text_muted"], padx=2)
 
-    # ── Header ────────────────────────────────────────────────────────────────
-    # Minimal clean header matching the Support-ticket reference — no red
-    # side-bar, no "TACTICAL CLIENT // HUD" subtitle. Just a compact wordmark
-    # + status chips, with a subtle cyan underline.
-    header = ctk.CTkFrame(win, fg_color=BRAND["hud_panel"], corner_radius=0,
-                           height=52, border_width=0)
+    # ── Header — breadcrumb nav style matching deck ──────────────────────────
+    header = ctk.CTkFrame(win, fg_color=BRAND["hud_panel_2"], corner_radius=0,
+                           height=48, border_width=0)
     header.pack(fill="x")
     header.pack_propagate(False)
 
-    wordmark = ctk.CTkFrame(header, fg_color="transparent")
-    wordmark.pack(side="left", padx=18, pady=8)
-    ctk.CTkLabel(wordmark, text="PROJECT",
-                 font=ctk.CTkFont(family=FONT_MONO, size=9, weight="bold"),
-                 text_color=BRAND["cyan"]).pack(side="left", pady=(6, 0))
-    ctk.CTkLabel(wordmark, text="  ARENA",
-                 font=ctk.CTkFont(family=FONT_DISPLAY, size=20, weight="bold"),
-                 text_color=BRAND["accent"]).pack(side="left")
-
-    # Subtle cyan underline at bottom of header
+    ctk.CTkFrame(header, height=1, fg_color=BRAND["hud_glow"], corner_radius=0).pack(
+        side="bottom", fill="x")
     ctk.CTkFrame(header, height=1, fg_color=BRAND["hud_border"], corner_radius=0).pack(
         side="bottom", fill="x")
 
-    # Status chips on right
+    # Left: red accent bar + breadcrumb
+    nav = ctk.CTkFrame(header, fg_color="transparent")
+    nav.pack(side="left", padx=(0, 0), fill="y")
+    ctk.CTkFrame(nav, width=3, fg_color=BRAND["accent"], corner_radius=0).pack(
+        side="left", fill="y", padx=(0, 14))
+    ctk.CTkLabel(nav, text="ARENA",
+                 font=ctk.CTkFont(family=FONT_DISPLAY, size=17, weight="bold"),
+                 text_color=BRAND["text"]).pack(side="left")
+    ctk.CTkLabel(nav, text="  //",
+                 font=ctk.CTkFont(family=FONT_MONO, size=12, weight="bold"),
+                 text_color=BRAND["accent"]).pack(side="left")
+    ctk.CTkLabel(nav, text="  OS",
+                 font=ctk.CTkFont(family=FONT_MONO, size=11),
+                 text_color=BRAND["text_muted"]).pack(side="left")
+    ctk.CTkLabel(nav, text="  //",
+                 font=ctk.CTkFont(family=FONT_MONO, size=11),
+                 text_color=BRAND["hud_border"]).pack(side="left")
+    ctk.CTkLabel(nav, text=f"  v{CLIENT_VERSION}",
+                 font=ctk.CTkFont(family=FONT_MONO, size=11),
+                 text_color=BRAND["text_muted"]).pack(side="left")
+
+    # Center: session ID + nominal indicator
+    _hdr_session_id = uuid.uuid4().hex[:8].upper()
+    sess_frame = ctk.CTkFrame(header, fg_color="transparent")
+    sess_frame.place(relx=0.5, rely=0.5, anchor="center")
+    ctk.CTkLabel(sess_frame,
+                 text=f"SESSION {_hdr_session_id}  //  SYS NOMINAL",
+                 font=ctk.CTkFont(family=FONT_MONO, size=9, weight="bold"),
+                 text_color=BRAND["text_muted"]).pack(side="left")
+    ctk.CTkLabel(sess_frame, text="  ●",
+                 font=ctk.CTkFont(size=9),
+                 text_color="#22C55E").pack(side="left")
+
+    # Right: chips
     hdr_right = ctk.CTkFrame(header, fg_color="transparent")
-    hdr_right.pack(side="right", padx=14, pady=12)
+    hdr_right.pack(side="right", padx=14, fill="y")
 
     def _chip(parent, text: str, dot_color: str | None = None) -> tuple[ctk.CTkFrame, ctk.CTkLabel | None]:
         chip = ctk.CTkFrame(
             parent,
-            fg_color=BRAND["hud_panel_2"],
-            corner_radius=4,
+            fg_color=BRAND["hud_panel"],
+            corner_radius=0,
             border_width=1,
             border_color=BRAND["hud_border"],
         )
-        chip.pack(side="right", padx=(8, 0))
+        chip.pack(side="right", padx=(6, 0), pady=12)
         dot = None
         if dot_color:
-            dot = ctk.CTkLabel(chip, text="●", font=ctk.CTkFont(size=11), text_color=dot_color)
-            dot.pack(side="left", padx=(10, 4), pady=7)
+            dot = ctk.CTkLabel(chip, text="●", font=ctk.CTkFont(size=10), text_color=dot_color)
+            dot.pack(side="left", padx=(8, 3), pady=5)
         lbl = ctk.CTkLabel(chip, text=text,
-                           font=ctk.CTkFont(family=FONT_MONO, size=10, weight="bold"),
-                           text_color=BRAND["text"])
-        lbl.pack(side="left", padx=(0 if dot_color else 12, 12), pady=7)
+                           font=ctk.CTkFont(family=FONT_MONO, size=9, weight="bold"),
+                           text_color=BRAND["text_muted"])
+        lbl.pack(side="left", padx=(0 if dot_color else 8, 8), pady=5)
         return chip, dot
 
     _chip(hdr_right, f"v{CLIENT_VERSION}")
@@ -2910,14 +2945,13 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         _mk_tag(tag_row, f"ARENA-{code}",
                 border_color=BRAND["accent"], text_color=BRAND["accent"])
 
-        # ── Teams grid: TEAM A | VS | TEAM B ─────────────────────────────────
+        # ── Teams grid: TEAM A | CENTER | TEAM B ─────────────────────────────
         players = data.get("players") or []
-        teams: dict[str, list[str]] = {"a": [], "b": []}
+        teams: dict[str, list[dict]] = {"a": [], "b": []}
         for p in players:
             t = (p.get("team") or "").lower()
             if t in teams:
-                teams[t].append(p.get("username")
-                                or (p.get("user_id") or "?")[:8])
+                teams[t].append(p)
         slot_cap = 5 if (mode or "").lower().startswith("5v5") else \
                    (3 if (mode or "").lower().startswith("3v3") else \
                     (2 if (mode or "").lower().startswith("2v2") else 1))
@@ -2926,69 +2960,171 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         teams_grid.pack(fill="x", padx=0, pady=(0, 8))
         lobby_body_ref.append(teams_grid)
 
-        def _team_col(parent, label: str, members: list[str], *,
+        _TEAM_COLORS = {"a": BRAND["hud_blue"], "b": BRAND["accent"]}
+        _BADGE_PALETTE = [
+            "#C0392B", "#8E44AD", "#2980B9", "#27AE60",
+            "#E67E22", "#16A085", "#D35400", "#2C3E50",
+        ]
+
+        def _badge_color(name: str) -> str:
+            if not name:
+                return BRAND["hud_border"]
+            return _BADGE_PALETTE[sum(ord(c) for c in name) % len(_BADGE_PALETTE)]
+
+        def _team_col(parent, team_key: str, members: list[dict], *,
                        highlight_me: bool, side: str):
+            team_color = _TEAM_COLORS.get(team_key, BRAND["accent"])
+            team_label = f"// TEAM_{team_key.upper()} // {'BLUE' if team_key == 'a' else 'RED'}"
+
             col = ctk.CTkFrame(parent, fg_color="transparent")
             col.pack(side=side, fill="both", expand=True,
-                      padx=(0, 4) if side == "left" else (4, 0))
-            head = ctk.CTkLabel(
-                col, text=f"○ {label.upper()} ({len(members)}/{slot_cap})",
-                font=ctk.CTkFont(family=FONT_MONO, size=10, weight="bold"),
-                text_color=BRAND["accent"])
-            head.pack(anchor="w", pady=(0, 4))
+                      padx=(0, 6) if side == "left" else (6, 0))
+
+            # Team header with color accent
+            head_row = ctk.CTkFrame(col, fg_color="transparent")
+            head_row.pack(fill="x", pady=(0, 6))
+            ctk.CTkFrame(head_row, width=2, fg_color=team_color,
+                         corner_radius=0).pack(side="left", fill="y", padx=(0, 8))
+            ctk.CTkLabel(head_row, text=team_label,
+                         font=ctk.CTkFont(family=FONT_MONO, size=10, weight="bold"),
+                         text_color=team_color).pack(side="left")
+            ctk.CTkLabel(head_row,
+                         text=f"  {len(members)}/{slot_cap}",
+                         font=ctk.CTkFont(family=FONT_MONO, size=9),
+                         text_color=BRAND["text_muted"]).pack(side="left")
+
             for i in range(slot_cap):
-                name = members[i] if i < len(members) else None
-                is_me = (highlight_me and name and
-                         name == (auth.username or ""))
-                row = tk.Canvas(col, bg=BRAND["hud_panel"],
-                                 highlightthickness=0, bd=0, height=26)
-                row.pack(fill="x", pady=(0, 3))
-                _text = name or f"Slot {i+1}"
-                _tc   = "#FFFFFF" if name else BRAND["text_muted"]
-                _fill = BRAND["accent_dark"] if is_me else BRAND["hud_panel_2"]
-                _bc   = BRAND["accent"] if is_me else BRAND["hud_border"]
-                def _mk_draw(cvs, text=_text, tc=_tc, fill=_fill, bc=_bc,
-                             has_name=bool(name), glow_me=is_me):
+                pdata    = members[i] if i < len(members) else None
+                name     = (pdata or {}).get("username") or (
+                    ((pdata or {}).get("user_id") or "")[:8] or None)
+                elo_val  = (pdata or {}).get("elo") or (pdata or {}).get("rank_points")
+                elo_str  = f"ELO {int(elo_val):,}" if elo_val else "ELO  —"
+                is_me    = (highlight_me and name and name == (auth.username or ""))
+                initials = (name or "")[:2].upper() if name else ""
+                badge_c  = _badge_color(name or "")
+                fill_c   = "#1a0a0a" if is_me else BRAND["hud_panel_2"]
+                border_c = BRAND["accent"] if is_me else BRAND["hud_border"]
+                rdy_text = "✓ RDY" if name else "○ SLOT"
+                rdy_col  = BRAND["hud_glow"] if name else BRAND["hud_border"]
+
+                row = tk.Canvas(col, bg=BRAND["bg"], highlightthickness=0,
+                                bd=0, height=46)
+                row.pack(fill="x", pady=(0, 4))
+
+                def _mk_draw(cvs, nm=name, ini=initials, bc=badge_c,
+                             fc=fill_c, bdc=border_c, elo=elo_str,
+                             rdy=rdy_text, rcol=rdy_col,
+                             glow_me=is_me, tc="#FFFFFF" if name else BRAND["text_muted"]):
                     def _d(_e=None):
-                        w = cvs.winfo_width() or 100
-                        h = 26; cut = 4
+                        w = max(80, cvs.winfo_width())
+                        h = 46
+                        cut = 5
                         cvs.delete("all")
-                        # Red neon bloom for the active player's slot.
+
                         if glow_me:
                             gi = make_neon_glow(cvs, w, h, cut,
-                                                BRAND["accent"],
-                                                glow=10, alpha=160,
-                                                inner_alpha=240)
+                                                BRAND["accent"], glow=12,
+                                                alpha=140, inner_alpha=220)
                             if gi is not None:
                                 cvs.create_image(0, 0, anchor="nw", image=gi)
                                 cvs._glow_ref = gi
+
+                        # Card background (chamfered)
                         pts = [cut, 0, w - 1, 0, w - 1, h - cut,
                                w - 1 - cut, h - 1, 0, h - 1, 0, cut]
-                        cvs.create_polygon(pts, fill=fill,
-                                           outline=bc, width=1)
-                        icon = "●" if has_name else "○"
-                        cvs.create_text(10, h // 2, text=icon,
-                                        fill=tc, font=(FONT_MONO, 9),
-                                        anchor="w")
-                        cvs.create_text(22, h // 2, text=text,
-                                        fill=tc,
-                                        font=(FONT_BODY, 11,
-                                              "bold" if has_name else "normal"),
-                                        anchor="w")
+                        cvs.create_polygon(pts, fill=fc, outline=bdc, width=1)
+
+                        # Initial badge circle
+                        r = 16
+                        cx, cy = 28, h // 2
+                        cvs.create_oval(cx - r, cy - r, cx + r, cy + r,
+                                        fill=bc + "33", outline=bc, width=1)
+                        if ini:
+                            cvs.create_text(cx, cy, text=ini, fill=bc,
+                                            font=(FONT_MONO, 9, "bold"))
+                        else:
+                            cvs.create_text(cx, cy, text="○", fill=BRAND["hud_border"],
+                                            font=(FONT_MONO, 10))
+
+                        # Username
+                        uname = nm or f"Slot {i + 1}"
+                        cvs.create_text(52, cy - 7, text=uname.upper(), fill=tc,
+                                        font=(FONT_DISPLAY, 11, "bold"), anchor="w")
+
+                        # ELO subtitle
+                        cvs.create_text(52, cy + 8, text=elo, fill=BRAND["text_muted"],
+                                        font=(FONT_MONO, 8), anchor="w")
+
+                        # RDY chip on right (chamfered)
+                        cw, ch = 58, 18
+                        cx2 = w - cw - 6
+                        cy2 = (h - ch) // 2
+                        cc = 4
+                        chip_pts = [
+                            cx2 + cc, cy2,
+                            cx2 + cw, cy2,
+                            cx2 + cw, cy2 + ch - cc,
+                            cx2 + cw - cc, cy2 + ch,
+                            cx2, cy2 + ch,
+                            cx2, cy2 + cc,
+                        ]
+                        cvs.create_polygon(chip_pts, fill=BRAND["hud_panel"],
+                                           outline=rcol, width=1)
+                        cvs.create_text(cx2 + cw // 2, cy2 + ch // 2,
+                                        text=rdy, fill=rcol,
+                                        font=(FONT_MONO, 8, "bold"))
                     return _d
+
                 drawer = _mk_draw(row)
                 row.bind("<Configure>", lambda e, d=drawer: e.widget.after(5, d))
                 row.after(20, drawer)
 
-        _team_col(teams_grid, "Team A", teams["a"],
-                   highlight_me=(your_team == "a"), side="left")
-        vs_lbl = ctk.CTkLabel(
-            teams_grid, text="V S", width=40,
-            font=ctk.CTkFont(family=FONT_DISPLAY, size=14, weight="bold"),
-            text_color=BRAND["accent"])
-        vs_lbl.pack(side="left", padx=4)
-        _team_col(teams_grid, "Team B", teams["b"],
-                   highlight_me=(your_team == "b"), side="left")
+        _team_col(teams_grid, "a", teams["a"],
+                  highlight_me=(your_team == "a"), side="left")
+
+        # ── Center column: MAP / TOTAL POT / VS / timer ───────────────────────
+        center_col = ctk.CTkFrame(teams_grid, fg_color="transparent", width=120)
+        center_col.pack(side="left", fill="y", padx=4)
+        center_col.pack_propagate(False)
+
+        map_name = (data.get("map") or data.get("map_name") or "—").upper()
+        try:
+            raw_stake = float(data.get("stake") or data.get("entry_fee") or 0)
+            pot_str   = f"A {int(raw_stake * (len(players) or 2))}"
+        except Exception:
+            pot_str   = "A —"
+
+        ctk.CTkLabel(center_col, text="MAP",
+                     font=ctk.CTkFont(family=FONT_MONO, size=8, weight="bold"),
+                     text_color=BRAND["text_muted"]).pack(pady=(8, 0))
+        ctk.CTkLabel(center_col, text=map_name,
+                     font=ctk.CTkFont(family=FONT_MONO, size=9, weight="bold"),
+                     text_color=BRAND["text"]).pack()
+
+        ctk.CTkFrame(center_col, height=1, fg_color=BRAND["hud_border"],
+                     corner_radius=0).pack(fill="x", padx=8, pady=6)
+
+        ctk.CTkLabel(center_col, text="TOTAL POT",
+                     font=ctk.CTkFont(family=FONT_MONO, size=8, weight="bold"),
+                     text_color=BRAND["text_muted"]).pack()
+        ctk.CTkLabel(center_col, text=pot_str,
+                     font=ctk.CTkFont(family=FONT_DISPLAY, size=16, weight="bold"),
+                     text_color=BRAND["accent"]).pack()
+
+        ctk.CTkFrame(center_col, height=1, fg_color=BRAND["hud_border"],
+                     corner_radius=0).pack(fill="x", padx=8, pady=6)
+
+        ctk.CTkLabel(center_col, text="VS",
+                     font=ctk.CTkFont(family=FONT_DISPLAY, size=28, weight="bold"),
+                     text_color=BRAND["accent"]).pack()
+
+        mode_disp = (mode or "—").upper()
+        ctk.CTkLabel(center_col, text=mode_disp,
+                     font=ctk.CTkFont(family=FONT_MONO, size=8),
+                     text_color=BRAND["text_muted"]).pack()
+
+        _team_col(teams_grid, "b", teams["b"],
+                  highlight_me=(your_team == "b"), side="left")
 
         # Forfeit warning banner — DisconnectMonitor issued a 30s grace period warning
         warn_at   = data.get("forfeit_warning_at")
@@ -3190,17 +3326,110 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 cbtn.configure(command=_make_handler(ev_id, cbtn))
 
     # ── Footer ─────────────────────────────────────────────────────────────────
-    footer = ctk.CTkFrame(win, fg_color=BRAND["hud_panel"], corner_radius=0,
-                           height=62, border_width=0)
+    footer = ctk.CTkFrame(win, fg_color=BRAND["hud_panel_2"], corner_radius=0,
+                           height=100, border_width=0)
     footer.pack(fill="x", side="bottom")
     footer.pack_propagate(False)
 
-    # Cyan accent line at top of footer
-    ctk.CTkFrame(footer, height=2, fg_color=BRAND["hud_glow"], corner_radius=0).pack(
+    ctk.CTkFrame(footer, height=1, fg_color=BRAND["hud_glow"], corner_radius=0).pack(
+        fill="x", side="top")
+    ctk.CTkFrame(footer, height=1, fg_color=BRAND["hud_border"], corner_radius=0).pack(
         fill="x", side="top")
 
+    # ── Telemetry strip ──────────────────────────────────────────────────────
+    telemetry_row = ctk.CTkFrame(footer, fg_color="transparent")
+    telemetry_row.pack(fill="x", padx=18, pady=(6, 0))
+
+    # Left: CLIENT READINESS
+    tl_left = ctk.CTkFrame(telemetry_row, fg_color="transparent")
+    tl_left.pack(side="left", fill="x", expand=True)
+    ctk.CTkLabel(tl_left, text="CLIENT READINESS",
+                 font=ctk.CTkFont(family=FONT_MONO, size=8, weight="bold"),
+                 text_color=BRAND["text_muted"]).pack(anchor="w")
+    _readiness_bar = ctk.CTkProgressBar(tl_left, height=3, corner_radius=0,
+                                         progress_color=BRAND["hud_glow"],
+                                         fg_color=BRAND["hud_border"],
+                                         width=220)
+    _readiness_bar.set(0)
+    _readiness_bar.pack(anchor="w", pady=(2, 1))
+    _readiness_lbl = ctk.CTkLabel(tl_left,
+                                   text="— CLIENTS SYNCED",
+                                   font=ctk.CTkFont(family=FONT_MONO, size=8),
+                                   text_color=BRAND["text_muted"])
+    _readiness_lbl.pack(anchor="w")
+
+    # Center: VERIFICATION ENGINE
+    tl_center = ctk.CTkFrame(telemetry_row, fg_color="transparent")
+    tl_center.pack(side="left", padx=40)
+    ctk.CTkLabel(tl_center, text="VERIFICATION ENGINE",
+                 font=ctk.CTkFont(family=FONT_MONO, size=8, weight="bold"),
+                 text_color=BRAND["text_muted"]).pack(anchor="w")
+    _ve_line1 = ctk.CTkLabel(tl_center, text="> ENGINE: OFFLINE // LAT —",
+                              font=ctk.CTkFont(family=FONT_MONO, size=8),
+                              text_color=BRAND["text_muted"])
+    _ve_line1.pack(anchor="w")
+    _ve_line2 = ctk.CTkLabel(tl_center, text="> VISION PIPELINE: IDLE",
+                              font=ctk.CTkFont(family=FONT_MONO, size=8),
+                              text_color=BRAND["text_muted"])
+    _ve_line2.pack(anchor="w")
+
+    # Right: LAUNCH GAME button (hidden until in_progress match)
+    tl_right = ctk.CTkFrame(telemetry_row, fg_color="transparent")
+    tl_right.pack(side="right")
+    _launch_holder = ctk.CTkFrame(tl_right, fg_color="transparent",
+                                   width=140, height=44)
+    _launch_holder.pack()
+    _launch_holder.pack_propagate(False)
+    _launch_cvs = tk.Canvas(_launch_holder, bg=BRAND["hud_panel_2"],
+                             highlightthickness=0, bd=0, width=140, height=44)
+    _launch_cvs.pack(fill="both", expand=True)
+    _launch_btn_win: list = [None]
+    _launch_game_name: list[str] = [""]
+
+    def _do_launch_game():
+        gname = _launch_game_name[0]
+        if not gname:
+            return
+        import subprocess
+        launches = {
+            "CS2":      "steam://rungameid/730",
+            "Valorant": "valorant://",
+        }
+        url = launches.get(gname)
+        if url:
+            try:
+                import webbrowser
+                webbrowser.open(url)
+            except Exception:
+                pass
+
+    def _draw_launch(label: str = "", visible: bool = False):
+        _launch_cvs.delete("all")
+        if not visible:
+            return
+        w, h = 140, 44
+        cut = 7
+        pts = [cut, 0, w - 1, 0, w - 1, h - cut,
+               w - 1 - cut, h - 1, 0, h - 1, 0, cut]
+        _launch_cvs.create_polygon(pts, fill=BRAND["accent"],
+                                    outline=BRAND["accent"], width=1)
+        if _launch_btn_win[0] is None:
+            btn = ctk.CTkButton(
+                _launch_cvs, text=f"LAUNCH {label}",
+                height=40, corner_radius=0,
+                fg_color=BRAND["accent"],
+                hover_color=BRAND["accent_dark"],
+                text_color="#FFFFFF",
+                font=ctk.CTkFont(family=FONT_DISPLAY, size=11, weight="bold"),
+                command=_do_launch_game,
+            )
+            _launch_btn_win[0] = _launch_cvs.create_window(
+                2, 2, window=btn, anchor="nw", width=136, height=40)
+
+    _draw_launch(visible=False)
+
     btn_row = ctk.CTkFrame(footer, fg_color="transparent")
-    btn_row.pack(expand=True)
+    btn_row.pack(expand=False, pady=(4, 0))
 
     def _check_engine_btn():
         threading.Thread(target=_do_engine_check, daemon=True).start()
@@ -3254,17 +3483,24 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     def _do_engine_check():
         """Background: fetch health, apply to UI on main thread."""
+        t0 = time.time()
         health = monitor.engine.health()
+        lat_ms = int((time.time() - t0) * 1000)
         def _apply():
             if health and health.get("status") == "ok":
                 db = health.get("db", "?")
                 eng_lbl.configure(text=f"Connected  ·  DB: {db}", text_color=BRAND["text"])
                 eng_dot.configure(text_color="#22C55E")
                 hdr_eng_dot.configure(text_color="#22C55E")
+                _ve_line1.configure(
+                    text=f"> ENGINE: NOMINAL // LAT {lat_ms}ms",
+                    text_color=BRAND["hud_glow"])
             else:
                 eng_lbl.configure(text="Engine offline", text_color=BRAND["text_muted"])
                 eng_dot.configure(text_color=BRAND["error"])
                 hdr_eng_dot.configure(text_color=BRAND["error"])
+                _ve_line1.configure(text="> ENGINE: OFFLINE // LAT —",
+                                    text_color=BRAND["error"])
         win.after(0, _apply)
 
     def _poll_engine():
@@ -3276,16 +3512,34 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         if game:
             game_lbl.configure(text=game, text_color=BRAND["text"])
             game_dot.configure(text_color=BRAND["accent"])
+            _ve_line2.configure(
+                text=f"> VISION PIPELINE: {'ARMED' if monitor.running else 'IDLE'}",
+                text_color=BRAND["hud_glow"] if monitor.running else BRAND["text_muted"])
         else:
             game_lbl.configure(text="No game detected", text_color=BRAND["text_muted"])
             game_dot.configure(text_color=BRAND["text_muted"])
+            _ve_line2.configure(text="> VISION PIPELINE: IDLE",
+                                text_color=BRAND["text_muted"])
+
         if monitor.current_match_id:
             match_lbl.configure(text=f"Match #{monitor.current_match_id[:8]}…")
+            _launch_game_name[0] = game or ""
+            _draw_launch(label=game or "GAME", visible=bool(game))
         else:
             match_lbl.configure(text="")
+            _launch_game_name[0] = ""
+            _draw_launch(visible=False)
 
         # Update capture count
         cap_lbl.configure(text=f"{monitor._capture_count} captures")
+
+        # Readiness bar: ratio of capture count to expected (simple heuristic)
+        cap_ratio = min(1.0, monitor._capture_count / 10.0) if monitor._capture_count else 0.0
+        _readiness_bar.set(cap_ratio)
+        cap_c = monitor._capture_count
+        _readiness_lbl.configure(
+            text=f"{cap_c} FRAMES CAPTURED",
+            text_color=BRAND["hud_glow"] if cap_c > 0 else BRAND["text_muted"])
 
         # Update screenshot thumbnail when a new screenshot is available
         last_fp = monitor._last_screenshot
@@ -3427,6 +3681,21 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 win.after(0, _ensure_monitor_for_live_match)
 
             _rebuild_lobby_body(data, _lobby_result_cache[0])
+
+            # Update CLIENT READINESS bar from player count
+            _all_players = data.get("players") or []
+            _rdy_count   = len(_all_players)
+            _mode_str    = (data.get("mode") or "1v1").lower()
+            _total_slots = (10 if "5v5" in _mode_str else
+                            6  if "3v3" in _mode_str else
+                            4  if "2v2" in _mode_str else 2)
+            _ratio = min(1.0, _rdy_count / max(1, _total_slots))
+            def _upd_readiness(r=_ratio, rc=_rdy_count, ts=_total_slots):
+                _readiness_bar.set(r)
+                _readiness_lbl.configure(
+                    text=f"{rc}/{ts} CLIENTS SYNCED",
+                    text_color=BRAND["hud_glow"] if rc >= ts else BRAND["text_muted"])
+            win.after(0, _upd_readiness)
 
             clear_mid = data.get("match_id") or mid
             if st_hb in ("completed", "tied"):
