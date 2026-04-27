@@ -1678,84 +1678,41 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             h = max(1, int(win.winfo_height()))
             bg.delete("all")
 
-            # ── Base vertical gradient ────────────────────────────────────────
-            c0 = _hex_to_rgb(BRAND["bg"])
-            c1 = _hex_to_rgb(BRAND["hud_panel"])
-            steps = min(200, h)
-            for i in range(steps):
-                t = i / max(1, steps - 1)
-                col = (_lerp(c0[0], c1[0], t), _lerp(c0[1], c1[1], t), _lerp(c0[2], c1[2], t))
-                y0 = int(i * h / steps)
-                y1 = int((i + 1) * h / steps)
-                bg.create_rectangle(0, y0, w, y1, outline="", fill=_rgb_to_hex(col))
+            # ── Flat near-black base (#0a0c10) ────────────────────────────────
+            bg.create_rectangle(0, 0, w, h, outline="", fill=BRAND["bg"])
 
-            # ── Animated pulse factors (slow breathing, ~7-8 s cycle) ─────────
+            # ── Animated pulse factor (slow ~8s breathing) ────────────────────
             _t = _time.time()
-            _p1 = (_math.sin(_t * 0.8) + 1) * 0.5         # 0..1
-            _p2 = (_math.sin(_t * 1.1 + 1.0) + 1) * 0.5
+            _p1 = (_math.sin(_t * 0.7) + 1) * 0.5   # 0..1
 
-            # ── Top-left teal bloom (solid pre-blended layers, outermost first)
-            # Each layer is a progressively brighter teal blended over #0a0c10
-            bg.create_oval(-w*0.38, -h*0.65, w*0.68, h*0.58,
-                           outline="", fill="#0a171f")
-            bg.create_oval(-w*0.22, -h*0.50, w*0.52, h*0.42,
-                           outline="", fill="#0c2130")
-            bg.create_oval(-w*0.06, -h*0.38, w*0.40 + _p1*w*0.04, h*0.30 + _p1*h*0.04,
-                           outline="", fill="#0e2d3e")
-            bg.create_oval(0, -h*0.18, w*0.24 + _p1*w*0.03, h*0.18 + _p1*h*0.03,
-                           outline="", fill="#0f3748")
+            # ── Top-left teal ambient bloom (very subtle, matches reference) ──
+            # Outer layers are barely distinguishable from bg
+            bg.create_oval(-w*0.30, -h*0.55, w*0.55, h*0.48,
+                           outline="", fill="#0b1520")
+            bg.create_oval(-w*0.14, -h*0.42, w*0.38, h*0.30,
+                           outline="", fill="#0c1e2e")
+            bg.create_oval(-w*0.02, -h*0.28, w*0.26 + _p1*w*0.02, h*0.18 + _p1*h*0.02,
+                           outline="", fill="#0d2538")
 
-            # ── Top-right violet bloom ────────────────────────────────────────
-            bg.create_oval(w*0.42, -h*0.62, w*1.48, h*0.40,
-                           outline="", fill="#0e0b1a")
-            bg.create_oval(w*0.60, -h*0.46, w*1.32, h*0.25,
-                           outline="", fill="#130d24")
-            bg.create_oval(w*0.74, -h*0.30, w*1.18 + _p2*w*0.03, h*0.14 + _p2*h*0.03,
-                           outline="", fill="#190f30")
+            # ── Right-edge red micro-glow (matches reference right-side tint) ─
+            bg.create_oval(w*0.72, -h*0.10, w*1.18, h*0.55,
+                           outline="", fill="#12080e")
+            bg.create_oval(w*0.85, h*0.30, w*1.20, h*0.90,
+                           outline="", fill="#160a10")
 
-            # ── Bottom-left red micro-bloom ───────────────────────────────────
-            bg.create_oval(-w*0.06, h*0.52, w*0.26, h*1.28,
-                           outline="", fill="#1a0810")
+            # ── Bottom-left very faint warm tint ──────────────────────────────
+            bg.create_oval(-w*0.05, h*0.60, w*0.22, h*1.20,
+                           outline="", fill="#100810")
 
-            # ── Scanlines (every 4 px) ────────────────────────────────────────
-            for y in range(0, h, 4):
-                bg.create_line(0, y, w, y, fill="#040507", width=1)
-
-            # ── Slow horizontal scan beam (atmospheric movement) ─────────────
-            _scan_y = int((_t * 0.055 % 1.0) * (h + 30)) - 15
-            if 0 <= _scan_y < h:
-                bg.create_line(0, _scan_y, w, _scan_y, fill="#0c3448", width=4)
-            if 0 <= _scan_y + 1 < h:
-                bg.create_line(0, _scan_y + 1, w, _scan_y + 1, fill="#0a2a3a", width=2)
-            if 0 <= _scan_y - 1 < h:
-                bg.create_line(0, _scan_y - 1, w, _scan_y - 1, fill="#081e2a", width=1)
-
-            # ── Hex grid overlay (flat-top hexagons) ─────────────────────────
-            _hz_size = 32
-            _hz_color = "#1a5c7a"   # visible teal hex grid
-            _hz_dx = 1.5 * _hz_size
-            _hz_dy = _math.sqrt(3) * _hz_size
-            _hz_cols = int(w / _hz_dx) + 2
-            _hz_rows = int(h / _hz_dy) + 2
-            for _hcol in range(_hz_cols):
-                for _hrow in range(_hz_rows):
-                    _cx = _hcol * _hz_dx
-                    _cy = _hrow * _hz_dy + (_hz_dy / 2 if _hcol % 2 else 0)
-                    _pts = []
-                    for _hi in range(6):
-                        _ha = _math.radians(60 * _hi)
-                        _pts += [_cx + _hz_size * _math.cos(_ha), _cy + _hz_size * _math.sin(_ha)]
-                    bg.create_polygon(_pts, outline=_hz_color, fill="", width=1)
+            # ── Cyan accent line at very top ──────────────────────────────────
+            bg.create_rectangle(0, 0, w, 2, outline="", fill=BRAND["hud_glow"])
 
             # ── Corner bracket marks ──────────────────────────────────────────
-            _cb = 22
+            _cb = 18
             bg.create_line(0, _cb, _cb, 0, fill=BRAND["hud_glow"], width=1)
             bg.create_line(w - _cb, 0, w, _cb, fill=BRAND["accent"], width=1)
             bg.create_line(0, h - _cb, _cb, h, fill=BRAND["hud_glow"], width=1)
             bg.create_line(w - _cb, h, w, h - _cb, fill=BRAND["accent"], width=1)
-
-            # ── Cyan accent line at very top ──────────────────────────────────
-            bg.create_rectangle(0, 0, w, 2, outline="", fill=BRAND["hud_glow"])
 
             # ── Self-schedule next animation frame (80 ms ≈ 12.5 fps) ─────────
             _bg_redraw_job[0] = win.after(80, _draw_backdrop)
@@ -2199,15 +2156,17 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             cvs.delete("fill")
             cvs.delete("chrome")
 
+            pts = [cut, 0, w - 1, 0, w - 1, h - cut,
+                   w - 1 - cut, h - 1, 0, h - 1, 0, cut]
+            # Fill first (bottom layer)
+            cvs.create_polygon(pts, fill=BRAND["hud_panel"], outline="", tags="fill")
+            # Glow on top of fill so blurred bloom is visible over the panel bg
             glow_img = make_neon_glow(cvs, w, h, cut, BRAND["cyan"],
                                       glow=26, alpha=180, inner_alpha=255)
             if glow_img is not None:
                 cvs.create_image(0, 0, anchor="nw", image=glow_img, tags="glow")
                 cvs._glow_ref = glow_img
-
-            pts = [cut, 0, w - 1, 0, w - 1, h - cut,
-                   w - 1 - cut, h - 1, 0, h - 1, 0, cut]
-            cvs.create_polygon(pts, fill=BRAND["hud_panel"], outline="", tags="fill")
+            # Chrome border + title on top
             cvs.create_polygon(pts, fill="", outline=BRAND["hud_border"],
                                width=1, tags="chrome")
             cvs.create_text(16, 16, text=title.upper(), fill=BRAND["text"],
@@ -2226,35 +2185,12 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 cvs.itemconfig(state["win"], width=iw)
                 cvs.coords(state["win"], PAD_L, PAD_T)
 
-        _sw_phase: list[int] = [0]
-
-        def _sweep_tick():
-            try:
-                if not cvs.winfo_exists():
-                    return
-            except Exception:
-                return
-            w_now = max(200, cvs.winfo_width())
-            h_now = max(min_height, cvs.winfo_height())
-            cvs.delete("sw")
-            ph = (_sw_phase[0] % 110) / 110.0
-            sx = int(ph * (w_now + h_now)) - h_now
-            pts = [sx, 0, sx + 55, 0, sx + 55 + h_now, h_now, sx + h_now, h_now]
-            cvs.create_polygon(pts, fill="#0e2e40", outline="", tags="sw")
-            try:
-                cvs.tag_raise("chrome")
-            except Exception:
-                pass
-            _sw_phase[0] += 1
-            cvs.after(85, _sweep_tick)
-
         def _on_cfg(_e=None):
             cvs.after(15, _redraw)
 
         cvs.bind("<Configure>", _on_cfg)
         inner.bind("<Configure>", _on_cfg)
         cvs.after(50, _redraw)
-        cvs.after(int(id(cvs) % 2800 + 120), _sweep_tick)
         # Expose the outer holder so callers can pack_forget/pack the whole card
         # (the returned `inner` frame is embedded inside a Canvas via
         # create_window, so its own pack state is not visible in the layout).
@@ -2666,11 +2602,12 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     _rebuild_identity()
 
     # ── HUB Panel — Friends Online + Game Invites ─────────────────────────────
-    # Feature flag: set ARENA_HUB_ENABLED=0 to skip the entire block at runtime.
-    _hub_enabled = os.environ.get("ARENA_HUB_ENABLED", "0").lower() not in ("0", "false", "no")
+    # Feature flag: set ARENA_HUB_ENABLED=0 to skip at runtime.
+    _hub_enabled = os.environ.get("ARENA_HUB_ENABLED", "1").lower() not in ("0", "false", "no")
+    _open_friend_picker = None
 
     if _hub_enabled:
-        hub_card = _chamfer_panel(ov_left, "Hub", width_shrink=0, min_height=60)
+        hub_card = _chamfer_panel(ov_left, "Friends", width_shrink=0, min_height=60)
         _hub_body_refs: list = []
         _hub_invite_modal_open: list[bool] = [False]
         _hub_seen_invite_ids: set = set()
@@ -2916,6 +2853,149 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
             accept_btn.configure(command=_accept)
             decline_btn.configure(command=_decline)
+
+        def _open_friend_picker():
+            """Modal: pick an online friend and send them a room invite."""
+            if not auth.is_authenticated:
+                return
+
+            picker = ctk.CTkToplevel(win)
+            picker.title("Invite Friend")
+            picker.geometry("370x400")
+            picker.resizable(False, False)
+            picker.configure(fg_color=BRAND["bg"])
+            picker.transient(win)
+            picker.grab_set()
+            picker.lift()
+            picker.focus()
+            picker.protocol("WM_DELETE_WINDOW", picker.destroy)
+
+            hdr_f = tk.Frame(picker, bg=BRAND["bg"])
+            hdr_f.pack(fill="x", padx=14, pady=(14, 6))
+            tk.Label(hdr_f, text="// INVITE // FRIEND",
+                     font=(FONT_MONO, 11, "bold"),
+                     fg=BRAND["cyan"], bg=BRAND["bg"]).pack(side="left")
+            tk.Button(hdr_f, text="✕",
+                      font=(FONT_MONO, 9),
+                      fg=BRAND["text_muted"], bg=BRAND["bg"],
+                      activeforeground=BRAND["text"],
+                      activebackground=BRAND["bg"],
+                      relief="flat", bd=0, cursor="hand2",
+                      command=picker.destroy).pack(side="right")
+            tk.Frame(picker, bg=BRAND["hud_border"], height=1).pack(fill="x")
+
+            body = ctk.CTkScrollableFrame(picker, fg_color=BRAND["bg_card"], corner_radius=0)
+            body.pack(fill="both", expand=True)
+
+            spin = ctk.CTkLabel(body, text="Loading friends…",
+                                font=ctk.CTkFont(family=FONT_MONO, size=10),
+                                text_color=BRAND["text_muted"])
+            spin.pack(pady=24)
+
+            def _populate(friends: list):
+                try: spin.destroy()
+                except Exception: pass
+                if not friends:
+                    ctk.CTkLabel(body, text="No friends online",
+                                 font=ctk.CTkFont(family=FONT_MONO, size=10),
+                                 text_color=BRAND["text_muted"]).pack(pady=24)
+                    return
+                for f in friends:
+                    uid_      = f.get("user_id", "")
+                    fname     = (f.get("username") or "Player").upper()
+                    glabel    = f.get("game") or ""
+                    c_online  = bool(f.get("client_online", False))
+
+                    row = tk.Frame(body, bg=BRAND["hud_panel"],
+                                   highlightbackground=BRAND["hud_border"],
+                                   highlightthickness=1)
+                    row.pack(fill="x", padx=10, pady=3)
+
+                    dot_c = "#22c55e" if c_online else BRAND["text_muted"]
+                    tk.Label(row, text="●", font=(FONT_MONO, 8),
+                             fg=dot_c, bg=BRAND["hud_panel"]).pack(side="left", padx=(10, 5), pady=9)
+
+                    inf_ = tk.Frame(row, bg=BRAND["hud_panel"])
+                    inf_.pack(side="left", fill="x", expand=True, pady=5)
+                    tk.Label(inf_, text=fname,
+                             font=(FONT_MONO, 10, "bold"),
+                             fg=BRAND["text"], bg=BRAND["hud_panel"],
+                             anchor="w").pack(anchor="w")
+                    sub = glabel.upper() if glabel else ("CLIENT" if c_online else "WEBSITE")
+                    tk.Label(inf_, text=sub,
+                             font=(FONT_MONO, 8),
+                             fg=BRAND["text_muted"], bg=BRAND["hud_panel"],
+                             anchor="w").pack(anchor="w")
+
+                    if c_online:
+                        inv_b = tk.Button(row, text="INVITE",
+                                          font=(FONT_MONO, 8, "bold"),
+                                          fg="#FFFFFF", bg=BRAND["accent"],
+                                          activebackground=BRAND["accent_dark"],
+                                          activeforeground="#FFFFFF",
+                                          relief="flat", bd=0, cursor="hand2",
+                                          padx=10, pady=5)
+                    else:
+                        inv_b = tk.Button(row, text="INVITE",
+                                          font=(FONT_MONO, 8, "bold"),
+                                          fg=BRAND["text_muted"], bg=BRAND["hud_panel_2"],
+                                          relief="flat", bd=0, padx=10, pady=5,
+                                          state="disabled")
+                    inv_b.pack(side="right", padx=(5, 10), pady=6)
+
+                    def _make_pick_inv(tuid=uid_, tname=fname, btn=inv_b):
+                        def _do():
+                            btn.configure(state="disabled", text="…")
+                            tok = auth.access_token or ""
+
+                            def _t():
+                                res = monitor.engine.hub_quick_invite(tok, tuid)
+
+                                def _after():
+                                    try: btn.configure(state="normal", text="INVITE")
+                                    except Exception: pass
+                                    if res is None:
+                                        if notify_fn:
+                                            try: notify_fn("Network error — invite not sent")
+                                            except Exception: pass
+                                    elif "detail" in res:
+                                        det = res["detail"]
+                                        if "website" in det.lower() or "open" in det.lower():
+                                            if notify_fn:
+                                                try: notify_fn("Open a room on project-arena.com first")
+                                                except Exception: pass
+                                        elif "already" in det.lower():
+                                            if notify_fn:
+                                                try: notify_fn(f"Already invited {tname}")
+                                                except Exception: pass
+                                        else:
+                                            if notify_fn:
+                                                try: notify_fn(f"Invite failed: {det}")
+                                                except Exception: pass
+                                    else:
+                                        c_ = res.get("code", "")
+                                        msg_ = f"Invite sent to {tname}"
+                                        if c_: msg_ += f"  ·  Room: {c_}"
+                                        if notify_fn:
+                                            try: notify_fn(msg_)
+                                            except Exception: pass
+                                        try: picker.destroy()
+                                        except Exception: pass
+
+                                win.after(0, _after)
+
+                            threading.Thread(target=_t, daemon=True).start()
+                        return _do
+
+                    if c_online:
+                        inv_b.configure(command=_make_pick_inv())
+
+            def _load_bg():
+                tok = auth.access_token or ""
+                fr  = monitor.engine.get_online_friends(tok)
+                win.after(0, lambda f=fr: _populate(f))
+
+            threading.Thread(target=_load_bg, daemon=True).start()
 
         # ── Poll loops ────────────────────────────────────────────────────────
         _HUB_FRIENDS_MS = 30_000
@@ -3172,9 +3252,9 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
         def _build_team(gparent, tkey, members, hme, colidx):
             is_a   = (tkey == "a")
-            accent = THEME["hud_blue"] if is_a else THEME["red"]
+            accent = THEME["cyan"] if is_a else THEME["red"]
             lbl    = "// TEAM_" + tkey.upper() + "  //  " + ("BLUE" if is_a else "RED")
-            pbg    = THEME["bg_panel_alt"]
+            pbg    = "#0d1015"
 
             outer = tk.Frame(gparent, bg=pbg,
                              highlightbackground=accent, highlightthickness=1)
@@ -3191,6 +3271,11 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             tk.Frame(tb, bg=accent, height=1).pack(
                 side="left", fill="x", expand=True, pady=9)
 
+            # Team-colored avatar palette matching SOURCE OF TRUTH
+            _av_fill  = "#0d3a42" if is_a else "#3a0c14"   # filled slot bg
+            _av_empty = "#081e24" if is_a else "#200810"   # empty slot bg
+            _av_bord  = THEME["cyan"] if is_a else THEME["red"]
+
             for i in range(slot_cap):
                 pd_  = members[i] if i < len(members) else None
                 nm   = (pd_ or {}).get("username") or (
@@ -3198,9 +3283,8 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 ev   = (pd_ or {}).get("elo") or (pd_ or {}).get("rank_points")
                 es   = ("ELO " + "{:,}".format(int(ev))) if ev else "ELO  —"
                 me   = (hme and bool(nm) and nm == (auth.username or ""))
-                ini  = (nm or "")[:2].upper() if nm else "  "
-                bc_  = _bc(nm or "")
-                rbg  = THEME["bg_row_active"] if me else pbg
+                ini  = (nm or "")[:2].upper() if nm else "+"
+                rbg  = "#0a1a1f" if (me and is_a) else ("#1a080c" if (me and not is_a) else pbg)
                 bdr  = THEME["border_active"] if me else THEME["border"]
                 rdy  = "✓ RDY" if nm else "○ SLOT"
                 rcol = THEME["cyan"] if nm else THEME["text_muted"]
@@ -3209,16 +3293,35 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                                 highlightbackground=bdr, highlightthickness=1)
                 card.pack(fill="x", padx=14, pady=2)
 
-                av = tk.Frame(card, bg=THEME["bg_muted"],
+                _fp      = _open_friend_picker
+                av_bg_c  = _av_fill if nm else (_av_empty if not _fp else _av_empty)
+                av_bdr_c = _av_bord if nm else (BRAND["cyan"] if _fp else THEME["border"])
+                av = tk.Frame(card, bg=av_bg_c,
                               width=34, height=34,
-                              highlightbackground=bc_ if nm else THEME["border"],
-                              highlightthickness=1)
+                              highlightbackground=av_bdr_c,
+                              highlightthickness=1,
+                              cursor="hand2" if (not nm and _fp) else "")
                 av.pack(side="left", padx=(10, 8), pady=7)
                 av.pack_propagate(False)
-                tk.Label(av, text=ini,
+                av_lbl = tk.Label(av, text=ini,
                          font=(FONT_MONO, 9, "bold"),
-                         fg=bc_ if nm else THEME["text_muted"],
-                         bg=THEME["bg_muted"]).pack(expand=True)
+                         fg="#ffffff" if nm else (BRAND["cyan"] if _fp else THEME["text_muted"]),
+                         bg=av_bg_c,
+                         cursor="hand2" if (not nm and _fp) else "")
+                av_lbl.pack(expand=True)
+
+                if not nm and _fp:
+                    def _bind_av(a=av, al=av_lbl, bg_=av_bg_col, fp_=_fp):
+                        def _e(e): al.configure(fg="#ffffff")
+                        def _l(e): al.configure(fg=BRAND["cyan"])
+                        def _c(e): fp_()
+                        a.bind("<Enter>",    _e)
+                        a.bind("<Leave>",    _l)
+                        a.bind("<Button-1>", _c)
+                        al.bind("<Enter>",   _e)
+                        al.bind("<Leave>",   _l)
+                        al.bind("<Button-1>",_c)
+                    _bind_av()
 
                 info = tk.Frame(card, bg=rbg)
                 info.pack(side="left", fill="y", pady=7)
@@ -3232,9 +3335,33 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                          fg=THEME["text_dim"], bg=rbg,
                          anchor="w").pack(anchor="w")
 
-                tk.Label(card, text=rdy,
-                         font=(FONT_MONO, 8, "bold"),
-                         fg=rcol, bg=rbg).pack(side="right", padx=10)
+                if nm:
+                    tk.Label(card, text=rdy,
+                             font=(FONT_MONO, 8, "bold"),
+                             fg=rcol, bg=rbg).pack(side="right", padx=10)
+                elif _fp:
+                    chip_f = tk.Frame(card, bg=BRAND["hud_panel_2"],
+                                      highlightbackground=BRAND["cyan"],
+                                      highlightthickness=1, cursor="hand2")
+                    chip_f.pack(side="right", padx=(4, 10), pady=8)
+                    chip_l = tk.Label(chip_f, text="⊕ INVITE",
+                                      font=(FONT_MONO, 7, "bold"),
+                                      fg=BRAND["cyan"], bg=BRAND["hud_panel_2"],
+                                      padx=7, pady=3, cursor="hand2")
+                    chip_l.pack()
+                    def _bind_chip(cf=chip_f, cl=chip_l, fp_=_fp):
+                        def _e(e): cl.configure(fg="#ffffff", bg=BRAND["hud_border"])
+                        def _l(e): cl.configure(fg=BRAND["cyan"],  bg=BRAND["hud_panel_2"])
+                        def _c(e): fp_()
+                        for w in (cf, cl):
+                            w.bind("<Enter>",    _e)
+                            w.bind("<Leave>",    _l)
+                            w.bind("<Button-1>", _c)
+                    _bind_chip()
+                else:
+                    tk.Label(card, text=rdy,
+                             font=(FONT_MONO, 8, "bold"),
+                             fg=rcol, bg=rbg).pack(side="right", padx=10)
 
             elos_ = [int((m.get("elo") or m.get("rank_points") or 0))
                      for m in members if m]
@@ -3283,24 +3410,39 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                  font=(FONT_MONO, 8),
                  fg=THEME["text_muted"], bg=BRAND["bg"]).pack()
         tk.Label(vc, text=pot_s,
-                 font=(FONT_ALT, 26, "bold"),
+                 font=(FONT_ALT, 30, "bold"),
                  fg=THEME["red"], bg=BRAND["bg"]).pack(pady=(1, 0))
         tk.Label(vc, text=mode.upper() + "  //  BO1",
                  font=(FONT_MONO, 8),
-                 fg=THEME["text_muted"], bg=BRAND["bg"]).pack(pady=(1, 6))
+                 fg=THEME["text_muted"], bg=BRAND["bg"]).pack(pady=(1, 4))
 
-        tk.Label(vc, text="VS",
-                 font=(FONT_ALT, 52, "bold"),
-                 fg=THEME["red"], bg=BRAND["bg"]).pack(pady=2)
+        # VS — Canvas-based with neon red glow matching reference
+        _vs_cvs = tk.Canvas(vc, width=148, height=88,
+                            bg=BRAND["bg"], highlightthickness=0)
+        _vs_cvs.pack(pady=(2, 2))
+        def _draw_vs_glow(c=_vs_cvs):
+            c.delete("all")
+            # Glow layers (outermost first)
+            for _off, _col in ((8, "#2a0508"), (5, "#480810"),
+                               (3, "#6e0d18"), (1, "#a01428")):
+                c.create_text(74, 44, text="VS",
+                              font=(FONT_ALT, 62, "bold"),
+                              fill=_col, tags="vs")
+            # Crisp top layer
+            c.create_text(74, 44, text="VS",
+                          font=(FONT_ALT, 62, "bold"),
+                          fill=THEME["red"], tags="vs")
+        _draw_vs_glow()
 
         tk.Label(vc, text="T  -  0 0 : 4 7",
                  font=(FONT_MONO, 8),
-                 fg=THEME["cyan"], bg=BRAND["bg"]).pack(pady=(8, 3))
+                 fg=THEME["cyan"], bg=BRAND["bg"]).pack(pady=(2, 3))
 
         _cd_c = tk.Canvas(vc, width=118, height=3,
-                          bg="#181c22", highlightthickness=0)
+                          bg=BRAND["bg"], highlightthickness=0)
         _cd_c.pack()
         _cd_c.create_rectangle(0, 0, 85, 3, fill=THEME["red"], outline="")
+        _cd_c.create_rectangle(85, 0, 118, 3, fill=THEME["text_muted"], outline="")
 
         _build_team(grid_f, "b", teams["b"], (your_team == "b"), 2)
 
@@ -3328,21 +3470,37 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 _wb.open({"CS2": "steam://rungameid/730", "Valorant": "valorant://"}.get(g, ""))
 
             btn_outer = tk.Frame(lobby_outer, bg=BG)
-            btn_outer.pack(fill="x", padx=14, pady=(10, 4))
+            btn_outer.pack(fill="x", padx=14, pady=(10, 6))
             lobby_body_ref.append(btn_outer)
-            launch_btn = tk.Button(
-                btn_outer,
-                text=f"▶  LAUNCH {game_name.upper()}",
-                font=(FONT_DISPLAY, 10, "bold"),
-                fg="#FFFFFF",
-                bg=THEME["red"],
-                activebackground=THEME["red_bright"],
-                activeforeground="#FFFFFF",
-                relief="flat", bd=0, cursor="hand2",
-                padx=18, pady=9,
-                command=_launch_from_lobby,
-            )
-            launch_btn.pack(fill="x")
+            # Chamfered LAUNCH button — Canvas-drawn diagonal corners
+            _lbtn_h  = 46
+            _lbtn_c  = tk.Canvas(btn_outer, height=_lbtn_h,
+                                 bg=BG, highlightthickness=0, cursor="hand2")
+            _lbtn_c.pack(fill="x")
+            _lbtn_hover = [False]
+
+            def _lbtn_draw(hover=False, c=_lbtn_c, h_=_lbtn_h, fn=_launch_from_lobby, gn=game_name):
+                c.delete("all")
+                w_ = max(80, c.winfo_width() or 300)
+                cut_ = 12
+                pts_ = [cut_, 0, w_ - cut_, 0, w_, cut_,
+                        w_, h_ - cut_, w_ - cut_, h_,
+                        cut_, h_, 0, h_ - cut_, 0, cut_]
+                fc_ = THEME["red_bright"] if hover else THEME["red"]
+                c.create_polygon(pts_, fill=fc_, outline="#ff4060", width=1)
+                c.create_text(w_ // 2, h_ // 2,
+                              text=f"▶  LAUNCH {gn.upper()}",
+                              font=(FONT_DISPLAY, 11, "bold"),
+                              fill="#FFFFFF")
+
+            def _lbtn_enter(e): _lbtn_hover[0] = True;  _lbtn_draw(True)
+            def _lbtn_leave(e): _lbtn_hover[0] = False; _lbtn_draw(False)
+            def _lbtn_click(e): _launch_from_lobby()
+            _lbtn_c.bind("<Configure>", lambda e: _lbtn_draw(_lbtn_hover[0]))
+            _lbtn_c.bind("<Enter>",    _lbtn_enter)
+            _lbtn_c.bind("<Leave>",    _lbtn_leave)
+            _lbtn_c.bind("<Button-1>", _lbtn_click)
+            _lbtn_c.after(30, lambda: _lbtn_draw(False))
 
         if result:
             rv = (result.get("result") or "").upper()
