@@ -3133,7 +3133,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 "game":   data.get("game"),
                 "mode":   data.get("mode"),
                 "status": data.get("status"),
-                "stake":  data.get("stake") or data.get("entry_fee"),
+                "stake":  data.get("bet_amount") or data.get("stake") or data.get("entry_fee"),
                 "map":    data.get("map") or data.get("map_name"),
                 "inmatch": data.get("in_match"),
                 "players": sorted([
@@ -3175,7 +3175,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         mode      = data.get("mode") or "—"
         your_team = (data.get("your_team") or "").lower()
         status    = data.get("status") or ""
-        stake     = data.get("stake") or data.get("entry_fee") or ""
+        stake     = data.get("bet_amount") or data.get("stake") or data.get("entry_fee") or ""
 
         _sc = {
             "waiting":     THEME["cyan"],
@@ -3381,10 +3381,11 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
         _build_team(grid_f, "a", teams["a"], (your_team == "a"), 0)
 
-        map_name = (data.get("map") or data.get("map_name") or "—").upper()
+        map_name  = (data.get("map") or data.get("map_name") or "—").upper()
+        _max_p    = int(data.get("max_players") or len(players) or 2)
         try:
-            raw_s = float(data.get("stake") or data.get("entry_fee") or 0)
-            pot_s = "₳ " + str(int(raw_s * (len(players) or 2)))
+            raw_s = float(data.get("bet_amount") or data.get("stake") or data.get("entry_fee") or 0)
+            pot_s = "₳ " + ("{:,}".format(int(raw_s * _max_p)) if raw_s else "0")
         except Exception:
             pot_s = "₳ —"
 
@@ -4046,17 +4047,19 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             # Update CLIENT READINESS bar from player count
             _all_players = data.get("players") or []
             _rdy_count   = len(_all_players)
-            _mode_str    = (data.get("mode") or "1v1").lower()
-            _total_slots = (10 if "5v5" in _mode_str else
-                            6  if "3v3" in _mode_str else
-                            4  if "2v2" in _mode_str else 2)
-            _ratio = min(1.0, _rdy_count / max(1, _total_slots))
+            # Use max_players from heartbeat (authoritative); fall back to mode heuristic
+            _total_slots = int(data.get("max_players") or 0)
+            if not _total_slots:
+                _mode_str    = (data.get("mode") or "1v1").lower()
+                _total_slots = (10 if "5v5" in _mode_str else
+                                6  if "3v3" in _mode_str else
+                                4  if "2v2" in _mode_str else 2)
             def _upd_readiness(rc=_rdy_count, ts=_total_slots):
                 _draw_segs(min(10, int(rc / max(1, ts) * 10)))
-                synced = rc - (1 if rc < ts else 0)
-                loading = 1 if 0 < rc < ts else 0
+                loading = max(0, ts - rc)
                 _readiness_lbl.configure(
-                    text=f"{synced}/{ts} CLIENTS SYNCED{f'  //  {loading} LOADING' if loading else ''}",
+                    text=(f"{rc}/{ts} CLIENTS SYNCED"
+                          + (f"  //  {loading} LOADING" if 0 < rc < ts else "")),
                     text_color=BRAND["cyan"] if rc >= ts else BRAND["text_muted"])
             win.after(0, _upd_readiness)
 
