@@ -1724,13 +1724,15 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             # ── Slow horizontal scan beam (atmospheric movement) ─────────────
             _scan_y = int((_t * 0.055 % 1.0) * (h + 30)) - 15
             if 0 <= _scan_y < h:
-                bg.create_line(0, _scan_y, w, _scan_y, fill="#07202e", width=3)
+                bg.create_line(0, _scan_y, w, _scan_y, fill="#0c3448", width=4)
             if 0 <= _scan_y + 1 < h:
-                bg.create_line(0, _scan_y + 1, w, _scan_y + 1, fill="#051822", width=1)
+                bg.create_line(0, _scan_y + 1, w, _scan_y + 1, fill="#0a2a3a", width=2)
+            if 0 <= _scan_y - 1 < h:
+                bg.create_line(0, _scan_y - 1, w, _scan_y - 1, fill="#081e2a", width=1)
 
             # ── Hex grid overlay (flat-top hexagons) ─────────────────────────
             _hz_size = 32
-            _hz_color = "#124460"   # noticeably brighter than pure dark for visibility
+            _hz_color = "#1a5c7a"   # visible teal hex grid
             _hz_dx = 1.5 * _hz_size
             _hz_dy = _math.sqrt(3) * _hz_size
             _hz_cols = int(w / _hz_dx) + 2
@@ -2077,7 +2079,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             pts = [cut, 0, w-1, 0, w-1, h-cut, w-1-cut, h-1, 0, h-1, 0, cut]
 
             glow_img = make_neon_glow(cvs, w, h, cut, BRAND["cyan"],
-                                      glow=10, alpha=90, inner_alpha=200)
+                                      glow=16, alpha=140, inner_alpha=255)
             if glow_img is not None:
                 if ids["glow"] is None:
                     ids["glow"] = cvs.create_image(0, 0, anchor="nw", image=glow_img)
@@ -2184,7 +2186,6 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             w = max(200, cvs.winfo_width())
             inner.update_idletasks()
             if expand:
-                # Let the layout manager determine height; just draw at current size
                 h = max(min_height, cvs.winfo_height())
             else:
                 ch = max(1, inner.winfo_reqheight())
@@ -2193,30 +2194,30 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                     cvs.config(height=total_h)
                     state["h"] = total_h
                 h = total_h
-            # Pronounced chamfer (Support-ticket reference cuts ~18px).
             cut = 18
-            cvs.delete("deco")
+            cvs.delete("glow")
+            cvs.delete("fill")
+            cvs.delete("chrome")
 
-            # Neon cyan bloom behind the frame — gives the HUD its soul.
             glow_img = make_neon_glow(cvs, w, h, cut, BRAND["cyan"],
-                                      glow=14, alpha=110, inner_alpha=220)
+                                      glow=26, alpha=180, inner_alpha=255)
             if glow_img is not None:
-                cvs.create_image(0, 0, anchor="nw", image=glow_img, tags="deco")
+                cvs.create_image(0, 0, anchor="nw", image=glow_img, tags="glow")
                 cvs._glow_ref = glow_img
 
-            # Clean chamfered border: thin subtle outline, TL + BR corner cuts.
             pts = [cut, 0, w - 1, 0, w - 1, h - cut,
                    w - 1 - cut, h - 1, 0, h - 1, 0, cut]
-            cvs.create_polygon(pts, fill=BRAND["hud_panel"],
-                               outline=BRAND["hud_border"], width=1, tags="deco")
-
-            # Title at top-left — big, bold, white, uppercase, generous spacing.
-            # Matches the "TOPIC" / "DETAILS" labels on the website popup.
+            cvs.create_polygon(pts, fill=BRAND["hud_panel"], outline="", tags="fill")
+            cvs.create_polygon(pts, fill="", outline=BRAND["hud_border"],
+                               width=1, tags="chrome")
             cvs.create_text(16, 16, text=title.upper(), fill=BRAND["text"],
                             font=(FONT_DISPLAY, 13, "bold"), anchor="w",
-                            tags="deco")
+                            tags="chrome")
+            try:
+                cvs.tag_raise("chrome")
+            except Exception:
+                pass
 
-            # Place / resize inner content window
             iw = max(100, w - PAD_L - PAD_R)
             if state["win"] is None:
                 state["win"] = cvs.create_window(PAD_L, PAD_T, window=inner,
@@ -2225,12 +2226,35 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 cvs.itemconfig(state["win"], width=iw)
                 cvs.coords(state["win"], PAD_L, PAD_T)
 
+        _sw_phase: list[int] = [0]
+
+        def _sweep_tick():
+            try:
+                if not cvs.winfo_exists():
+                    return
+            except Exception:
+                return
+            w_now = max(200, cvs.winfo_width())
+            h_now = max(min_height, cvs.winfo_height())
+            cvs.delete("sw")
+            ph = (_sw_phase[0] % 110) / 110.0
+            sx = int(ph * (w_now + h_now)) - h_now
+            pts = [sx, 0, sx + 55, 0, sx + 55 + h_now, h_now, sx + h_now, h_now]
+            cvs.create_polygon(pts, fill="#0e2e40", outline="", tags="sw")
+            try:
+                cvs.tag_raise("chrome")
+            except Exception:
+                pass
+            _sw_phase[0] += 1
+            cvs.after(85, _sweep_tick)
+
         def _on_cfg(_e=None):
             cvs.after(15, _redraw)
 
         cvs.bind("<Configure>", _on_cfg)
         inner.bind("<Configure>", _on_cfg)
         cvs.after(50, _redraw)
+        cvs.after(int(id(cvs) % 2800 + 120), _sweep_tick)
         # Expose the outer holder so callers can pack_forget/pack the whole card
         # (the returned `inner` frame is embedded inside a Canvas via
         # create_window, so its own pack state is not visible in the layout).
@@ -3297,6 +3321,28 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                           fg=THEME["red"], bg="#2A0000")
             wb.pack(fill="x", padx=0, pady=(0, 6))
             lobby_body_ref.append(wb)
+
+        if game_name and game_name.upper() in ("CS2", "VALORANT") and status not in ("completed", "tied"):
+            def _launch_from_lobby(g=game_name):
+                import webbrowser as _wb
+                _wb.open({"CS2": "steam://rungameid/730", "Valorant": "valorant://"}.get(g, ""))
+
+            btn_outer = tk.Frame(lobby_outer, bg=BG)
+            btn_outer.pack(fill="x", padx=14, pady=(10, 4))
+            lobby_body_ref.append(btn_outer)
+            launch_btn = tk.Button(
+                btn_outer,
+                text=f"▶  LAUNCH {game_name.upper()}",
+                font=(FONT_DISPLAY, 10, "bold"),
+                fg="#FFFFFF",
+                bg=THEME["red"],
+                activebackground=THEME["red_bright"],
+                activeforeground="#FFFFFF",
+                relief="flat", bd=0, cursor="hand2",
+                padx=18, pady=9,
+                command=_launch_from_lobby,
+            )
+            launch_btn.pack(fill="x")
 
         if result:
             rv = (result.get("result") or "").upper()
