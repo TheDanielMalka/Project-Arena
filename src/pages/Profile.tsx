@@ -578,57 +578,7 @@ const Profile = () => {
       bgColor: "bg-arena-orange/5",
       onConnect: () => {
         if (!token) return;
-        const authUrl = `${ENGINE_BASE}/auth/faceit?token=${encodeURIComponent(token)}`;
-        const popup = window.open(authUrl, 'faceit_oauth', 'width=580,height=720,top=100,left=400');
-        if (!popup) { window.location.href = authUrl; return; }
-        localStorage.removeItem('faceit_oauth_result');
-        let finished = false;
-        const done = (success: boolean) => {
-          if (finished) return;
-          finished = true;
-          window.removeEventListener('message', onMsg);
-          window.removeEventListener('storage', onStorage);
-          clearInterval(pollInterval);
-          try { popup.close(); } catch { /* ignore */ }
-          if (success) {
-            void refreshProfileFromServer();
-            toast({ title: "FACEIT Connected!", description: "Your FACEIT account has been linked to Arena." });
-          } else {
-            toast({ title: "FACEIT Connection Failed", variant: "destructive" });
-          }
-        };
-        const onMsg = (e: MessageEvent) => {
-          if (!e.data || typeof e.data !== 'object') return;
-          const d = e.data as Record<string, unknown>;
-          if (d.type === 'faceit_linked') { done(!!d.success); return; }
-        };
-        const onStorage = (e: StorageEvent) => {
-          if (e.key !== 'faceit_oauth_result' || !e.newValue) return;
-          try {
-            const d = JSON.parse(e.newValue) as Record<string, unknown>;
-            if (d.type === 'faceit_linked') { localStorage.removeItem('faceit_oauth_result'); done(!!d.success); }
-          } catch { /* ignore */ }
-        };
-        window.addEventListener('message', onMsg);
-        window.addEventListener('storage', onStorage);
-        const pollInterval = setInterval(() => {
-          if (!popup.closed || finished) return;
-          // popup closed without postMessage (FACEIT COOP severs window.opener) — verify via server
-          finished = true;
-          window.removeEventListener('message', onMsg);
-          window.removeEventListener('storage', onStorage);
-          clearInterval(pollInterval);
-          apiGetMe(token).then((me) => {
-            if (me?.faceit_verified) {
-              void refreshProfileFromServer();
-              toast({ title: "FACEIT Connected!", description: "Your FACEIT account has been linked to Arena." });
-            } else {
-              toast({ title: "FACEIT Connection Failed", variant: "destructive" });
-            }
-          }).catch(() => {
-            toast({ title: "FACEIT Connection Failed", variant: "destructive" });
-          });
-        }, 500);
+        window.location.href = `${ENGINE_BASE}/auth/faceit?token=${encodeURIComponent(token)}`;
       },
       onDisconnect: () => {
         if (!token) return;
