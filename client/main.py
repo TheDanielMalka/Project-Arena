@@ -1665,42 +1665,67 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             return int(a + (b - a) * t)
 
         def _draw_backdrop() -> None:
+            import math as _math
+            import time as _time
             w = max(1, int(win.winfo_width()))
             h = max(1, int(win.winfo_height()))
             bg.delete("all")
 
+            # ── Base vertical gradient ────────────────────────────────────────
             c0 = _hex_to_rgb(BRAND["bg"])
             c1 = _hex_to_rgb(BRAND["hud_panel"])
-
-            # Vertical gradient base
-            steps = min(220, h)
+            steps = min(200, h)
             for i in range(steps):
                 t = i / max(1, steps - 1)
-                col = (
-                    _lerp(c0[0], c1[0], t),
-                    _lerp(c0[1], c1[1], t),
-                    _lerp(c0[2], c1[2], t),
-                )
+                col = (_lerp(c0[0], c1[0], t), _lerp(c0[1], c1[1], t), _lerp(c0[2], c1[2], t))
                 y0 = int(i * h / steps)
                 y1 = int((i + 1) * h / steps)
                 bg.create_rectangle(0, y0, w, y1, outline="", fill=_rgb_to_hex(col))
 
-            # Corner glows (cyan top-left + violet top-right + red bottom hint)
-            bg.create_oval(-w * 0.38, -h * 0.60, w * 0.60, h * 0.38, outline="", fill="#0d3340", stipple="gray25")
-            bg.create_oval(w * 0.42, -h * 0.48, w * 1.38, h * 0.42, outline="", fill="#2d1445", stipple="gray25")
-            bg.create_oval(-w * 0.10, h * 0.62, w * 0.32, h * 1.35, outline="", fill="#1a0808", stipple="gray12")
+            # ── Animated pulse factors (slow breathing, ~7-8 s cycle) ─────────
+            _t = _time.time()
+            _p1 = (_math.sin(_t * 0.8) + 1) * 0.5         # 0..1
+            _p2 = (_math.sin(_t * 1.1 + 1.0) + 1) * 0.5
 
-            # Subtle scanlines (every 6px — less heavy than CRT)
-            for y in range(0, h, 6):
-                bg.create_line(0, y, w, y, fill="#050505", width=1)
+            # ── Top-left teal bloom (solid pre-blended layers, outermost first)
+            # Each layer is a progressively brighter teal blended over #0a0c10
+            bg.create_oval(-w*0.38, -h*0.65, w*0.68, h*0.58,
+                           outline="", fill="#0a171f")
+            bg.create_oval(-w*0.22, -h*0.50, w*0.52, h*0.42,
+                           outline="", fill="#0c2130")
+            bg.create_oval(-w*0.06, -h*0.38, w*0.40 + _p1*w*0.04, h*0.30 + _p1*h*0.04,
+                           outline="", fill="#0e2d3e")
+            bg.create_oval(0, -h*0.18, w*0.24 + _p1*w*0.03, h*0.18 + _p1*h*0.03,
+                           outline="", fill="#0f3748")
 
-            # ── HEX GRID OVERLAY (flat-top, brief spec §2) ───────────────────
-            import math as _math
+            # ── Top-right violet bloom ────────────────────────────────────────
+            bg.create_oval(w*0.42, -h*0.62, w*1.48, h*0.40,
+                           outline="", fill="#0e0b1a")
+            bg.create_oval(w*0.60, -h*0.46, w*1.32, h*0.25,
+                           outline="", fill="#130d24")
+            bg.create_oval(w*0.74, -h*0.30, w*1.18 + _p2*w*0.03, h*0.14 + _p2*h*0.03,
+                           outline="", fill="#190f30")
+
+            # ── Bottom-left red micro-bloom ───────────────────────────────────
+            bg.create_oval(-w*0.06, h*0.52, w*0.26, h*1.28,
+                           outline="", fill="#1a0810")
+
+            # ── Scanlines (every 4 px) ────────────────────────────────────────
+            for y in range(0, h, 4):
+                bg.create_line(0, y, w, y, fill="#040507", width=1)
+
+            # ── Slow horizontal scan beam (atmospheric movement) ─────────────
+            _scan_y = int((_t * 0.055 % 1.0) * (h + 30)) - 15
+            if 0 <= _scan_y < h:
+                bg.create_line(0, _scan_y, w, _scan_y, fill="#07202e", width=3)
+            if 0 <= _scan_y + 1 < h:
+                bg.create_line(0, _scan_y + 1, w, _scan_y + 1, fill="#051822", width=1)
+
+            # ── Hex grid overlay (flat-top hexagons) ─────────────────────────
             _hz_size = 32
-            _hz_color = "#082830"
-            _hz_sqrt3 = _math.sqrt(3)
+            _hz_color = "#124460"   # noticeably brighter than pure dark for visibility
             _hz_dx = 1.5 * _hz_size
-            _hz_dy = _hz_sqrt3 * _hz_size
+            _hz_dy = _math.sqrt(3) * _hz_size
             _hz_cols = int(w / _hz_dx) + 2
             _hz_rows = int(h / _hz_dy) + 2
             for _hcol in range(_hz_cols):
@@ -1710,19 +1735,21 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                     _pts = []
                     for _hi in range(6):
                         _ha = _math.radians(60 * _hi)
-                        _pts += [_cx + _hz_size * _math.cos(_ha),
-                                 _cy + _hz_size * _math.sin(_ha)]
+                        _pts += [_cx + _hz_size * _math.cos(_ha), _cy + _hz_size * _math.sin(_ha)]
                     bg.create_polygon(_pts, outline=_hz_color, fill="", width=1)
 
-            # Corner bracket marks (tactical framing)
+            # ── Corner bracket marks ──────────────────────────────────────────
             _cb = 22
             bg.create_line(0, _cb, _cb, 0, fill=BRAND["hud_glow"], width=1)
-            bg.create_line(w - _cb, 0, w, _cb, fill=BRAND["accent"],   width=1)
+            bg.create_line(w - _cb, 0, w, _cb, fill=BRAND["accent"], width=1)
             bg.create_line(0, h - _cb, _cb, h, fill=BRAND["hud_glow"], width=1)
             bg.create_line(w - _cb, h, w, h - _cb, fill=BRAND["accent"], width=1)
 
-            # Cyan accent line at very top
+            # ── Cyan accent line at very top ──────────────────────────────────
             bg.create_rectangle(0, 0, w, 2, outline="", fill=BRAND["hud_glow"])
+
+            # ── Self-schedule next animation frame (80 ms ≈ 12.5 fps) ─────────
+            _bg_redraw_job[0] = win.after(80, _draw_backdrop)
 
         def _schedule_backdrop_redraw() -> None:
             job = _bg_redraw_job[0]
@@ -1884,40 +1911,116 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     _chip(hdr_right, f"v{CLIENT_VERSION}")
     _eng_chip, hdr_eng_dot = _chip(hdr_right, "ENGINE", dot_color=BRAND["text_muted"])
 
-    # ── Tab view ──────────────────────────────────────────────────────────────
-    tabview = ctk.CTkTabview(
-        win,
-        fg_color=BRAND["bg"],
-        corner_radius=0,
-        segmented_button_fg_color=BRAND["hud_panel"],
-        segmented_button_selected_color=BRAND["accent"],
-        segmented_button_selected_hover_color=BRAND["accent_dark"],
-        segmented_button_unselected_color=BRAND["hud_panel"],
-        segmented_button_unselected_hover_color=BRAND["hud_panel_2"],
-        text_color=BRAND["text"],
-        text_color_disabled=BRAND["text_muted"],
-    )
-    tabview.pack(fill="both", expand=True)
-    tabview.add("Overview")
-    tabview.add("Creators")
+    # ── Main layout: left nav sidebar + right content (no CTkTabview) ─────────
+    _main_body = ctk.CTkFrame(win, fg_color="transparent", corner_radius=0)
+    _main_body.pack(fill="both", expand=True)
 
-    tab_ov = tabview.tab("Overview")
-    tab_ev = tabview.tab("Creators")
+    _nav_bg = BRAND["hud_panel_2"]
 
-    # ── OVERVIEW TAB ──────────────────────────────────────────────────────────
-    # Two-column AAA HUD layout (left: identity/match, right: game/monitor)
+    # Left nav sidebar (fixed 185px, no scrollbar)
+    _nav_panel = tk.Frame(_main_body, bg=_nav_bg, width=185)
+    _nav_panel.pack(side="left", fill="y")
+    _nav_panel.pack_propagate(False)
+    # Right edge cyan accent line
+    tk.Frame(_nav_panel, bg=BRAND["hud_glow"], width=1).place(relx=1.0, x=-1, rely=0, relheight=1)
 
-    ov_root = ctk.CTkFrame(tab_ov, fg_color=BRAND["bg"], corner_radius=0)
-    ov_root.pack(fill="both", expand=True)
-    ov_root.grid_columnconfigure(0, weight=2)
-    ov_root.grid_columnconfigure(1, weight=3)
-    ov_root.grid_rowconfigure(0, weight=1)
+    # Right content switcher
+    _content_area = ctk.CTkFrame(_main_body, fg_color="transparent", corner_radius=0)
+    _content_area.pack(side="left", fill="both", expand=True)
 
-    ov_left = ctk.CTkScrollableFrame(ov_root, fg_color=BRAND["bg"], corner_radius=0)
-    ov_left.grid(row=0, column=0, sticky="nsew", padx=(0, 6), pady=0)
+    _ov_frame = ctk.CTkFrame(_content_area, fg_color="transparent", corner_radius=0)
+    _ov_frame.pack(fill="both", expand=True)
+    _ev_frame = ctk.CTkFrame(_content_area, fg_color="transparent", corner_radius=0)
 
-    ov_right = ctk.CTkScrollableFrame(ov_root, fg_color=BRAND["bg"], corner_radius=0)
-    ov_right.grid(row=0, column=1, sticky="nsew", padx=(6, 0), pady=0)
+    # Nav items: (label, tab_key)
+    _nav_items = [("Overview", "ov"), ("Creators", "ev")]
+    _nav_rows: dict = {}
+    _active_tab_key: list = ["ov"]
+
+    def _switch_nav(key: str):
+        if _active_tab_key[0] == key:
+            return
+        _active_tab_key[0] = key
+        if key == "ov":
+            _ov_frame.pack(fill="both", expand=True)
+            _ev_frame.pack_forget()
+        else:
+            _ev_frame.pack(fill="both", expand=True)
+            _ov_frame.pack_forget()
+        for k, (row, bar, dot, lbl) in _nav_rows.items():
+            active = (k == key)
+            row.configure(bg=BRAND["hud_panel"] if active else _nav_bg)
+            bar.configure(bg=BRAND["hud_glow"] if active else _nav_bg)
+            dot.configure(fg=BRAND["hud_glow"] if active else BRAND["hud_border"],
+                          bg=BRAND["hud_panel"] if active else _nav_bg)
+            lbl.configure(fg=BRAND["text"] if active else BRAND["text_muted"],
+                          bg=BRAND["hud_panel"] if active else _nav_bg)
+
+    # ── ARENA wordmark in sidebar ─────────────────────────────────────────────
+    _nav_logo = tk.Frame(_nav_panel, bg=_nav_bg)
+    _nav_logo.pack(fill="x", padx=0, pady=(0, 0))
+    # Left cyan line
+    tk.Frame(_nav_logo, bg=BRAND["hud_glow"], height=1).pack(fill="x", side="top")
+    _nav_logo_inner = tk.Frame(_nav_logo, bg=_nav_bg)
+    _nav_logo_inner.pack(fill="x", padx=14, pady=(10, 10))
+    tk.Label(_nav_logo_inner, text="//", font=(FONT_MONO, 9, "bold"),
+             fg=BRAND["hud_glow"], bg=_nav_bg).pack(side="left")
+    tk.Label(_nav_logo_inner, text=" ARENA", font=(FONT_DISPLAY, 11, "bold"),
+             fg=BRAND["accent"], bg=_nav_bg).pack(side="left")
+    # Bottom dim separator
+    tk.Frame(_nav_logo, bg=BRAND["hud_border"], height=1).pack(fill="x", side="top")
+
+    # ── Nav buttons ───────────────────────────────────────────────────────────
+    for _ni_lbl, _ni_key in _nav_items:
+        _nr = tk.Frame(_nav_panel, bg=_nav_bg, cursor="hand2")
+        _nr.pack(fill="x", padx=0)
+        # 3px left-edge active indicator
+        _nbar = tk.Frame(_nr, width=3,
+                         bg=BRAND["hud_glow"] if _ni_key == "ov" else _nav_bg)
+        _nbar.pack(side="left", fill="y")
+        _nbar.pack_propagate(False)
+        _nd = tk.Label(_nr, text=">",
+                       font=(FONT_MONO, 9, "bold"),
+                       fg=BRAND["hud_glow"] if _ni_key == "ov" else BRAND["hud_border"],
+                       bg=BRAND["hud_panel"] if _ni_key == "ov" else _nav_bg,
+                       padx=8)
+        _nd.pack(side="left", pady=8)
+        _nl = tk.Label(_nr, text=_ni_lbl.upper(),
+                       font=(FONT_MONO, 9, "bold"),
+                       fg=BRAND["text"] if _ni_key == "ov" else BRAND["text_muted"],
+                       bg=BRAND["hud_panel"] if _ni_key == "ov" else _nav_bg,
+                       anchor="w")
+        _nl.pack(side="left", fill="x", expand=True, pady=8)
+        if _ni_key == "ov":
+            _nr.configure(bg=BRAND["hud_panel"])
+        _nav_rows[_ni_key] = (_nr, _nbar, _nd, _nl)
+        for _nw in (_nr, _nbar, _nd, _nl):
+            _nw.bind("<Button-1>", lambda e, k=_ni_key: _switch_nav(k))
+        def _nav_enter(e, row=_nr, bar=_nbar, dot=_nd, lbl=_nl, key=_ni_key):
+            if _active_tab_key[0] != key:
+                row.configure(bg=BRAND["hud_panel"])
+                bar.configure(bg=BRAND["hud_border"])
+                dot.configure(bg=BRAND["hud_panel"])
+                lbl.configure(bg=BRAND["hud_panel"])
+        def _nav_leave(e, row=_nr, bar=_nbar, dot=_nd, lbl=_nl, key=_ni_key):
+            if _active_tab_key[0] != key:
+                row.configure(bg=_nav_bg)
+                bar.configure(bg=_nav_bg)
+                dot.configure(bg=_nav_bg)
+                lbl.configure(bg=_nav_bg)
+        for _nw in (_nr, _nbar, _nd, _nl):
+            _nw.bind("<Enter>", _nav_enter)
+            _nw.bind("<Leave>", _nav_leave)
+
+    # 1px separator below nav
+    tk.Frame(_nav_panel, bg=BRAND["hud_border"], height=1).pack(fill="x", padx=0, pady=(0, 8))
+
+    # Compatibility aliases
+    tab_ov = _ov_frame
+    tab_ev = _ev_frame
+    ov_left = _nav_panel   # identity/engine widgets pack here
+    ov_right = ctk.CTkFrame(_ov_frame, fg_color="transparent", corner_radius=0)
+    ov_right.pack(fill="both", expand=True, padx=8, pady=0)
 
     # ── Compact chamfered status card helper (matches website tactical frame).
     # Draws: chamfered polygon background + cyan L-brackets (top-left and
@@ -2037,7 +2140,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         return dot_proxy, status_proxy
 
     # ENGINE card — compact chamfered tactical frame
-    eng_dot, eng_lbl = _make_chamfer_status(ov_left, "Engine", "Checking…")
+    eng_dot, eng_lbl = _make_chamfer_status(ov_left, "Engine", "Checking…", width_shrink=0)
 
     # ── Large chamfered panel (Identity/Monitoring etc.) ──────────────────────
     # Unlike `_make_chamfer_status` which is a one-line compact strip, this
@@ -2216,7 +2319,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     # Identity card — compact chamfered tactical panel (admin-dialog style).
     # Uses the same 80px right-shrink as the Engine / Game Status strips so
     # every card in the column ends on the same vertical line.
-    id_card = _chamfer_panel(ov_left, "Identity", width_shrink=80, min_height=70)
+    id_card = _chamfer_panel(ov_left, "Identity", width_shrink=0, min_height=70)
     id_inner_ref: list = []
 
     def _rebuild_identity():
@@ -2481,10 +2584,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         xp_bar.pack(fill="x", pady=(0, 10))
 
         def _do_logout():
-            # Stop heartbeat FIRST so no stale beat re-opens the disconnected session
-            # before the engine logout call marks it as disconnected.
             monitor.stop()
-            # Phase 5: tell engine to disconnect sessions before clearing local state
             auth.logout(engine=monitor.engine)
             monitor.engine.token = ""
             monitor.engine.reset_401_guard()
@@ -2493,14 +2593,8 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 tray_app._apply_tray_icon()
             win.after(0, _rebuild_identity)
 
-        ctk.CTkButton(
-            parent, text="SIGN OUT", height=32, corner_radius=4,
-            fg_color=BRAND["hud_panel_2"], hover_color=BRAND["hud_border"],
-            border_width=1, border_color=BRAND["hud_border"],
-            text_color=BRAND["text_muted"],
-            font=ctk.CTkFont(family=FONT_MONO, size=10, weight="bold"),
-            command=_do_logout,
-        ).pack(anchor="w")
+        _hud_button(parent, "SIGN OUT", command=_do_logout, kind="ghost", height=36)
+        _hud_button(parent, "PROJECT-ARENA.COM", command=_open_website, kind="ghost", height=36)
 
     _rebuild_identity()
 
@@ -2509,7 +2603,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     _hub_enabled = os.environ.get("ARENA_HUB_ENABLED", "0").lower() not in ("0", "false", "no")
 
     if _hub_enabled:
-        hub_card = _chamfer_panel(ov_left, "Hub", width_shrink=80, min_height=60)
+        hub_card = _chamfer_panel(ov_left, "Hub", width_shrink=0, min_height=60)
         _hub_body_refs: list = []
         _hub_invite_modal_open: list[bool] = [False]
         _hub_seen_invite_ids: set = set()
@@ -2830,7 +2924,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     # Game status card — compact chamfered tactical frame (match id in the
     # right slot so the old `match_lbl` stays visible without a second row).
     game_dot, game_lbl, match_lbl = _make_chamfer_status(
-        ov_right, "Game Status", "No game detected", with_extra=True,
+        ov_right, "Game Status", "No game detected", with_extra=True, width_shrink=0,
     )
 
     # ── Match Lobby Card — hidden until monitor.current_match_id is set ───────
@@ -3153,7 +3247,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     # Monitoring toggle card — chamfered tactical panel (admin-dialog style),
     # same 80px right-shrink as Identity/Engine so the column ends aligned.
-    mon_card = _chamfer_panel(ov_right, "Monitoring", width_shrink=80, min_height=70)
+    mon_card = _chamfer_panel(ov_right, "Monitoring", width_shrink=0, min_height=70)
     mon_row  = ctk.CTkFrame(mon_card, fg_color="transparent")
     mon_row.pack(fill="x", padx=0, pady=(0, 6))
 
