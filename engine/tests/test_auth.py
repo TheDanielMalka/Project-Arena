@@ -1815,6 +1815,7 @@ class TestMatchHistory:
             "Opponent",            # opponent username
             str(uuid.uuid4()),     # opponent id
             None,                  # opponent avatar
+            "CRYPTO",              # stake_currency
         )
 
     def test_match_history_returns_list(self):
@@ -1846,14 +1847,17 @@ class TestMatchHistory:
             resp = client.get("/matches/history", headers=self._auth_header())
         assert resp.json()["matches"][0]["result"] == "loss"
 
-    def test_match_history_no_winner_is_draw(self):
+    def test_match_history_no_winner_returns_status(self):
         row = list(self._match_row())
-        row[5] = None   # no winner → draw
+        row[3] = "tied"   # status
+        row[5] = None     # no winner → result == status ("tied")
         ctx, session = _make_session_mock()
         session.execute.return_value.fetchall.return_value = [tuple(row)]
         with patch("main.SessionLocal", return_value=ctx):
             resp = client.get("/matches/history", headers=self._auth_header())
-        assert resp.json()["matches"][0]["result"] == "draw"
+        data = resp.json()["matches"][0]
+        assert data["result"] == "tied"
+        assert data["stake_currency"] == "CRYPTO"
 
     def test_match_history_no_token_returns_401(self):
         resp = client.get("/matches/history")

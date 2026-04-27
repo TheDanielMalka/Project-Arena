@@ -1432,10 +1432,10 @@ async def websocket_endpoint(
                 msg = __import__("json").loads(raw)
             except Exception:
                 continue
-            # Client may send {"type": "ws:subscribe_match", "match_id": "<id>"}
+            # Client sends {"type": "ws:subscribe_match", "data": {"match_id": "<id>"}}
             # to join a match room after connecting (e.g. right after create/join).
             if msg.get("type") == "ws:subscribe_match":
-                mid = msg.get("match_id") or ""
+                mid = (msg.get("data") or {}).get("match_id") or msg.get("match_id") or ""
                 if mid:
                     with SessionLocal() as s:
                         allowed = s.execute(
@@ -2749,11 +2749,23 @@ async def client_heartbeat(payload: HeartbeatRequest):
     record = {**payload.model_dump(), "last_seen": now_iso}
 
     # ── In-memory update (always) ─────────────────────────────
+    _status_changed = False
     with _client_store_lock:
         existing = _client_statuses.get(payload.wallet_address, {})
         # user_id: prefer the heartbeat-provided value; fall back to a prior bind
         record["user_id"] = payload.user_id or existing.get("user_id")
+        _status_changed = existing.get("status") != payload.status
         _client_statuses[payload.wallet_address] = record
+
+    # ── Push client:status_changed to user's browser sockets on status change ──
+    _ws_user_id = record.get("user_id")
+    if _status_changed and _ws_user_id:
+        ws_manager.fire_user(_ws_user_id, "client:status_changed", {
+            "status":   payload.status,
+            "game":     payload.game,
+            "match_id": payload.match_id,
+            "online":   True,
+        })
 
     # ── DB UPSERT (best-effort, only when session_id is present) ─────────────
     # Conflict target: partial unique index on wallet_address WHERE disconnected_at IS NULL.
@@ -8770,7 +8782,8 @@ async def match_history(
                          FROM match_players mp2
                          JOIN users u2 ON u2.id = mp2.user_id
                          WHERE mp2.match_id = m.id AND mp2.user_id != :uid
-                         LIMIT 1)
+                         LIMIT 1),
+                        m.stake_currency
                     FROM matches m
                     JOIN match_players mp ON mp.match_id = m.id
                     WHERE {where}
@@ -8794,7 +8807,7 @@ async def match_history(
                 "result":          (
                     "win"  if r[5] and str(r[5]) == user_id else
                     "loss" if r[5] else
-                    "draw"
+                    r[3]   # "tied", "cancelled", "disputed" — not a draw
                 ),
                 "winner_id":       str(r[5]) if r[5] else None,
                 "created_at":      r[6].isoformat() if r[6] else None,
@@ -8802,6 +8815,7 @@ async def match_history(
                 "opponent":        r[8],
                 "opponent_id":     str(r[9])  if r[9]  else None,
                 "opponent_avatar": r[10],
+                "stake_currency":  r[11] or "CRYPTO",
             }
             for r in rows
         ]
