@@ -4562,21 +4562,21 @@ async def faceit_auth_callback(
 
     if error:
         logger.warning("FACEIT callback: provider returned error=%s description=%s", error, error_description)
-        return _faceit_resp(error_url, False, wants_json)
+        return RedirectResponse(error_url, status_code=302)
 
     if not code:
         logger.error("FACEIT callback: no code and no error in callback params")
-        return _faceit_resp(error_url, False, wants_json)
+        return RedirectResponse(error_url, status_code=302)
 
     if not FACEIT_CLIENT_ID:
         logger.error("FACEIT callback: FACEIT_CLIENT_ID not set")
-        return _faceit_resp(error_url, False, wants_json)
+        return RedirectResponse(error_url, status_code=302)
 
     with _faceit_nonces_lock:
         entry = _faceit_nonces.pop(state, None)
     if not entry:
         logger.warning("FACEIT callback: nonce not found (state prefix=%s)", state[:8])
-        return _faceit_resp(error_url, False, wants_json)
+        return RedirectResponse(error_url, status_code=302)
     jwt_token, _ = entry
     redirect_uri = f"{ENGINE_BASE_URL.rstrip('/')}/auth/faceit/callback"
 
@@ -4599,7 +4599,7 @@ async def faceit_auth_callback(
             if token_resp.status_code != 200:
                 logger.error("FACEIT token exchange failed: status=%s body=%s",
                              token_resp.status_code, token_resp.text[:500])
-                return _faceit_resp(error_url, False, wants_json)
+                return RedirectResponse(error_url, status_code=302)
 
             token_json = token_resp.json()
             access_token = token_json.get("access_token")
@@ -4607,7 +4607,7 @@ async def faceit_auth_callback(
 
             if not access_token:
                 logger.error("FACEIT token exchange: no access_token in response keys=%s", list(token_json.keys()))
-                return _faceit_resp(error_url, False, wants_json)
+                return RedirectResponse(error_url, status_code=302)
 
             userinfo: dict | None = None
             userinfo_resp = await hc.get(
@@ -4627,18 +4627,18 @@ async def faceit_auth_callback(
             if not userinfo:
                 logger.error("FACEIT: no userinfo available; access_token present=%s id_token present=%s",
                              bool(access_token), bool(id_token_raw))
-                return _faceit_resp(error_url, False, wants_json)
+                return RedirectResponse(error_url, status_code=302)
 
     except Exception as exc:
         logger.error("FACEIT OAuth network error: %s", exc)
-        return _faceit_resp(error_url, False, wants_json)
+        return RedirectResponse(error_url, status_code=302)
 
     faceit_id       = (userinfo.get("guid") or userinfo.get("sub") or "").strip()
     faceit_nickname = (userinfo.get("nickname") or userinfo.get("name") or "").strip()
 
     if not faceit_id:
         logger.error("FACEIT: no user ID in userinfo; available keys=%s", list(userinfo.keys()))
-        return _faceit_resp(error_url, False, wants_json)
+        return RedirectResponse(error_url, status_code=302)
 
     faceit_elo, faceit_level = None, None
     if FACEIT_API_KEY:
@@ -4662,7 +4662,7 @@ async def faceit_auth_callback(
         user_id  = str(payload["sub"])
     except Exception as exc:
         logger.error("FACEIT callback: JWT decode failed: %s", exc)
-        return _faceit_resp(error_url, False, wants_json)
+        return RedirectResponse(error_url, status_code=302)
 
     try:
         with SessionLocal() as session:
@@ -4670,7 +4670,7 @@ async def faceit_auth_callback(
                 text("SELECT 1 FROM users WHERE faceit_id = :f AND id != :uid"),
                 {"f": faceit_id, "uid": user_id},
             ).fetchone():
-                return _faceit_resp(f"{FRONTEND_URL}/profile?faceit_error=taken", False, wants_json)
+                return RedirectResponse(f"{FRONTEND_URL}/profile?faceit_error=taken", status_code=302)
 
             session.execute(
                 text(
@@ -4686,9 +4686,9 @@ async def faceit_auth_callback(
             session.commit()
     except Exception as exc:
         logger.error("FACEIT link DB error: %s", exc)
-        return _faceit_resp(error_url, False, wants_json)
+        return RedirectResponse(error_url, status_code=302)
 
-    return _faceit_resp(f"{FRONTEND_URL}/profile?faceit_linked=1", True, wants_json)
+    return RedirectResponse(f"{FRONTEND_URL}/profile?faceit_linked=1", status_code=302)
 
 
 @app.delete("/auth/faceit", status_code=200)
