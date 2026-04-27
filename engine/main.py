@@ -4498,11 +4498,6 @@ async def discord_auth_disconnect(payload: dict = Depends(verify_token)):
 
 
 # ── FACEIT OAuth2 ─────────────────────────────────────────────────────────────
-# In-memory nonce store — avoids DB schema issues and keeps state short
-# (long JWT in state triggers Cloudflare WAF).
-import threading as _threading, time as _time
-_faceit_nonces: dict[str, tuple[str, float]] = {}
-_faceit_nonces_lock = _threading.Lock()
 
 
 @app.get("/auth/faceit")
@@ -4510,12 +4505,22 @@ async def faceit_auth_start(token: str):
     if not FACEIT_CLIENT_ID:
         raise HTTPException(503, "FACEIT OAuth not configured")
     nonce = secrets.token_urlsafe(16)
-    expires = _time.time() + 600
-    with _faceit_nonces_lock:
-        now = _time.time()
-        for k in [k for k, (_, exp) in _faceit_nonces.items() if exp < now]:
-            del _faceit_nonces[k]
-        _faceit_nonces[nonce] = (token, expires)
+    try:
+        with SessionLocal() as session:
+            session.execute(
+                text("DELETE FROM faceit_oauth_states WHERE expires_at < NOW()"),
+            )
+            session.execute(
+                text(
+                    "INSERT INTO faceit_oauth_states (nonce, jwt_token, code_verifier, expires_at) "
+                    "VALUES (:n, :t, '', NOW() + INTERVAL '10 minutes')"
+                ),
+                {"n": nonce, "t": token},
+            )
+            session.commit()
+    except Exception as exc:
+        logger.error("FACEIT auth start DB error: %s", exc)
+        raise HTTPException(500, "OAuth state error")
     params = {
         "response_type": "code",
         "client_id":     FACEIT_CLIENT_ID,
@@ -4525,27 +4530,6 @@ async def faceit_auth_start(token: str):
     }
     url = "https://accounts.faceit.com/oauth/authorize?" + urllib.parse.urlencode(params)
     return RedirectResponse(url, status_code=302)
-
-
-def _faceit_resp(redirect_url: str, success: bool, wants_json: bool = False):
-    if wants_json:
-        from fastapi.responses import JSONResponse
-        return JSONResponse({"success": success})
-    return _faceit_html(redirect_url, success)
-
-
-def _faceit_html(redirect_url: str, success: bool) -> HTMLResponse:
-    s = "true" if success else "false"
-    return HTMLResponse(f"""<!DOCTYPE html><html><body><script>
-(function(){{
-  var ok={s};
-  var m={{type:"faceit_linked",success:ok,ts:Date.now()}};
-  try{{localStorage.setItem("faceit_oauth_result",JSON.stringify(m));}}catch(e){{}}
-  if(window.opener){{try{{window.opener.postMessage(m,"*");}}catch(e){{}}}}
-  try{{window.close();}}catch(e){{}}
-  setTimeout(function(){{window.location.href="{redirect_url}";}},300);
-}})();
-</script></body></html>""")
 
 
 def _faceit_decode_id_token(id_token: str) -> dict | None:
@@ -4570,7 +4554,6 @@ async def faceit_auth_callback(
 ):
     """FACEIT OAuth2 callback: exchange code → token → fetch player → save to DB."""
     error_url = f"{FRONTEND_URL}/profile?faceit_error=1"
-    wants_json = "application/json" in request.headers.get("accept", "")
 
     if error:
         logger.warning("FACEIT callback: provider returned error=%s description=%s", error, error_description)
@@ -4584,12 +4567,24 @@ async def faceit_auth_callback(
         logger.error("FACEIT callback: FACEIT_CLIENT_ID not set")
         return RedirectResponse(error_url, status_code=302)
 
-    with _faceit_nonces_lock:
-        entry = _faceit_nonces.pop(state, None)
-    if not entry:
-        logger.warning("FACEIT callback: nonce not found (state prefix=%s)", state[:8])
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "DELETE FROM faceit_oauth_states "
+                    "WHERE nonce = :n AND expires_at > NOW() "
+                    "RETURNING jwt_token"
+                ),
+                {"n": state},
+            ).fetchone()
+            session.commit()
+    except Exception as exc:
+        logger.error("FACEIT callback: DB state lookup error: %s", exc)
         return RedirectResponse(error_url, status_code=302)
-    jwt_token, _ = entry
+    if not row:
+        logger.warning("FACEIT callback: nonce not found or expired (state prefix=%s)", state[:8])
+        return RedirectResponse(error_url, status_code=302)
+    jwt_token = row[0]
     redirect_uri = f"{ENGINE_BASE_URL.rstrip('/')}/auth/faceit/callback"
 
     token_data: dict = {

@@ -2058,100 +2058,99 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     def _make_chamfer_status(parent, title: str, initial_status: str = "Checking…",
                              width_shrink: int = 80, with_extra: bool = False):
-        """
-        Compact chamfered status card. Returns (dot_proxy, status_proxy[, extra_proxy]).
-        `width_shrink` is the extra right padding (px) — ~80 gives the -15% look.
-        `with_extra` adds a third text slot after the status (e.g. match id).
-        """
         wrap = ctk.CTkFrame(parent, fg_color="transparent")
         wrap.pack(fill="x", padx=(14, 14 + width_shrink), pady=(10, 0))
 
-        cvs = tk.Canvas(wrap, height=40, bg=BRAND["bg"],
+        _H = 44
+        cvs = tk.Canvas(wrap, height=_H, bg=BRAND["bg"],
                         highlightthickness=0, bd=0, relief="flat")
         cvs.pack(fill="x")
 
-        ids: dict = {"frame": None, "strip": None,
-                     "tl1": None, "tl2": None, "br1": None, "br2": None,
-                     "dot": None, "title": None, "sep": None, "status": None,
-                     "extra": None, "slash": None}
+        ids: dict = {"frame": None, "glow": None,
+                     "dot": None, "title": None, "status": None, "extra": None}
+        _cur = {"status": initial_status, "extra": "", "stat_x": 90}
 
         def _redraw(_event=None):
-            w = max(120, cvs.winfo_width())
-            h = 40
-            # Bigger chamfer to match _chamfer_panel and the Support-ticket
-            # reference. Clean flat look — no L-brackets, no red stripe, no
-            # /// decoration (those were earlier cyberpunk noise).
+            w   = max(120, cvs.winfo_width())
+            h   = _H
             cut = 14
-            panel  = BRAND["hud_panel"]
-            border = BRAND["hud_border"]
+            pts = [cut, 0, w-1, 0, w-1, h-cut, w-1-cut, h-1, 0, h-1, 0, cut]
 
-            pts = [
-                cut, 0,
-                w - 1, 0,
-                w - 1, h - cut,
-                w - 1 - cut, h - 1,
-                0, h - 1,
-                0, cut,
-            ]
-            # Neon cyan glow behind the frame — subtle bloom matching website HUD.
             glow_img = make_neon_glow(cvs, w, h, cut, BRAND["cyan"],
                                       glow=10, alpha=90, inner_alpha=200)
             if glow_img is not None:
-                if ids.get("glow") is None:
+                if ids["glow"] is None:
                     ids["glow"] = cvs.create_image(0, 0, anchor="nw", image=glow_img)
                 else:
                     cvs.itemconfig(ids["glow"], image=glow_img)
                     cvs.coords(ids["glow"], 0, 0)
-                cvs._glow_ref = glow_img  # keep ref alive
+                cvs._glow_ref = glow_img
+
             if ids["frame"] is None:
-                ids["frame"] = cvs.create_polygon(pts, fill=panel, outline=border, width=1)
+                ids["frame"] = cvs.create_polygon(
+                    pts, fill=BRAND["hud_panel"], outline=BRAND["hud_border"], width=1)
             else:
                 cvs.coords(ids["frame"], *pts)
-            # Ensure glow is below the frame polygon
-            if ids.get("glow") is not None:
+            if ids["glow"] is not None:
                 try: cvs.tag_lower(ids["glow"], ids["frame"])
                 except Exception: pass
 
-            title_text = title.upper()
-
+            cy = h // 2
             if ids["dot"] is None:
                 ids["dot"] = cvs.create_text(
-                    20, h // 2, text="●", fill=BRAND["text_muted"],
-                    font=(FONT_MONO, 11, "bold"), anchor="w",
-                )
+                    20, cy, text="●", fill=BRAND["text_muted"],
+                    font=(FONT_MONO, 10, "bold"), anchor="w")
                 ids["title"] = cvs.create_text(
-                    34, h // 2, text=title_text, fill=BRAND["text"],
-                    font=(FONT_DISPLAY, 12, "bold"), anchor="w",
-                )
+                    34, cy, text=title.upper(), fill=BRAND["text"],
+                    font=(FONT_DISPLAY, 11, "bold"), anchor="w")
+                cvs.update_idletasks()
                 try:
                     bb = cvs.bbox(ids["title"])
-                    title_right = bb[2] if bb else 34 + 8 * len(title_text)
+                    _cur["stat_x"] = (bb[2] if bb else 34 + 9 * len(title)) + 12
                 except Exception:
-                    title_right = 34 + 8 * len(title_text)
-                stat_x = title_right + 14
+                    _cur["stat_x"] = 34 + 9 * len(title) + 12
                 ids["status"] = cvs.create_text(
-                    stat_x, h // 2, text=initial_status, fill=BRAND["text_muted"],
-                    font=(FONT_MONO, 11), anchor="w",
-                )
+                    _cur["stat_x"], cy, text=_cur["status"],
+                    fill=BRAND["text_muted"], font=(FONT_MONO, 9), anchor="w")
                 if with_extra:
                     ids["extra"] = cvs.create_text(
-                        w - 20, h // 2, text="", fill=BRAND["warning"],
-                        font=(FONT_MONO, 10), anchor="e",
-                    )
-            else:
-                if with_extra and ids["extra"] is not None:
-                    cvs.coords(ids["extra"], w - 20, h // 2)
+                        w - 14, cy, text="", fill=BRAND["warning"],
+                        font=(FONT_MONO, 9), anchor="e")
+
+            if ids["extra"] is not None:
+                cvs.coords(ids["extra"], w - 14, cy)
+
+            # Fit status text to available canvas width
+            if ids["status"] is not None:
+                avail = w - _cur["stat_x"] - 14
+                txt   = _cur["status"]
+                if avail > 10:
+                    max_c = max(3, int(avail / 5.5))
+                    if len(txt) > max_c:
+                        txt = txt[:max_c - 1] + "…"
+                cvs.itemconfig(ids["status"], text=txt)
 
         cvs.bind("<Configure>", _redraw)
-        cvs.after(0, _redraw)
         cvs.update_idletasks()
         _redraw()
+        cvs.after(200, _redraw)
+
+        class _StatusProxy:
+            def __init__(self, canvas, item_id, key):
+                self._c, self._id, self._key = canvas, item_id, key
+            def configure(self, **kw):
+                if "text" in kw:
+                    _cur[self._key] = kw["text"]
+                    try: _redraw()
+                    except Exception: pass
+                if "text_color" in kw:
+                    try: self._c.itemconfig(self._id, fill=kw["text_color"])
+                    except Exception: pass
 
         dot_proxy    = _CanvasItemProxy(cvs, ids["dot"])
-        status_proxy = _CanvasItemProxy(cvs, ids["status"])
+        status_proxy = _StatusProxy(cvs, ids["status"], "status")
         if with_extra:
-            extra_proxy = _CanvasItemProxy(cvs, ids["extra"])
-            return dot_proxy, status_proxy, extra_proxy
+            return dot_proxy, status_proxy, _StatusProxy(cvs, ids["extra"], "extra")
         return dot_proxy, status_proxy
 
     # ENGINE card — compact chamfered tactical frame
@@ -2164,13 +2163,15 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     # padding), matching the admin-support / match-room card style from the
     # website. Returns the inner content `ctk.CTkFrame`.
     def _chamfer_panel(parent, title: str, width_shrink: int = 40,
-                       min_height: int = 70):
+                       min_height: int = 70, expand: bool = False):
         holder = ctk.CTkFrame(parent, fg_color="transparent")
-        holder.pack(fill="x", padx=(14, 14 + width_shrink), pady=(10, 0))
+        _hfill = "both" if expand else "x"
+        holder.pack(fill=_hfill, expand=expand,
+                    padx=(14, 14 + width_shrink), pady=(10, 0))
 
         cvs = tk.Canvas(holder, bg=BRAND["bg"], highlightthickness=0,
                         bd=0, height=min_height)
-        cvs.pack(fill="x")
+        cvs.pack(fill=_hfill, expand=expand)
 
         inner = ctk.CTkFrame(cvs, fg_color=BRAND["hud_panel"], corner_radius=0)
 
@@ -2182,13 +2183,16 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         def _redraw():
             w = max(200, cvs.winfo_width())
             inner.update_idletasks()
-            ch = max(1, inner.winfo_reqheight())
-            total_h = max(min_height, ch + PAD_T + PAD_B)
-
-            if total_h != state["h"]:
-                cvs.config(height=total_h)
-                state["h"] = total_h
-            h = total_h
+            if expand:
+                # Let the layout manager determine height; just draw at current size
+                h = max(min_height, cvs.winfo_height())
+            else:
+                ch = max(1, inner.winfo_reqheight())
+                total_h = max(min_height, ch + PAD_T + PAD_B)
+                if total_h != state["h"]:
+                    cvs.config(height=total_h)
+                    state["h"] = total_h
+                h = total_h
             # Pronounced chamfer (Support-ticket reference cuts ~18px).
             cut = 18
             cvs.delete("deco")
@@ -2334,7 +2338,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     # Identity card — compact chamfered tactical panel (admin-dialog style).
     # Uses the same 80px right-shrink as the Engine / Game Status strips so
     # every card in the column ends on the same vertical line.
-    id_card = _chamfer_panel(ov_left, "Identity", width_shrink=0, min_height=70)
+    id_card = _chamfer_panel(ov_left, "Identity", width_shrink=0, min_height=70, expand=True)
     id_inner_ref: list = []
 
     def _rebuild_identity():
@@ -2513,27 +2517,38 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                     command=_open_website, kind="ghost", height=36)
 
     def _build_profile(parent: ctk.CTkFrame):
-        """Profile card shown after successful auth."""
-        uname   = auth.username or auth.email or "Player"
-        initial = uname[0].upper()
-        av_size = 52
-
-        bg_rgb  = _resolve_avatar_color(auth.avatar_bg)
-        av_img  = Image.new("RGBA", (av_size, av_size), (0, 0, 0, 0))
-        av_d    = ImageDraw.Draw(av_img)
-        av_d.ellipse([0, 0, av_size - 1, av_size - 1], fill=(*bg_rgb, 40))
-        av_d.ellipse([0, 0, av_size - 1, av_size - 1], outline=(*bg_rgb, 220), width=2)
-        ctk_av  = ctk.CTkImage(light_image=av_img, dark_image=av_img,
-                                size=(av_size, av_size))
+        uname       = auth.username or auth.email or "Player"
+        initial     = uname[0].upper()
+        av_size     = 46
+        cut_av      = 7
+        bg_rgb      = _resolve_avatar_color(auth.avatar_bg)
+        av_hex      = "#{:02x}{:02x}{:02x}".format(*bg_rgb)
         badge_emoji = _resolve_badge_emoji(auth.equipped_badge_icon)
-        av_hex  = "#{:02x}{:02x}{:02x}".format(*bg_rgb)
 
-        # ── Avatar + name row ─────────────────────────────────────────────────
+        # Chamfered HUD avatar — octagon with user colour ring
+        av_img = Image.new("RGBA", (av_size, av_size), (0, 0, 0, 0))
+        av_d   = ImageDraw.Draw(av_img)
+        av_pts = [cut_av, 0,  av_size-cut_av, 0,
+                  av_size-1,  cut_av,  av_size-1,  av_size-cut_av,
+                  av_size-cut_av, av_size-1,  cut_av, av_size-1,
+                  0, av_size-cut_av,  0, cut_av]
+        av_d.polygon(av_pts, fill=(*bg_rgb, 30))
+        av_d.polygon(av_pts, outline=(*bg_rgb, 215))
+        # inner highlight ring (1 px inset)
+        inn = [cut_av+2, 1,  av_size-cut_av-2, 1,
+               av_size-2, cut_av+2,  av_size-2, av_size-cut_av-2,
+               av_size-cut_av-2, av_size-2,  cut_av+2, av_size-2,
+               1, av_size-cut_av-2,  1, cut_av+2]
+        av_d.polygon(inn, outline=(*bg_rgb, 55))
+        ctk_av = ctk.CTkImage(light_image=av_img, dark_image=av_img,
+                               size=(av_size, av_size))
+
+        # ── Avatar + name block ───────────────────────────────────────────────
         row = ctk.CTkFrame(parent, fg_color="transparent")
-        row.pack(fill="x", pady=(0, 8))
+        row.pack(fill="x", pady=(0, 4))
 
         ctk.CTkLabel(row, image=ctk_av, text=initial,
-                     font=ctk.CTkFont(size=18, weight="bold"),
+                     font=ctk.CTkFont(family=FONT_DISPLAY, size=15, weight="bold"),
                      text_color=av_hex).pack(side="left", padx=(0, 10))
 
         info = ctk.CTkFrame(row, fg_color="transparent")
@@ -2541,32 +2556,45 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
         name_row = ctk.CTkFrame(info, fg_color="transparent")
         name_row.pack(anchor="w", fill="x")
-        # Truncate username to fit 240px column
-        _uname_display = uname.upper()[:16] + ("…" if len(uname) > 16 else "")
+        _uname_display = uname.upper()[:13] + ("…" if len(uname) > 13 else "")
         ctk.CTkLabel(name_row, text=_uname_display,
-                     font=ctk.CTkFont(family=FONT_MONO, size=12, weight="bold"),
+                     font=ctk.CTkFont(family=FONT_DISPLAY, size=11, weight="bold"),
                      text_color=BRAND["text"], anchor="w").pack(side="left")
         if badge_emoji:
-            ctk.CTkLabel(name_row, text=f" {badge_emoji}",
-                         font=ctk.CTkFont(size=12),
+            ctk.CTkLabel(name_row, text=f"  {badge_emoji}",
+                         font=ctk.CTkFont(size=11),
                          text_color=av_hex).pack(side="left")
 
-        # Wallet short form on second line (no email — saves space)
+        # Wallet chip — gold accent
         wallet = auth.wallet_address
         if wallet and wallet != "unknown":
-            ctk.CTkLabel(info,
-                         text=f"{wallet[:6]}…{wallet[-4:]}",
-                         font=ctk.CTkFont(family=FONT_MONO, size=9),
-                         text_color=BRAND["text_muted"], anchor="w").pack(anchor="w")
+            w_chip = ctk.CTkFrame(info, fg_color=BRAND["hud_panel_2"], corner_radius=2)
+            w_chip.pack(anchor="w", pady=(3, 0))
+            ctk.CTkLabel(w_chip,
+                         text=f"₳  {wallet[:6]}…{wallet[-4:]}",
+                         font=ctk.CTkFont(family=FONT_MONO, size=8),
+                         text_color=BRAND["gold"],
+                         padx=5, pady=1).pack()
 
-        # ── Stat chips row ────────────────────────────────────────────────────
+        # Email — dim small line under wallet
+        email = auth.email or ""
+        if email and email.lower() != (auth.username or "").lower():
+            ctk.CTkLabel(info,
+                         text=email[:22] + ("…" if len(email) > 22 else ""),
+                         font=ctk.CTkFont(family=FONT_MONO, size=8),
+                         text_color=BRAND["text_muted"], anchor="w").pack(anchor="w", pady=(2, 0))
+
+        # ── Separator ─────────────────────────────────────────────────────────
+        tk.Frame(parent, bg=BRAND["hud_border"], height=1).pack(fill="x", pady=(8, 6))
+
+        # ── Stats ─────────────────────────────────────────────────────────────
         rank       = auth.rank or "UNRANKED"
         reg        = (auth.region or "—").upper()
         xp_to_next = auth.xp_to_next_level
         xp_ratio   = max(0.0, min(1.0, auth.xp / xp_to_next))
 
         stat_row = ctk.CTkFrame(parent, fg_color="transparent")
-        stat_row.pack(fill="x", pady=(2, 4))
+        stat_row.pack(fill="x", pady=(0, 4))
 
         def _stat(col_parent, label: str, value: str):
             cell = ctk.CTkFrame(col_parent, fg_color="transparent")
@@ -2581,7 +2609,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         _stat(stat_row, "RANK",   rank[:10])
         _stat(stat_row, "REGION", reg)
 
-        # XP progress bar with label
+        # XP bar
         xp_lbl_row = ctk.CTkFrame(parent, fg_color="transparent")
         xp_lbl_row.pack(fill="x", pady=(0, 2))
         ctk.CTkLabel(xp_lbl_row, text="XP",
@@ -3619,7 +3647,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         def _apply():
             if health and health.get("status") == "ok":
                 db = health.get("db", "?")
-                eng_lbl.configure(text=f"Connected  ·  DB: {db}", text_color=BRAND["text"])
+                eng_lbl.configure(text=f"Online · DB:{db.upper()[:3]}", text_color=BRAND["text"])
                 eng_dot.configure(text_color="#22C55E")
                 hdr_eng_dot.configure(text_color="#22C55E")
                 _ve_line1.configure(
