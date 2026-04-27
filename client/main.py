@@ -1177,12 +1177,19 @@ class MatchMonitor:
         self._heartbeat_stop       = threading.Event()
         self._session_id           = get_or_create_session_id(config)
         self._ws: ClientWsThread | None = None
+        # UI layer sets this to trigger an immediate lobby poll on WS events
+        self._on_ws_lobby_refresh: "Callable | None" = None
 
     def _on_ws_match_status(self, match_id: str, status: str, winner_id: str | None) -> None:
         if match_id != self.current_match_id:
             return
         self.current_match_status = status
         logger.info(f"[WS] match status → {status} (winner={winner_id})")
+        if self._on_ws_lobby_refresh:
+            try:
+                self._on_ws_lobby_refresh()
+            except Exception:
+                pass
 
     def start(self):
         if self.running:
@@ -2015,12 +2022,20 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     # 1px separator below nav
     tk.Frame(_nav_panel, bg=BRAND["hud_border"], height=1).pack(fill="x", padx=0, pady=(0, 8))
 
-    # Compatibility aliases
+    # ── Two-column layout inside _ov_frame ───────────────────────────────────
+    # ov_left: 240px fixed — Engine + Identity + Hub cards
+    # ov_right: fills remaining width — Game Status, Monitoring, Lobby
     tab_ov = _ov_frame
     tab_ev = _ev_frame
-    ov_left = _nav_panel   # identity/engine widgets pack here
+
+    ov_left = ctk.CTkFrame(_ov_frame, fg_color="transparent", corner_radius=0, width=240)
+    ov_left.pack(side="left", fill="y")
+    ov_left.pack_propagate(False)
+    # Right-edge dim separator
+    tk.Frame(ov_left, bg=BRAND["hud_border"], width=1).place(relx=1.0, x=-1, rely=0, relheight=1)
+
     ov_right = ctk.CTkFrame(_ov_frame, fg_color="transparent", corner_radius=0)
-    ov_right.pack(fill="both", expand=True, padx=8, pady=0)
+    ov_right.pack(side="left", fill="both", expand=True, padx=(0, 0), pady=0)
 
     # ── Compact chamfered status card helper (matches website tactical frame).
     # Draws: chamfered polygon background + cyan L-brackets (top-left and
@@ -2501,83 +2516,83 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         """Profile card shown after successful auth."""
         uname   = auth.username or auth.email or "Player"
         initial = uname[0].upper()
-        av_size = 44
+        av_size = 52
 
-        # Avatar — circle color matches the user's avatar_bg setting on the website
         bg_rgb  = _resolve_avatar_color(auth.avatar_bg)
         av_img  = Image.new("RGBA", (av_size, av_size), (0, 0, 0, 0))
         av_d    = ImageDraw.Draw(av_img)
-        av_d.ellipse([0, 0, av_size, av_size], fill=(*bg_rgb, 35))
-        av_d.ellipse([0, 0, av_size, av_size], outline=(*bg_rgb, 255), width=2)
+        av_d.ellipse([0, 0, av_size - 1, av_size - 1], fill=(*bg_rgb, 40))
+        av_d.ellipse([0, 0, av_size - 1, av_size - 1], outline=(*bg_rgb, 220), width=2)
         ctk_av  = ctk.CTkImage(light_image=av_img, dark_image=av_img,
                                 size=(av_size, av_size))
-
-        # Badge emoji (equipped_badge_icon = "badge:<id>")
         badge_emoji = _resolve_badge_emoji(auth.equipped_badge_icon)
-        av_hex      = "#{:02x}{:02x}{:02x}".format(*bg_rgb)
+        av_hex  = "#{:02x}{:02x}{:02x}".format(*bg_rgb)
 
+        # ── Avatar + name row ─────────────────────────────────────────────────
         row = ctk.CTkFrame(parent, fg_color="transparent")
-        row.pack(fill="x", pady=(0, 10))
+        row.pack(fill="x", pady=(0, 8))
 
         ctk.CTkLabel(row, image=ctk_av, text=initial,
-                     font=ctk.CTkFont(size=16, weight="bold"),
-                     text_color=av_hex).pack(side="left")
+                     font=ctk.CTkFont(size=18, weight="bold"),
+                     text_color=av_hex).pack(side="left", padx=(0, 10))
 
         info = ctk.CTkFrame(row, fg_color="transparent")
-        info.pack(side="left", padx=(10, 0))
+        info.pack(side="left", fill="x", expand=True)
 
-        # Username + optional badge chip on the same line
         name_row = ctk.CTkFrame(info, fg_color="transparent")
-        name_row.pack(anchor="w")
-        ctk.CTkLabel(name_row, text=uname.upper(),
-                     font=ctk.CTkFont(family=FONT_MONO, size=13, weight="bold"),
-                     text_color=BRAND["text"]).pack(side="left")
+        name_row.pack(anchor="w", fill="x")
+        # Truncate username to fit 240px column
+        _uname_display = uname.upper()[:16] + ("…" if len(uname) > 16 else "")
+        ctk.CTkLabel(name_row, text=_uname_display,
+                     font=ctk.CTkFont(family=FONT_MONO, size=12, weight="bold"),
+                     text_color=BRAND["text"], anchor="w").pack(side="left")
         if badge_emoji:
             ctk.CTkLabel(name_row, text=f" {badge_emoji}",
-                         font=ctk.CTkFont(size=13),
+                         font=ctk.CTkFont(size=12),
                          text_color=av_hex).pack(side="left")
 
-        if auth.email:
-            ctk.CTkLabel(info, text=auth.email,
-                         font=ctk.CTkFont(size=11),
-                         text_color=BRAND["text_muted"]).pack(anchor="w")
-
+        # Wallet short form on second line (no email — saves space)
         wallet = auth.wallet_address
         if wallet and wallet != "unknown":
-            # TODO[VERIF]: show linked Steam/Riot IDs from API when keys exist in platform_config
             ctk.CTkLabel(info,
                          text=f"{wallet[:6]}…{wallet[-4:]}",
-                         font=ctk.CTkFont(size=11),
-                         text_color=BRAND["text_muted"]).pack(anchor="w")
+                         font=ctk.CTkFont(family=FONT_MONO, size=9),
+                         text_color=BRAND["text_muted"], anchor="w").pack(anchor="w")
 
-        # Stat row — RANK / REGION / XP in one clean horizontal strip, all
-        # same muted style (labels gray, values white). Matches the reference
-        # pattern of `TOPIC` / `DETAILS` — uniform palette, no rainbow colors.
-        rank = auth.rank or "Unranked"
-        reg  = auth.region or "—"
+        # ── Stat chips row ────────────────────────────────────────────────────
+        rank       = auth.rank or "UNRANKED"
+        reg        = (auth.region or "—").upper()
         xp_to_next = auth.xp_to_next_level
         xp_ratio   = max(0.0, min(1.0, auth.xp / xp_to_next))
 
         stat_row = ctk.CTkFrame(parent, fg_color="transparent")
-        stat_row.pack(fill="x", pady=(2, 6))
+        stat_row.pack(fill="x", pady=(2, 4))
 
         def _stat(col_parent, label: str, value: str):
             cell = ctk.CTkFrame(col_parent, fg_color="transparent")
-            cell.pack(side="left", padx=(0, 18))
-            ctk.CTkLabel(cell, text=label.upper(),
-                         font=ctk.CTkFont(family=FONT_MONO, size=9,
-                                          weight="bold"),
+            cell.pack(side="left", padx=(0, 14))
+            ctk.CTkLabel(cell, text=label,
+                         font=ctk.CTkFont(family=FONT_MONO, size=8, weight="bold"),
                          text_color=BRAND["text_muted"]).pack(anchor="w")
             ctk.CTkLabel(cell, text=value,
-                         font=ctk.CTkFont(family=FONT_MONO, size=12,
-                                          weight="bold"),
+                         font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
                          text_color=BRAND["text"]).pack(anchor="w")
 
-        _stat(stat_row, "Rank",   rank)
-        _stat(stat_row, "Region", reg)
-        _stat(stat_row, "XP",     f"{auth.xp:,} / {xp_to_next:,}")
+        _stat(stat_row, "RANK",   rank[:10])
+        _stat(stat_row, "REGION", reg)
 
-        xp_bar = ctk.CTkProgressBar(parent, height=4, corner_radius=0,
+        # XP progress bar with label
+        xp_lbl_row = ctk.CTkFrame(parent, fg_color="transparent")
+        xp_lbl_row.pack(fill="x", pady=(0, 2))
+        ctk.CTkLabel(xp_lbl_row, text="XP",
+                     font=ctk.CTkFont(family=FONT_MONO, size=8, weight="bold"),
+                     text_color=BRAND["text_muted"]).pack(side="left")
+        ctk.CTkLabel(xp_lbl_row,
+                     text=f"{auth.xp:,} / {xp_to_next:,}",
+                     font=ctk.CTkFont(family=FONT_MONO, size=8),
+                     text_color=BRAND["hud_glow"]).pack(side="right")
+
+        xp_bar = ctk.CTkProgressBar(parent, height=3, corner_radius=0,
                                      progress_color=BRAND["cyan"],
                                      fg_color=BRAND["hud_panel_2"])
         xp_bar.set(xp_ratio)
@@ -2940,6 +2955,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     _lobby_result_cache: list[dict | None] = [None]
     _completed_clear_after: list[str | None] = [None]   # tkinter after() job id
     _completed_scheduled_for: list[str | None] = [None]  # match_id we already timed
+    _last_lobby_fp: list[str | None] = [None]           # fingerprint of last rendered data
 
     def _cancel_completed_clear_timer() -> None:
         job = _completed_clear_after[0]
@@ -2975,8 +2991,38 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
         _completed_clear_after[0] = win.after(5000, _fire)
 
+    def _lobby_fingerprint(data: dict | None, result: dict | None) -> str:
+        if data is None:
+            return "null"
+        try:
+            import json as _j
+            key = {
+                "code":   data.get("code"),
+                "game":   data.get("game"),
+                "mode":   data.get("mode"),
+                "status": data.get("status"),
+                "stake":  data.get("stake") or data.get("entry_fee"),
+                "map":    data.get("map") or data.get("map_name"),
+                "inmatch": data.get("in_match"),
+                "players": sorted([
+                    {"uid": p.get("user_id"), "nm": p.get("username"),
+                     "team": p.get("team"), "elo": p.get("elo") or p.get("rank_points")}
+                    for p in (data.get("players") or [])
+                ], key=lambda x: (x.get("team") or "", x.get("nm") or "")),
+                "result_winner": (result or {}).get("winner"),
+            }
+            return _j.dumps(key, sort_keys=True)
+        except Exception:
+            return str(data)
+
     def _rebuild_lobby_body(data: dict | None, result: dict | None = None):
         """Rebuild lobby card content. Always called on main thread via win.after."""
+        # Skip full rebuild if nothing structural changed (avoids flicker every poll)
+        fp = _lobby_fingerprint(data, result)
+        if fp == _last_lobby_fp[0]:
+            return
+        _last_lobby_fp[0] = fp
+
         for w in lobby_body_ref:
             try: w.destroy()
             except Exception: pass
@@ -3799,6 +3845,10 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     def _poll_lobby():
         threading.Thread(target=_do_lobby_poll, daemon=True).start()
         win.after(5_000, _poll_lobby)
+
+    # WS fires an immediate poll instead of waiting 5s for the next tick
+    monitor._on_ws_lobby_refresh = lambda: threading.Thread(
+        target=_do_lobby_poll, daemon=True).start()
 
     # Kick off all polls
     win.after(500,    _poll_engine)
