@@ -48,33 +48,37 @@ CLIENT_VERSION = "1.0.0"
 #     gold       : hsl(45 93% 47%)    → #E9A80A
 #
 BRAND = {
-    "bg":          "#0A0A0A",   # hsl(0 0% 4%)
-    "bg_card":     "#141414",   # hsl(0 0% 8%)
-    "bg_hover":    "#242424",   # hsl(0 0% 14%)
-    "accent":      "#E42535",   # hsl(355 78% 52%) — Arena red
-    "accent_dark": "#B81E2A",   # darker red for hover
-    "text":        "#FAFAFA",
-    "text_muted":  "#999999",   # hsl(0 0% 60%)
-    "border":      "#292929",   # hsl(0 0% 16%)
-    "error":       "#EF4444",
-    "warning":     "#E9A80A",   # arena-gold
-    "rank_gold":   "#E9A80A",
-    # AAA HUD extensions — mirror tokens from src/index.css
-    "hud_panel":   "#0F1115",
-    "hud_panel_2": "#0B0D10",
-    "hud_border":  "#2A2F3A",
-    "hud_glow":    "#13C4E0",   # --arena-cyan  hsl(188 94% 42%)
-    "hud_glow_2":  "#D93EE8",   # --arena-hud-magenta hsl(300 85% 55%)
-    "hud_blue":    "#2A84FF",   # --arena-hud-blue hsl(210 100% 58%)
-    "cyan":        "#13C4E0",
-    "cyan_soft":   "#0d3340",
-    "magenta":     "#D93EE8",
-    # PIL tuples for icon drawing
-    "accent_pil":  (228, 37, 53, 255),    # #E42535
+    # ── Base surfaces (Claude Design spec) ───────────────────────────────────
+    "bg":          "#0a0c10",   # page background
+    "bg_card":     "#0e1117",   # card / panel surface
+    "bg_hover":    "#131720",   # hover state
+    "hud_panel":   "#0e1117",   # panel fill
+    "hud_panel_2": "#0b0d13",   # deeper panel
+    "hud_border":  "#1e2430",   # default border
+    "border":      "#1e2430",
+    # ── Text ─────────────────────────────────────────────────────────────────
+    "text":        "#e8eaf0",   # primary text
+    "text_muted":  "#8c8c8c",   # hsl(0 0% 55%) dim text
+    # ── Accent palette (exact from Claude Design cheat sheet) ────────────────
+    "accent":      "#dc2649",   # red  hsl(355 78% 52%) — primary / TEAM_B
+    "accent_dark": "#b01e3a",   # red hover
+    "cyan":        "#06b6d4",   # hsl(188 94% 42%) — TEAM_A / RDY chip / grid
+    "hud_glow":    "#06b6d4",   # alias
+    "cyan_glow":   "#22d3ee",   # brighter cyan glow
+    "cyan_soft":   "#071e26",   # dark cyan bg tint
+    "hud_blue":    "#2e8aff",   # hsl(210 100% 58%)
+    "magenta":     "#d946ef",   # hsl(300 85% 55%)
+    "hud_glow_2":  "#d946ef",
+    "gold":        "#eab308",   # hsl(45 93% 47%) — LOAD chip / wallet ₳
+    "warning":     "#eab308",
+    "rank_gold":   "#eab308",
+    "error":       "#ef4444",
+    # ── PIL tuples for icon drawing ───────────────────────────────────────────
+    "accent_pil":  (220, 38, 73, 255),
     "idle_pil":    (80, 80, 80, 255),
     "error_pil":   (239, 68, 68, 255),
-    "match_pil":   (233, 168, 10, 255),   # gold
-    "bg_pil":      (10, 10, 10, 255),     # #0A0A0A
+    "match_pil":   (234, 179, 8, 255),
+    "bg_pil":      (10, 12, 16, 255),
 }
 
 # ── Per-game capture intervals (seconds) ──────────────────────────────────────
@@ -1663,20 +1667,37 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             bg.create_oval(w * 0.42, -h * 0.48, w * 1.38, h * 0.42, outline="", fill="#2d1445", stipple="gray25")
             bg.create_oval(-w * 0.10, h * 0.62, w * 0.32, h * 1.35, outline="", fill="#1a0808", stipple="gray12")
 
-            # Scanlines (every 4px for CRT feel)
-            for y in range(0, h, 4):
-                bg.create_line(0, y, w, y, fill="#000000", width=1)
+            # Subtle scanlines (every 6px — less heavy than CRT)
+            for y in range(0, h, 6):
+                bg.create_line(0, y, w, y, fill="#050505", width=1)
 
-            # HUD tactical grid overlay
-            for gx in range(0, w + 60, 60):
-                bg.create_line(gx, 0, gx, h, fill="#0d1117", width=1)
-            for gy in range(0, h + 60, 60):
-                bg.create_line(0, gy, w, gy, fill="#0d1117", width=1)
+            # ── HEX GRID OVERLAY ─────────────────────────────────────────────
+            # Pointy-top hexes, r=50, col-step=87, row-step=75, alt-row +43
+            import math as _math
+            _r_h   = 50
+            _c_stp = int(_math.sqrt(3) * _r_h)   # 87
+            _r_stp = int(1.5 * _r_h)              # 75
+            _hex_c = "#0f2028"                     # ~6% cyan on dark bg
 
-            # Corner bracket marks
-            _cb = 20
+            def _hx(cx, cy, r):
+                pts = []
+                for k in range(6):
+                    a = _math.pi / 6 + _math.pi / 3 * k
+                    pts += [cx + r * _math.cos(a), cy + r * _math.sin(a)]
+                return pts
+
+            _row = 0
+            for _gy in range(-_r_stp, h + _r_stp * 2, _r_stp):
+                _xoff = (_c_stp // 2) if (_row % 2) else 0
+                for _gx in range(-_c_stp + _xoff, w + _c_stp, _c_stp):
+                    bg.create_polygon(_hx(_gx, _gy, _r_h),
+                                      outline=_hex_c, fill="", width=1)
+                _row += 1
+
+            # Corner bracket marks (tactical framing)
+            _cb = 22
             bg.create_line(0, _cb, _cb, 0, fill=BRAND["hud_glow"], width=1)
-            bg.create_line(w - _cb, 0, w, _cb, fill=BRAND["accent"], width=1)
+            bg.create_line(w - _cb, 0, w, _cb, fill=BRAND["accent"],   width=1)
             bg.create_line(0, h - _cb, _cb, h, fill=BRAND["hud_glow"], width=1)
             bg.create_line(w - _cb, h, w, h - _cb, fill=BRAND["accent"], width=1)
 
@@ -2465,7 +2486,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     # ── HUB Panel — Friends Online + Game Invites ─────────────────────────────
     # Feature flag: set ARENA_HUB_ENABLED=0 to skip the entire block at runtime.
-    _hub_enabled = os.environ.get("ARENA_HUB_ENABLED", "1").lower() not in ("0", "false", "no")
+    _hub_enabled = os.environ.get("ARENA_HUB_ENABLED", "0").lower() not in ("0", "false", "no")
 
     if _hub_enabled:
         hub_card = _chamfer_panel(ov_left, "Hub", width_shrink=80, min_height=60)
@@ -3011,14 +3032,26 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                                 bd=0, height=46)
                 row.pack(fill="x", pady=(0, 4))
 
+                # Pre-mix badge dark fill (Tkinter canvas has no RGBA — blend manually)
+                def _darken(hex6: str, alpha: float = 0.18) -> str:
+                    h6 = hex6.lstrip("#")
+                    bg_r, bg_g, bg_b = 11, 12, 16  # ~#0b0c10
+                    fr, fg, fb = int(h6[0:2],16), int(h6[2:4],16), int(h6[4:6],16)
+                    return "#{:02x}{:02x}{:02x}".format(
+                        int(bg_r*(1-alpha)+fr*alpha),
+                        int(bg_g*(1-alpha)+fg*alpha),
+                        int(bg_b*(1-alpha)+fb*alpha))
+
+                badge_fill = _darken(badge_c, 0.22)
+
                 def _mk_draw(cvs, nm=name, ini=initials, bc=badge_c,
-                             fc=fill_c, bdc=border_c, elo=elo_str,
+                             bf=badge_fill, fc=fill_c, bdc=border_c, elo=elo_str,
                              rdy=rdy_text, rcol=rdy_col,
                              glow_me=is_me, tc="#FFFFFF" if name else BRAND["text_muted"]):
                     def _d(_e=None):
                         w = max(80, cvs.winfo_width())
                         h = 46
-                        cut = 5
+                        cut = 4
                         cvs.delete("all")
 
                         if glow_me:
@@ -3034,43 +3067,52 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                                w - 1 - cut, h - 1, 0, h - 1, 0, cut]
                         cvs.create_polygon(pts, fill=fc, outline=bdc, width=1)
 
-                        # Initial badge circle
-                        r = 16
-                        cx, cy = 28, h // 2
-                        cvs.create_oval(cx - r, cy - r, cx + r, cy + r,
-                                        fill=bc + "33", outline=bc, width=1)
+                        # Left accent bar (cyan for my slot, team color otherwise)
+                        bar_c = BRAND["accent"] if glow_me else bdc
+                        cvs.create_rectangle(0, 0, 2, h, fill=bar_c, outline="")
+
+                        # Avatar square (chamfered rect — matches deck style)
+                        asz, ax, ay, acc = 30, 7, (h - 30) // 2, 4
+                        av_pts = [
+                            ax + acc, ay,        ax + asz, ay,
+                            ax + asz, ay + asz - acc,
+                            ax + asz - acc, ay + asz,
+                            ax, ay + asz,         ax, ay + acc,
+                        ]
+                        cvs.create_polygon(av_pts, fill=bf, outline=bc, width=1)
                         if ini:
-                            cvs.create_text(cx, cy, text=ini, fill=bc,
+                            cvs.create_text(ax + asz//2, ay + asz//2,
+                                            text=ini, fill=bc,
                                             font=(FONT_MONO, 9, "bold"))
                         else:
-                            cvs.create_text(cx, cy, text="○", fill=BRAND["hud_border"],
-                                            font=(FONT_MONO, 10))
+                            cvs.create_text(ax + asz//2, ay + asz//2,
+                                            text="—", fill=BRAND["hud_border"],
+                                            font=(FONT_MONO, 9))
 
-                        # Username
-                        uname = nm or f"Slot {i + 1}"
-                        cvs.create_text(52, cy - 7, text=uname.upper(), fill=tc,
+                        # Username + ELO
+                        uname = nm or f"SLOT {i + 1}"
+                        tx = ax + asz + 8
+                        mid = h // 2
+                        cvs.create_text(tx, mid - 7, text=uname.upper(), fill=tc,
                                         font=(FONT_DISPLAY, 11, "bold"), anchor="w")
-
-                        # ELO subtitle
-                        cvs.create_text(52, cy + 8, text=elo, fill=BRAND["text_muted"],
+                        cvs.create_text(tx, mid + 7, text=elo, fill=BRAND["text_muted"],
                                         font=(FONT_MONO, 8), anchor="w")
 
-                        # RDY chip on right (chamfered)
-                        cw, ch = 58, 18
+                        # RDY / LOAD chip (chamfered, right-aligned)
+                        cw, ch2 = 60, 18
                         cx2 = w - cw - 6
-                        cy2 = (h - ch) // 2
-                        cc = 4
+                        cy2 = (h - ch2) // 2
+                        cc  = 4
                         chip_pts = [
-                            cx2 + cc, cy2,
-                            cx2 + cw, cy2,
-                            cx2 + cw, cy2 + ch - cc,
-                            cx2 + cw - cc, cy2 + ch,
-                            cx2, cy2 + ch,
-                            cx2, cy2 + cc,
+                            cx2 + cc, cy2,       cx2 + cw, cy2,
+                            cx2 + cw, cy2 + ch2 - cc,
+                            cx2 + cw - cc, cy2 + ch2,
+                            cx2, cy2 + ch2,      cx2, cy2 + cc,
                         ]
-                        cvs.create_polygon(chip_pts, fill=BRAND["hud_panel"],
+                        chip_bg = "#0a1a1e" if nm else BRAND["hud_panel"]
+                        cvs.create_polygon(chip_pts, fill=chip_bg,
                                            outline=rcol, width=1)
-                        cvs.create_text(cx2 + cw // 2, cy2 + ch // 2,
+                        cvs.create_text(cx2 + cw // 2, cy2 + ch2 // 2,
                                         text=rdy, fill=rcol,
                                         font=(FONT_MONO, 8, "bold"))
                     return _d
@@ -3327,40 +3369,63 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
 
     # ── Footer ─────────────────────────────────────────────────────────────────
     footer = ctk.CTkFrame(win, fg_color=BRAND["hud_panel_2"], corner_radius=0,
-                           height=100, border_width=0)
+                           height=94, border_width=0)
     footer.pack(fill="x", side="bottom")
     footer.pack_propagate(False)
 
-    ctk.CTkFrame(footer, height=1, fg_color=BRAND["hud_glow"], corner_radius=0).pack(
-        fill="x", side="top")
-    ctk.CTkFrame(footer, height=1, fg_color=BRAND["hud_border"], corner_radius=0).pack(
-        fill="x", side="top")
+    ctk.CTkFrame(footer, height=1, fg_color=BRAND["cyan"],        corner_radius=0).pack(fill="x", side="top")
+    ctk.CTkFrame(footer, height=1, fg_color=BRAND["hud_border"],  corner_radius=0).pack(fill="x", side="top")
 
     # ── Telemetry strip ──────────────────────────────────────────────────────
     telemetry_row = ctk.CTkFrame(footer, fg_color="transparent")
-    telemetry_row.pack(fill="x", padx=18, pady=(6, 0))
+    telemetry_row.pack(fill="x", padx=20, pady=(8, 0))
 
-    # Left: CLIENT READINESS
+    # Left: CLIENT READINESS — 10 segmented cells (6h, 4gap each)
     tl_left = ctk.CTkFrame(telemetry_row, fg_color="transparent")
     tl_left.pack(side="left", fill="x", expand=True)
     ctk.CTkLabel(tl_left, text="CLIENT READINESS",
                  font=ctk.CTkFont(family=FONT_MONO, size=8, weight="bold"),
                  text_color=BRAND["text_muted"]).pack(anchor="w")
-    _readiness_bar = ctk.CTkProgressBar(tl_left, height=3, corner_radius=0,
-                                         progress_color=BRAND["hud_glow"],
-                                         fg_color=BRAND["hud_border"],
-                                         width=220)
-    _readiness_bar.set(0)
-    _readiness_bar.pack(anchor="w", pady=(2, 1))
+
+    # Segmented bar canvas (cells 0-7 cyan, 8 gold=loading, 9 muted=empty)
+    _seg_cvs = tk.Canvas(tl_left, bg=BRAND["hud_panel_2"],
+                          highlightthickness=0, bd=0, height=10, width=180)
+    _seg_cvs.pack(anchor="w", pady=(3, 2))
+    _seg_filled: list[int] = [0]
+
+    def _draw_segs(_n: int = 0):
+        _seg_cvs.delete("all")
+        cw, ch, gap, seg = 180, 6, 4, 10
+        cell_w = (cw - gap * (seg - 1)) // seg
+        for idx in range(seg):
+            x0 = idx * (cell_w + gap)
+            x1 = x0 + cell_w
+            if idx < _n - 1:
+                col = BRAND["cyan"]
+            elif idx == _n - 1 and _n < seg:
+                col = BRAND["gold"]
+            elif idx < _n:
+                col = BRAND["cyan"]
+            else:
+                col = BRAND["hud_border"]
+            _seg_cvs.create_rectangle(x0, 2, x1, ch, fill=col, outline="")
+
+    _draw_segs(0)
+
     _readiness_lbl = ctk.CTkLabel(tl_left,
-                                   text="— CLIENTS SYNCED",
+                                   text="— // WAITING",
                                    font=ctk.CTkFont(family=FONT_MONO, size=8),
                                    text_color=BRAND["text_muted"])
     _readiness_lbl.pack(anchor="w")
 
+    # Compatibility shim so existing _poll_game/_upd_readiness still compiles
+    class _FakeBar:
+        def set(self, v): pass
+    _readiness_bar = _FakeBar()
+
     # Center: VERIFICATION ENGINE
     tl_center = ctk.CTkFrame(telemetry_row, fg_color="transparent")
-    tl_center.pack(side="left", padx=40)
+    tl_center.pack(side="left", padx=44)
     ctk.CTkLabel(tl_center, text="VERIFICATION ENGINE",
                  font=ctk.CTkFont(family=FONT_MONO, size=8, weight="bold"),
                  text_color=BRAND["text_muted"]).pack(anchor="w")
@@ -3533,13 +3598,12 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         # Update capture count
         cap_lbl.configure(text=f"{monitor._capture_count} captures")
 
-        # Readiness bar: ratio of capture count to expected (simple heuristic)
-        cap_ratio = min(1.0, monitor._capture_count / 10.0) if monitor._capture_count else 0.0
-        _readiness_bar.set(cap_ratio)
-        cap_c = monitor._capture_count
+        cap_c  = monitor._capture_count
+        _segs  = min(10, int(cap_c / max(1, 10) * 10)) if cap_c else 0
+        _draw_segs(_segs)
         _readiness_lbl.configure(
             text=f"{cap_c} FRAMES CAPTURED",
-            text_color=BRAND["hud_glow"] if cap_c > 0 else BRAND["text_muted"])
+            text_color=BRAND["cyan"] if cap_c > 0 else BRAND["text_muted"])
 
         # Update screenshot thumbnail when a new screenshot is available
         last_fp = monitor._last_screenshot
@@ -3690,11 +3754,13 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                             6  if "3v3" in _mode_str else
                             4  if "2v2" in _mode_str else 2)
             _ratio = min(1.0, _rdy_count / max(1, _total_slots))
-            def _upd_readiness(r=_ratio, rc=_rdy_count, ts=_total_slots):
-                _readiness_bar.set(r)
+            def _upd_readiness(rc=_rdy_count, ts=_total_slots):
+                _draw_segs(min(10, int(rc / max(1, ts) * 10)))
+                synced = rc - (1 if rc < ts else 0)
+                loading = 1 if 0 < rc < ts else 0
                 _readiness_lbl.configure(
-                    text=f"{rc}/{ts} CLIENTS SYNCED",
-                    text_color=BRAND["hud_glow"] if rc >= ts else BRAND["text_muted"])
+                    text=f"{synced}/{ts} CLIENTS SYNCED{f'  //  {loading} LOADING' if loading else ''}",
+                    text_color=BRAND["cyan"] if rc >= ts else BRAND["text_muted"])
             win.after(0, _upd_readiness)
 
             clear_mid = data.get("match_id") or mid
