@@ -81,6 +81,29 @@ BRAND = {
     "bg_pil":      (10, 12, 16, 255),
 }
 
+THEME = {
+    "bg_deep":       "#050608",
+    "bg_panel":      "#0a0c10",
+    "bg_panel_alt":  "#0d1015",
+    "bg_avg_strip":  "#0e1218",
+    "bg_muted":      "#1f1f1f",
+    "bg_row_active": "#0a1418",
+    "border":        "#292929",
+    "border_cyan":   "#0a4a55",
+    "border_red":    "#5a1a2a",
+    "border_active": "#06b6d4",
+    "text":          "#fafafa",
+    "text_muted":    "#999999",
+    "text_dim":      "#8c8c8c",
+    "cyan":          "#06b6d4",
+    "cyan_glow":     "#22d3ee",
+    "red":           "#dc2649",
+    "red_bright":    "#e8425e",
+    "magenta":       "#d946ef",
+    "gold":          "#eab308",
+    "hud_blue":      "#2e8aff",
+}
+
 # ── Per-game capture intervals (seconds) ──────────────────────────────────────
 GAME_INTERVALS = {
     "AUTO":     5,
@@ -1671,28 +1694,25 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             for y in range(0, h, 6):
                 bg.create_line(0, y, w, y, fill="#050505", width=1)
 
-            # ── HEX GRID OVERLAY ─────────────────────────────────────────────
-            # Pointy-top hexes, r=50, col-step=87, row-step=75, alt-row +43
+            # ── HEX GRID OVERLAY (flat-top, brief spec §2) ───────────────────
             import math as _math
-            _r_h   = 50
-            _c_stp = int(_math.sqrt(3) * _r_h)   # 87
-            _r_stp = int(1.5 * _r_h)              # 75
-            _hex_c = "#0f2028"                     # ~6% cyan on dark bg
-
-            def _hx(cx, cy, r):
-                pts = []
-                for k in range(6):
-                    a = _math.pi / 6 + _math.pi / 3 * k
-                    pts += [cx + r * _math.cos(a), cy + r * _math.sin(a)]
-                return pts
-
-            _row = 0
-            for _gy in range(-_r_stp, h + _r_stp * 2, _r_stp):
-                _xoff = (_c_stp // 2) if (_row % 2) else 0
-                for _gx in range(-_c_stp + _xoff, w + _c_stp, _c_stp):
-                    bg.create_polygon(_hx(_gx, _gy, _r_h),
-                                      outline=_hex_c, fill="", width=1)
-                _row += 1
+            _hz_size = 32
+            _hz_color = "#082830"
+            _hz_sqrt3 = _math.sqrt(3)
+            _hz_dx = 1.5 * _hz_size
+            _hz_dy = _hz_sqrt3 * _hz_size
+            _hz_cols = int(w / _hz_dx) + 2
+            _hz_rows = int(h / _hz_dy) + 2
+            for _hcol in range(_hz_cols):
+                for _hrow in range(_hz_rows):
+                    _cx = _hcol * _hz_dx
+                    _cy = _hrow * _hz_dy + (_hz_dy / 2 if _hcol % 2 else 0)
+                    _pts = []
+                    for _hi in range(6):
+                        _ha = _math.radians(60 * _hi)
+                        _pts += [_cx + _hz_size * _math.cos(_ha),
+                                 _cy + _hz_size * _math.sin(_ha)]
+                    bg.create_polygon(_pts, outline=_hz_color, fill="", width=1)
 
             # Corner bracket marks (tactical framing)
             _cb = 22
@@ -1879,18 +1899,18 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     )
     tabview.pack(fill="both", expand=True)
     tabview.add("Overview")
-    tabview.add("Events")
+    tabview.add("Creators")
 
     tab_ov = tabview.tab("Overview")
-    tab_ev = tabview.tab("Events")
+    tab_ev = tabview.tab("Creators")
 
     # ── OVERVIEW TAB ──────────────────────────────────────────────────────────
     # Two-column AAA HUD layout (left: identity/match, right: game/monitor)
 
     ov_root = ctk.CTkFrame(tab_ov, fg_color=BRAND["bg"], corner_radius=0)
     ov_root.pack(fill="both", expand=True)
-    ov_root.grid_columnconfigure(0, weight=1, uniform="ov")
-    ov_root.grid_columnconfigure(1, weight=1, uniform="ov")
+    ov_root.grid_columnconfigure(0, weight=2)
+    ov_root.grid_columnconfigure(1, weight=3)
     ov_root.grid_rowconfigure(0, weight=1)
 
     ov_left = ctk.CTkScrollableFrame(ov_root, fg_color=BRAND["bg"], corner_radius=0)
@@ -2818,9 +2838,9 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     # Match Lobby moved to right column — fills the dead space under Monitoring
     # and makes the left column not need scrolling.
     lobby_container = ctk.CTkFrame(ov_right, fg_color="transparent")
-    lobby_container.pack(fill="x")
+    lobby_container.pack(fill="both", expand=True)
 
-    lobby_outer = _chamfer_panel(lobby_container, "Match Lobby", width_shrink=80, min_height=90)
+    lobby_outer = _chamfer_panel(lobby_container, "Match Lobby", width_shrink=0, min_height=90)
 
     lobby_body_ref: list = []
     _lobby_result_cache: list[dict | None] = [None]
@@ -2875,7 +2895,8 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             return
 
         if not lobby_holder.winfo_ismapped():
-            lobby_holder.pack(fill="x", padx=(14, 14 + 80), pady=(10, 0))
+            lobby_holder.pack(fill="both", expand=True,
+                              padx=14, pady=(10, 0))
 
         code      = data.get("code") or "—"
         game_name = data.get("game") or "—"
@@ -2884,346 +2905,251 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         status    = data.get("status") or ""
         stake     = data.get("stake") or data.get("entry_fee") or ""
 
-        status_colors = {
-            "waiting":     BRAND["cyan"],
-            "starting":    BRAND["warning"],
-            "in_progress": BRAND["accent"],
-            "completed":   BRAND["text_muted"],
-            "tied":        BRAND["warning"],
-        }
-        status_color = status_colors.get(status, BRAND["text_muted"])
-        status_text  = status.replace("_", " ").upper() + "  ·  PLAYERS"
+        _sc = {
+            "waiting":     THEME["cyan"],
+            "starting":    THEME["gold"],
+            "in_progress": THEME["red"],
+            "completed":   THEME["text_muted"],
+            "tied":        THEME["gold"],
+        }.get(status, THEME["text_muted"])
+        BG = BRAND["hud_panel"]
 
-        # ── Header row: "YOU'RE IN THE ROOM" + status chip ───────────────────
-        hdr_row = ctk.CTkFrame(lobby_outer, fg_color="transparent")
-        hdr_row.pack(fill="x", padx=0, pady=(0, 6))
-        lobby_body_ref.append(hdr_row)
-        ctx_map = {
+        _ctx = {
             "waiting":     "YOU'RE IN THE ROOM",
             "starting":    "YOU'RE IN THE ROOM",
             "in_progress": "MATCH IN PROGRESS",
             "completed":   "MATCH ENDED",
             "tied":        "MATCH DRAW",
         }
-        ctk.CTkLabel(
-            hdr_row, text=ctx_map.get(status, "MATCH_SESSION · LIVE"),
-            font=ctk.CTkFont(family=FONT_DISPLAY, size=15, weight="bold"),
-            text_color=BRAND["text"],
-        ).pack(side="left")
-        # Status chip (right) — small chamfered pill with cyan border
-        chip = tk.Canvas(hdr_row, bg=BRAND["hud_panel"], highlightthickness=0,
-                         bd=0, height=22, width=160)
-        chip.pack(side="right")
-        def _draw_chip(_e=None):
-            w = chip.winfo_width() or 160
-            h = 22; cut = 5
-            chip.delete("all")
-            pts = [cut, 0, w - 1, 0, w - 1, h - cut,
-                   w - 1 - cut, h - 1, 0, h - 1, 0, cut]
-            chip.create_polygon(pts, fill=BRAND["hud_panel"],
-                                outline=status_color, width=1)
-            chip.create_text(w // 2, h // 2, text=status_text,
-                             fill=status_color,
-                             font=(FONT_MONO, 9, "bold"))
-        chip.bind("<Configure>", lambda e: chip.after(5, _draw_chip))
-        chip.after(20, _draw_chip)
-        lobby_body_ref.append(chip)
+        hdr = tk.Frame(lobby_outer, bg=BG)
+        hdr.pack(fill="x", padx=0, pady=(0, 3))
+        lobby_body_ref.append(hdr)
+        tk.Label(hdr, text=_ctx.get(status, "MATCH SESSION"),
+                 font=(FONT_DISPLAY, 13, "bold"),
+                 fg=THEME["text"], bg=BG).pack(side="left")
+        tk.Label(hdr, text="  " + status.replace("_", " ").upper(),
+                 font=(FONT_MONO, 8, "bold"),
+                 fg=_sc, bg=BG).pack(side="right")
 
-        # ── Tag row: game · mode · stake · room code ─────────────────────────
-        tag_row = ctk.CTkFrame(lobby_outer, fg_color="transparent")
-        tag_row.pack(fill="x", padx=0, pady=(0, 10))
+        tag_row = tk.Frame(lobby_outer, bg=BG)
+        tag_row.pack(fill="x", padx=0, pady=(0, 6))
         lobby_body_ref.append(tag_row)
 
-        def _mk_tag(parent, text: str, *, border_color: str, text_color: str,
-                    fill: str | None = None, width: int = 0):
-            t_len = max(width, len(text) * 8 + 14)
-            c = tk.Canvas(parent, bg=BRAND["hud_panel"], highlightthickness=0,
-                          bd=0, height=22, width=t_len)
-            c.pack(side="left", padx=(0, 6))
-            def _d(_e=None):
-                w = c.winfo_width() or t_len
-                h = 22; cut = 5
-                c.delete("all")
-                pts = [cut, 0, w - 1, 0, w - 1, h - cut,
-                       w - 1 - cut, h - 1, 0, h - 1, 0, cut]
-                c.create_polygon(pts, fill=fill or BRAND["hud_panel"],
-                                 outline=border_color, width=1)
-                c.create_text(w // 2, h // 2, text=text,
-                              fill=text_color,
-                              font=(FONT_MONO, 9, "bold"))
-            c.bind("<Configure>", lambda e: c.after(5, _d))
-            c.after(20, _d)
-            return c
+        def _mk_tag(parent, txt, fc):
+            tk.Label(parent, text=txt,
+                     font=(FONT_MONO, 8, "bold"),
+                     fg=fc, bg=BG,
+                     highlightbackground=fc, highlightthickness=1,
+                     padx=7, pady=1).pack(side="left", padx=(0, 4))
 
-        _mk_tag(tag_row, game_name.upper(),
-                border_color=BRAND["hud_border"], text_color=BRAND["text"])
-        _mk_tag(tag_row, mode.upper(),
-                border_color=BRAND["hud_border"], text_color=BRAND["text"])
+        _mk_tag(tag_row, game_name.upper(), THEME["text_muted"])
+        _mk_tag(tag_row, mode.upper(), THEME["text_muted"])
         if stake:
-            _mk_tag(tag_row, f"STK: {stake}",
-                    border_color=BRAND["warning"],
-                    text_color=BRAND["warning"])
-        _mk_tag(tag_row, f"ARENA-{code}",
-                border_color=BRAND["accent"], text_color=BRAND["accent"])
+            _mk_tag(tag_row, "STK: " + str(stake), THEME["gold"])
+        tk.Label(tag_row, text="ARENA-" + code,
+                 font=(FONT_MONO, 8, "bold"),
+                 fg="#ffffff", bg=THEME["red"],
+                 padx=8, pady=2).pack(side="left", padx=(0, 4))
 
-        # ── Teams grid: TEAM A | CENTER | TEAM B ─────────────────────────────
         players = data.get("players") or []
-        teams: dict[str, list[dict]] = {"a": [], "b": []}
+        teams = {"a": [], "b": []}
         for p in players:
             t = (p.get("team") or "").lower()
             if t in teams:
                 teams[t].append(p)
-        slot_cap = 5 if (mode or "").lower().startswith("5v5") else \
-                   (3 if (mode or "").lower().startswith("3v3") else \
-                    (2 if (mode or "").lower().startswith("2v2") else 1))
+        _mode_l = (mode or "").lower()
+        slot_cap = 5 if _mode_l.startswith("5v5") else (
+                   3 if _mode_l.startswith("3v3") else (
+                   2 if _mode_l.startswith("2v2") else 1))
 
-        teams_grid = ctk.CTkFrame(lobby_outer, fg_color="transparent")
-        teams_grid.pack(fill="x", padx=0, pady=(0, 8))
-        lobby_body_ref.append(teams_grid)
+        grid_f = tk.Frame(lobby_outer, bg=BG)
+        grid_f.pack(fill="both", expand=True, padx=0, pady=(0, 4))
+        lobby_body_ref.append(grid_f)
+        grid_f.grid_columnconfigure(0, weight=1, uniform="tc")
+        grid_f.grid_columnconfigure(1, weight=0, minsize=150)
+        grid_f.grid_columnconfigure(2, weight=1, uniform="tc")
+        grid_f.grid_rowconfigure(0, weight=1)
 
-        _TEAM_COLORS = {"a": BRAND["hud_blue"], "b": BRAND["accent"]}
-        _BADGE_PALETTE = [
-            "#C0392B", "#8E44AD", "#2980B9", "#27AE60",
-            "#E67E22", "#16A085", "#D35400", "#2C3E50",
-        ]
+        _BPAL = ["#C0392B","#8E44AD","#2980B9","#27AE60",
+                 "#E67E22","#16A085","#D35400","#2C3E50"]
 
-        def _badge_color(name: str) -> str:
+        def _bc(name):
             if not name:
-                return BRAND["hud_border"]
-            return _BADGE_PALETTE[sum(ord(c) for c in name) % len(_BADGE_PALETTE)]
+                return THEME["border"]
+            return _BPAL[sum(ord(c) for c in name) % len(_BPAL)]
 
-        def _team_col(parent, team_key: str, members: list[dict], *,
-                       highlight_me: bool, side: str):
-            team_color = _TEAM_COLORS.get(team_key, BRAND["accent"])
-            team_label = f"// TEAM_{team_key.upper()} // {'BLUE' if team_key == 'a' else 'RED'}"
+        def _build_team(gparent, tkey, members, hme, colidx):
+            is_a   = (tkey == "a")
+            accent = THEME["hud_blue"] if is_a else THEME["red"]
+            lbl    = "// TEAM_" + tkey.upper() + "  //  " + ("BLUE" if is_a else "RED")
+            pbg    = THEME["bg_panel_alt"]
 
-            col = ctk.CTkFrame(parent, fg_color="transparent")
-            col.pack(side=side, fill="both", expand=True,
-                      padx=(0, 6) if side == "left" else (6, 0))
+            outer = tk.Frame(gparent, bg=pbg,
+                             highlightbackground=accent, highlightthickness=1)
+            px = (0, 5) if colidx == 0 else (5, 0)
+            outer.grid(row=0, column=colidx, sticky="nsew", padx=px)
 
-            # Team header with color accent
-            head_row = ctk.CTkFrame(col, fg_color="transparent")
-            head_row.pack(fill="x", pady=(0, 6))
-            ctk.CTkFrame(head_row, width=2, fg_color=team_color,
-                         corner_radius=0).pack(side="left", fill="y", padx=(0, 8))
-            ctk.CTkLabel(head_row, text=team_label,
-                         font=ctk.CTkFont(family=FONT_MONO, size=10, weight="bold"),
-                         text_color=team_color).pack(side="left")
-            ctk.CTkLabel(head_row,
-                         text=f"  {len(members)}/{slot_cap}",
-                         font=ctk.CTkFont(family=FONT_MONO, size=9),
-                         text_color=BRAND["text_muted"]).pack(side="left")
+            tb = tk.Frame(outer, bg=pbg)
+            tb.pack(fill="x", padx=14, pady=(10, 6))
+            tk.Frame(tb, bg=accent, height=1).pack(
+                side="left", fill="x", expand=True, pady=9)
+            tk.Label(tb, text="  " + lbl + "  ",
+                     font=(FONT_MONO, 8, "bold"),
+                     fg=accent, bg=pbg).pack(side="left")
+            tk.Frame(tb, bg=accent, height=1).pack(
+                side="left", fill="x", expand=True, pady=9)
 
             for i in range(slot_cap):
-                pdata    = members[i] if i < len(members) else None
-                name     = (pdata or {}).get("username") or (
-                    ((pdata or {}).get("user_id") or "")[:8] or None)
-                elo_val  = (pdata or {}).get("elo") or (pdata or {}).get("rank_points")
-                elo_str  = f"ELO {int(elo_val):,}" if elo_val else "ELO  —"
-                is_me    = (highlight_me and name and name == (auth.username or ""))
-                initials = (name or "")[:2].upper() if name else ""
-                badge_c  = _badge_color(name or "")
-                fill_c   = "#1a0a0a" if is_me else BRAND["hud_panel_2"]
-                border_c = BRAND["accent"] if is_me else BRAND["hud_border"]
-                rdy_text = "✓ RDY" if name else "○ SLOT"
-                rdy_col  = BRAND["hud_glow"] if name else BRAND["hud_border"]
+                pd_  = members[i] if i < len(members) else None
+                nm   = (pd_ or {}).get("username") or (
+                       ((pd_ or {}).get("user_id") or "")[:8] or None)
+                ev   = (pd_ or {}).get("elo") or (pd_ or {}).get("rank_points")
+                es   = ("ELO " + "{:,}".format(int(ev))) if ev else "ELO  —"
+                me   = (hme and bool(nm) and nm == (auth.username or ""))
+                ini  = (nm or "")[:2].upper() if nm else "  "
+                bc_  = _bc(nm or "")
+                rbg  = THEME["bg_row_active"] if me else pbg
+                bdr  = THEME["border_active"] if me else THEME["border"]
+                rdy  = "✓ RDY" if nm else "○ SLOT"
+                rcol = THEME["cyan"] if nm else THEME["text_muted"]
 
-                row = tk.Canvas(col, bg=BRAND["bg"], highlightthickness=0,
-                                bd=0, height=46)
-                row.pack(fill="x", pady=(0, 4))
+                card = tk.Frame(outer, bg=rbg,
+                                highlightbackground=bdr, highlightthickness=1)
+                card.pack(fill="x", padx=14, pady=2)
 
-                # Pre-mix badge dark fill (Tkinter canvas has no RGBA — blend manually)
-                def _darken(hex6: str, alpha: float = 0.18) -> str:
-                    h6 = hex6.lstrip("#")
-                    bg_r, bg_g, bg_b = 11, 12, 16  # ~#0b0c10
-                    fr, fg, fb = int(h6[0:2],16), int(h6[2:4],16), int(h6[4:6],16)
-                    return "#{:02x}{:02x}{:02x}".format(
-                        int(bg_r*(1-alpha)+fr*alpha),
-                        int(bg_g*(1-alpha)+fg*alpha),
-                        int(bg_b*(1-alpha)+fb*alpha))
+                av = tk.Frame(card, bg=THEME["bg_muted"],
+                              width=34, height=34,
+                              highlightbackground=bc_ if nm else THEME["border"],
+                              highlightthickness=1)
+                av.pack(side="left", padx=(10, 8), pady=7)
+                av.pack_propagate(False)
+                tk.Label(av, text=ini,
+                         font=(FONT_MONO, 9, "bold"),
+                         fg=bc_ if nm else THEME["text_muted"],
+                         bg=THEME["bg_muted"]).pack(expand=True)
 
-                badge_fill = _darken(badge_c, 0.22)
+                info = tk.Frame(card, bg=rbg)
+                info.pack(side="left", fill="y", pady=7)
+                tk.Label(info,
+                         text=(nm or ("SLOT " + str(i+1))).upper(),
+                         font=(FONT_DISPLAY, 9, "bold"),
+                         fg=THEME["text"] if nm else THEME["text_muted"],
+                         bg=rbg, anchor="w").pack(anchor="w")
+                tk.Label(info, text=es,
+                         font=(FONT_MONO, 8),
+                         fg=THEME["text_dim"], bg=rbg,
+                         anchor="w").pack(anchor="w")
 
-                def _mk_draw(cvs, nm=name, ini=initials, bc=badge_c,
-                             bf=badge_fill, fc=fill_c, bdc=border_c, elo=elo_str,
-                             rdy=rdy_text, rcol=rdy_col,
-                             glow_me=is_me, tc="#FFFFFF" if name else BRAND["text_muted"]):
-                    def _d(_e=None):
-                        w = max(80, cvs.winfo_width())
-                        h = 46
-                        cut = 4
-                        cvs.delete("all")
+                tk.Label(card, text=rdy,
+                         font=(FONT_MONO, 8, "bold"),
+                         fg=rcol, bg=rbg).pack(side="right", padx=10)
 
-                        if glow_me:
-                            gi = make_neon_glow(cvs, w, h, cut,
-                                                BRAND["accent"], glow=12,
-                                                alpha=140, inner_alpha=220)
-                            if gi is not None:
-                                cvs.create_image(0, 0, anchor="nw", image=gi)
-                                cvs._glow_ref = gi
+            elos_ = [int((m.get("elo") or m.get("rank_points") or 0))
+                     for m in members if m]
+            avg_  = int(sum(elos_) / len(elos_)) if elos_ else 0
+            afr   = tk.Frame(outer, bg=THEME["bg_avg_strip"],
+                             highlightbackground=THEME["border"], highlightthickness=1)
+            afr.pack(fill="x", padx=14, pady=(6, 12))
+            tk.Label(afr, text="TEAM_AVG_ELO",
+                     font=(FONT_MONO, 8),
+                     fg=THEME["text_muted"],
+                     bg=THEME["bg_avg_strip"]).pack(side="left", padx=10, pady=5)
+            tk.Label(afr,
+                     text=("{:,}".format(avg_) if avg_ else "—"),
+                     font=(FONT_DISPLAY, 12, "bold"),
+                     fg=accent,
+                     bg=THEME["bg_avg_strip"]).pack(side="right", padx=10, pady=5)
 
-                        # Card background (chamfered)
-                        pts = [cut, 0, w - 1, 0, w - 1, h - cut,
-                               w - 1 - cut, h - 1, 0, h - 1, 0, cut]
-                        cvs.create_polygon(pts, fill=fc, outline=bdc, width=1)
-
-                        # Left accent bar (cyan for my slot, team color otherwise)
-                        bar_c = BRAND["accent"] if glow_me else bdc
-                        cvs.create_rectangle(0, 0, 2, h, fill=bar_c, outline="")
-
-                        # Avatar square (chamfered rect — matches deck style)
-                        asz, ax, ay, acc = 30, 7, (h - 30) // 2, 4
-                        av_pts = [
-                            ax + acc, ay,        ax + asz, ay,
-                            ax + asz, ay + asz - acc,
-                            ax + asz - acc, ay + asz,
-                            ax, ay + asz,         ax, ay + acc,
-                        ]
-                        cvs.create_polygon(av_pts, fill=bf, outline=bc, width=1)
-                        if ini:
-                            cvs.create_text(ax + asz//2, ay + asz//2,
-                                            text=ini, fill=bc,
-                                            font=(FONT_MONO, 9, "bold"))
-                        else:
-                            cvs.create_text(ax + asz//2, ay + asz//2,
-                                            text="—", fill=BRAND["hud_border"],
-                                            font=(FONT_MONO, 9))
-
-                        # Username + ELO
-                        uname = nm or f"SLOT {i + 1}"
-                        tx = ax + asz + 8
-                        mid = h // 2
-                        cvs.create_text(tx, mid - 7, text=uname.upper(), fill=tc,
-                                        font=(FONT_DISPLAY, 11, "bold"), anchor="w")
-                        cvs.create_text(tx, mid + 7, text=elo, fill=BRAND["text_muted"],
-                                        font=(FONT_MONO, 8), anchor="w")
-
-                        # RDY / LOAD chip (chamfered, right-aligned)
-                        cw, ch2 = 60, 18
-                        cx2 = w - cw - 6
-                        cy2 = (h - ch2) // 2
-                        cc  = 4
-                        chip_pts = [
-                            cx2 + cc, cy2,       cx2 + cw, cy2,
-                            cx2 + cw, cy2 + ch2 - cc,
-                            cx2 + cw - cc, cy2 + ch2,
-                            cx2, cy2 + ch2,      cx2, cy2 + cc,
-                        ]
-                        chip_bg = "#0a1a1e" if nm else BRAND["hud_panel"]
-                        cvs.create_polygon(chip_pts, fill=chip_bg,
-                                           outline=rcol, width=1)
-                        cvs.create_text(cx2 + cw // 2, cy2 + ch2 // 2,
-                                        text=rdy, fill=rcol,
-                                        font=(FONT_MONO, 8, "bold"))
-                    return _d
-
-                drawer = _mk_draw(row)
-                row.bind("<Configure>", lambda e, d=drawer: e.widget.after(5, d))
-                row.after(20, drawer)
-
-        _team_col(teams_grid, "a", teams["a"],
-                  highlight_me=(your_team == "a"), side="left")
-
-        # ── Center column: MAP / TOTAL POT / VS / timer ───────────────────────
-        center_col = ctk.CTkFrame(teams_grid, fg_color="transparent", width=120)
-        center_col.pack(side="left", fill="y", padx=4)
-        center_col.pack_propagate(False)
+        _build_team(grid_f, "a", teams["a"], (your_team == "a"), 0)
 
         map_name = (data.get("map") or data.get("map_name") or "—").upper()
         try:
-            raw_stake = float(data.get("stake") or data.get("entry_fee") or 0)
-            pot_str   = f"A {int(raw_stake * (len(players) or 2))}"
+            raw_s = float(data.get("stake") or data.get("entry_fee") or 0)
+            pot_s = "₳ " + str(int(raw_s * (len(players) or 2)))
         except Exception:
-            pot_str   = "A —"
+            pot_s = "₳ —"
 
-        ctk.CTkLabel(center_col, text="MAP",
-                     font=ctk.CTkFont(family=FONT_MONO, size=8, weight="bold"),
-                     text_color=BRAND["text_muted"]).pack(pady=(8, 0))
-        ctk.CTkLabel(center_col, text=map_name,
-                     font=ctk.CTkFont(family=FONT_MONO, size=9, weight="bold"),
-                     text_color=BRAND["text"]).pack()
+        vc = tk.Frame(grid_f, bg=BRAND["bg"])
+        vc.grid(row=0, column=1, sticky="nsew", padx=5)
 
-        ctk.CTkFrame(center_col, height=1, fg_color=BRAND["hud_border"],
-                     corner_radius=0).pack(fill="x", padx=8, pady=6)
+        tk.Label(vc, text="M  A  P",
+                 font=(FONT_MONO, 8, "bold"),
+                 fg=THEME["cyan"], bg=BRAND["bg"]).pack(pady=(16, 5))
 
-        ctk.CTkLabel(center_col, text="TOTAL POT",
-                     font=ctk.CTkFont(family=FONT_MONO, size=8, weight="bold"),
-                     text_color=BRAND["text_muted"]).pack()
-        ctk.CTkLabel(center_col, text=pot_str,
-                     font=ctk.CTkFont(family=FONT_DISPLAY, size=16, weight="bold"),
-                     text_color=BRAND["accent"]).pack()
+        mc = tk.Canvas(vc, width=138, height=84,
+                       bg=THEME["bg_panel"],
+                       highlightbackground=THEME["border"],
+                       highlightthickness=1)
+        mc.pack(pady=(0, 8))
+        for _si_i in range(-138, 138, 14):
+            mc.create_line(_si_i, 0, _si_i + 84, 84, fill="#0c0f14", width=7)
+        mc.create_text(69, 42, text=map_name,
+                       fill=THEME["text_muted"],
+                       font=(FONT_MONO, 8, "bold"))
 
-        ctk.CTkFrame(center_col, height=1, fg_color=BRAND["hud_border"],
-                     corner_radius=0).pack(fill="x", padx=8, pady=6)
+        tk.Label(vc, text="TOTAL POT",
+                 font=(FONT_MONO, 8),
+                 fg=THEME["text_muted"], bg=BRAND["bg"]).pack()
+        tk.Label(vc, text=pot_s,
+                 font=(FONT_ALT, 26, "bold"),
+                 fg=THEME["red"], bg=BRAND["bg"]).pack(pady=(1, 0))
+        tk.Label(vc, text=mode.upper() + "  //  BO1",
+                 font=(FONT_MONO, 8),
+                 fg=THEME["text_muted"], bg=BRAND["bg"]).pack(pady=(1, 6))
 
-        ctk.CTkLabel(center_col, text="VS",
-                     font=ctk.CTkFont(family=FONT_DISPLAY, size=28, weight="bold"),
-                     text_color=BRAND["accent"]).pack()
+        tk.Label(vc, text="VS",
+                 font=(FONT_ALT, 52, "bold"),
+                 fg=THEME["red"], bg=BRAND["bg"]).pack(pady=2)
 
-        mode_disp = (mode or "—").upper()
-        ctk.CTkLabel(center_col, text=mode_disp,
-                     font=ctk.CTkFont(family=FONT_MONO, size=8),
-                     text_color=BRAND["text_muted"]).pack()
+        tk.Label(vc, text="T  -  0 0 : 4 7",
+                 font=(FONT_MONO, 8),
+                 fg=THEME["cyan"], bg=BRAND["bg"]).pack(pady=(8, 3))
 
-        _team_col(teams_grid, "b", teams["b"],
-                  highlight_me=(your_team == "b"), side="left")
+        _cd_c = tk.Canvas(vc, width=118, height=3,
+                          bg="#181c22", highlightthickness=0)
+        _cd_c.pack()
+        _cd_c.create_rectangle(0, 0, 85, 3, fill=THEME["red"], outline="")
 
-        # Forfeit warning banner — DisconnectMonitor issued a 30s grace period warning
+        _build_team(grid_f, "b", teams["b"], (your_team == "b"), 2)
+
         warn_at   = data.get("forfeit_warning_at")
         warn_team = (data.get("forfeit_warning_team") or "").upper()
         if warn_at and warn_team and (
             warn_team == "BOTH" or warn_team == your_team.upper()
         ):
             try:
-                deadline_dt = (
-                    datetime.fromisoformat(warn_at.replace("Z", "+00:00"))
-                    + timedelta(seconds=30)
-                )
-                secs_left = max(0, int(
-                    (deadline_dt - datetime.now(timezone.utc)).total_seconds()
-                ))
-                warn_msg = f"\u26a0  FORFEIT WARNING \u2014 Return to game NOW!  {secs_left}s remaining"
+                ddl  = (datetime.fromisoformat(warn_at.replace("Z", "+00:00"))
+                        + timedelta(seconds=30))
+                sl   = max(0, int((ddl - datetime.now(timezone.utc)).total_seconds()))
+                wmsg = "FORFEIT WARNING — Return NOW!  " + str(sl) + "s"
             except Exception:
-                warn_msg = "\u26a0  FORFEIT WARNING \u2014 Return to game NOW!"
-            warn_banner = ctk.CTkLabel(
-                lobby_outer,
-                text=warn_msg,
-                font=ctk.CTkFont(family=FONT_MONO, size=12, weight="bold"),
-                text_color=BRAND["accent"],
-                fg_color="#2A0000",
-                corner_radius=4,
-            )
-            warn_banner.pack(fill="x", padx=0, pady=(0, 8))
-            lobby_body_ref.append(warn_banner)
+                wmsg = "FORFEIT WARNING — Return to game NOW!"
+            wb = tk.Label(lobby_outer, text=wmsg,
+                          font=(FONT_MONO, 11, "bold"),
+                          fg=THEME["red"], bg="#2A0000")
+            wb.pack(fill="x", padx=0, pady=(0, 6))
+            lobby_body_ref.append(wb)
 
-        # Result banner — shown when match completed and result was fetched
-        # TODO(Claude): confirm GET /match/{id}/status response shape.
-        # Need 'result' (victory/defeat) and 'score' fields to display the banner.
-        # Once confirmed, remove this comment.
         if result:
-            res_val   = (result.get("result") or "").upper()
-            score_val = result.get("score") or ""
-            res_color = (
-                BRAND["warning"] if res_val == "VICTORY"
-                else BRAND["warning"] if res_val == "TIE"
-                else BRAND["accent"]
-            )
-            tail = f"{res_val}" + (f" ({score_val})" if score_val else "")
-            res_text = f"Match ended — result: {tail}"
-            res_banner = ctk.CTkLabel(lobby_outer, text=res_text,
-                                      font=ctk.CTkFont(family=FONT_MONO, size=12, weight="bold"),
-                                      text_color=res_color)
-            res_banner.pack(anchor="w", padx=0, pady=(0, 10))
-            lobby_body_ref.append(res_banner)
+            rv = (result.get("result") or "").upper()
+            sv = result.get("score") or ""
+            rc = THEME["gold"] if rv in ("VICTORY", "TIE") else THEME["red"]
+            rt = "Match ended — " + rv + ((" (" + sv + ")") if sv else "")
+            rb = tk.Label(lobby_outer, text=rt,
+                          font=(FONT_MONO, 11, "bold"),
+                          fg=rc, bg=BG)
+            rb.pack(anchor="w", padx=0, pady=(0, 8))
+            lobby_body_ref.append(rb)
         elif status in ("completed", "tied"):
-            wait_lbl = ctk.CTkLabel(
+            wl = tk.Label(
                 lobby_outer,
-                text="Match ended — fetching result…" if status == "completed" else "Draw — fetching result…",
-                font=ctk.CTkFont(size=11),
-                text_color=BRAND["text_muted"],
-            )
-            wait_lbl.pack(anchor="w", padx=0, pady=(0, 10))
-            lobby_body_ref.append(wait_lbl)
+                text=("Match ended — fetching result…"
+                      if status == "completed" else
+                      "Draw — fetching result…"),
+                font=(FONT_MONO, 10),
+                fg=THEME["text_muted"], bg=BG)
+            wl.pack(anchor="w", padx=0, pady=(0, 8))
+            lobby_body_ref.append(wl)
 
     # Monitoring toggle card — chamfered tactical panel (admin-dialog style),
     # same 80px right-shrink as Identity/Engine so the column ends aligned.
@@ -3387,28 +3313,27 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                  font=ctk.CTkFont(family=FONT_MONO, size=8, weight="bold"),
                  text_color=BRAND["text_muted"]).pack(anchor="w")
 
-    # Segmented bar canvas (cells 0-7 cyan, 8 gold=loading, 9 muted=empty)
-    _seg_cvs = tk.Canvas(tl_left, bg=BRAND["hud_panel_2"],
-                          highlightthickness=0, bd=0, height=10, width=180)
-    _seg_cvs.pack(anchor="w", pady=(3, 2))
-    _seg_filled: list[int] = [0]
+    # 10-cell readiness bar (tk.Frame cells, no Canvas)
+    _seg_bar = tk.Frame(tl_left, bg=BRAND["hud_panel_2"])
+    _seg_bar.pack(anchor="w", pady=(3, 2))
+    _seg_frames: list = []
+    for _si in range(10):
+        _seg_bar.grid_columnconfigure(_si, weight=1)
+        _sf = tk.Frame(_seg_bar, bg=BRAND["hud_border"], height=6, width=14)
+        _sf.grid(row=0, column=_si, sticky="ew", padx=(0, 2))
+        _seg_frames.append(_sf)
 
     def _draw_segs(_n: int = 0):
-        _seg_cvs.delete("all")
-        cw, ch, gap, seg = 180, 6, 4, 10
-        cell_w = (cw - gap * (seg - 1)) // seg
-        for idx in range(seg):
-            x0 = idx * (cell_w + gap)
-            x1 = x0 + cell_w
-            if idx < _n - 1:
-                col = BRAND["cyan"]
-            elif idx == _n - 1 and _n < seg:
-                col = BRAND["gold"]
-            elif idx < _n:
-                col = BRAND["cyan"]
+        for _idx in range(10):
+            if _idx < _n - 1:
+                _c = THEME["cyan"]
+            elif _idx == _n - 1 and _n < 10:
+                _c = THEME["gold"]
+            elif _idx < _n:
+                _c = THEME["cyan"]
             else:
-                col = BRAND["hud_border"]
-            _seg_cvs.create_rectangle(x0, 2, x1, ch, fill=col, outline="")
+                _c = BRAND["hud_border"]
+            _seg_frames[_idx].configure(bg=_c)
 
     _draw_segs(0)
 
