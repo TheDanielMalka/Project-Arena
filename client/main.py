@@ -2224,6 +2224,9 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             else:
                 cvs.itemconfig(state["win"], width=iw)
                 cvs.coords(state["win"], PAD_L, PAD_T)
+            # Keep the embedded frame above the polygon (delete+recreate pushes
+            # polygon to a higher z-index each redraw, covering the window).
+            cvs.tag_raise(state["win"])
 
         def _on_cfg(_e=None):
             cvs.after(15, _redraw)
@@ -2287,6 +2290,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 )
             else:
                 frame_cvs.itemconfig(entry_win[0], width=w - 4, height=h - 4)
+            frame_cvs.tag_raise(entry_win[0])
         frame_cvs.bind("<Configure>", lambda e: frame_cvs.after(10, _redraw_entry))
         frame_cvs.after(30, _redraw_entry)
         return entry
@@ -2320,9 +2324,6 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             h = height
             cut = 7
             cvs.delete("deco")
-            # Chamfered polygon background (TL+BR). Primary = solid accent red;
-            # secondary = panel fill with hud_border outline. Matches the
-            # CANCEL / CONFIRM & SEND TICKET pair from the website.
             pts = [cut, 0, w - 1, 0, w - 1, h - cut,
                    w - 1 - cut, h - 1, 0, h - 1, 0, cut]
             cvs.create_polygon(pts, fill=fg, outline=bc, width=1, tags="deco")
@@ -2331,6 +2332,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                                                width=w - 4, height=h - 4)
             else:
                 cvs.itemconfig(btn_win[0], width=w - 4, height=h - 4)
+            cvs.tag_raise(btn_win[0])
         cvs.bind("<Configure>", lambda e: cvs.after(10, _redraw_btn))
         cvs.after(30, _redraw_btn)
         return btn
@@ -3561,16 +3563,20 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             except Exception:
                 pass
 
+    _launch_btn_widget: list = [None]
+
     def _draw_launch(label: str = "", visible: bool = False):
-        _launch_cvs.delete("all")
+        _launch_cvs.delete("deco")
         if not visible:
+            if _launch_btn_win[0] is not None:
+                _launch_cvs.itemconfig(_launch_btn_win[0], state="hidden")
             return
         w, h = 140, 44
         cut = 7
         pts = [cut, 0, w - 1, 0, w - 1, h - cut,
                w - 1 - cut, h - 1, 0, h - 1, 0, cut]
         _launch_cvs.create_polygon(pts, fill=BRAND["accent"],
-                                    outline=BRAND["accent"], width=1)
+                                    outline=BRAND["accent"], width=1, tags="deco")
         if _launch_btn_win[0] is None:
             btn = ctk.CTkButton(
                 _launch_cvs, text=f"LAUNCH {label}",
@@ -3581,8 +3587,14 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 font=ctk.CTkFont(family=FONT_DISPLAY, size=11, weight="bold"),
                 command=_do_launch_game,
             )
+            _launch_btn_widget[0] = btn
             _launch_btn_win[0] = _launch_cvs.create_window(
                 2, 2, window=btn, anchor="nw", width=136, height=40)
+        else:
+            _launch_cvs.itemconfig(_launch_btn_win[0], state="normal")
+            if _launch_btn_widget[0] is not None:
+                _launch_btn_widget[0].configure(text=f"LAUNCH {label}")
+        _launch_cvs.tag_raise(_launch_btn_win[0])
 
     _draw_launch(visible=False)
 
@@ -3629,6 +3641,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                     width=w - 4, height=h - 4)
             else:
                 cvs.itemconfig(btn_win[0], width=w - 4, height=h - 4)
+            cvs.tag_raise(btn_win[0])
         cvs.bind("<Configure>", lambda e: cvs.after(10, _draw))
         cvs.after(30, _draw)
         return btn

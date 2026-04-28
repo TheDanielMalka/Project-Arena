@@ -20,6 +20,9 @@ websockets==13.*
 # Process Detection
 psutil==6.*
 
+# Windows API (required by pystray on Windows)
+pywin32
+
 # Build
 pyinstaller==6.11.*
 

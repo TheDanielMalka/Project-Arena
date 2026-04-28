@@ -31,6 +31,28 @@ DATA_FILES = [
     ("assets", "assets"),
 ]
 
+def _get_tcltk_data():
+    """
+    Collect Tcl/Tk data directories that PyInstaller misses on Python 3.13.
+    Locates Tcl via _tkinter.pyd which always lives in the system Python DLLs
+    directory, not the venv — so sys.executable is not reliable here.
+    Returns list of (src, dest) tuples to add to DATA_FILES at build time.
+    """
+    import os
+    try:
+        import _tkinter
+        # _tkinter.pyd → PythonXXX\DLLs → PythonXXX
+        python_dir = os.path.dirname(os.path.dirname(_tkinter.__file__))
+        tcl_dir    = os.path.join(python_dir, "tcl")
+        tcl86      = os.path.join(tcl_dir, "tcl8.6")
+        tk86       = os.path.join(tcl_dir, "tk8.6")
+        if os.path.isdir(tcl86) and os.path.isdir(tk86):
+            print(f"  Tcl/Tk data: {tcl86}, {tk86}")
+            return [(tcl86, "_tcl_data"), (tk86, "_tk_data")]
+    except Exception as e:
+        print(f"  WARNING: Could not locate Tcl/Tk data: {e}")
+    return []
+
 # Client only needs: pystray, PIL, mss, httpx, psutil, websockets
 # NO cv2, numpy, pytesseract - OCR happens server-side
 HIDDEN_IMPORTS = [
@@ -46,11 +68,24 @@ HIDDEN_IMPORTS = [
     "websockets",
     "websockets.asyncio",
     "websockets.asyncio.client",
+    "websockets.asyncio.connection",
+    "websockets.asyncio.messages",
+    "websockets.asyncio.server",
     "websockets.exceptions",
     "websockets.http11",
     "websockets.connection",
     "websockets.frames",
     "websockets.streams",
+    "websockets.legacy",
+    "websockets.legacy.client",
+    "websockets.legacy.protocol",
+    "websockets.protocol",
+    "websockets.uri",
+    "websockets.version",
+    "win32api",
+    "win32con",
+    "win32gui",
+    "win32print",
 ]
 
 
@@ -364,8 +399,9 @@ def build():
     if os.path.exists(ICON_PATH):
         cmd.append(f"--icon={ICON_PATH}")
 
-    # Add data files
-    for src, dest in DATA_FILES:
+    # Add data files (static + dynamically located Tcl/Tk)
+    all_data = DATA_FILES + _get_tcltk_data()
+    for src, dest in all_data:
         if os.path.exists(src):
             sep = ";" if sys.platform == "win32" else ":"
             cmd.append(f"--add-data={src}{sep}{dest}")
