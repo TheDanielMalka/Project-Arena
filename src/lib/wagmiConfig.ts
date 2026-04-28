@@ -75,4 +75,7 @@ export const web3modal = {
   open: async (options?: { view?: string }) => {
     await _modal?.open(options as Parameters<NonNullable<typeof _modal>["open"]>[0]);
   },
+  close: () => {
+    _modal?.close();
+  },
 };
