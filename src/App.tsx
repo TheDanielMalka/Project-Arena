@@ -58,10 +58,11 @@ function WagmiAutoSync() {
   // 1. Only promote the wagmi address into walletStore when it matches the DB.
   useEffect(() => {
     if (!address) { setConnected(null); return; }
-    if (user?.walletAddress?.toLowerCase() === address.toLowerCase()) {
+    if (!user?.walletAddress) return; // profile not yet synced — wait for DB value
+    if (user.walletAddress.toLowerCase() === address.toLowerCase()) {
       setConnected(address);
     } else {
-      setConnected(null);
+      setConnected(null); // explicit conflict: wagmi has different address than DB
     }
   }, [address, user?.walletAddress, setConnected]);
 

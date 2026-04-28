@@ -2,7 +2,7 @@ import { createConfig, http } from "wagmi";
 import { defineChain } from "viem";
 import { injected, walletConnect, coinbaseWallet } from "wagmi/connectors";
 import { createWeb3Modal } from "@web3modal/wagmi/react";
-import { reconnect, getAccount } from "@wagmi/core";
+import { reconnect } from "@wagmi/core";
 
 const BSC_TESTNET_RPC = "https://data-seed-prebsc-1-s1.binance.org:8545/";
 const BSC_MAINNET_RPC = "https://bsc-dataseed1.binance.org/";
@@ -48,6 +48,8 @@ export const wagmiConfig = createConfig({
     [bscMainnet.id]: http(BSC_MAINNET_RPC),
   },
 });
+
+reconnect(wagmiConfig).catch(() => {});
 
 /**
  * Web3Modal singleton — initialised once at module load.

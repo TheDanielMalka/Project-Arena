@@ -221,6 +221,7 @@ export function ArenaHeader() {
                         const r = await apiPatchMeWalletAddress(token, address);
                         if (r.ok === false) { toast({ variant: "destructive", title: "Wallet", description: r.error }); return; }
                         useWalletStore.getState().setConnectedAddress(address);
+                        await useUserStore.getState().refreshProfileFromServer();
                         connectUserWalletFlag();
                         toast({ title: "Wallet linked", description: "Your wallet is connected and saved to your profile." });
                       } catch (e: unknown) {
