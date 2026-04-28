@@ -140,7 +140,8 @@ export async function connectMetaMaskAndSignOwnership(): Promise<{ address: stri
         reject(new Error("No wallet connected — modal was dismissed."));
       }, 120_000);
 
-      // Reject immediately when user closes modal without connecting.
+      // Reject when user explicitly closes modal without connecting.
+      // Only acts on "disconnected" — if wagmi is "connecting", watchAccount handles it.
       _unsubModal = web3modal.subscribeState(({ open }) => {
         if (open) {
           modalHasOpened = true;
@@ -149,10 +150,11 @@ export async function connectMetaMaskAndSignOwnership(): Promise<{ address: stri
           if (acc.status === "connected" && acc.address) {
             cleanup();
             resolve(acc.address);
-          } else {
+          } else if (acc.status === "disconnected") {
             cleanup();
             reject(new Error("No wallet connected — modal was dismissed."));
           }
+          // "connecting" / "reconnecting" → watchAccount will fire and resolve
         }
       });
 
