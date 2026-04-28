@@ -3973,6 +3973,9 @@ async def patch_user_me(req: PatchUserRequest, payload: dict = Depends(verify_to
             logger.error("patch_user_me error: %s", exc)
             raise HTTPException(500, "Profile update failed")
 
+        if "wallet_address" in fields:
+            _ws_profile_updated(user_id)
+
     # Return fresh profile
     return await me(payload)
 

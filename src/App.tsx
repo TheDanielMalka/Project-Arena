@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -54,6 +54,7 @@ function WagmiAutoSync() {
   const token = useUserStore((s) => s.token);
   const setConnected = useWalletStore((s) => s.setConnectedAddress);
   const refreshProfile = useUserStore((s) => s.refreshProfileFromServer);
+  const prevAddress = useRef<string | null>(null);
 
   // 1. Only promote the wagmi address into walletStore when it matches the DB.
   useEffect(() => {
@@ -80,6 +81,22 @@ function WagmiAutoSync() {
     const id = setInterval(() => void refreshProfile(), 30_000);
     return () => clearInterval(id);
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 4. MetaMask account switch detection — when wagmi address changes from one
+  //    address to a different address (not null), the new address won't match DB
+  //    and setConnected(null) fires in Effect 1. Auto-sync the disconnect so the
+  //    remote WalletConnect case (mobile disconnect → address → null while DB
+  //    still has wallet) also calls disconnectWallet immediately.
+  useEffect(() => {
+    const prev = prevAddress.current;
+    prevAddress.current = address ?? null;
+    if (prev === null || !prev) return; // no previous address, nothing to compare
+    if (address) return; // new address present — Effect 1 handles it
+    // address went null while we had one: remote disconnect or MetaMask lock.
+    // Only auto-unlink when the DB still thinks a wallet is linked.
+    if (!user?.walletAddress || !token) return;
+    void useWalletStore.getState().disconnectWallet();
+  }, [address]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return null;
 }
