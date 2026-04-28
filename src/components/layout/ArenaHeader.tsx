@@ -212,7 +212,6 @@ export function ArenaHeader() {
                   onClick={() => {
                     void (async () => {
                       try {
-                        wagmiDisconnect();
                         const { connectMetaMaskAndSignOwnership } = await import("@/lib/metamaskBsc");
                         const { apiPatchMeWalletAddress } = await import("@/lib/engine-api");
                         const token = useUserStore.getState().token;

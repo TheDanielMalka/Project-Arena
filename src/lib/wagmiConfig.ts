@@ -78,4 +78,7 @@ export const web3modal = {
   close: () => {
     _modal?.close();
   },
+  subscribeState: (cb: (state: { open: boolean }) => void): (() => void) => {
+    return _modal?.subscribeState(cb) ?? (() => {});
+  },
 };
