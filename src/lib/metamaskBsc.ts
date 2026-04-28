@@ -124,16 +124,45 @@ export async function connectMetaMaskAndSignOwnership(): Promise<{ address: stri
   } else {
     void web3modal.open({ view: "Connect" });
     address = await new Promise<`0x${string}`>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        unwatch();
+      let _timeout: ReturnType<typeof setTimeout> | undefined;
+      let _unwatch: (() => void) | undefined;
+      let _unsubModal: (() => void) | undefined;
+      let modalHasOpened = false;
+
+      const cleanup = () => {
+        clearTimeout(_timeout);
+        _unsubModal?.();
+        _unwatch?.();
+      };
+
+      _timeout = setTimeout(() => {
+        cleanup();
         reject(new Error("No wallet connected — modal was dismissed."));
       }, 120_000);
-      const unwatch = watchAccount(wagmiConfig, {
+
+      // Reject when user explicitly closes modal without connecting.
+      // Only acts on "disconnected" — if wagmi is "connecting", watchAccount handles it.
+      _unsubModal = web3modal.subscribeState(({ open }) => {
+        if (open) {
+          modalHasOpened = true;
+        } else if (modalHasOpened) {
+          const acc = getAccount(wagmiConfig);
+          if (acc.status === "connected" && acc.address) {
+            cleanup();
+            resolve(acc.address);
+          } else if (acc.status === "disconnected") {
+            cleanup();
+            reject(new Error("No wallet connected — modal was dismissed."));
+          }
+          // "connecting" / "reconnecting" → watchAccount will fire and resolve
+        }
+      });
+
+      _unwatch = watchAccount(wagmiConfig, {
         onChange(account) {
           if (account.status === "connected" && account.address) {
-            clearTimeout(timeout);
-            unwatch();
-            web3modal.close(); // expose MetaMask's signature prompt immediately
+            cleanup();
+            web3modal.close();
             resolve(account.address);
           }
         },
