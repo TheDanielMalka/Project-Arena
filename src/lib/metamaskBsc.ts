@@ -85,8 +85,17 @@ async function ensureTargetChain(): Promise<{ client: Awaited<ReturnType<typeof 
     const chain = targetId === 56 ? bscMainnet : bscTestnet;
     await switchChain(wagmiConfig, { chainId: chain.id });
   }
-  const client = await getWalletClient(wagmiConfig);
-  return { client, address: state.address };
+  // wagmi fires watchAccount("connected") slightly before the connector object is
+  // ready for getWalletClient — retry up to 8× with 250ms gaps (~2s total).
+  for (let attempt = 0; attempt < 8; attempt++) {
+    try {
+      const client = await getWalletClient(wagmiConfig);
+      return { client, address: state.address };
+    } catch {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+  throw new Error("Wallet not ready — please try again");
 }
 
 function getContractAddress(): `0x${string}` {
@@ -124,6 +133,7 @@ export async function connectMetaMaskAndSignOwnership(): Promise<{ address: stri
           if (account.status === "connected" && account.address) {
             clearTimeout(timeout);
             unwatch();
+            web3modal.close(); // expose MetaMask's signature prompt immediately
             resolve(account.address);
           }
         },
