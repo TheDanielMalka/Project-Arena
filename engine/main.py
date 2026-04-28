@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import hashlib
 import hmac as _hmac
 import httpx
@@ -4508,6 +4509,14 @@ async def faceit_auth_start(token: str):
     if not FACEIT_CLIENT_ID:
         raise HTTPException(503, "FACEIT OAuth not configured")
     nonce = secrets.token_urlsafe(16)
+    # PKCE — required by FACEIT for all OAuth apps regardless of client type.
+    # code_verifier: random URL-safe base64, code_challenge: S256(verifier).
+    code_verifier = secrets.token_urlsafe(32)
+    code_challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode()).digest())
+        .rstrip(b"=")
+        .decode()
+    )
     try:
         with SessionLocal() as session:
             session.execute(
@@ -4516,20 +4525,22 @@ async def faceit_auth_start(token: str):
             session.execute(
                 text(
                     "INSERT INTO faceit_oauth_states (nonce, jwt_token, code_verifier, expires_at) "
-                    "VALUES (:n, :t, '', NOW() + INTERVAL '10 minutes')"
+                    "VALUES (:n, :t, :cv, NOW() + INTERVAL '10 minutes')"
                 ),
-                {"n": nonce, "t": token},
+                {"n": nonce, "t": token, "cv": code_verifier},
             )
             session.commit()
     except Exception as exc:
         logger.error("FACEIT auth start DB error: %s", exc)
         raise HTTPException(500, "OAuth state error")
     params = {
-        "response_type": "code",
-        "client_id":     FACEIT_CLIENT_ID,
-        "redirect_uri":  f"{ENGINE_BASE_URL.rstrip('/')}/auth/faceit/callback",
-        "scope":         "openid email profile",
-        "state":         nonce,
+        "response_type":         "code",
+        "client_id":             FACEIT_CLIENT_ID,
+        "redirect_uri":          f"{ENGINE_BASE_URL.rstrip('/')}/auth/faceit/callback",
+        "scope":                 "openid email profile",
+        "state":                 nonce,
+        "code_challenge":        code_challenge,
+        "code_challenge_method": "S256",
     }
     url = "https://accounts.faceit.com/oauth/authorize?" + urllib.parse.urlencode(params)
     return RedirectResponse(url, status_code=302)
@@ -4576,7 +4587,7 @@ async def faceit_auth_callback(
                 text(
                     "DELETE FROM faceit_oauth_states "
                     "WHERE nonce = :n AND expires_at > NOW() "
-                    "RETURNING jwt_token"
+                    "RETURNING jwt_token, code_verifier"
                 ),
                 {"n": state},
             ).fetchone()
@@ -4587,14 +4598,16 @@ async def faceit_auth_callback(
     if not row:
         logger.warning("FACEIT callback: nonce not found or expired (state prefix=%s)", state[:8])
         return RedirectResponse(error_url, status_code=302)
-    jwt_token = row[0]
+    jwt_token    = row[0]
+    code_verifier = row[1] or ""
     redirect_uri = f"{ENGINE_BASE_URL.rstrip('/')}/auth/faceit/callback"
 
     token_data: dict = {
-        "grant_type":   "authorization_code",
-        "client_id":    FACEIT_CLIENT_ID,
-        "code":         code,
-        "redirect_uri": redirect_uri,
+        "grant_type":    "authorization_code",
+        "client_id":     FACEIT_CLIENT_ID,
+        "code":          code,
+        "redirect_uri":  redirect_uri,
+        "code_verifier": code_verifier,
     }
     if FACEIT_CLIENT_SECRET:
         token_data["client_secret"] = FACEIT_CLIENT_SECRET
