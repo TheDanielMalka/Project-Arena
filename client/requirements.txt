@@ -21,7 +21,7 @@ websockets==13.*
 psutil==6.*
 
 # Windows API (required by pystray on Windows)
-pywin32
+pywin32; sys_platform == 'win32'
 
 # Build
 pyinstaller==6.11.*
