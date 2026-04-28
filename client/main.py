@@ -2300,7 +2300,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
     # Identity card — compact chamfered tactical panel (admin-dialog style).
     # Uses the same 80px right-shrink as the Engine / Game Status strips so
     # every card in the column ends on the same vertical line.
-    id_card = _chamfer_panel(ov_left, "Identity", width_shrink=0, min_height=70, expand=True)
+    id_card = _chamfer_panel(ov_left, "Identity", width_shrink=0, min_height=70)
     id_inner_ref: list = []
 
     def _rebuild_identity():
@@ -3237,12 +3237,8 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                    2 if _mode_l.startswith("2v2") else 1))
 
         grid_f = tk.Frame(lobby_outer, bg=BG)
-        grid_f.pack(fill="both", expand=True, padx=0, pady=(0, 4))
+        grid_f.pack(fill="x", padx=0, pady=(0, 4))
         lobby_body_ref.append(grid_f)
-        grid_f.grid_columnconfigure(0, weight=1, uniform="tc")
-        grid_f.grid_columnconfigure(1, weight=0, minsize=150)
-        grid_f.grid_columnconfigure(2, weight=1, uniform="tc")
-        grid_f.grid_rowconfigure(0, weight=1)
 
         _BPAL = ["#C0392B","#8E44AD","#2980B9","#27AE60",
                  "#E67E22","#16A085","#D35400","#2C3E50"]
@@ -3261,7 +3257,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
             outer = tk.Frame(gparent, bg=pbg,
                              highlightbackground=accent, highlightthickness=1)
             px = (0, 5) if colidx == 0 else (5, 0)
-            outer.grid(row=0, column=colidx, sticky="nsew", padx=px)
+            outer.pack(side="left", fill="both", expand=True, padx=px)
 
             tb = tk.Frame(outer, bg=pbg)
             tb.pack(fill="x", padx=14, pady=(10, 6))
@@ -3313,7 +3309,7 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
                 av_lbl.pack(expand=True)
 
                 if not nm and _fp:
-                    def _bind_av(a=av, al=av_lbl, bg_=av_bg_col, fp_=_fp):
+                    def _bind_av(a=av, al=av_lbl, bg_=av_bg_c, fp_=_fp):
                         def _e(e): al.configure(fg="#ffffff")
                         def _l(e): al.configure(fg=BRAND["cyan"])
                         def _c(e): fp_()
@@ -3391,8 +3387,9 @@ def _build_client_window(monitor: "MatchMonitor", auth: "AuthManager",
         except Exception:
             pot_s = "₳ —"
 
-        vc = tk.Frame(grid_f, bg=BRAND["bg"])
-        vc.grid(row=0, column=1, sticky="nsew", padx=5)
+        vc = tk.Frame(grid_f, bg=BRAND["bg"], width=160)
+        vc.pack_propagate(False)
+        vc.pack(side="left", fill="y", padx=4)
 
         tk.Label(vc, text="M  A  P",
                  font=(FONT_MONO, 8, "bold"),
