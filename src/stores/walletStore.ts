@@ -114,6 +114,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       }
       set({ connectedAddress: address, selectedNetwork: "bsc" });
       useUserStore.getState().setLinkedWalletAddress(address);
+      await useUserStore.getState().refreshProfileFromServer();
       return { ok: true as const };
     } catch (e: unknown) {
       const err = e as { code?: string; message?: string };
@@ -140,6 +141,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       if (result.ok === false) return { ok: false as const, error: result.error };
       set({ connectedAddress: null });
       useUserStore.getState().unlinkWalletFromProfile();
+      await useUserStore.getState().refreshProfileFromServer();
       return { ok: true as const };
     } catch (e) {
       return { ok: false as const, error: "Could not disconnect wallet." };

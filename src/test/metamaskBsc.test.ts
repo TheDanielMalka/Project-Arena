@@ -153,11 +153,18 @@ describe("buildWalletOwnershipMessage", () => {
 // ── connectMetaMaskAndSignOwnership — fail-closed ────────────────────────────
 
 describe("connectMetaMaskAndSignOwnership", () => {
-  afterEach(() => clearWindowEthereum());
+  afterEach(() => {
+    clearWindowEthereum();
+    vi.useRealTimers();
+  });
 
   it("throws when web3modal is dismissed without connecting a wallet", async () => {
-    await expect(connectMetaMaskAndSignOwnership()).rejects.toThrow(
-      /no wallet connected/i,
-    );
+    vi.useFakeTimers();
+    const promise = connectMetaMaskAndSignOwnership();
+    // Attach rejection handler BEFORE advancing timers — prevents unhandled-rejection
+    // warning that fires when the setTimeout callback runs before .rejects can subscribe.
+    const assertion = expect(promise).rejects.toThrow(/no wallet connected/i);
+    await vi.advanceTimersByTimeAsync(120_001);
+    await assertion;
   });
 });

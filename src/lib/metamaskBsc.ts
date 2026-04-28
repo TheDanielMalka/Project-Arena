@@ -11,6 +11,7 @@
 
 import {
   getAccount,
+  watchAccount,
   signMessage,
   switchChain,
   waitForTransactionReceipt,
@@ -106,22 +107,36 @@ function getContractAddress(): `0x${string}` {
  * On mobile: WalletConnect QR / deep-link → MetaMask Mobile / Trust Wallet etc.
  */
 export async function connectMetaMaskAndSignOwnership(): Promise<{ address: string; signature: string }> {
-  await web3modal.open({ view: "Connect" });
+  const current = getAccount(wagmiConfig);
 
-  const account = getAccount(wagmiConfig);
-  if (!account.address) {
-    throw new Error("No wallet connected — modal was dismissed.");
+  let address: `0x${string}`;
+  if (current.status === "connected" && current.address) {
+    address = current.address;
+  } else {
+    void web3modal.open({ view: "Connect" });
+    address = await new Promise<`0x${string}`>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        unwatch();
+        reject(new Error("No wallet connected — modal was dismissed."));
+      }, 120_000);
+      const unwatch = watchAccount(wagmiConfig, {
+        onChange(account) {
+          if (account.status === "connected" && account.address) {
+            clearTimeout(timeout);
+            unwatch();
+            resolve(account.address);
+          }
+        },
+      });
+    });
   }
 
   await ensureTargetChain();
 
-  const message   = buildWalletOwnershipMessage(account.address);
-  const signature = await signMessage(wagmiConfig, {
-    account: account.address,
-    message,
-  });
+  const message   = buildWalletOwnershipMessage(address);
+  const signature = await signMessage(wagmiConfig, { account: address, message });
 
-  return { address: account.address, signature };
+  return { address, signature };
 }
 
 // ─── Contract writes ─────────────────────────────────────────────────────────
